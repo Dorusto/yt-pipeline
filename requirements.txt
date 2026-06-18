@@ -1,0 +1,3 @@
+opencv-python
+pysubs2
+pyyaml

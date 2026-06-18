@@ -1,0 +1,15 @@
+video: "Lenea.mp4"
+audio: "Lenea.mp3"
+
+segments:
+  - name: "Hook"
+    start: "00:00:00"
+    end: "00:00:56"
+
+  - name: "Reframing"
+    start: "01:02:00"
+    end: "01:52:00"
+
+  - name: "Felicitari"
+    start: "03:07:00"
+    end: "03:50:00"

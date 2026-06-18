@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+shorts_config.yaml
+*.mp4
+*.mp3
+*.wav
+*.json
+*.ass
