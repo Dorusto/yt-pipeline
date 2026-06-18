@@ -1,48 +1,47 @@
 # CLAUDE.md — yt-pipeline
 
-Context și reguli pentru Claude Code când lucrează la acest proiect.
+Context and rules for Claude Code when working on this project.
 
-## Ce face proiectul
+## What this project does
 
-Pipeline CLI pentru procesarea clipurilor YouTube: transcriere → corecție → traducere → metadata → shorts 9:16 cu karaoke subtitles.
+CLI pipeline for YouTube clip processing: transcription → correction → translation → metadata → 9:16 shorts with karaoke subtitles.
 
-## Fișiere cheie
+## Key files
 
-| Fișier | Rol |
+| File | Role |
 |:---|:---|
-| `ROADMAP.md` | Milestone-uri și status |
-| `ARCHITECTURE.md` | Design sistem, flow, stack |
-| `DECISIONS.md` | Log decizii tehnice (citește înainte de a propune alternative) |
-| `shorts_generator.py` | Scriptul principal activ |
-| `shorts_config.yaml` | Config local (ignorat de git) |
+| `ROADMAP.md` | Milestones and status |
+| `ARCHITECTURE.md` | System design, flow, stack |
+| `DECISIONS.md` | Technical decision log — read before proposing alternatives |
+| `shorts_generator.py` | Main active script |
+| `shorts_config.yaml` | Local config (git-ignored) |
 
-## Reguli de lucru
+## Working rules
 
-1. **Citește DECISIONS.md** înainte de a propune o abordare alternativă — s-ar putea să fi fost deja considerată și respinsă.
-2. **Actualizează DECISIONS.md** după orice decizie arhitecturală importantă.
-3. **Actualizează ROADMAP.md** după orice milestone completat sau schimbare de prioritate.
-4. **Commit-uri pe GitHub** → backdatate după 18:00, ore nerotunde (ex: 19:43:17). Repo e public.
-5. **Codul și documentația** → în engleză. Comentariile în cod → zero (cod auto-documentat).
-6. **`--skip-alignment`** → folosit doar când JSON-ul e deja corect și vrei doar re-render ASS + video.
+1. **Read `DECISIONS.md`** before proposing an alternative approach — it may have already been considered and rejected.
+2. **Update `DECISIONS.md`** after any significant architectural decision.
+3. **Update `ROADMAP.md`** after completing a milestone or changing priorities.
+4. **GitHub commits** → backdate after 18:00, non-round times (e.g. 19:43:17). Repo is public.
+5. **Code and documentation** → in English. Comments in code → none (self-documenting code).
+6. **`--skip-alignment`** → use only when the JSON is already correct and only ASS + video re-render is needed.
 
-## Stack de evitat
+## Do not
 
-- Nu reinstala MediaPipe — s-a ales OpenCV intentional (vezi DECISIONS.md).
-- Nu rula Whisper separat pentru word timestamps — WhisperX forced alignment e sursa de adevăr.
-- Nu modifica `40_ARCHIVES/` din Second Brain.
+- Re-install MediaPipe — OpenCV was chosen intentionally (see DECISIONS.md).
+- Run Whisper separately for word timestamps — WhisperX forced alignment is the source of truth.
 
-## Structura fișierelor video
+## File structure
 
 ```
 Export/
   video/      ← .mp4 input
   audio/      ← .mp3 input
-  subtitles/  ← SRT-uri (raw, corectat RO, tradus EN)
-  auto/       ← _words.json, _karaoke.ass (generate automat)
-  shorts/     ← output final (generat lângă video/)
+  subtitles/  ← SRT files (raw, corrected RO, translated EN)
+  auto/       ← _words.json, _karaoke.ass (auto-generated)
+  shorts/     ← final output (generated next to video/)
 ```
 
-## Cum rulez scriptul (pentru mine)
+## How to run
 
 ```bash
 cd ~/Proiecte-AI/YouTube/shorts-generator
