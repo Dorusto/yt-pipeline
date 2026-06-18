@@ -1,12 +1,17 @@
-# shorts-generator
+# yt-pipeline
 
-Automatically generates 9:16 Shorts / Reels from 1920×1080 YouTube videos.
+CLI pipeline for processing YouTube clips: transcription → correction → translation → metadata → 9:16 shorts with karaoke subtitles.
 
-**What it does:**
-- Detects face position and computes 608×1080 crop automatically
-- Runs forced alignment (WhisperX) on a corrected SRT to get word-level timestamps
-- Generates ASS subtitle file with karaoke highlighting (active word = yellow)
-- Renders with ffmpeg + h264_nvenc (GPU)
+---
+
+## Scripts
+
+| Script | What it does |
+|:---|:---|
+| `correct_srt.py` | Applies a corrections list to fix common Whisper transcription errors |
+| `translate_srt.py` | Translates SRT from Romanian to English via DeepSeek API |
+| `analyze_srt.py` | Generates title, description, chapters and tags from SRT via DeepSeek API |
+| `shorts_generator.py` | Generates 9:16 shorts with karaoke highlighting from video + corrected SRT |
 
 ---
 
@@ -15,79 +20,113 @@ Automatically generates 9:16 Shorts / Reels from 1920×1080 YouTube videos.
 - Python 3.10+
 - [`uv`](https://github.com/astral-sh/uv)
 - `ffmpeg` with nvenc support
-- [`whisperx`](https://github.com/m-bain/whisperX) — for forced alignment
+- `openai-whisper` — transcription (install via pipx)
+- `DEEPSEEK_API_KEY` in environment — for correction, translation and metadata
 
 ---
 
 ## Installation
 
 ```bash
-git clone https://github.com/Dorusto/shorts-generator.git
-cd shorts-generator
+git clone https://github.com/Dorusto/yt-pipeline.git
+cd yt-pipeline
 uv venv
 uv pip install -r requirements.txt
 ```
 
 ---
 
-## Usage
+## Workflow
 
-### 1. Configure segments
+```
+[Export clip]
+      ↓
+whisper audio.mp3 --word_timestamps True --output_format all
+      ↓
+python correct_srt.py MyClip.srt
+      ↓
+[Manual SRT review]
+      ↓
+python translate_srt.py MyClip_corrected.srt
+      ↓
+python analyze_srt.py MyClip_corrected.srt MyClip.mp4
+      ↓
+python shorts_generator.py --video MyClip.mp4 --srt MyClip_corrected.srt
+```
 
-Copy `shorts_config_example.yaml` → `shorts_config.yaml` and fill in your segments:
+---
 
+## shorts_generator.py
+
+Generates 9:16 crops with karaoke subtitle highlighting from a 1920×1080 source.
+
+**What it does:**
+- Detects face position → computes 608×1080 crop offset automatically
+- Runs WhisperX forced alignment on the corrected SRT → word-level timestamps
+- Generates ASS karaoke file (active word = yellow, rest = white)
+- Renders with ffmpeg + h264_nvenc (GPU)
+
+**Usage:**
+```bash
+# Direct mode
+.venv/bin/python shorts_generator.py \
+  --video /path/to/video.mp4 \
+  --audio /path/to/audio.mp3 \
+  --srt   /path/to/corrected.srt
+
+# Re-render only (skip alignment, use existing words JSON)
+.venv/bin/python shorts_generator.py --video ... --skip-alignment
+```
+
+**Config** (`shorts_config.yaml` — git-ignored, copy from `shorts_config_example.yaml`):
 ```yaml
-video: "MyVideo.mp4"
-audio: "MyVideo.mp3"
-srt: "MyVideo_corrected.srt"
+video: "MyClip.mp4"
+audio: "MyClip.mp3"
+srt:   "MyClip_RO.srt"
 
 segments:
   - name: "Hook"
     start: "00:00:00"
     end: "00:00:54"
-
-  - name: "Reframing"
-    start: "00:01:02"
-    end: "00:01:52"
-```
-
-### 2. Run
-
-**Interactive mode** (prompts for video path):
-```bash
-.venv/bin/python shorts_generator.py
-```
-
-**Direct mode:**
-```bash
-.venv/bin/python shorts_generator.py \
-  --video /path/to/video.mp4 \
-  --srt /path/to/corrected.srt
-```
-
-### 3. Output
-
-Shorts are saved in a `shorts/` folder next to the video file:
-```
-shorts/Short1-Hook.mp4
-shorts/Short2-Reframing.mp4
-
-auto/Hook_words.json       # word timestamps from forced alignment
-auto/Hook_karaoke.ass      # generated karaoke subtitles
 ```
 
 ---
 
-## Expected folder structure
+## correct_srt.py
 
+Applies find/replace corrections from `corrections.txt` (one `wrong|correct` pair per line).
+
+```bash
+python correct_srt.py input.srt
+python correct_srt.py input.srt output_corrected.srt
 ```
-Export/
-  video/     MyVideo.mp4
-  audio/     MyVideo.mp3
-  subtitles/ MyVideo_corrected.srt
-  shorts/    ← generated output
-  auto/      ← intermediate JSON + ASS files
+
+---
+
+## translate_srt.py
+
+Translates SRT preserving exact structure (numbers, timestamps, blank lines).
+
+```bash
+python translate_srt.py input_RO.srt
+python translate_srt.py input_RO.srt output_EN.srt
 ```
+
+Requires: `DEEPSEEK_API_KEY` environment variable.
+
+---
+
+## analyze_srt.py
+
+Generates YouTube metadata from transcript.
+
+```bash
+python analyze_srt.py subtitles.srt video.mp4
+```
+
+Output: `video_metadata.txt` with title, description, chapters, tags.
+
+Requires: `DEEPSEEK_API_KEY` environment variable.
 
 ---
 
@@ -95,7 +134,9 @@ Export/
 
 | Component | Tool |
 |:---|:---|
-| Cut + crop + burn subtitles | `ffmpeg` with `h264_nvenc` |
-| Word-level alignment | `whisperx` forced alignment on corrected SRT |
-| Face detection for crop | `opencv-python` (Haar cascades) |
-| ASS subtitle manipulation | `pysubs2` |
+| Transcription | `openai-whisper turbo` |
+| Forced alignment | `whisperx` |
+| Face detection | `opencv-python` (Haar cascades) |
+| ASS subtitles | `pysubs2` |
+| Video render | `ffmpeg h264_nvenc` |
+| AI (correction / translation / metadata) | DeepSeek API |
