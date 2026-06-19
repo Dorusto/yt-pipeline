@@ -5,12 +5,16 @@ Pipeline partially functional. `shorts_generator.py` is in production (tested on
 
 ---
 
-## Milestone 1 — Repo unification (in progress)
+## Milestone 1 — Repo unification (complete)
 - [x] `shorts_generator.py` — 9:16 crop, WhisperX alignment, karaoke ASS, ffmpeg nvenc
-- [x] GitHub repo (to be renamed `yt-pipeline`)
-- [ ] Move `correct_srt.py`, `translate_srt.py`, `analyze_srt.py` into repo
-- [ ] Rename repo → `yt-pipeline`
-- [ ] Update README with all scripts
+- [x] GitHub repo renamed to `yt-pipeline`
+- [x] `correct_srt.py`, `translate_srt.py`, `analyze_srt.py` added to repo
+- [x] README updated with all scripts
+- [x] Manual `x_offset` override per segment in `shorts_config.yaml`
+- [x] SRT boundary trimming at both start and end of segment
+- [x] Face detection logging (detected/sampled frames)
+- [x] All output files saved next to video (not next to SRT)
+- [x] `analyze_srt.py --shorts-config` — per-short metadata generation
 
 ## Milestone 2 — Single Whisper run
 - [ ] `transcribe.py` — run Whisper once, save both SRT and `_words.json` simultaneously
@@ -33,12 +37,12 @@ Pipeline partially functional. `shorts_generator.py` is in production (tested on
 - [ ] Quick preview (10s) before full render
 
 ## Milestone 5 — Upload & metadata
-- [ ] Integrate `analyze_srt.py` into pipeline → auto `video_metadata.txt`
+- [x] `analyze_srt.py` generates `video_metadata.txt` (main video) and `{name}_metadata.txt` (per short)
 - [ ] Optional: YouTube Data API auto-upload
 
 ---
 
 ## Known issues
-- Face detection (Haar cascades) may miss or misplace face center — verify per clip
-- `correct_srt.py` does not catch all Whisper errors (e.g. "înrăbdare" → "nerăbdare")
-- SRT entries straddling segment boundary are trimmed at nearest sentence end (approximation)
+- Face detection (Haar cascades) may miss or misplace face center — use manual `x_offset` per segment in config if needed
+- `correct_srt.py` does not catch all Whisper errors — always review SRT manually before running shorts_generator
+- SRT boundary trimming at sentence punctuation is an approximation — verify output on segments that straddle boundaries

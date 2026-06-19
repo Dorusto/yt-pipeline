@@ -13,8 +13,11 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 | `ROADMAP.md` | Milestones and status |
 | `ARCHITECTURE.md` | System design, flow, stack |
 | `DECISIONS.md` | Technical decision log — read before proposing alternatives |
-| `shorts_generator.py` | Main active script |
-| `shorts_config.yaml` | Local config (git-ignored) |
+| `shorts_generator.py` | Generates 9:16 shorts — main active script |
+| `analyze_srt.py` | Main video metadata + per-short metadata (`--shorts-config`) |
+| `translate_srt.py` | RO→EN translation — pass `.mp4` as 2nd arg to save in video folder |
+| `correct_srt.py` | Find/replace corrections from `corrections.txt` |
+| `shorts_config.yaml` | Local config (git-ignored) — segments, optional `x_offset` per segment |
 
 ## Working rules
 
@@ -44,9 +47,39 @@ Export/
 ## How to run
 
 ```bash
-cd ~/Proiecte-AI/YouTube/shorts-generator
-.venv/bin/python shorts_generator.py \
-  --video ~/Videos/[Clip]/Export/video/[Clip].mp4 \
-  --audio ~/Videos/[Clip]/Export/audio/[Clip].mp3 \
-  --srt   ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt
+cd ~/Proiecte-AI/YouTube/yt-pipeline
+
+# Generate shorts (reads shorts_config.yaml automatically)
+.venv/bin/python shorts_generator.py --video ~/Videos/[Clip]/Export/video/[Clip].mp4
+
+# Re-render only (skip WhisperX, reuse existing words JSON)
+.venv/bin/python shorts_generator.py --video ... --skip-alignment
+
+# Main video metadata
+python analyze_srt.py subtitles/[Clip]_RO.srt video/[Clip].mp4
+
+# Per-short metadata (after generating shorts)
+python analyze_srt.py subtitles/[Clip]_RO.srt video/[Clip].mp4 --shorts-config shorts_config.yaml
+
+# Translate SRT (saves next to video)
+python translate_srt.py subtitles/[Clip]_RO.srt video/[Clip].mp4
+```
+
+## shorts_config.yaml format
+
+```yaml
+video: "MyClip.mp4"
+audio: "MyClip.mp3"
+srt:   "MyClip_RO.srt"
+
+segments:
+  - name: "Hook"
+    start: "00:00:00"
+    end: "00:00:54"
+    # no x_offset → auto face detection
+
+  - name: "Piesa"
+    start: "00:05:06"
+    end: "00:05:46"
+    x_offset: 800   # manual override, skips face detection
 ```
