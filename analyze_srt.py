@@ -357,21 +357,38 @@ def main():
     chapters_text = "\n".join(f"{ch['timestamp']} {ch['title']}" for ch in chapters)
     print(f"\nCapitole:\n{chapters_text}")
 
-    # --- Shorts candidate: afișează rankat ---
+    # --- Shorts candidate: afișează rankat + salvează ---
     shorts = result.get("shorts", [])
     shorts_sorted = sorted(shorts, key=lambda x: x.get("score", 0), reverse=True)
 
     print(f"\n{'=' * 50}")
     print(f"SEGMENTE CANDIDATE SHORTS ({len(shorts_sorted)} găsite, rankat după potențial)")
     print("=" * 50)
+    lines = []
     for i, s in enumerate(shorts_sorted, 1):
         print(f"\n[{i}] ★{s.get('score', '?')}/10  {s['start']} → {s['end']}")
         print(f"    {s['title']}")
         print(f"    Hook   : {s.get('hook', '—')}")
         print(f"    Motiv  : {s.get('reason', '—')}")
+        lines.append(f"[{i}] ★{s.get('score', '?')}/10  {s['start']} → {s['end']}")
+        lines.append(f"    {s['title']}")
+        lines.append(f"    Hook   : {s.get('hook', '—')}")
+        lines.append(f"    Motiv  : {s.get('reason', '—')}")
+        lines.append("")
+
+    candidates_file = os.path.join(out_dir, f"{basename}_shorts_candidates.txt")
+    with open(candidates_file, "w", encoding="utf-8") as f:
+        f.write(f"SHORTURI CANDIDATE — {basename}\n")
+        f.write("=" * 50 + "\n\n")
+        f.write("\n".join(lines))
+    print(f"\nCandidați salvați → {os.path.basename(candidates_file)}")
 
     # --- Confirmare tăiere ---
-    selected = ask_selection(shorts_sorted)
+    try:
+        selected = ask_selection(shorts_sorted)
+    except EOFError:
+        print("Mod non-interactiv — nicio tăiere. Gata.")
+        return
     if not selected:
         print("Nicio tăiere. Gata.")
         return
