@@ -56,13 +56,13 @@ cd ~/Proiecte-AI/YouTube/yt-pipeline
 .venv/bin/python shorts_generator.py --video ... --skip-alignment
 
 # Main video metadata
-python analyze_srt.py subtitles/[Clip]_RO.srt video/[Clip].mp4
+python analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
 
 # Per-short metadata (after generating shorts)
-python analyze_srt.py subtitles/[Clip]_RO.srt video/[Clip].mp4 --shorts-config shorts_config.yaml
+python analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4 --shorts-config shorts_config.yaml
 
 # Translate SRT (saves next to video)
-python translate_srt.py subtitles/[Clip]_RO.srt video/[Clip].mp4
+python translate_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
 ```
 
 ## shorts_config.yaml format

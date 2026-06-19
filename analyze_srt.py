@@ -305,8 +305,14 @@ def main():
         print("Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] [--shorts-config config.yaml]")
         sys.exit(1)
 
-    srt_file = sys.argv[1]
-    video_file = sys.argv[2]
+    srt_file = os.path.abspath(os.path.expanduser(sys.argv[1]))
+    video_file = os.path.abspath(os.path.expanduser(sys.argv[2]))
+
+    for label, path in [("SRT", srt_file), ("Video", video_file)]:
+        if not os.path.exists(path):
+            print(f"[eroare] {label} negăsit: {path}")
+            print("Folosește căi absolute (ex: ~/Videos/Lenea/Export/subtitles/Lenea_RO.srt)")
+            sys.exit(1)
 
     args = sys.argv[3:]
     youtube_url = "[LINK VIDEO PRINCIPAL]"
@@ -314,7 +320,7 @@ def main():
     i = 0
     while i < len(args):
         if args[i] == "--shorts-config" and i + 1 < len(args):
-            shorts_config_path = args[i + 1]
+            shorts_config_path = os.path.abspath(os.path.expanduser(args[i + 1]))
             i += 2
         elif not args[i].startswith("--"):
             youtube_url = args[i]
