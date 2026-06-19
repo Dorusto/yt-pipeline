@@ -115,12 +115,8 @@ FORMAT RĂSPUNS:
     return json.loads(raw)
 
 
-def make_output_dir(srt_file):
-    srt_dir = os.path.dirname(os.path.abspath(srt_file))
-    name = os.path.splitext(os.path.basename(srt_file))[0]
-    out_dir = os.path.join(srt_dir, name)
-    os.makedirs(out_dir, exist_ok=True)
-    return out_dir
+def make_output_dir(video_file):
+    return os.path.dirname(os.path.abspath(video_file))
 
 
 def save_video_metadata(result, chapters, out_dir, basename):
@@ -223,7 +219,7 @@ def main():
     youtube_url = sys.argv[3] if len(sys.argv) > 3 else "[LINK VIDEO PRINCIPAL]"
 
     basename = os.path.splitext(os.path.basename(srt_file))[0]
-    out_dir = make_output_dir(srt_file)
+    out_dir = make_output_dir(video_file)
 
     print(f"Parsez {srt_file}...")
     segments = parse_srt(srt_file)

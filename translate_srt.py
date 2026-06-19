@@ -70,11 +70,15 @@ def translate_batch(texts):
 
 def main():
     if len(sys.argv) < 2:
-        print("Utilizare: python3 translate_srt.py input.srt [output.srt]")
+        print("Utilizare: python3 translate_srt.py input.srt [video.mp4 | output_EN.srt]")
         sys.exit(1)
 
     input_file = sys.argv[1]
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 2 and sys.argv[2].endswith(".mp4"):
+        video_dir = os.path.dirname(os.path.abspath(sys.argv[2]))
+        basename_en = os.path.basename(input_file).replace(".srt", "_EN.srt")
+        output_file = os.path.join(video_dir, basename_en)
+    elif len(sys.argv) > 2:
         output_file = sys.argv[2]
     else:
         output_file = input_file.replace(".srt", "_EN.srt")
