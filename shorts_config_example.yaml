@@ -6,7 +6,9 @@ segments:
   - name: "Hook"
     start: "00:00:00"
     end: "00:00:54"
+    # no x_offset → face detection runs automatically
 
   - name: "Reframing"
     start: "00:01:02"
     end: "00:01:52"
+    x_offset: 800   # manual override — skip face detection, crop from pixel 800

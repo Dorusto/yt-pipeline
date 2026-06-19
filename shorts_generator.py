@@ -117,6 +117,7 @@ def detect_face_offset(video_path: str, start: float, end: float) -> int:
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     x_centers = []
+    total_frames = 0
 
     cascade = cv2.CascadeClassifier(
         cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
@@ -128,6 +129,7 @@ def detect_face_offset(video_path: str, start: float, end: float) -> int:
         ret, frame = cap.read()
         if not ret:
             break
+        total_frames += 1
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
         if len(faces) > 0:
@@ -137,8 +139,10 @@ def detect_face_offset(video_path: str, start: float, end: float) -> int:
 
     cap.release()
 
+    print(f"     face detected in {len(x_centers)}/{total_frames} sampled frames")
+
     if not x_centers:
-        print("     [warn] no face detected — using center")
+        print("     [warn] no face detected — using center (set x_offset manually in config)")
         return (SRC_W - CROP_W) // 2
 
     avg_x = sum(x_centers) / len(x_centers)
@@ -159,6 +163,20 @@ def parse_srt_for_alignment(srt_path: str, start: float, end: float) -> list:
             continue
 
         text = event.plaintext.strip()
+
+        # Entry straddles segment start — trim from first sentence boundary after proportional cut
+        if ev_start < start:
+            ws = text.split()
+            fraction = (start - ev_start) / (ev_end - ev_start)
+            n_est = int(len(ws) * fraction)
+            cut = n_est
+            for i in range(n_est, len(ws)):
+                if ws[i].rstrip("\"'").endswith((".", "!", "?", "...")):
+                    cut = i + 1
+                    break
+            text = " ".join(ws[cut:])
+            if not text:
+                continue
 
         # Entry straddles segment end — trim at sentence boundary near proportional cut
         if ev_end > end:
@@ -338,9 +356,13 @@ def main() -> None:
 
         print(f"\n[{i}/{len(segments)}] {name}  ({seg['start']} → {seg['end']})")
 
-        print("  → detecting face...")
-        x_offset = detect_face_offset(str(video_path), start, end)
-        print(f"     x_offset = {x_offset}px")
+        if "x_offset" in seg:
+            x_offset = int(seg["x_offset"])
+            print(f"  → manual x_offset = {x_offset}px (from config)")
+        else:
+            print("  → detecting face...")
+            x_offset = detect_face_offset(str(video_path), start, end)
+            print(f"     x_offset = {x_offset}px")
 
         words_json = auto_dir / f"{name}_words.json"
         if args.skip_alignment and words_json.exists():

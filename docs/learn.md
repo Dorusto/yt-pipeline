@@ -34,3 +34,16 @@ Non-obvious findings: gotchas, surprising behaviors, debugging notes.
 - "înrăbdare" → "nerăbdare" (wrong prefix — Whisper mishears "ne" as "în")
 - Hyphenated words ("task-ul", "n-a", "să-ți") are sometimes split into separate tokens
 - `merge_hyphenated()` in `shorts_generator.py` handles hyphen splits automatically
+
+## SRT boundary trimming
+
+- When a segment start/end cuts through an SRT entry, WhisperX force-aligns ALL text in that entry — including words outside the clip.
+- **End straddling**: trim at the last sentence boundary (`.`, `!`, `?`) before the proportional cut point. Words after the boundary are dropped.
+- **Start straddling**: trim at the first sentence boundary AFTER the proportional cut point. Words before the boundary are dropped.
+- Always fix errors in the SRT file directly — it is the single source of truth. WhisperX propagates the corrected text automatically.
+
+## Face detection (OpenCV)
+
+- `detect_face_offset()` logs `face detected in X/Y sampled frames`. If X=0, face is not detected — use manual `x_offset` in config.
+- In talking-head setups, the face is often close to center (1920×1080). The auto-detected offset may look identical to center if the difference is < ~100px.
+- Add `x_offset: <int>` per segment in `shorts_config.yaml` to bypass face detection entirely.
