@@ -1,6 +1,7 @@
 video: "MyVideo.mp4"
 audio: "MyVideo.mp3"
 srt: "MyVideo_corrected.srt"
+youtube_url: "https://youtu.be/xxxxxxxxxxx"   # optional — auto-added to short descriptions
 
 segments:
   - name: "Hook"

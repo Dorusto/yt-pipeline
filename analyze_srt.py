@@ -178,6 +178,8 @@ def generate_shorts_metadata(srt_file, config_path, shorts_dir, youtube_url):
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
     segments = config.get("segments", [])
+    if youtube_url == "[LINK VIDEO PRINCIPAL]" and config.get("youtube_url"):
+        youtube_url = config["youtube_url"]
     os.makedirs(shorts_dir, exist_ok=True)
     for i, seg in enumerate(segments, 1):
         name = seg["name"]
