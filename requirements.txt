@@ -1,4 +1,5 @@
 opencv-python
+openai
 pysubs2
 pyyaml
 torch

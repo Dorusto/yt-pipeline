@@ -34,6 +34,32 @@ Non-obvious findings: gotchas, surprising behaviors, debugging notes.
 - "înrăbdare" → "nerăbdare" (wrong prefix — Whisper mishears "ne" as "în")
 - Hyphenated words ("task-ul", "n-a", "să-ți") are sometimes split into separate tokens
 - `merge_hyphenated()` in `shorts_generator.py` handles hyphen splits automatically
+- `correct_srt.py` does not catch all errors — always review SRT manually and fix directly in the file
+
+## Path handling
+
+- `analyze_srt.py` and `translate_srt.py` require absolute paths (or paths with `~`). Relative paths from a different directory than the video folder will fail silently or create spurious directories.
+- `shorts_generator.py` uses `find_file()` to locate SRT/audio relative to the video — only `--video` needs to be absolute.
+- Running `analyze_srt.py` with a non-existent video path creates a `video/shorts/` folder in the current directory. Clean it up manually.
+
+## Workflow order
+
+```
+1. correct_srt.py  → fix Whisper errors (+ manual review of SRT)
+2. translate_srt.py → RO→EN subtitle (optional, for EN shorts later)
+3. analyze_srt.py  → main video metadata + shorts candidates list
+4. shorts_generator.py → render 9:16 shorts (one or all segments)
+5. analyze_srt.py --shorts-config → per-short metadata with YouTube URL
+```
+
+Always fix text errors in the corrected SRT file — `shorts_generator.py` propagates them automatically via WhisperX forced alignment.
+
+## Config design
+
+- All segment info lives in `shorts_config.yaml` (git-ignored). Keep all segments there permanently — useful for re-generating metadata or re-rendering.
+- `youtube_url` in config auto-fills all short descriptions. Add it once after the main video is published.
+- `x_offset` per segment overrides face detection — use when auto-detect picks wrong crop.
+- Segment names become filenames (`Short1-{name}.mp4`) — avoid spaces and special characters.
 
 ## SRT boundary trimming
 

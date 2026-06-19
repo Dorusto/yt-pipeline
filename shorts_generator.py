@@ -27,17 +27,13 @@ CONFIG_PATH = SCRIPT_DIR / "shorts_config.yaml"
 
 YAML_TEMPLATE = """\
 video: "MyVideo.mp4"
-audio: "MyVideo.mp3"
-srt: "MyVideo_corrected.srt"
+srt: "MyVideo_RO.srt"
+# youtube_url: "https://youtu.be/..."
 
 segments:
   - name: "Hook"
     start: "00:00:00"
     end: "00:00:56"
-
-  - name: "Segment2"
-    start: "00:01:02"
-    end: "00:01:52"
 """
 
 

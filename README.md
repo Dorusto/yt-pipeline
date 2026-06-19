@@ -4,24 +4,34 @@ CLI pipeline for processing YouTube clips: transcription → correction → tran
 
 ---
 
-## Scripts
+## Workflow
 
-| Script | What it does |
-|:---|:---|
-| `correct_srt.py` | Applies a corrections list to fix common Whisper transcription errors |
-| `translate_srt.py` | Translates SRT from Romanian to English via DeepSeek API |
-| `analyze_srt.py` | Generates title, description, chapters and tags from SRT via DeepSeek API |
-| `shorts_generator.py` | Generates 9:16 shorts with karaoke highlighting from video + corrected SRT |
+```
+1. Export clip (video + audio from editor)
+2. whisper audio.mp3 --output_format srt
+3. python correct_srt.py raw.srt
+4. [Manual SRT review — fix remaining errors directly in the file]
+5. python translate_srt.py RO.srt ~/Videos/Clip/Export/video/Clip.mp4
+6. python analyze_srt.py RO.srt ~/Videos/Clip/Export/video/Clip.mp4
+7. Edit shorts_config.yaml with chosen segments
+8. .venv/bin/python shorts_generator.py --video ~/Videos/Clip/Export/video/Clip.mp4
+9. python analyze_srt.py RO.srt ~/Videos/Clip/Export/video/Clip.mp4 --shorts-config shorts_config.yaml
+10. [Upload main video → add youtube_url to shorts_config.yaml → re-run step 9]
+```
+
+All outputs (metadata, translated SRT, short candidates) are saved next to the video file.
 
 ---
 
-## Requirements
+## Scripts
 
-- Python 3.10+
-- [`uv`](https://github.com/astral-sh/uv)
-- `ffmpeg` with nvenc support
-- `openai-whisper` — transcription (install via pipx)
-- `DEEPSEEK_API_KEY` in environment — for correction, translation and metadata
+| Script | Input | Output |
+|:---|:---|:---|
+| `correct_srt.py` | `raw.srt` | `raw_corectat.srt` |
+| `translate_srt.py` | `_RO.srt` + `video.mp4` | `_EN.srt` next to video |
+| `analyze_srt.py` | `_RO.srt` + `video.mp4` | `video_metadata.txt` + `shorts_candidates.txt` |
+| `analyze_srt.py --shorts-config` | config yaml | `{name}_metadata.txt` in `shorts/` |
+| `shorts_generator.py` | `video.mp4` + config | `Short{N}-{name}.mp4` + karaoke ASS |
 
 ---
 
@@ -31,102 +41,33 @@ CLI pipeline for processing YouTube clips: transcription → correction → tran
 git clone https://github.com/Dorusto/yt-pipeline.git
 cd yt-pipeline
 uv venv
-uv pip install -r requirements.txt
+uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
 ```
+
+Requires: `ffmpeg` with nvenc, `openai-whisper` via pipx, `DEEPSEEK_API_KEY` in environment.
 
 ---
 
-## Workflow
+## shorts_config.yaml
 
-```
-[Export clip]
-      ↓
-whisper audio.mp3 --word_timestamps True --output_format all
-      ↓
-python correct_srt.py MyClip.srt
-      ↓
-[Manual SRT review]
-      ↓
-python translate_srt.py MyClip_corrected.srt
-      ↓
-python analyze_srt.py MyClip_corrected.srt MyClip.mp4
-      ↓
-python shorts_generator.py --video MyClip.mp4 --srt MyClip_corrected.srt
-```
-
----
-
-## shorts_generator.py
-
-Generates 9:16 crops with karaoke subtitle highlighting from a 1920×1080 source.
-
-**What it does:**
-- Detects face position → computes 608×1080 crop offset automatically
-- Runs WhisperX forced alignment on the corrected SRT → word-level timestamps
-- Generates ASS karaoke file (active word = yellow, rest = white)
-- Renders with ffmpeg + h264_nvenc (GPU)
-
-**Usage:**
-```bash
-# Direct mode
-.venv/bin/python shorts_generator.py \
-  --video /path/to/video.mp4 \
-  --audio /path/to/audio.mp3 \
-  --srt   /path/to/corrected.srt
-
-# Re-render only (skip alignment, use existing words JSON)
-.venv/bin/python shorts_generator.py --video ... --skip-alignment
-```
-
-**Config** (`shorts_config.yaml` — git-ignored, copy from `shorts_config_example.yaml`):
 ```yaml
 video: "MyClip.mp4"
-audio: "MyClip.mp3"
 srt:   "MyClip_RO.srt"
+youtube_url: "https://youtu.be/..."   # optional — fills short descriptions
 
 segments:
   - name: "Hook"
     start: "00:00:00"
-    end: "00:00:54"
+    end:   "00:00:54"
+    # no x_offset → auto face detection
+
+  - name: "Delegarea"
+    start: "00:05:06"
+    end:   "00:05:46"
+    x_offset: 800   # manual crop override (pixels from left, 0–1312)
 ```
 
----
-
-## correct_srt.py
-
-Applies find/replace corrections from `corrections.txt` (one `wrong|correct` pair per line).
-
-```bash
-python correct_srt.py input.srt
-python correct_srt.py input.srt output_corrected.srt
-```
-
----
-
-## translate_srt.py
-
-Translates SRT preserving exact structure (numbers, timestamps, blank lines).
-
-```bash
-python translate_srt.py input_RO.srt
-python translate_srt.py input_RO.srt output_EN.srt
-```
-
-Requires: `DEEPSEEK_API_KEY` environment variable.
-
----
-
-## analyze_srt.py
-
-Generates YouTube metadata from transcript.
-
-```bash
-python analyze_srt.py subtitles.srt video.mp4
-```
-
-Output: `video_metadata.txt` with title, description, chapters, tags.
-
-Requires: `DEEPSEEK_API_KEY` environment variable.
+Copy from `shorts_config_example.yaml`. File is git-ignored.
 
 ---
 
@@ -134,9 +75,10 @@ Requires: `DEEPSEEK_API_KEY` environment variable.
 
 | Component | Tool |
 |:---|:---|
-| Transcription | `openai-whisper turbo` |
-| Forced alignment | `whisperx` |
-| Face detection | `opencv-python` (Haar cascades) |
+| Transcription | `openai-whisper turbo` (pipx) |
+| Forced alignment | `whisperx` (wav2vec2 Romanian) |
+| Face detection | OpenCV Haar cascades |
 | ASS subtitles | `pysubs2` |
 | Video render | `ffmpeg h264_nvenc` |
-| AI (correction / translation / metadata) | DeepSeek API |
+| AI (metadata / translation) | DeepSeek API |
+| Package management | `uv` |
