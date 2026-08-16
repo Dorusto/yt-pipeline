@@ -26,13 +26,13 @@ Pipeline fully functional for end-to-end clip processing. Tested on Lenea clip (
 ```
 1. Export clip: video + audio from editor
 2. whisper audio.mp3 --output_format srt   ← run manually via pipx
-3. python correct_srt.py raw.srt           ← fix common errors
+3. python scripts/correct_srt.py raw.srt           ← fix common errors
 4. [Manual SRT review and fix]             ← critical — this is the source of truth
-5. python translate_srt.py RO.srt video.mp4
-6. python analyze_srt.py RO.srt video.mp4 ← main metadata + short candidates
-7. Edit shorts_config.yaml with chosen segments
-8. .venv/bin/python shorts_generator.py --video video.mp4
-9. python analyze_srt.py RO.srt video.mp4 --shorts-config shorts_config.yaml
+5. python scripts/translate_srt.py RO.srt video.mp4
+6. python scripts/analyze_srt.py RO.srt video.mp4 ← main metadata + short candidates
+7. Edit scripts/shorts_config.yaml with chosen segments
+8. .venv/bin/python scripts/shorts_generator.py --video video.mp4
+9. python scripts/analyze_srt.py RO.srt video.mp4 --shorts-config scripts/shorts_config.yaml
 10. [Add youtube_url to config after main video upload]
 11. Re-run step 9 to refresh all short metadata with the real link
 ```
