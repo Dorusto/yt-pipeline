@@ -4,6 +4,8 @@
 
 Pipeline fully functional for end-to-end clip processing. Tested on Lenea clip (June 2026): produced 4 Shorts with karaoke subtitles, per-short metadata, and main video metadata. Ready for the next clip.
 
+**New (2026-08-16):** rough-cut assembly from raw footage — `kdenlive_from_fragments.py` + `srt_from_fragments.py`. Tested end-to-end on the Dolomiti clip (30 fragments, 9 source files, retimed subtitle import) — see `ARCHITECTURE.md` and `DECISIONS.md` for how it works and why several non-obvious choices were made.
+
 ---
 
 ## Scripts — current state
@@ -75,6 +77,26 @@ WhisperX forced alignment is the slowest step (~30s per segment). If word timest
 ## Milestone 5 — Upload 🔲
 
 - [ ] Optional: YouTube Data API auto-upload with scheduled publish date
+
+## Milestone 6 — Chapter-based clip splitting 🔲
+
+Split a long recording into clips using chapter timestamps — no AI selection needed.
+
+- [ ] Download source video with `yt-dlp`
+- [ ] Parse chapter timestamps (manual input or from video description)
+- [ ] Cut clips with `ffmpeg` at chapter boundaries
+
+## Milestone 7 — Auto-detect highlight moments 🔲
+
+Reuses most of Milestone 6's code. Claude decides what's worth clipping instead of manual chapter marks.
+
+- [ ] Full transcript of the long source video
+- [ ] Claude prompt: identify top moments (hooks, striking numbers, surprising statements)
+- [ ] Output: timestamps per moment, feeds into the same cutting pipeline as Milestone 6
+
+## Control / confirmation interface — undecided
+
+No control/confirmation interface (approve-before-upload, edit title before publish, etc.) has been built or committed to. Decide only if an actual need appears once Milestones 5-7 exist — don't build preventively. If needed, extend the existing Majordom Telegram bot rather than building a separate one.
 
 ---
 

@@ -10,27 +10,29 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 
 | File | Role |
 |:---|:---|
-| `ROADMAP.md` | Milestones and status |
-| `ARCHITECTURE.md` | System design, flow, stack |
-| `DECISIONS.md` | Technical decision log — read before proposing alternatives |
+| `docs/ROADMAP.md` | Milestones and status |
+| `docs/ARCHITECTURE.md` | System design, flow, stack |
+| `docs/DECISIONS.md` | Technical decision log — read before proposing alternatives |
 | `shorts_generator.py` | Generates 9:16 shorts — main active script |
 | `analyze_srt.py` | Main video metadata + per-short metadata (`--shorts-config`) |
 | `translate_srt.py` | RO→EN translation — pass `.mp4` as 2nd arg to save in video folder |
 | `correct_srt.py` | Find/replace corrections from `corrections.txt` |
 | `shorts_config.yaml` | Local config (git-ignored) — segments, optional `x_offset` per segment |
+| `kdenlive_from_fragments.py` | Generates a `.kdenlive` rough-cut project from a fragments YAML (raw footage → editable timeline) |
+| `srt_from_fragments.py` | Generates a subtitle file retimed to match a rough-cut assembled by the script above |
 
 ## Working rules
 
-1. **Read `DECISIONS.md`** before proposing an alternative approach — it may have already been considered and rejected.
-2. **Update `DECISIONS.md`** after any significant architectural decision.
-3. **Update `ROADMAP.md`** after completing a milestone or changing priorities.
+1. **Read `docs/DECISIONS.md`** before proposing an alternative approach — it may have already been considered and rejected.
+2. **Update `docs/DECISIONS.md`** after any significant architectural decision.
+3. **Update `docs/ROADMAP.md`** after completing a milestone or changing priorities.
 4. **GitHub commits** → backdate after 18:00, non-round times (e.g. 19:43:17). Repo is public.
 5. **Code and documentation** → in English. Comments in code → none (self-documenting code).
 6. **`--skip-alignment`** → use only when the JSON is already correct and only ASS + video re-render is needed.
 
 ## Do not
 
-- Re-install MediaPipe — OpenCV was chosen intentionally (see DECISIONS.md).
+- Re-install MediaPipe — OpenCV was chosen intentionally (see docs/DECISIONS.md).
 - Run Whisper separately for word timestamps — WhisperX forced alignment is the source of truth.
 
 ## File structure
@@ -63,6 +65,10 @@ python analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[C
 
 # Translate SRT (saves next to video)
 python translate_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
+
+# Rough-cut assembly from raw footage (pre-editing, see README.md)
+python3 kdenlive_from_fragments.py fragments.yaml
+python3 srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
 ```
 
 ## shorts_config.yaml format

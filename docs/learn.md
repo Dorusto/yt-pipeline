@@ -72,6 +72,17 @@ Every time a Whisper error slips through `correct_srt.py` undetected, add it to 
 - **Start straddling**: trim at the first sentence boundary AFTER the proportional cut point. Words before the boundary are dropped.
 - Always fix errors in the SRT file directly — it is the single source of truth. WhisperX propagates the corrected text automatically.
 
+## Kdenlive / MLT project generation
+
+- `melt -consumer xml project.kdenlive` only validates that MLT can parse and re-serialize the file — it does NOT catch Kdenlive-UI-specific bugs (missing audio routing, wrong track order, missing version property all passed this check while being broken in the actual app). Only opening in Kdenlive itself catches those.
+- DJI Action 4 (and likely other action cams) `.MP4` files carry extra `data` streams (GPS/telemetry) and a second `mjpeg` video stream (embedded thumbnail) alongside the real video/audio pair. Always set `video_index`/`audio_index` explicitly on the chain — don't rely on MLT's auto-detection. Verify once per shoot with `ffprobe -show_entries stream=index,codec_type -of csv=p=0 file.mp4`.
+- A combined AV producer on a single Kdenlive video track plays fine when rendered via `melt` directly, but Kdenlive's own mixer never routes audio from a track typed "video" — audio needs its own dedicated track (`hide="video"` on that `<track>`), even though it's the exact same source file/chain.
+- `<property name="kdenlive:docproperties.version">1.1</property>` (inside the `main_bin` playlist) is required or Kdenlive shows an "Incorrect project file" warning on open. This is separate from the MLT framework's own `version="7.40.0"` attribute on `<mlt>`.
+- Track stacking order in the UI is the *reverse* of the `<track>` element order inside `<tractor>` — the last track in the XML is the topmost in Kdenlive.
+- Default Kdenlive project layout is 4 tracks: V2, V1, A1, A2 (top to bottom) — include empty V2/A2 playlists even if unused, so the project matches what a human-created Kdenlive project looks like.
+- Kdenlive's clip-grouping ("linked" video+audio pair, `Ctrl+G`) is stored as an undocumented JSON blob (`kdenlive:sequenceproperties.groups`) with track-index/frame-position encoding — not worth reverse-engineering for a convenience feature when manual grouping is a two-click fix.
+- Subtitle retiming for a rough-cut assembled from fragments: don't reverse-engineer Kdenlive's native subtitle format — just emit a plain `.srt` with each source line's timestamp remapped to `sum(prior fragment durations) + (line_start - fragment_in)`, clipped to the fragment's own boundaries, and import it normally (`Project → Subtitles → Import Subtitle File`).
+
 ## Face detection (OpenCV)
 
 - `detect_face_offset()` logs `face detected in X/Y sampled frames`. If X=0, face is not detected — use manual `x_offset` in config.

@@ -39,6 +39,48 @@ All outputs (metadata, translated SRT, short candidates) are saved next to the v
 | `analyze_srt.py` | `_RO.srt` + `video.mp4` | `video_metadata.txt` + `shorts_candidates.txt` |
 | `analyze_srt.py --shorts-config` | config yaml | `{name}_metadata.txt` in `shorts/` |
 | `shorts_generator.py` | `video.mp4` + config | `Short{N}-{name}.mp4` + karaoke ASS |
+| `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
+| `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
+
+---
+
+## Rough-cut assembly (raw footage → Kdenlive project)
+
+For narrative clips with a lot of raw, uncut footage (multi-day trips, vlogs), scrubbing through every source file to find the moments already selected in the written structure doc wastes time. These two scripts skip that: given a list of (source file, in, out) fragments already identified (from raw transcripts, matched to quotes), they generate a ready-to-open Kdenlive project with those fragments placed on the timeline, plus a subtitle file retimed to match.
+
+```
+1. Identify fragments (source video + in/out timecode + label), e.g. by grepping raw
+   Whisper SRTs for the quotes already chosen in the video structure doc
+2. Write them to fragments.yaml (see format below)
+3. python3 kdenlive_from_fragments.py fragments.yaml
+   → generates the .kdenlive project (validated with `melt` automatically)
+4. python3 srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
+   → generates a subtitle file retimed to the new (cut) timeline
+5. Open the .kdenlive project, Project → Subtitles → Import Subtitle File → output.srt
+6. Continue editing normally (trim, add music/transitions) from this starting point
+```
+
+**fragments.yaml format:**
+
+```yaml
+source_dir: /path/to/raw/clips
+output: /path/to/Project.kdenlive
+fragments:
+  - file: DJI_..._D.MP4
+    in: "00:11:16.320"
+    out: "00:11:50.680"
+    label: beat5-descriptive-label
+  - file: ...
+    in: "..."
+    out: "..."
+    label: ...
+```
+
+Fragments are placed on the timeline in the order they appear in the YAML. Each unique source file gets one producer (`<chain>`); fragments from the same file reuse it with different in/out.
+
+**Why this isn't part of the main correct→translate→analyze→shorts pipeline:** it operates on *raw, uncut* footage before an editing decision has been made, not on the *final exported* video. It's a pre-editing step, used once per clip to skip manual scrubbing — not a repeated per-clip pipeline stage like the scripts above.
+
+See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured, and `docs/DECISIONS.md` for why several non-obvious choices were made (video/audio track split, explicit stream indices, subtitle approach).
 
 ---
 
