@@ -51,24 +51,24 @@ Export/
 ```bash
 cd ~/Proiecte-AI/YouTube/yt-pipeline
 
-# Generate shorts (reads shorts_config.yaml automatically)
-.venv/bin/python shorts_generator.py --video ~/Videos/[Clip]/Export/video/[Clip].mp4
+# Generate shorts (reads scripts/shorts_config.yaml automatically)
+.venv/bin/python scripts/shorts_generator.py --video ~/Videos/[Clip]/Export/video/[Clip].mp4
 
 # Re-render only (skip WhisperX, reuse existing words JSON)
-.venv/bin/python shorts_generator.py --video ... --skip-alignment
+.venv/bin/python scripts/shorts_generator.py --video ... --skip-alignment
 
 # Main video metadata
-python analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
+python scripts/analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
 
 # Per-short metadata (after generating shorts)
-python analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4 --shorts-config shorts_config.yaml
+python scripts/analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4 --shorts-config scripts/shorts_config.yaml
 
 # Translate SRT (saves next to video)
-python translate_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
+python scripts/translate_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
 
 # Rough-cut assembly from raw footage (pre-editing, see README.md)
-python3 kdenlive_from_fragments.py fragments.yaml
-python3 srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
+python3 scripts/kdenlive_from_fragments.py fragments.yaml
+python3 scripts/srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
 ```
 
 ## shorts_config.yaml format

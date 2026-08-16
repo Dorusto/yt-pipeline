@@ -11,16 +11,16 @@ CLI pipeline for processing YouTube clips: transcription → correction → tran
 2. whisper Clip.mp4 --language Romanian --model turbo --output_format srt \
        --word_timestamps True --max_line_width 42 --max_line_count 2 \
        --output_dir /path/to/export/
-3. python correct_srt.py raw.srt Clip_RO.srt
+3. python scripts/correct_srt.py raw.srt Clip_RO.srt
 4. [Manual SRT review — fix remaining errors directly in the file]
-5. python translate_srt.py Clip_RO.srt Clip_EN.srt
-6. python analyze_srt.py Clip_RO.srt Clip.mp4
+5. python scripts/translate_srt.py Clip_RO.srt Clip_EN.srt
+6. python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
    → outputs: Clip_video_metadata.txt + Clip_shorts_candidates.txt
    → interactive: choose which shorts to cut → ffmpeg cuts them automatically
-7. Edit shorts_config.yaml with chosen segments (from candidates file)
-8. .venv/bin/python shorts_generator.py --video Clip.mp4
-9. [Upload main video → add youtube_url to shorts_config.yaml]
-10. python analyze_srt.py Clip_RO.srt Clip.mp4 --shorts-config shorts_config.yaml
+7. Edit scripts/shorts_config.yaml with chosen segments (from candidates file)
+8. .venv/bin/python scripts/shorts_generator.py --video Clip.mp4
+9. [Upload main video → add youtube_url to scripts/shorts_config.yaml]
+10. python scripts/analyze_srt.py Clip_RO.srt Clip.mp4 --shorts-config scripts/shorts_config.yaml
     → generates per-short metadata.txt with video link filled in
 ```
 
@@ -31,6 +31,8 @@ All outputs (metadata, translated SRT, short candidates) are saved next to the v
 ---
 
 ## Scripts
+
+All scripts live in `scripts/` (see paths above for exact commands).
 
 | Script | Input | Output |
 |:---|:---|:---|
@@ -52,9 +54,9 @@ For narrative clips with a lot of raw, uncut footage (multi-day trips, vlogs), s
 1. Identify fragments (source video + in/out timecode + label), e.g. by grepping raw
    Whisper SRTs for the quotes already chosen in the video structure doc
 2. Write them to fragments.yaml (see format below)
-3. python3 kdenlive_from_fragments.py fragments.yaml
+3. python3 scripts/kdenlive_from_fragments.py fragments.yaml
    → generates the .kdenlive project (validated with `melt` automatically)
-4. python3 srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
+4. python3 scripts/srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
    → generates a subtitle file retimed to the new (cut) timeline
 5. Open the .kdenlive project, Project → Subtitles → Import Subtitle File → output.srt
 6. Continue editing normally (trim, add music/transitions) from this starting point
