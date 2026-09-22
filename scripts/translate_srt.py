@@ -9,7 +9,7 @@ Utilizare:
 
 Daca nu specifici output, il genereaza automat: input_EN.srt
 
-Necesita: DEEPSEEK_API_KEY in environment
+Necesita: OPENROUTER_API_KEY in environment
 Necesita: pip install openai
 """
 
@@ -22,8 +22,8 @@ from openai import OpenAI
 BATCH_SIZE = 20
 
 client = OpenAI(
-    api_key=os.environ["DEEPSEEK_API_KEY"],
-    base_url="https://api.deepseek.com"
+    api_key=os.environ["OPENROUTER_API_KEY"],
+    base_url="https://openrouter.ai/api/v1"
 )
 
 
@@ -55,7 +55,7 @@ def translate_batch(texts):
         f"{numbered}"
     )
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )
@@ -74,7 +74,7 @@ def main():
         sys.exit(1)
 
     input_file = sys.argv[1]
-    if len(sys.argv) > 2 and sys.argv[2].endswith(".mp4"):
+    if len(sys.argv) > 2 and sys.argv[2].lower().endswith(".mp4"):
         video_dir = os.path.dirname(os.path.abspath(sys.argv[2]))
         basename_en = os.path.basename(input_file).replace(".srt", "_EN.srt")
         output_file = os.path.join(video_dir, basename_en)

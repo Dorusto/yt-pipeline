@@ -234,7 +234,7 @@ def merge_hyphenated(words: list) -> list:
 
 
 def generate_karaoke_ass(words: list, output_path: str) -> None:
-    LINE_WORDS = 5
+    LINE_WORDS = 3
     words = merge_hyphenated(words)
 
     subs = pysubs2.SSAFile()
@@ -275,6 +275,64 @@ def generate_karaoke_ass(words: list, output_path: str) -> None:
                 )
             )
 
+    subs.save(output_path)
+
+
+def words_from_srt_segments(segments: list) -> list:
+    """
+    Construiește o listă de cuvinte cu timpi estimați (interpolare uniformă
+    în intervalul [start,end] al fiecărei linii SRT), fără WhisperX — sursa
+    e direct textul .srt deja corectat, deci nu poate pierde cuvinte.
+    Precizia per-cuvânt e aproximativă, nu sincronizată exact pe audio.
+    """
+    words = []
+    for seg in segments:
+        text = seg["text"].replace("\n", " ").replace("\r", " ")
+        toks = text.split()
+        if not toks:
+            continue
+        dur = seg["end"] - seg["start"]
+        step = dur / len(toks)
+        for i, tok in enumerate(toks):
+            words.append({
+                "word": tok,
+                "start": seg["start"] + i * step,
+                "end": seg["start"] + (i + 1) * step,
+            })
+    return words
+
+
+def generate_plain_ass(segments: list, output_path: str) -> None:
+    """
+    Fallback fără highlight per-cuvânt: text direct din .srt corectat (deja
+    verificat de om), fără WhisperX. Nu poate pierde cuvinte, pentru că nu
+    depinde de alinierea audio — doar de segmentele SRT deja parsate.
+    Randare libass face wrap automat la PlayResX, nu tăiem noi liniile.
+    """
+    subs = pysubs2.SSAFile()
+    subs.info["PlayResX"] = "608"
+    subs.info["PlayResY"] = "1080"
+    subs.styles["Default"] = pysubs2.SSAStyle(
+        fontname="Arial",
+        fontsize=60,
+        primarycolor=pysubs2.Color(255, 255, 255, 0),
+        outlinecolor=pysubs2.Color(0, 0, 0, 0),
+        outline=3,
+        shadow=1,
+        bold=True,
+        alignment=2,
+        marginv=60,
+        marginl=20,
+        marginr=20,
+    )
+    for seg in segments:
+        subs.append(
+            pysubs2.SSAEvent(
+                start=pysubs2.make_time(s=seg["start"]),
+                end=pysubs2.make_time(s=seg["end"]),
+                text=seg["text"].replace("\n", " ").replace("\r", " "),
+            )
+        )
     subs.save(output_path)
 
 
@@ -360,20 +418,14 @@ def main() -> None:
             x_offset = detect_face_offset(str(video_path), start, end)
             print(f"     x_offset = {x_offset}px")
 
-        words_json = auto_dir / f"{name}_words.json"
-        if args.skip_alignment and words_json.exists():
-            print("  → loading existing words JSON (--skip-alignment)...")
-            words = json.loads(words_json.read_text())
-        else:
-            print("  → forced alignment (WhisperX)...")
-            with tempfile.TemporaryDirectory() as tmpdir:
-                words = run_forced_alignment(str(audio_path), str(srt_path), start, end, tmpdir)
-            words_json.write_text(json.dumps(words, ensure_ascii=False, indent=2))
-        print(f"     {len(words)} words → {words_json.name}")
+        print("  → cuvinte din .srt corectat (fără WhisperX — nu pierde cuvinte)...")
+        srt_segments = parse_srt_for_alignment(str(srt_path), start, end)
+        words = words_from_srt_segments(srt_segments)
+        print(f"     {len(words)} cuvinte (timing interpolat, nu aliniat pe audio)")
 
         ass_path = auto_dir / f"{name}_karaoke.ass"
         generate_karaoke_ass(words, str(ass_path))
-        print(f"     ASS generated → {ass_path.name}")
+        print(f"     ASS generat → {ass_path.name}")
 
         output = shorts_dir / f"Short{i}-{name}.mp4"
         print(f"  → render → {output.name}")

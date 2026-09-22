@@ -112,3 +112,8 @@ No control/confirmation interface (approve-before-upload, edit title before publ
 - `correct_srt.py` misses errors not in `corrections.txt` — always review SRT manually
 - Segment names become filenames — avoid spaces (use `-` or `_`)
 - `analyze_srt.py` requires absolute paths
+- `shorts_generator.py` no longer runs WhisperX forced alignment: word timing is interpolated from the SRT. `--skip-alignment` is accepted but does nothing, `run_forced_alignment` and `generate_plain_ass` are unused, and `whisperx` and `torch` are still imported at startup. No `DECISIONS.md` entry records the change.
+- `shorts_generator.py` asks interactively when the config has an `audio:` key pointing to a missing file, or when `--srt` is not given and the subtitle file is not found
+- Possible cumulative subtitle drift of about one frame per fragment between `kdenlive_from_fragments.py` (frame-inclusive entries) and `srt_from_fragments.py` (sums `out - in`). Unverified
+- `daily_summary_srt.py` has a hard-coded Romanian prompt for a solo motorcycle trip and summarises only the first 80,000 characters of each day
+- `ROADMAP.md`, `ARCHITECTURE.md` and `CLAUDE.md` still describe WhisperX alignment, and DeepSeek for `correct_srt.py` and `translate_srt.py`

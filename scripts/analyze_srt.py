@@ -8,7 +8,7 @@ Analizează un fișier .srt și generează:
 Utilizare:
     python3 analyze_srt.py subtitles.srt video.mp4
 
-Necesită: DEEPSEEK_API_KEY în environment
+Necesită: OPENROUTER_API_KEY în environment
 Necesită: pip install openai
 """
 
@@ -24,8 +24,8 @@ from openai import OpenAI
 BATCH_CHARS = 80000
 
 client = OpenAI(
-    api_key=os.environ["DEEPSEEK_API_KEY"],
-    base_url="https://api.deepseek.com",
+    api_key=os.environ["OPENROUTER_API_KEY"],
+    base_url="https://openrouter.ai/api/v1",
 )
 
 
@@ -106,7 +106,7 @@ FORMAT RĂSPUNS:
 }}"""
 
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )
@@ -164,7 +164,7 @@ TRANSCRIPT:
 {transcript}"""
 
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )

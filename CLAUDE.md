@@ -20,6 +20,8 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 | `shorts_config.yaml` | Local config (git-ignored) — segments, optional `x_offset` per segment |
 | `kdenlive_from_fragments.py` | Generates a `.kdenlive` rough-cut project from a fragments YAML (raw footage → editable timeline) |
 | `srt_from_fragments.py` | Generates a subtitle file retimed to match a rough-cut assembled by the script above |
+| `daily_summary_srt.py` | Groups raw `.srt` transcripts in a folder by day (parsed from filename, e.g. `DJI_YYYYMMDDHHMMSS_...`) and generates a full narrative summary per day (DeepSeek) — memory aid, not filtered for editing angle |
+| `.claude/skills/` | Agent skills (`yt-transcript`, `yt-shorts`, `yt-rough-cut`) — keep in sync with the scripts, setup in `docs/AGENT_SETUP.md` |
 
 ## Working rules
 
@@ -29,6 +31,7 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 4. **GitHub commits** → backdate after 18:00, non-round times (e.g. 19:43:17). Repo is public.
 5. **Code and documentation** → in English. Comments in code → none (self-documenting code).
 6. **`--skip-alignment`** → use only when the JSON is already correct and only ASS + video re-render is needed.
+7. **Skills** → when a script's arguments, outputs or behavior change, update the matching skill in `.claude/skills/` in the same change.
 
 ## Do not
 
@@ -69,6 +72,9 @@ python scripts/translate_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~
 # Rough-cut assembly from raw footage (pre-editing, see README.md)
 python3 scripts/kdenlive_from_fragments.py fragments.yaml
 python3 scripts/srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
+
+# Daily narrative summary from raw transcripts (memory aid, not editing-angle-filtered)
+python3 scripts/daily_summary_srt.py transcripts_raw/ rezumat_pe_zile.md
 ```
 
 ## shorts_config.yaml format

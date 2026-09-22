@@ -2,6 +2,8 @@
 
 CLI pipeline for processing YouTube clips: transcription → correction → translation → metadata → 9:16 shorts with karaoke subtitles.
 
+**Use it from an AI agent** (Claude Code or opencode): see [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md).
+
 ---
 
 ## Workflow
@@ -14,19 +16,24 @@ CLI pipeline for processing YouTube clips: transcription → correction → tran
 3. python scripts/correct_srt.py raw.srt Clip_RO.srt
 4. [Manual SRT review — fix remaining errors directly in the file]
 5. python scripts/translate_srt.py Clip_RO.srt Clip_EN.srt
-6. python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
-   → outputs: Clip_video_metadata.txt + Clip_shorts_candidates.txt
-   → interactive: choose which shorts to cut → ffmpeg cuts them automatically
-7. Edit scripts/shorts_config.yaml with chosen segments (from candidates file)
+6. [DEPRECATED 2026-09-06, see docs/DECISIONS.md] python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
+   → no longer used for the main video's metadata — a generic transcript-only model can't
+     see narrative decisions already made (angle, what got cut, pre-selected Shorts moments).
+     Main video metadata is now written directly by Claude from the project's own structure doc.
+7. Edit scripts/shorts_config.yaml with segments already decided in the project's own planning
+   doc (not from a generated candidates file)
 8. .venv/bin/python scripts/shorts_generator.py --video Clip.mp4
 9. [Upload main video → add youtube_url to scripts/shorts_config.yaml]
-10. python scripts/analyze_srt.py Clip_RO.srt Clip.mp4 --shorts-config scripts/shorts_config.yaml
-    → generates per-short metadata.txt with video link filled in
+10. [Also deprecated for the same reason as step 6] python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
+    --shorts-config scripts/shorts_config.yaml — per-short title/description are now written
+    manually (by Claude, from the pre-decided segment), not generated here
 ```
 
 Note: Whisper accepts `.mp4` directly — no separate audio export needed.
 
-All outputs (metadata, translated SRT, short candidates) are saved next to the video file.
+`analyze_srt.py` itself is not removed (client now points at OpenRouter, see below) — only its use for metadata/Shorts-description generation is deprecated. `shorts_generator.py` (video cropping + karaoke burn-in) is unaffected — it does no text generation.
+
+All outputs (translated SRT, cropped shorts) are saved next to the video file.
 
 ---
 
@@ -95,7 +102,7 @@ uv venv
 uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
 ```
 
-Requires: `ffmpeg` with nvenc, `openai-whisper` via pipx, `DEEPSEEK_API_KEY` in environment.
+Requires: `ffmpeg` with nvenc, `openai-whisper` via pipx, `OPENROUTER_API_KEY` in environment (DeepSeek-direct retired 2026-09-02, no more top-ups — see `docs/DECISIONS.md`).
 
 ---
 
@@ -131,5 +138,5 @@ Copy from `shorts_config_example.yaml`. File is git-ignored.
 | Face detection | OpenCV Haar cascades |
 | ASS subtitles | `pysubs2` |
 | Video render | `ffmpeg h264_nvenc` |
-| AI (metadata / translation) | DeepSeek API |
+| AI (translation; metadata gen deprecated) | DeepSeek via OpenRouter |
 | Package management | `uv` |

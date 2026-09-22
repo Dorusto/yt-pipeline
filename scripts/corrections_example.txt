@@ -1,0 +1,7 @@
+# Copy this file to corrections.txt (same folder) and add one correction per line.
+# Format: wrong|correct
+# Lines starting with # are ignored.
+# Matching is a plain, case-sensitive text replace over the whole .srt file,
+# timestamps included, so avoid very short patterns (e.g. single digits).
+# Example, remove the leading # to activate:
+# wrongword|correctword
