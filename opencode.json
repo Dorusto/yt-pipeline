@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openrouter": {
+      "models": {
+        "xiaomi/mimo-v2.6-pro": {},
+        "deepseek/deepseek-v4.1-flash": {},
+        "z-ai/glm-5.3-flash": {}
+      }
+    }
+  },
+  "permission": {
+    "webfetch": "allow",
+    "websearch": "allow",
+    "external_directory": "ask",
+    "doom_loop": "ask"
+  }
+}
