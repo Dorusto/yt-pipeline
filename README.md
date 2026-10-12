@@ -58,7 +58,8 @@ All scripts live in `scripts/` (see paths above for exact commands).
 
 Shared building blocks for the AI Director track (see `docs/VISION.md`). Independent of the finished-clip pipeline above.
 
-- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `__init__.py`.
+- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `__init__.py`.
+- `config.yaml` — project-wide AI Director config: OpenRouter model id per role, per-run `llm_budget_usd`, `llm_backend`. Copy from the committed `config.yaml.example`; `config.yaml` is git-ignored and holds no secrets (API keys stay in `OPENROUTER_API_KEY`).
 - `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`.
 - `tests/` — pytest suite with tiny offline fixtures. Runs on a CPU-only machine (no GPU, no torch/whisperx).
 - `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`).

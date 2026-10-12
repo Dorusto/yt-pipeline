@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 shorts_config.yaml
+config.yaml
 corrections.txt
 .env
 *.mp4
