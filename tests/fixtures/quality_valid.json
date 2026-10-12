@@ -1,0 +1,79 @@
+{
+  "file": "dji_mimo_20261012_113618_0051_1791817331815_video.mp4",
+  "path": "/media/yt-test/proxy/dji_mimo_20261012_113618_0051_1791817331815_video.mp4",
+  "generated_at": "2026-10-12T21:32:00+00:00",
+  "duration_s": 21.93,
+  "motion_file": "/media/yt-test/workspace/motion/dji_mimo_20261012_113618_0051_1791817331815_video.json",
+  "segments": [
+    {
+      "id": "s1",
+      "start_s": 0.0,
+      "end_s": 2.0,
+      "role": "setup",
+      "confidence": 0.55,
+      "role_evidence": ["still head of the take right after record starts"],
+      "motion_label": "static",
+      "defects": [],
+      "metrics": {
+        "laplacian_rel": 1.1,
+        "clip_high_pct": 0.2,
+        "clip_low_pct": 0.0,
+        "mean_luma": 120.0,
+        "shake": 0.01,
+        "obstruction": 0.0,
+        "horizon_deg": 0.4
+      }
+    },
+    {
+      "id": "s2",
+      "start_s": 2.0,
+      "end_s": 13.0,
+      "role": "move",
+      "confidence": 0.8,
+      "role_evidence": ["steady pan right with handles"],
+      "motion_label": "pan_right",
+      "defects": [
+        {
+          "name": "blur",
+          "value": 0.35,
+          "detail": "laplacian 0.28x clip median during acceleration"
+        }
+      ],
+      "metrics": {
+        "laplacian_rel": 0.28,
+        "clip_high_pct": 1.0,
+        "clip_low_pct": 0.1,
+        "mean_luma": 118.0,
+        "shake": 0.05,
+        "obstruction": 0.0,
+        "horizon_deg": 0.8
+      }
+    },
+    {
+      "id": "s3",
+      "start_s": 13.0,
+      "end_s": 21.93,
+      "role": "teardown",
+      "confidence": 0.6,
+      "role_evidence": ["irregular motion at the tail of the take"],
+      "motion_label": "complex_motion",
+      "defects": [
+        {
+          "name": "horizon",
+          "value": 0.31,
+          "detail": "horizon 3.1 deg"
+        }
+      ],
+      "metrics": {
+        "laplacian_rel": 1.0,
+        "clip_high_pct": 0.5,
+        "clip_low_pct": 0.2,
+        "mean_luma": 110.0,
+        "shake": 0.12,
+        "obstruction": 0.0,
+        "horizon_deg": 3.1
+      }
+    }
+  ],
+  "warnings": []
+}

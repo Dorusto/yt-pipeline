@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-10-12T21:30:00+00:00",
+  "source_dir": "/media/yt-test/proxy",
+  "clip_count": 1,
+  "clips": [
+    {
+      "file": "dji_mimo_20261012_113618_0051_1791817331815_video.mp4",
+      "path": "/media/yt-test/proxy/dji_mimo_20261012_113618_0051_1791817331815_video.mp4",
+      "size_bytes": 12972850,
+      "duration_s": 21.93,
+      "creation_time": "2026-10-12T11:36:18",
+      "creation_time_source": "filename",
+      "width": 1280,
+      "height": 720,
+      "fps": 25.0,
+      "video_codec": "h264",
+      "nb_frames": 548,
+      "streams": [
+        {
+          "index": 0,
+          "codec_type": "video",
+          "codec_name": "h264",
+          "codec_tag": "avc1",
+          "handler_name": "VideoHandler",
+          "width": 1280,
+          "height": 720,
+          "fps": 25.0,
+          "nb_frames": 548,
+          "duration_s": 21.92
+        },
+        {
+          "index": 1,
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "codec_tag": "mp4a",
+          "handler_name": "SoundHandler",
+          "sample_rate": 48000,
+          "channels": 2,
+          "nb_frames": 1029,
+          "duration_s": 21.93
+        },
+        {
+          "index": 2,
+          "codec_type": "data",
+          "codec_name": null,
+          "codec_tag": "tmcd",
+          "handler_name": "VideoHandler",
+          "nb_frames": 1
+        }
+      ],
+      "gyro": {
+        "present": false,
+        "evidence": null
+      },
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

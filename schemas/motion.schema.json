@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/motion.schema.json",
+  "title": "motion",
+  "description": "Camera motion analysis written by scripts/motion.py per clip: sampled trajectory, motion phases and labelled moves with steady range and handles. Labels follow the CameraBench geometric vocabulary; semantic moves (orbit, tracking, reveal) and the dolly-vs-zoom split are left to the vision step and flagged with semantic_check. Optical flow alone cannot separate dolly from zoom, so scale change is labelled dolly_in/dolly_out.",
+  "type": "object",
+  "required": ["file", "duration_s", "analysis", "trajectory", "phases", "moves"],
+  "$defs": {
+    "motion_label": {
+      "type": "string",
+      "enum": [
+        "static",
+        "minor_motion",
+        "pan_left",
+        "pan_right",
+        "tilt_up",
+        "tilt_down",
+        "roll_cw",
+        "roll_ccw",
+        "dolly_in",
+        "dolly_out",
+        "zoom_in",
+        "zoom_out",
+        "truck_left",
+        "truck_right",
+        "pedestal_up",
+        "pedestal_down",
+        "complex_motion"
+      ]
+    },
+    "speed": {
+      "type": "string",
+      "enum": ["slow", "regular", "fast"]
+    },
+    "steadiness": {
+      "type": "string",
+      "enum": ["static", "no_shaking", "minimal_shaking", "unsteady", "very_unsteady"]
+    }
+  },
+  "properties": {
+    "file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "clip file name"
+    },
+    "path": {
+      "type": "string",
+      "description": "absolute path of the analysed clip"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the analysis run"
+    },
+    "duration_s": {
+      "type": "number",
+      "minimum": 0
+    },
+    "fps_source": {
+      "type": ["number", "null"],
+      "description": "frame rate of the source clip"
+    },
+    "analysis": {
+      "type": "object",
+      "required": ["method", "source", "sample_fps"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "description": "how the trajectory was estimated, e.g. lucas_kanade_affine_partial_ransac"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["optical_flow", "gyro"],
+          "description": "gyro is preferred when ingest reported IMU data; optical flow is the CPU fallback"
+        },
+        "sample_fps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "analysis sampling rate; frames between samples are skipped"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "analysis width in pixels, frames are scaled down to this"
+        },
+        "frames_analyzed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "trajectory": {
+      "type": "array",
+      "description": "one row per analysed frame pair, in time order",
+      "items": {
+        "type": "object",
+        "required": ["t", "dx", "dy", "scale", "roll_deg"],
+        "properties": {
+          "t": {
+            "type": "number",
+            "minimum": 0,
+            "description": "midpoint time of the frame pair in seconds"
+          },
+          "dx": {
+            "type": "number",
+            "description": "horizontal translation of the frame pair, in fractions of frame width"
+          },
+          "dy": {
+            "type": "number",
+            "description": "vertical translation of the frame pair, in fractions of frame height"
+          },
+          "scale": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "scale ratio of the frame pair; 1.0 = no zoom or dolly component"
+          },
+          "roll_deg": {
+            "type": "number",
+            "description": "rotation around the lens axis of the frame pair, in degrees"
+          },
+          "inlier_ratio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "share of tracked points the global transform explains"
+          },
+          "speed": {
+            "type": "number",
+            "minimum": 0,
+            "description": "smoothed velocity magnitude in frame widths per second"
+          },
+          "shake": {
+            "type": "number",
+            "minimum": 0,
+            "description": "high-frequency residual energy after smoothing (unsteadiness)"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "phases": {
+      "type": "array",
+      "description": "the take split into motion phases; they tile the clip with no gaps",
+      "items": {
+        "type": "object",
+        "required": ["start_s", "end_s", "type"],
+        "properties": {
+          "start_s": {"type": "number", "minimum": 0},
+          "end_s": {"type": "number", "minimum": 0},
+          "type": {
+            "type": "string",
+            "enum": ["still", "ramp_up", "steady_move", "ramp_down", "irregular"]
+          },
+          "dominant_motion": {"$ref": "#/$defs/motion_label"},
+          "speed": {"$ref": "#/$defs/speed"},
+          "steadiness": {"$ref": "#/$defs/steadiness"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "moves": {
+      "type": "array",
+      "description": "usable moves carved out of the phases: steady range, handles, CameraBench label",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "start_s",
+          "end_s",
+          "label",
+          "speed",
+          "steadiness",
+          "steady_start_s",
+          "steady_end_s",
+          "confidence"
+        ],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "start_s": {"type": "number", "minimum": 0},
+          "end_s": {"type": "number", "minimum": 0},
+          "label": {"$ref": "#/$defs/motion_label"},
+          "speed": {"$ref": "#/$defs/speed"},
+          "steadiness": {"$ref": "#/$defs/steadiness"},
+          "steady_start_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "start of the steady phase; cut here, not at start_s"
+          },
+          "steady_end_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "end of the steady phase; cut here, not at end_s"
+          },
+          "handle_in_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "recommended handle before steady_start_s so a cut is never mid-acceleration"
+          },
+          "handle_out_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "recommended handle after steady_end_s"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "mean_dx": {"type": "number"},
+          "mean_dy": {"type": "number"},
+          "mean_scale": {"type": "number"},
+          "mean_roll_deg": {"type": "number"},
+          "semantic_check": {
+            "type": "boolean",
+            "description": "true when the geometric signal alone is ambiguous (dolly vs zoom) and the vision step should decide"
+          },
+          "notes": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}
