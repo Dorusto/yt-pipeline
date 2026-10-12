@@ -2,6 +2,7 @@ opencv-python-headless
 openai
 pysubs2
 pyyaml
+jsonschema
 torch
 torchaudio
 whisperx

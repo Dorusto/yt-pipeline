@@ -9,13 +9,26 @@ new position on the edited timeline. Lines outside any fragment are dropped.
 Usage:
     python3 srt_from_fragments.py fragments.yaml transcripts_raw/ output.srt
 """
+import argparse
+import json
 import re
 import sys
 
 import yaml
 
+from common.schema import SchemaError, validate
+
 SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
 TC = re.compile(r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})")
+
+
+def load_config(path):
+    with open(path) as f:
+        cfg = yaml.safe_load(f) or {}
+    errors = validate(cfg, "fragments")
+    if errors:
+        raise SchemaError("fragments", errors)
+    return cfg
 
 
 def srt_to_sec(m):
@@ -62,9 +75,8 @@ def parse_srt(path):
     return entries
 
 
-def build(fragments_path, transcripts_dir, output_path):
-    with open(fragments_path) as f:
-        cfg = yaml.safe_load(f)
+def build(fragments_path, transcripts_dir, output_path, quiet=False):
+    cfg = load_config(fragments_path)
 
     out_entries = []
     timeline_pos = 0.0
@@ -96,11 +108,34 @@ def build(fragments_path, transcripts_dir, output_path):
         for i, (start, end, text, label) in enumerate(out_entries, 1):
             f.write(f"{i}\n{sec_to_srt(start)} --> {sec_to_srt(end)}\n{text}\n\n")
 
-    print(f"written: {output_path} ({len(out_entries)} lines, timeline length {timeline_pos:.1f}s)")
+    if not quiet:
+        print(f"written: {output_path} ({len(out_entries)} lines, timeline length {timeline_pos:.1f}s)")
+    return {"output": output_path, "lines": len(out_entries), "duration": round(timeline_pos, 3)}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Retime raw per-clip subtitles onto a rough-cut timeline."
+    )
+    parser.add_argument("fragments", help="path to fragments.yaml")
+    parser.add_argument("transcripts_dir", help="folder with the raw per-clip .srt files")
+    parser.add_argument("output", help="path of the .srt to write")
+    parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
+    args = parser.parse_args(argv)
+
+    try:
+        summary = build(args.fragments, args.transcripts_dir, args.output, quiet=args.json)
+    except (SchemaError, FileNotFoundError) as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps({"ok": True, **summary}))
+    return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print(__doc__)
-        sys.exit(1)
-    build(sys.argv[1], sys.argv[2], sys.argv[3])
+    sys.exit(main())

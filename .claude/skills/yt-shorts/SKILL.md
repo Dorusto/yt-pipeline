@@ -1,7 +1,7 @@
 ---
 name: yt-shorts
 description: Generate vertical 9:16 Shorts / Reels (608x1080) with burnt-in karaoke-style subtitles from segments of a finished 1920x1080 video and its corrected Romanian .srt. Use when the user wants to cut Shorts or Reels, make vertical clips, or turn moments of a finished video into Shorts. Trigger phrases - "generează shorts pentru clipul X", "taie Shorts din video", "fă reels verticale cu subtitrări", "generate shorts from this video". For Short titles and descriptions see the yt-transcript skill, step 5 (it asks first).
-compatibility: Run from the repository root. Needs an NVIDIA GPU, ffmpeg with h264_nvenc, and the repo .venv with requirements.txt installed.
+compatibility: Run from the repository root. Needs ffmpeg; uses h264_nvenc when an NVIDIA GPU is present, otherwise falls back to libx264 (works on CPU). Needs the repo .venv with requirements.txt installed. torch and whisperx are no longer needed (lazy import, only for the unused forced-alignment path).
 ---
 
 # yt-shorts
@@ -10,8 +10,8 @@ Cut segments of a finished 1920x1080 video into vertical 608x1080 clips with bur
 
 ## Prerequisites
 
-- NVIDIA GPU and an ffmpeg build with `h264_nvenc`. The render step fails without them.
-- The repo `.venv` with `requirements.txt` installed. `whisperx` and `torch` are imported at startup even though word alignment is not run, so startup is slow and both must be installed.
+- NVIDIA GPU optional. The render selects `h264_nvenc` when an NVIDIA GPU is detected (`nvidia-smi`) and it is available in ffmpeg, otherwise it uses `libx264`. If the chosen encoder fails at render time it retries once with `libx264` (unless already using it). Force one with `--encoder`.
+- The repo `.venv` with `requirements.txt` installed. `torch` and `whisperx` are imported lazily inside the unused forced-alignment path, so they are not needed for the active pipeline (SRT-interpolated timing).
 - Source video is 1920x1080 (the crop is a fixed 608-pixel-wide window).
 - A corrected Romanian `.srt` that matches the timeline of that same video (see the yt-transcript skill). Subtitles from a different edit burn the wrong text.
 
@@ -39,15 +39,17 @@ segments:
 - `name` becomes part of file names (`Short<N>-<name>.mp4`, `auto/<name>_karaoke.ass`). Use no spaces or slashes.
 - `x_offset` is optional: pixels from the left edge of the 1920-wide frame to the left edge of the crop, from 0 to 1312. Values outside that range make ffmpeg fail. A manual offset skips face detection for that segment.
 - `video:` and `srt:` must be filled in or the script refuses to run, but the `video:` value is not used for anything. Do not add an `audio:` key; audio is not needed, and a missing audio file triggers an interactive prompt.
-- If `scripts/shorts_config.yaml` does not exist, the first run creates a template and exits with code 0 without rendering anything. Config validation errors also exit with code 0, so read the output instead of trusting the exit code.
+- If `scripts/shorts_config.yaml` does not exist, the first run creates a template and exits with code 0 without rendering anything. In interactive mode config validation errors also exit with code 0, so read the output instead of trusting the exit code. Run with `--yes` in an agent context: then a missing or incomplete config, or a missing input file, exits with code 1 instead of prompting.
 
 ## Step 2: run
 
 ```bash
-.venv/bin/python scripts/shorts_generator.py --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt
+.venv/bin/python scripts/shorts_generator.py --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt --yes
 ```
 
-- Always pass both `--video` and `--srt`. Without `--video` the script asks for the path with `input()`; without `--srt` it looks in the video folder, `../subtitles/` and `..`, and asks interactively if it finds nothing. An interactive prompt hangs a non-interactive agent.
+- Always pass both `--video` and `--srt`. Without `--video` the script asks for the path with `input()`; without `--srt` it looks in the video folder, `../subtitles/` and `..`, and asks interactively if it finds nothing. An interactive prompt hangs a non-interactive agent, so pass `--yes` to turn those prompts into hard errors (exit code 1).
+- `--json` prints a machine-readable summary (one line per run) and, together with `--yes`, makes the run fully non-interactive. The summary lists, per short: name, start, end, x_offset, word count, output path and the encoder actually used.
+- `--encoder libx264|h264_nvenc` forces an encoder; the `YT_VIDEO_ENCODER` environment variable does the same.
 - `--skip-alignment` is accepted but does nothing. Do not use it.
 - Keep the video path free of `:`, `,` and `'`. The path of the generated subtitle file is passed to ffmpeg inside a `-vf` filter string, so these characters are likely to break it (inferred from the code, not tested).
 - Output goes next to the video: `shorts/Short<N>-<name>.mp4` (N is the segment's position in the config) and `auto/<name>_karaoke.ass`. Existing files with the same names are overwritten without asking.

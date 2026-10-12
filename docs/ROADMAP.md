@@ -14,7 +14,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 | Phase | Scope | Status |
 |:---|:---|:---|
-| D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | 🔲 next |
+| D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | ✅ done 2026-10-12 — see [`reports/D0-REPORT.md`](reports/D0-REPORT.md) |
 | D1 | Ingest + analyze + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | 🔲 |
 | D2 | Director → `fragments.yaml` → Kdenlive + preview (Mode A) | 🔲 |
 | D3 | Web UI v1 | 🔲 |
@@ -129,7 +129,7 @@ No control/confirmation interface (approve-before-upload, edit title before publ
 - `correct_srt.py` misses errors not in `corrections.txt` — always review SRT manually
 - Segment names become filenames — avoid spaces (use `-` or `_`)
 - `analyze_srt.py` requires absolute paths
-- `shorts_generator.py` no longer runs WhisperX forced alignment: word timing is interpolated from the SRT. `--skip-alignment` is accepted but does nothing, `run_forced_alignment` and `generate_plain_ass` are unused, and `whisperx` and `torch` are still imported at startup. No `DECISIONS.md` entry records the change.
+- `shorts_generator.py` no longer runs WhisperX forced alignment: word timing is interpolated from the SRT. `--skip-alignment` is accepted but does nothing and `run_forced_alignment`/`generate_plain_ass` are unused; `torch`/`whisperx` are now imported lazily inside that unused path, so a normal run and the test suite work without them (D0, see `DECISIONS.md`). `--yes`, `--json` and `--encoder` were added; the encoder is `h264_nvenc` when a GPU is present and `libx264` otherwise.
 - `shorts_generator.py` asks interactively when the config has an `audio:` key pointing to a missing file, or when `--srt` is not given and the subtitle file is not found
 - Possible cumulative subtitle drift of about one frame per fragment between `kdenlive_from_fragments.py` (frame-inclusive entries) and `srt_from_fragments.py` (sums `out - in`). Unverified
 - `daily_summary_srt.py` has a hard-coded Romanian prompt for a solo motorcycle trip and summarises only the first 80,000 characters of each day
