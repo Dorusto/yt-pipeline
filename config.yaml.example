@@ -9,9 +9,15 @@ models:
   vision: deepseek/deepseek-v4.1-flash
   vision_fallback: z-ai/glm-5.3-flash
 
-# Maximum USD one run may spend on OpenRouter calls. The LLM client refuses
-# further calls once this is reached. Omit or use null for no limit.
+# Maximum USD one job may spend on OpenRouter calls across processes. The LLM
+# client refuses further calls once this is reached. Omit or use null for no limit.
 llm_budget_usd: 5.0
 
 # Backend used by scripts/common/llm.py: openrouter or mock.
 llm_backend: openrouter
+
+# Optional per-project spend ledger (JSON) so llm_budget_usd caps a whole job
+# across separate tool runs. Prefer the workspace copy: <workspace>/llm_spend.json.
+# Overridden by the YT_SPEND_LEDGER environment variable; when neither is set,
+# YT_WORKSPACE/llm_spend.json is used if YT_WORKSPACE is set.
+# spend_ledger: /path/to/workspace/llm_spend.json
