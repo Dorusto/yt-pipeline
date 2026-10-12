@@ -4,7 +4,7 @@ Where yt-pipeline is going next: from a set of scripts that process an already-e
 
 Target: beat DJI Mimo / GoPro Quik on action footage and Opus Clip / Descript on talking-head, without subscriptions or cloud lock-in.
 
-Prior art and reasoning: [`research/prior-art.md`](research/prior-art.md). Status per phase: [`ROADMAP.md`](ROADMAP.md), section *AI Director track*.
+Prior art and reasoning: [`research/prior-art.md`](research/prior-art.md) and [`research/ai-editors-features.md`](research/ai-editors-features.md). Status per phase: [`ROADMAP.md`](ROADMAP.md), section *AI Director track*.
 
 ---
 
@@ -69,6 +69,14 @@ P0 = first usable version, P1 = next, P2 = later.
 | Search footage by text ("serpentine at sunset") | Lighthouse, TimeLens2 | A+B | P1 |
 | Audience signal for Shorts (YouTube "Most replayed") | Opus Clip workflow | B | P2 |
 | Frame grab, event grouping by day/place | Quik | A | P2 |
+| Project log: summary, topics, B-roll catalogue | Eddie AI | A+B | P0 (D1b) |
+| Automatic B-roll over talking-head | Eddie AI, Descript | B | P1 (D4) |
+| Speaker detection, take/topic chunking, retakes | CutBack Selects | B | P1 (D4) |
+| Multicam and audio sync without markers | CutBack Selects | A+B | P1 |
+| Overnight edit on the homelab, draft ready by morning | Insta360 AI Director, Eddie AI | A+B | P1 |
+| Feedback loop: approve / reject trains our own scorer | Opus Clip | A+B | P1 |
+| Faces and smiles preference | DJI LightCut | A | P2 |
+| Export to Premiere / Resolve via OpenTimelineIO | CutBack, Eddie AI | A+B | P2 |
 
 Out of scope for now: auto-upload and social posting, team features, generative video, voice cloning.
 
