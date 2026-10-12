@@ -33,10 +33,10 @@ ingest → analyze → index → direct → fragments.yaml → kdenlive / ffmpeg
 ```
 
 1. **Ingest** — scan a folder, read metadata (time, fps, resolution, streams, GPS if present), make 720p proxies.
-2. **Analyze** (cached per file):
-   - shots with PySceneDetect;
-   - vision per shot: 3 frames (20/50/80%) + nearby transcript → JSON (description, scenery, action, quality, emotion, subject box, reason);
-   - quality signals: blur, exposure, shake, wind noise, duplicates (embeddings);
+2. **Analyze** (cached per file), as separate tools — details in [`research/camera-motion-and-quality.md`](research/camera-motion-and-quality.md):
+   - **motion**: camera trajectory from OpenCV optical flow (gyro data when the file has it), split of continuous takes into motion phases (still → ramp → steady move → ramp → still), moves labelled with the CameraBench vocabulary (pan, tilt, roll, dolly/zoom, truck, pedestal, steadiness, speed), steady range + handles per move;
+   - **quality**: measured defects (blur, exposure, shake, obstruction, horizon) and a role per segment (move, hold, transition in/out, setup, teardown, accidental) — labels, never deletions; techniques catalogued in [`guides/shot-grammar.md`](guides/shot-grammar.md);
+   - **describe**: vision model on all segments except confident setup/teardown/accidental — 3 frames in order with timestamps and the motion label → description, semantic motion (orbit, tracking, reveal), subject, scene;
    - audio: transcript (existing Whisper flow), RMS energy;
    - music: beats, downbeats, energy.
 3. **Index** — one `shotlog.json` per project. Score per shot = weighted fusion, weights per mode in config, starting from `0.40·vision + 0.35·audio_energy + 0.25·text`. Every candidate carries **score + hook + reason**. Overlap > 50% keeps the higher score.
@@ -81,13 +81,14 @@ Named D0–D5 so they don't collide with the existing Milestones 1–7 in the ro
 | Phase | Scope | Done when | Human checkpoint |
 |---|---|---|---|
 | **D0** | Foundation: `scripts/common/`, `schemas/`, pytest with tiny fixtures, CPU-only path (libx264 fallback, no torch import unless needed), known-issue fixes that block automation | tests green on the LXC without a GPU | — |
-| **D1** | `ingest` + `analyze` + `index` → `shotlog.json`; vision bake-off (DeepSeek vs GLM on the same ~10 clips) | shotlog for a real folder + bake-off report | **⛔ Doru judges description quality on his own clips** |
+| **D1a** | `ingest`, `motion`, `quality` (CPU only, no model cost) + the two budget fixes from the PR #4 review | per-clip timeline of moves, transition candidates, setup/teardown and defects, for Doru's test clips | **⛔ Doru checks the timelines against what he filmed** |
+| **D1b** | `describe` + `index` → `shotlog.json`; vision bake-off (DeepSeek vs GLM) on kept segments of 5 varied clips | shotlog for a real folder + bake-off report | **⛔ Doru judges description quality** |
 | **D2** | Director (screenwriter / editor / reviewer) → `fragments.yaml` → Kdenlive + preview | 3-min recap from a brief opens in Kdenlive | at ~80% |
 | **D3** | Web UI v1 | full Mode A flow without a terminal | at ~80% |
 | **D4** | Mode B on the same index: absorb `edit_workflow.py` (fillers, chapters, auto-editor), Shorts ranking feeding `shorts_generator.py` | one real talking-head video processed | at ~80% |
 | **D5** | P1 features | per feature | batch review |
 
-Do not start D2 before the D1 checkpoint is approved.
+Do not start D1b before the D1a checkpoint, nor D2 before the D1b checkpoint.
 
 ## 6. Model routing (decided 2026-10-12)
 
