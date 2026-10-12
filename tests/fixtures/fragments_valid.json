@@ -1,0 +1,21 @@
+{
+  "source_dir": "/footage/dji",
+  "output": "/footage/Project.kdenlive",
+  "fragments": [
+    {
+      "file": "DJI_20260816120000_0001_D.MP4",
+      "in": "00:00:05.000",
+      "out": "00:00:12.500",
+      "label": "sunrise-ride",
+      "score": 0.83,
+      "reason": "opening wide shot",
+      "slot": "hook"
+    },
+    {
+      "file": "DJI_20260816120130_0002_D.MP4",
+      "in": "00:01:02.250",
+      "out": "00:01:09.750",
+      "label": "coffee-stop"
+    }
+  ]
+}

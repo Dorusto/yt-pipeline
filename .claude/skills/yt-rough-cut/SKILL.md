@@ -1,7 +1,7 @@
 ---
 name: yt-rough-cut
 description: Assemble a rough-cut Kdenlive project from raw footage and a list of chosen fragments, retime the subtitles to match, and summarise raw transcripts day by day. Use when the user has a lot of uncut footage (multi-day trips, vlogs) with raw .srt transcripts and wants a .kdenlive timeline, a subtitle file for it, or a per-day summary of what was said. Trigger phrases - "fă rough-cut din footage brut", "generează proiectul Kdenlive din fragmente", "rezumat pe zile din transcripturi", "subtitrare pentru rough-cut", "build a rough cut from these fragments". Not for editing a finished video or for Shorts.
-compatibility: Run from the repository root. Needs the repo .venv, ffprobe, and melt (MLT). The day summary also needs OPENROUTER_API_KEY. Footage is assumed to be 25 fps with video stream 0 and audio stream 1.
+compatibility: Run from the repository root. Needs the repo .venv, ffprobe, and melt (MLT). The day summary also needs OPENROUTER_API_KEY. Footage is assumed to be 25 fps with video stream 0 and audio stream 1. The fragments YAML is validated against schemas/fragments.schema.json before anything is generated.
 ---
 
 # yt-rough-cut
@@ -50,6 +50,8 @@ fragments:
 - `in` and `out` are `HH:MM:SS.mmm`: two digits per part and exactly three decimals, with a dot (the raw `.srt` uses a comma). The subtitle script fails on any other shape.
 - Always quote them. Unquoted, YAML reads `00:11:16.320` as a number.
 - `label` is only a note for humans; neither script writes it anywhere.
+- Extra keys are allowed and ignored by both generators — the AI Director writes `score`, `reason` and `slot` per fragment (see `schemas/fragments.schema.json`).
+- Before generating anything, the fragments YAML is validated against `schemas/fragments.schema.json`. A schema error (missing `out`, bad timecode shape, empty list) exits with code 1 and an `[error] ...` line before any file is touched.
 - Name the output `*_generated.kdenlive` so it never collides with the file the user edits by hand.
 
 ## Step 4: generate the project
@@ -61,6 +63,7 @@ fragments:
 - Every fragment becomes a video entry and an audio entry on separate tracks, linked as one group so moving or trimming one moves the other.
 - If the output file already exists it is first copied to `<output>.bak-<timestamp>` next to it, then overwritten.
 - It runs `melt` on the result. Expect `written: ... (N fragments, M source clips, N AV groups)` and `melt validation OK`. If validation fails the file stays on disk and the script exits with an error.
+- `--json` prints a machine-readable summary; `--skip-melt` skips the melt validation pass.
 - A missing source file stops the script with an ffprobe error.
 
 Before regenerating over an existing project, ask: "Have you edited this project by hand since the last generation?" Regeneration replaces the file. The backup keeps only the previous version each time. Once serious manual editing starts, the user should Save As under a different name in Kdenlive, so the `_generated` file stays script output only.
@@ -72,7 +75,7 @@ Before regenerating over an existing project, ask: "Have you edited this project
 ```
 
 - For each fragment it takes the raw subtitle lines that overlap it, clips them to the fragment and moves them to the fragment's place on the new timeline. Lines outside every fragment are dropped.
-- It prints `written: ... (N lines, timeline length X s)`.
+- It prints `written: ... (N lines, timeline length X s)`, or a JSON summary with `--json` (`output`, `lines`, `duration`). The same schema validation as step 4 runs first.
 - A fragment whose `.srt` is missing from the transcripts folder stops the script with FileNotFoundError.
 - Possible drift, not tested: this script places fragment k at the sum of the earlier `out - in` durations, while the Kdenlive entries are frame-inclusive (one extra frame each). Subtitles may therefore run ahead of the video by about 0.04 s per fragment at 25 fps, adding up over a long list. After importing, check the last fragments; if they are off, tell the user.
 

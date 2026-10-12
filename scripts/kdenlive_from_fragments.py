@@ -26,6 +26,7 @@ fragments.yaml format:
         label: optional-note
       - ...
 """
+import argparse
 import json
 import os
 import shutil
@@ -36,7 +37,22 @@ from datetime import datetime
 
 import yaml
 
+from common.schema import SchemaError, validate
+
 FPS = 25
+
+
+def load_config(config_path):
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f) or {}
+
+    errors = validate(cfg, "fragments")
+    for key in ("source_dir", "output"):
+        if not cfg.get(key):
+            errors.append(f"<root>: '{key}' is required by kdenlive_from_fragments.py")
+    if errors:
+        raise SchemaError("fragments", errors)
+    return cfg
 
 
 def probe_duration(path):
@@ -61,9 +77,8 @@ def tc_to_frames(tc, fps=FPS):
     return round(seconds * fps)
 
 
-def build(config_path):
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
+def build(config_path, quiet=False):
+    cfg = load_config(config_path)
 
     source_dir = cfg["source_dir"]
     output = cfg["output"]
@@ -272,23 +287,57 @@ def build(config_path):
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         backup = f"{output}.bak-{stamp}"
         shutil.copy2(output, backup)
-        print(f"backup: {backup}")
+        if not quiet:
+            print(f"backup: {backup}")
 
     with open(output, "w") as f:
         f.write(xml)
-    print(f"written: {output} ({len(fragments)} fragments, {len(chains)} source clips, {len(groups)} AV groups)")
+    if not quiet:
+        print(f"written: {output} ({len(fragments)} fragments, {len(chains)} source clips, {len(groups)} AV groups)")
     return output
 
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Generate a .kdenlive project timeline from a fragments YAML."
+    )
+    parser.add_argument("fragments", help="path to fragments.yaml")
+    parser.add_argument("--skip-melt", action="store_true", help="skip the melt validation pass")
+    parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
+    args = parser.parse_args(argv)
+
+    try:
+        out_path = build(args.fragments, quiet=args.json)
+    except (SchemaError, FileNotFoundError) as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        return 1
+
+    if not args.skip_melt:
+        result = subprocess.run(
+            ["melt", "-consumer", "xml", out_path], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            if args.json:
+                print(json.dumps({
+                    "ok": False,
+                    "output": out_path,
+                    "error": "melt validation failed",
+                    "stderr": result.stderr[-2000:],
+                }))
+            else:
+                print("melt validation FAILED:")
+                print(result.stderr[-2000:])
+            return 1
+        if not args.json:
+            print("melt validation OK")
+
+    if args.json:
+        print(json.dumps({"ok": True, "output": out_path}))
+    return 0
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(__doc__)
-        sys.exit(1)
-    out_path = build(sys.argv[1])
-    result = subprocess.run(["melt", "-consumer", "xml", out_path],
-                             capture_output=True, text=True)
-    if result.returncode != 0:
-        print("melt validation FAILED:")
-        print(result.stderr[-2000:])
-        sys.exit(1)
-    print("melt validation OK")
+    sys.exit(main())

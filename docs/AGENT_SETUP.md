@@ -70,7 +70,15 @@ Expected: `Segmente găsite: 10`, then 10 in both counts. Translation uses a few
 
 To test the skills themselves, ask the agent in plain words: "correct and translate examples/sample_RO.srt". It should load `yt-transcript` and run the same steps.
 
-Shorts need a real 1920x1080 video, an NVIDIA GPU and a matching subtitle file. The rough-cut scripts need real footage with per-file `.srt` transcripts. Neither has an offline smoke test yet.
+Shorts need a real 1920x1080 video and a matching subtitle file. An NVIDIA GPU is optional: the render uses `h264_nvenc` when a GPU is present and falls back to `libx264` otherwise. The rough-cut scripts need real footage with per-file `.srt` transcripts.
+
+The AI Director foundation (phase D0) has an offline suite that runs on a CPU-only machine (no GPU, no API key):
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Expected: all tests pass, including notifications, encoder selection, schema validation and the rough-cut retiming.
 
 ## 7. Typical session
 
@@ -120,6 +128,18 @@ These are git-ignored and never appear on a fresh clone: `scripts/corrections.tx
 ## 10. Keeping skills in sync
 
 When a script's arguments, outputs or behavior change, update the matching skill in `.claude/skills/` in the same change. See `CLAUDE.md`, Working rules.
+
+## 11. Notifications (ntfy)
+
+Agents (and humans) can post a short status message to the project's ntfy topic when a phase report is ready or when blocked.
+
+```bash
+.venv/bin/python scripts/notify.py "D0 report ready: docs/reports/D0-REPORT.md"
+echo "blocked on the vision model" | .venv/bin/python scripts/notify.py - --title Blocked
+.venv/bin/python scripts/notify.py "test" --dry-run --json
+```
+
+The server URL comes from `NTFY_URL` and defaults to `http://10.10.1.61:8090/opencode-doru`. `--json` prints a machine-readable result; `--dry-run` resolves the target without sending.
 
 ## Troubleshooting
 

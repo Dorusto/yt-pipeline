@@ -1,0 +1,97 @@
+import json
+from pathlib import Path
+
+import pytest
+
+import kdenlive_from_fragments as kf
+import srt_from_fragments as sf
+from common.schema import SchemaError
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_sec_to_tc():
+    assert kf.sec_to_tc(3661.5) == "01:01:01.500"
+    assert kf.sec_to_tc(0) == "00:00:00.000"
+
+
+def test_tc_to_frames_uses_project_fps():
+    assert kf.tc_to_frames("00:00:01.000") == 25
+    assert kf.tc_to_frames("00:01:00.000") == 1500
+
+
+def test_kdenlive_load_config_valid_fixture():
+    cfg = kf.load_config(FIXTURES / "fragments_valid.json")
+    assert len(cfg["fragments"]) == 2
+
+
+def test_kdenlive_load_config_requires_output(tmp_path):
+    cfg = tmp_path / "f.yaml"
+    cfg.write_text(
+        "source_dir: /x\nfragments:\n  - file: a.MP4\n    in: '00:00:00.000'\n    out: '00:00:01.000'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError):
+        kf.load_config(cfg)
+
+
+def test_kdenlive_load_config_rejects_missing_timecode(tmp_path):
+    cfg = tmp_path / "f.yaml"
+    cfg.write_text(
+        "source_dir: /x\noutput: /x/p.kdenlive\nfragments:\n  - file: a.MP4\n    in: '00:00:00.000'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError):
+        kf.load_config(cfg)
+
+
+def test_kdenlive_main_invalid_returns_1(tmp_path, capsys):
+    cfg = tmp_path / "f.yaml"
+    cfg.write_text("fragments: []\n", encoding="utf-8")
+    assert kf.main([str(cfg), "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_srt_load_config_valid_fixture():
+    cfg = sf.load_config(FIXTURES / "fragments_valid.json")
+    assert cfg["fragments"][0]["file"].endswith(".MP4")
+
+
+def _write_raw_srt(path):
+    path.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nintro line\n\n"
+        "2\n00:00:02,000 --> 00:00:04,000\nsecond line\n\n"
+        "3\n00:00:10,000 --> 00:00:12,000\nlater line\n\n",
+        encoding="utf-8",
+    )
+
+
+def test_srt_build_retimes_fragments(tmp_path):
+    transcripts = tmp_path / "raw"
+    transcripts.mkdir()
+    _write_raw_srt(transcripts / "clipA.srt")
+
+    fragments = tmp_path / "f.yaml"
+    fragments.write_text(
+        "fragments:\n"
+        "  - file: clipA.MP4\n    in: '00:00:00.000'\n    out: '00:00:05.000'\n"
+        "  - file: clipA.MP4\n    in: '00:00:10.000'\n    out: '00:00:13.000'\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.srt"
+    summary = sf.build(fragments, str(transcripts), str(out), quiet=True)
+
+    assert summary["lines"] == 3
+    assert summary["duration"] == pytest.approx(8.0)
+    text = out.read_text(encoding="utf-8")
+    assert "intro line" in text and "later line" in text
+    later_block = [b for b in text.strip().split("\n\n") if "later line" in b][0]
+    assert "00:00:05,000 --> 00:00:07,000" in later_block
+
+
+def test_srt_main_invalid_fragments_returns_1(tmp_path, capsys):
+    fragments = tmp_path / "f.yaml"
+    fragments.write_text("fragments: []\n", encoding="utf-8")
+    rc = sf.main([str(fragments), str(tmp_path), str(tmp_path / "o.srt"), "--json"])
+    assert rc == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False

@@ -50,6 +50,27 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `shorts_generator.py` | `video.mp4` + config | `Short{N}-{name}.mp4` + karaoke ASS |
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
+| `notify.py` | message | POST to the project's ntfy topic |
+
+---
+
+## Foundation (AI Director, phase D0)
+
+Shared building blocks for the AI Director track (see `docs/VISION.md`). Independent of the finished-clip pipeline above.
+
+- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `__init__.py`.
+- `config.yaml` — project-wide AI Director config: OpenRouter model id per role, per-run `llm_budget_usd`, `llm_backend`. Copy from the committed `config.yaml.example`; `config.yaml` is git-ignored and holds no secrets (API keys stay in `OPENROUTER_API_KEY`).
+- `scripts/common/llm.py` — OpenRouter client with per-run `llm_budget_usd` spend tracking, role-to-model resolution and a mock backend for offline tests and dry runs.
+- `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`.
+- `tests/` — pytest suite with tiny offline fixtures. Runs on a CPU-only machine (no GPU, no torch/whisperx).
+- `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`).
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python scripts/notify.py "hello" --dry-run
+```
+
+`shorts_generator.py` and the two rough-cut generators no longer assume a GPU: they pick `h264_nvenc` when an NVIDIA GPU is present and fall back to `libx264` otherwise, and validate their `fragments.yaml` input against the schema before touching any media.
 
 ---
 
@@ -102,7 +123,7 @@ uv venv
 uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
 ```
 
-Requires: `ffmpeg` with nvenc, `openai-whisper` via pipx, `OPENROUTER_API_KEY` in environment (DeepSeek-direct retired 2026-09-02, no more top-ups — see `docs/DECISIONS.md`).
+Requires: `ffmpeg` (nvenc optional — `libx264` is used when no NVIDIA GPU is present), `openai-whisper` via pipx, `OPENROUTER_API_KEY` in environment (DeepSeek-direct retired 2026-09-02, no more top-ups — see `docs/DECISIONS.md`). Run the test suite with `.venv/bin/python -m pytest -q` (deps: `requirements-dev.txt`).
 
 ---
 
@@ -137,6 +158,8 @@ Copy from `shorts_config_example.yaml`. File is git-ignored.
 | Forced alignment | `whisperx` (wav2vec2 Romanian) |
 | Face detection | OpenCV Haar cascades |
 | ASS subtitles | `pysubs2` |
-| Video render | `ffmpeg h264_nvenc` |
+| Video render | `ffmpeg h264_nvenc` (GPU) or `libx264` (CPU fallback, automatic) |
 | AI (translation; metadata gen deprecated) | DeepSeek via OpenRouter |
+| Notifications | ntfy (`scripts/notify.py`) |
+| Schemas / tests | JSON Schema (`jsonschema`) / `pytest` |
 | Package management | `uv` |

@@ -1,0 +1,17 @@
+# AI Director configuration — copy to config.yaml and edit.
+# config.yaml is git-ignored; config.yaml.example is the committed template.
+# Model ids are OpenRouter slugs (the part after openrouter.ai/models/).
+
+models:
+  architect: xiaomi/mimo-v2.6-pro
+  coder: deepseek/deepseek-v4.1-flash
+  coder_fallback: z-ai/glm-5.3-flash
+  vision: deepseek/deepseek-v4.1-flash
+  vision_fallback: z-ai/glm-5.3-flash
+
+# Maximum USD one run may spend on OpenRouter calls. The LLM client refuses
+# further calls once this is reached. Omit or use null for no limit.
+llm_budget_usd: 5.0
+
+# Backend used by scripts/common/llm.py: openrouter or mock.
+llm_backend: openrouter

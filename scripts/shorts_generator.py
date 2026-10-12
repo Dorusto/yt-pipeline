@@ -6,21 +6,20 @@ Run from the shorts-generator folder — no arguments needed.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import cv2
 import pysubs2
-import torch
-import whisperx
 import yaml
+
+from common.ffmpeg_tools import available_video_encoders, pick_video_encoder, video_encode_args
 
 CROP_W = 608
 CROP_H = 1080
 SRC_W = 1920
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "shorts_config.yaml"
@@ -41,8 +40,10 @@ segments:
 # Setup & validation
 # ---------------------------------------------------------------------------
 
-def load_and_validate_config() -> dict:
+def load_and_validate_config(interactive: bool = True) -> dict:
     if not CONFIG_PATH.exists():
+        if not interactive:
+            raise RuntimeError(f"{CONFIG_PATH.name} not found; create it before running non-interactively")
         CONFIG_PATH.write_text(YAML_TEMPLATE)
         print(f"Created {CONFIG_PATH.name} from template.")
         print("Fill in your video/audio/srt filenames and segments, then run again.")
@@ -59,7 +60,10 @@ def load_and_validate_config() -> dict:
         errors.append("  - 'segments:' missing or empty")
 
     if errors:
-        print(f"{CONFIG_PATH.name} is not complete:\n" + "\n".join(errors))
+        message = f"{CONFIG_PATH.name} is not complete:\n" + "\n".join(errors)
+        if not interactive:
+            raise RuntimeError(message)
+        print(message)
         print("Fill it in and run again.")
         sys.exit(0)
 
@@ -77,7 +81,7 @@ def ask_video_path() -> Path:
     return path
 
 
-def find_file(base_path: Path, filename: str, subfolder: str) -> Path:
+def find_file(base_path: Path, filename: str, subfolder: str, interactive: bool = True) -> Path:
     """Look for filename in: same dir, parent/subfolder/, parent/."""
     candidates = [
         base_path.parent / filename,
@@ -87,6 +91,9 @@ def find_file(base_path: Path, filename: str, subfolder: str) -> Path:
     for c in candidates:
         if c.exists():
             return c
+
+    if not interactive:
+        raise RuntimeError(f"could not find {filename} next to {base_path}")
 
     print(f"\nCould not find {filename} automatically.")
     print(f"Path to {filename}:")
@@ -198,6 +205,11 @@ def run_forced_alignment(audio_path: str, srt_path: str, start: float, end: floa
     on the corrected SRT to get accurate word-level timestamps.
     Returns [{word, start, end}] with timestamps relative to segment start.
     """
+    import torch
+    import whisperx
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     seg_audio = str(Path(tmpdir) / "seg.wav")
     subprocess.run(
         ["ffmpeg", "-y", "-ss", str(start), "-to", str(end), "-i", audio_path, seg_audio],
@@ -211,8 +223,8 @@ def run_forced_alignment(audio_path: str, srt_path: str, start: float, end: floa
         print("     [warn] no SRT entries found for this segment")
         return []
 
-    model_a, metadata = whisperx.load_align_model(language_code="ro", device=DEVICE)
-    result = whisperx.align(segments, model_a, metadata, audio, device=DEVICE, return_char_alignments=False)
+    model_a, metadata = whisperx.load_align_model(language_code="ro", device=device)
+    result = whisperx.align(segments, model_a, metadata, audio, device=device, return_char_alignments=False)
 
     return [
         {"word": w["word"].strip(), "start": round(w["start"], 3), "end": round(w["end"], 3)}
@@ -338,58 +350,93 @@ def generate_plain_ass(segments: list, output_path: str) -> None:
 
 def render_short(
     video_path: str, x_offset: int, start: float, end: float,
-    ass_path: str, output_path: str,
-) -> None:
-    subprocess.run(
-        [
+    ass_path: str, output_path: str, encoder: str | None = None,
+) -> str:
+    encoder = encoder or pick_video_encoder()
+
+    def command(enc: str) -> list:
+        return [
             "ffmpeg", "-y",
             "-ss", str(start), "-to", str(end), "-i", video_path,
             "-vf", f"crop={CROP_W}:{CROP_H}:{x_offset}:0,ass={ass_path}",
-            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23",
+            *video_encode_args(enc),
             "-c:a", "aac", "-b:a", "192k",
             output_path,
-        ],
-        check=True,
-    )
+        ]
+
+    try:
+        subprocess.run(command(encoder), check=True)
+    except subprocess.CalledProcessError:
+        if encoder != "libx264" and "libx264" in available_video_encoders():
+            print(f"     [warn] {encoder} render failed, retrying with libx264")
+            encoder = "libx264"
+            subprocess.run(command(encoder), check=True)
+        else:
+            raise
+    return encoder
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser(add_help=False)
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Generate 9:16 Shorts with karaoke subtitles.")
     parser.add_argument("--video", type=str, default=None)
     parser.add_argument("--audio", type=str, default=None)
     parser.add_argument("--srt", type=str, default=None)
+    parser.add_argument("--encoder", type=str, default=None,
+                        help="force a video encoder (default: auto, nvenc if a GPU is present else libx264)")
+    parser.add_argument("--yes", action="store_true",
+                        help="never prompt; fail instead when a file or config entry is missing")
     parser.add_argument("--skip-alignment", action="store_true",
                         help="Use existing _words.json instead of re-running alignment")
-    args, _ = parser.parse_known_args()
+    parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
+    return parser
 
-    print("=== Shorts Generator ===")
 
-    config = load_and_validate_config()
+def main(argv=None) -> int:
+    args, _ = build_parser().parse_known_args(argv)
+    interactive = not args.yes
 
-    if args.video:
-        video_path = Path(args.video).expanduser().resolve()
-        if not video_path.exists():
-            print(f"File not found: {video_path}")
-            sys.exit(1)
-    else:
-        video_path = ask_video_path()
+    def log(message=""):
+        if not args.json:
+            print(message)
 
-    if args.audio:
-        audio_path = Path(args.audio).expanduser().resolve()
-    elif config.get("audio") and config["audio"] not in ("MyVideo.mp3",):
-        audio_path = find_file(video_path, config["audio"], "audio")
-    else:
-        audio_path = video_path  # extract audio directly from video
+    log("=== Shorts Generator ===")
 
-    srt_path = (
-        Path(args.srt).expanduser().resolve()
-        if args.srt
-        else find_file(video_path, config["srt"], "subtitles")
-    )
+    try:
+        config = load_and_validate_config(interactive=interactive)
+
+        if args.video:
+            video_path = Path(args.video).expanduser().resolve()
+            if not video_path.exists():
+                raise RuntimeError(f"file not found: {video_path}")
+        elif interactive:
+            video_path = ask_video_path()
+        else:
+            raise RuntimeError("--video is required with --yes")
+
+        if args.audio:
+            audio_path = Path(args.audio).expanduser().resolve()
+        elif config.get("audio") and config["audio"] not in ("MyVideo.mp3",):
+            audio_path = find_file(video_path, config["audio"], "audio", interactive=interactive)
+        else:
+            audio_path = video_path
+
+        srt_path = (
+            Path(args.srt).expanduser().resolve()
+            if args.srt
+            else find_file(video_path, config["srt"], "subtitles", interactive=interactive)
+        )
+
+        encoder = args.encoder or os.environ.get("YT_VIDEO_ENCODER") or pick_video_encoder()
+    except RuntimeError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        return 1
 
     out_dir = video_path.parent
     shorts_dir = out_dir / "shorts"
@@ -397,43 +444,58 @@ def main() -> None:
     shorts_dir.mkdir(exist_ok=True)
     auto_dir.mkdir(exist_ok=True)
 
-    print(f"\nVideo:  {video_path}")
-    print(f"Audio:  {audio_path}")
-    print(f"SRT:    {srt_path}")
-    print(f"Output: {shorts_dir}")
+    log(f"\nVideo:   {video_path}")
+    log(f"Audio:   {audio_path}")
+    log(f"SRT:     {srt_path}")
+    log(f"Output:  {shorts_dir}")
+    log(f"Encoder: {encoder}")
 
     segments = config["segments"]
+    results = []
     for i, seg in enumerate(segments, 1):
         name = seg["name"]
         start = parse_time(seg["start"])
         end = parse_time(seg["end"])
 
-        print(f"\n[{i}/{len(segments)}] {name}  ({seg['start']} → {seg['end']})")
+        log(f"\n[{i}/{len(segments)}] {name}  ({seg['start']} → {seg['end']})")
 
         if "x_offset" in seg:
             x_offset = int(seg["x_offset"])
-            print(f"  → manual x_offset = {x_offset}px (from config)")
+            log(f"  → manual x_offset = {x_offset}px (from config)")
         else:
-            print("  → detecting face...")
+            log("  → detecting face...")
             x_offset = detect_face_offset(str(video_path), start, end)
-            print(f"     x_offset = {x_offset}px")
+            log(f"     x_offset = {x_offset}px")
 
-        print("  → cuvinte din .srt corectat (fără WhisperX — nu pierde cuvinte)...")
+        log("  → cuvinte din .srt corectat (fără WhisperX — nu pierde cuvinte)...")
         srt_segments = parse_srt_for_alignment(str(srt_path), start, end)
         words = words_from_srt_segments(srt_segments)
-        print(f"     {len(words)} cuvinte (timing interpolat, nu aliniat pe audio)")
+        log(f"     {len(words)} cuvinte (timing interpolat, nu aliniat pe audio)")
 
         ass_path = auto_dir / f"{name}_karaoke.ass"
         generate_karaoke_ass(words, str(ass_path))
-        print(f"     ASS generat → {ass_path.name}")
+        log(f"     ASS generat → {ass_path.name}")
 
         output = shorts_dir / f"Short{i}-{name}.mp4"
-        print(f"  → render → {output.name}")
-        render_short(str(video_path), x_offset, start, end, str(ass_path), str(output))
-        print(f"  ✓ {output}")
+        log(f"  → render → {output.name}")
+        used_encoder = render_short(str(video_path), x_offset, start, end, str(ass_path), str(output), encoder)
+        log(f"  ✓ {output}")
+        results.append({
+            "name": name,
+            "start": seg["start"],
+            "end": seg["end"],
+            "x_offset": x_offset,
+            "words": len(words),
+            "output": str(output),
+            "encoder": used_encoder,
+        })
 
-    print(f"\nDone! {len(segments)} short(s) in {shorts_dir}")
+    log(f"\nDone! {len(segments)} short(s) in {shorts_dir}")
+
+    if args.json:
+        print(json.dumps({"ok": True, "shorts": results, "output_dir": str(shorts_dir)}))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
