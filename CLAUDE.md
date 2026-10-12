@@ -22,6 +22,8 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 | `srt_from_fragments.py` | Generates a subtitle file retimed to match a rough-cut assembled by the script above |
 | `daily_summary_srt.py` | Groups raw `.srt` transcripts in a folder by day (parsed from filename, e.g. `DJI_YYYYMMDDHHMMSS_...`) and generates a full narrative summary per day (DeepSeek) — memory aid, not filtered for editing angle |
 | `.claude/skills/` | Agent skills (`yt-transcript`, `yt-shorts`, `yt-rough-cut`) — keep in sync with the scripts, setup in `docs/AGENT_SETUP.md` |
+| `docs/VISION.md` | AI Director plan — modes, principles, architecture, phases D0–D5, model routing |
+| `docs/research/prior-art.md` | Open-source and market research behind the AI Director plan |
 
 ## Working rules
 
@@ -32,6 +34,33 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 5. **Code and documentation** → in English. Comments in code → none (self-documenting code).
 6. **`--skip-alignment`** → use only when the JSON is already correct and only ASS + video re-render is needed.
 7. **Skills** → when a script's arguments, outputs or behavior change, update the matching skill in `.claude/skills/` in the same change.
+
+## Building the AI Director (phases D0–D5)
+
+Read `docs/VISION.md` before starting any D-phase task. These rules add to the working rules above.
+
+**Roles.** Doru is product owner and reviewer: he steps in when a phase is ~70–80% done, plus one mandatory checkpoint at the end of D1. The agents build end-to-end and verify their own work. Conversation with Doru in Romanian; everything in the repo in English.
+
+**Autonomy.**
+- Decide reversible things yourself, record them in `docs/DECISIONS.md` (existing format), move on.
+- Stop and ask only for: anything irreversible or expensive (overwriting footage, paid APIs beyond OpenRouter model calls, downloads > 20 GB, changing an interface Doru approved), a pure taste/product choice between equal options, or a phase checkpoint.
+- Before any new library, model or format: check current version, maintenance, license and fit; compare at least two options; log the decision.
+- Reuse before building. Prefer maintained libraries and the existing scripts (`kdenlive_from_fragments.py` is the Kdenlive export, not something new).
+- Footage is read-only. Outputs go to the project workspace.
+- Mock what you cannot run here (no GPU on the build machine) and say so in the phase report.
+- LLM spend: respect the per-run budget cap in config; stop and report when reached.
+
+**Agent team.**
+- The architect plans each task and writes a task brief; the coder implements one task at a time; the architect audits the result before marking it done.
+- The coder only knows what is in its brief. The architect inlines the relevant rules, schemas and DECISIONS entries into every brief.
+- Tasks touching more than 3 tightly coupled files, or any schema change, stay with the architect.
+- Do not switch coder models in the middle of a task.
+
+**Every new tool** is a standalone script in `scripts/` plus a skill in `.claude/skills/`, with `--help`, `--json` and re-run safety. No tool imports another tool; shared code only in `scripts/common/`.
+
+**Definition of done (every task):** tests pass; ran end-to-end on sample media and, for anything visual, looked at output frames; outputs validated against `schemas/`; no source file modified; DECISIONS entry if something new was chosen; skill and README updated if behavior changed.
+
+**Phase report** in `docs/reports/D<n>-REPORT.md`, three short lists: *Works* (what was verified, how), *Mocked / not verified*, *Doru, check this* (max 5 bullets, each with a path or command). Send a short notification (max 5 lines) when a phase report is ready or when blocked.
 
 ## Do not
 

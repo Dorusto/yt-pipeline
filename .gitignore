@@ -9,3 +9,6 @@ corrections.txt
 *.wav
 *.json
 *.ass
+!opencode.json
+!schemas/*.json
+!tests/fixtures/**/*.json

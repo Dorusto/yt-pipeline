@@ -8,6 +8,23 @@ Pipeline fully functional for end-to-end clip processing. Tested on Lenea clip (
 
 ---
 
+## AI Director track (D0–D5) — started 2026-10-12
+
+Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md`](research/prior-art.md).
+
+| Phase | Scope | Status |
+|:---|:---|:---|
+| D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | 🔲 next |
+| D1 | Ingest + analyze + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | 🔲 |
+| D2 | Director → `fragments.yaml` → Kdenlive + preview (Mode A) | 🔲 |
+| D3 | Web UI v1 | 🔲 |
+| D4 | Mode B on the same index (fillers, chapters, Shorts ranking) | 🔲 |
+| D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 |
+
+Milestones 2–7 below are the older plan for the finished-clip pipeline. Where a D-phase covers the same ground (Milestone 7 → D4), the D-phase wins; the rest stay as they are.
+
+---
+
 ## Scripts — current state
 
 | Script | Status | What it does |

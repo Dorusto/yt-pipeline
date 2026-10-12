@@ -100,20 +100,18 @@ Two common paths. In both, you make the creative decisions and the agent runs th
 - Watching the Shorts and the rough cut.
 - Approving anything that spends API credit or overwrites a file.
 
-## 8. Optional: a dedicated opencode agent
+## 8. opencode agents
 
-Not shipped. The default opencode agent already loads the skills. A project agent only presets a model and permissions. To make one, create `.opencode/agents/yt-pipeline.md`:
+Two project agents ship in `.opencode/agents/`, used to build the AI Director (see `docs/VISION.md`), not to run the pipeline:
 
-```markdown
----
-description: Runs the yt-pipeline skills on a video project
-mode: primary
-model: provider/model-id
----
-Use the yt-transcript, yt-shorts and yt-rough-cut skills. Ask before running anything that spends API credit or overwrites files.
-```
+| Agent | Mode | Model (OpenRouter) | Role |
+|:---|:---|:---|:---|
+| `architect` | primary (Tab to select) | `xiaomi/mimo-v2.6-pro` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
+| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | implements one brief, never commits |
 
-Replace `provider/model-id` with a model you have access to.
+`opencode.json` in the repo root registers the three OpenRouter models and the shared permissions. To swap a model, change the `model:` line in the agent file. `z-ai/glm-5.3-flash` is the fallback coder.
+
+To run the pipeline itself, the default `build` agent is enough: it already loads the skills.
 
 ## 9. Files that stay local
 
