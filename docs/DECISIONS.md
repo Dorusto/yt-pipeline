@@ -389,9 +389,9 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 **Options:**
 - A) Keep one D1: scene detection + fixed 5 s segments + vision descriptions
-- B) Separate tools: `motion` (optical flow / gyro, motion phases, CameraBench labels), `quality` (blur, exposure, shake, obstruction, setup/teardown → keep/discard with reasons), then `describe` only on kept segments; checkpoint after the CPU-only part
+- B) Separate tools: `motion` (optical flow / gyro, motion phases, CameraBench labels), `quality` (measured defects plus a role per segment: move, hold, transition in/out, setup, teardown, accidental — labels, never deletions), then `describe` only on kept segments; checkpoint after the CPU-only part
 - C) Use the CameraBench fine-tuned Qwen2.5-VL for all motion labels now
 
-**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a Doru checkpoint.
+**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a Doru checkpoint. The analysis tools label and never delete: one file can hold several intentional shots, and fast motion at the head or tail of a take may be half of an in-camera transition (whip pan, roll) rather than junk — the director pairs them. Techniques the tools must know are catalogued in `docs/guides/shot-grammar.md`.
 
 **Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and Doru can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.

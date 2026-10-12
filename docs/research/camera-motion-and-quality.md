@@ -55,7 +55,7 @@ Hard cuts: PySceneDetect (content detector) is enough for edited material; Trans
 - From the smoothed velocity and acceleration curves, split each take into phases: **still → ramp-up → steady move → ramp-down → still**, and also split where the dominant motion type changes (pan becomes tilt, orbit stops).
 - A **usable move** = a steady phase of one dominant motion, low shake, minimum length (e.g. ≥ 1.5 s).
 - **Handles:** keep 5–10 frames of ramp at each end so a cut does not start mid-acceleration.
-- **Setup / teardown junk:** short, irregular, fast or high-shake phases at the head and tail of a take, typically with motion blur, are marked `discard` with the reason `setup` / `teardown`.
+- **Setup / teardown (likely, not certain):** short, irregular, fast or high-shake phases at the head and tail of a take are labelled `setup` / `teardown`. A clean, fast, single-direction rotation at the head or tail is labelled `transition_in` / `transition_out` instead — it may be half of a whip-pan or roll transition. Nothing is deleted; roles and defects are labels (see `docs/guides/shot-grammar.md`, section 1).
 
 ## 5. Rejecting bad footage — quality signals
 
@@ -72,7 +72,7 @@ Per segment, all cheap on CPU:
 
 Learned score (optional, later): **DOVER-Mobile** (~10M parameters, runs on CPU, reported ~1.4 s per video) gives separate technical and aesthetic quality; useful to rank among the "keep" segments, not to decide keep/discard.
 
-Every rejection carries a **reason**, so the review UI can show "discarded: setup, blur 0.21" and Doru can override it.
+Defects are measured values, kept separate from intent: blur during a whip pan is intended, blur on a hold is a defect. Nothing is deleted — the review UI shows "setup? blur 0.21" and Doru or the director decides.
 
 ## 6. Pacing — how long a move should be on screen
 
@@ -91,11 +91,11 @@ So `motion` must output, per usable move: start/end of the steady phase, the han
 |---|---|---|---|
 | `ingest` | folder of clips | `ingest.json`: per clip duration, fps, resolution, streams, creation time, gyro present | ffprobe |
 | `motion` | one clip | `motion/<clip>.json`: per-frame trajectory summary, phases, labelled moves with steady range + handles | OpenCV (CPU) |
-| `quality` | one clip (+ its motion file if present) | `quality/<clip>.json`: per segment blur, exposure, shake, obstruction, keep/discard + reason | OpenCV (CPU) |
+| `quality` | one clip (+ its motion file if present) | `quality/<clip>.json`: per segment measured defects (blur, exposure, shake, obstruction, horizon) and a role (`move`, `hold`, `transition_in/out`, `setup`, `teardown`, `accidental`) with confidence | OpenCV (CPU) |
 | `describe` | clip + kept segments | `describe/<clip>.json`: VLM description, semantic motion (orbit, tracking, reveal), subject, scene | vision model via `scripts/common/llm.py` |
 | `index` | the files above | `shotlog.json`: one row per segment, merged, scored | none |
 
-Order matters for cost: `describe` runs only on segments that `quality` kept, so junk never costs a vision call.
+Order matters for cost: `describe` skips segments labelled `setup`, `teardown` or `accidental` with high confidence, so obvious junk never costs a vision call; uncertain ones are still described.
 
 Each tool improves on its own later: `motion` can swap optical flow for gyro data; `describe` can swap the cloud model for the CameraBench 7B on the 3090; `quality` can add DOVER — without touching the others, because they only meet in the JSON files.
 
