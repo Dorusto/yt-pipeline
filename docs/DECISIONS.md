@@ -395,3 +395,58 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a Doru checkpoint. The analysis tools label and never delete: one file can hold several intentional shots, and fast motion at the head or tail of a take may be half of an in-camera transition (whip pan, roll) rather than junk — the director pairs them. Techniques the tools must know are catalogued in `docs/guides/shot-grammar.md`.
 
 **Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and Doru can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.
+
+---
+
+## [2026-10-12] PR #4 review fixes: missing `usage.cost` raises, spend ledger caps the whole job
+
+**Context:** the D0 review found two budget holes. A response without `usage.cost` was charged `0.0`, so the cap silently stopped counting; and `spent_usd` lived only in the process, so a job that chains several tool runs could spend `llm_budget_usd` per process.
+
+**Options:**
+- A) Warn and continue on a missing cost; keep per-process accounting
+- B) Raise `MissingUsageCost` on the OpenRouter backend when `usage.cost` is absent, and persist every call to a per-project `llm_spend.json` ledger that the client reads at start-up so the cap spans processes
+- C) Pre-pay a fixed OpenRouter credit and rely on the account balance
+
+**Decision:** B, in `scripts/common/llm.py`. Ledger resolution order: explicit `ledger_path` → `YT_SPEND_LEDGER` → `spend_ledger` in `config.yaml` → `YT_WORKSPACE/llm_spend.json` → none (in-process only, as before).
+
+**Rationale:** a missing cost must not make a call free — better to fail loudly than to under-count spend; the error names `usage.cost` and never leaks the API key. The ledger makes `llm_budget_usd` a job cap, which is what the CLAUDE.md spend rule means; atomic writes (`os.replace`) keep the ledger consistent when a run is interrupted. C caps at the account level and surfaces as HTTP 402 after the fact.
+
+---
+
+## [2026-10-12] D1a motion labels: CameraBench geometric vocabulary, image motion inverted, dolly flagged for semantics
+
+**Context:** `motion` must name camera moves from 2D optical flow. Flow measures how the *picture* moves; the label must say what the *camera* did. Geometric methods cannot separate dolly from zoom (or orbit from pan+truck), per `docs/research/camera-motion-and-quality.md`.
+
+**Decision:** the `motion.schema.json` label set is the CameraBench geometric vocabulary (`static`, `pan_left/right`, `tilt_up/down`, `roll_cw/ccw`, `dolly_in/out`, `zoom_in/out`, `truck/pedestal`, `complex_motion`). Labels invert image motion: image `dx < 0` → `pan_right`, image `dy > 0` → `tilt_up`, image `roll_deg < 0` → `roll_cw` (positive `roll_deg` is image-clockwise). Scale change is labelled `dolly_in/out` with `semantic_check: true` so the D1b vision step resolves dolly vs zoom; `zoom_*` and `truck/pedestal` stay in the vocabulary for the gyro/vision upgrades. The dominance contest uses the raw rate for dolly (`|log scale| per second`) instead of the `/0.25` speed normalisation, so a 5 %/s drift cannot outscore a real pan.
+
+**Rationale:** this is the vocabulary the director and the shot-grammar guide speak, and the inversion keeps the naming consistent with filming language. Flagging only the truly ambiguous case keeps the paid vision step small.
+
+---
+
+## [2026-10-12] Motion segmentation: split on dominant-type change with hysteresis and per-channel significance floors
+
+**Context:** the first D1a implementation labelled a moving run from its mean over the whole run. On real footage one `dolly_in` swallowed 157 s of a trip clip that contains fast whips and pans, and the dolly score activated below 1.25 %/s — under the parallax/stabilisation drift of walking footage — so 36 of 39 moves were dolly and none were pans. Verified against sliding windows and frame-level image shifts.
+
+**Options:**
+- A) Keep run-mean labels, retune thresholds only
+- B) Label every sample from the smoothed series, split runs where the dominant component+sign changes (0.6 s hysteresis, 0.4 s short-run merge), and gate each channel with a significance floor (pan/tilt 0.03 fw/s, roll 5 deg/s, dolly 0.05 log/s **plus** 70 % sign-consistency in the window)
+- C) Send everything to a neural shot/motion detector
+
+**Decision:** B (implemented in `scripts/motion.py`, audit round 2).
+
+**Rationale:** the research explicitly asks for splitting "where the dominant motion type changes"; the floors kill estimator noise without hiding real moves, and the dolly sign-consistency test is what separates a real push-in from drift. C costs GPU and model downloads for what geometry already answers for pan/tilt/roll. After the fix the 21-clip set yields 56 moves across all eight geometric labels, and clip 0072's whips appear as their own `pan_*` phases at the right times (checked against frame content).
+
+---
+
+## [2026-10-12] Quality horizon measured from edge angles, not from integrated flow roll
+
+**Context:** `quality` needs "horizon tilt (roll offset on a static shot)" per segment. The first version cumulatively summed the per-pair `roll_deg` of the motion trajectory; the estimator drifts and the drift compounds, reporting holds at ±30° where the frames differ by ~1.5° (checked with Canny+Hough on the actual frames).
+
+**Options:**
+- A) Keep the integrated flow roll and accept the drift
+- B) Measure the tilt directly per sampled frame: Canny + `HoughLines`, median line angle relative to horizontal; `horizon_deg` per segment = its frames' mean minus the clip's median
+- C) Gyro-derived roll (needs the raw files and a gyro parser)
+
+**Decision:** B, in `scripts/quality.py` (audit round 2). Fewer than 30 Hough lines → frame not measured; segments without measurements fall back to `0.0`.
+
+**Rationale:** B is a real measurement of the picture, cheap on CPU, and needs no motion file; cross-checks on the test clips agree with independent edge measurements (11.5° reported vs 10° measured on clip 0067; -10° vs -9° on clip 0080). A is a random walk presented as a fact. C is the later upgrade and needs footage these proxies do not carry.

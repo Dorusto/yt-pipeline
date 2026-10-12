@@ -15,7 +15,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | Phase | Scope | Status |
 |:---|:---|:---|
 | D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | ✅ done 2026-10-12 — see [`reports/D0-REPORT.md`](reports/D0-REPORT.md) |
-| D1a | Ingest + motion + quality (CPU only): moves, motion phases, junk with reasons — **⛔ Doru checkpoint** | 🔲 next |
+| D1a | Ingest + motion + quality (CPU only): moves, motion phases, junk with reasons — **⛔ Doru checkpoint** | ✅ built 2026-10-12, ready for checkpoint — see [`reports/D1a-REPORT.md`](reports/D1a-REPORT.md) |
 | D1b | Describe + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | 🔲 |
 | D2 | Director → `fragments.yaml` → Kdenlive + preview (Mode A) | 🔲 |
 | D3 | Web UI v1 | 🔲 |
