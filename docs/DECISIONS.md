@@ -380,3 +380,18 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** B.
 
 **Rationale:** A repeats the accounting in every tool and forgets one eventually. C caps spend at the account level, not per run, and errors arrive as HTTP 402 after the fact — not a clear stop. B matches "model backends are config" (`llm_backend`: `openrouter` or `mock`) and reuses the `openai` SDK connection every script already uses (DECISIONS 2026-09-22), so no new dependency. Cost is known only after a call, so the call that crosses the cap still returns its result; the *next* call raises `BudgetExceeded` with the spent and budget amounts in the message. Missing `usage.cost` charges `0.0` rather than failing — token counts are still reported.
+
+---
+
+## [2026-10-12] D1 split into D1a (motion + quality, CPU) and D1b (describe + index)
+
+**Context:** The first D1 plan sent every scene-detected shot to a vision model. Doru's test clips are continuous action-cam takes of 2–5 minutes with no hard cuts, full of deliberate camera moves (orbit, push/pull, pans) wrapped in setup and teardown motion (moving into position after pressing record, moving back before stopping), plus blurred and shaky stretches. Scene detection alone sees one shot per take; a vision model looking at three stills cannot reliably tell a pan from an orbit or find where a move starts and ends. Research: `docs/research/camera-motion-and-quality.md`.
+
+**Options:**
+- A) Keep one D1: scene detection + fixed 5 s segments + vision descriptions
+- B) Separate tools: `motion` (optical flow / gyro, motion phases, CameraBench labels), `quality` (blur, exposure, shake, obstruction, setup/teardown → keep/discard with reasons), then `describe` only on kept segments; checkpoint after the CPU-only part
+- C) Use the CameraBench fine-tuned Qwen2.5-VL for all motion labels now
+
+**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a Doru checkpoint.
+
+**Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and Doru can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.
