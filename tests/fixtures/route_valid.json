@@ -1,0 +1,134 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-10-13T20:25:00+00:00",
+  "tool": "scripts/router.py",
+  "brief": {
+    "text": "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only",
+    "target_duration_s": 90.0,
+    "order": "chronological",
+    "pacing": "calm-to-energy",
+    "music_file": null,
+    "ambient_only": true,
+    "signals": [
+      "90 seconds",
+      "chronological",
+      "calm",
+      "energy",
+      "ambient sound only"
+    ]
+  },
+  "content_type": "vacation",
+  "content_type_source": "brief",
+  "stations": [
+    {
+      "name": "ingest",
+      "enabled": true,
+      "settings": {
+        "proxy_height": 720
+      },
+      "reason": "every project starts with a folder scan"
+    },
+    {
+      "name": "motion",
+      "enabled": true,
+      "settings": {
+        "sample_fps": 10
+      },
+      "reason": "action footage needs camera moves"
+    },
+    {
+      "name": "quality",
+      "enabled": true,
+      "settings": {},
+      "reason": "defects and roles decide what is usable"
+    },
+    {
+      "name": "describe",
+      "enabled": true,
+      "settings": {},
+      "reason": "content score drives the selection"
+    },
+    {
+      "name": "similarity",
+      "enabled": true,
+      "settings": {
+        "threshold": 0.9
+      },
+      "reason": "the director refuses near duplicates"
+    },
+    {
+      "name": "audio_analysis",
+      "enabled": true,
+      "settings": {},
+      "reason": "ambient sound is part of the shot on action footage"
+    },
+    {
+      "name": "index",
+      "enabled": true,
+      "settings": {},
+      "reason": "one shotlog per project"
+    },
+    {
+      "name": "director",
+      "enabled": true,
+      "settings": {
+        "mode": "llm",
+        "fallback": "rules"
+      },
+      "reason": "the brief asks for a story, not a clip list"
+    },
+    {
+      "name": "audio_clean",
+      "enabled": true,
+      "settings": {
+        "target_lufs": -16.0
+      },
+      "reason": "wind and noise on the water"
+    },
+    {
+      "name": "beats",
+      "enabled": false,
+      "settings": {},
+      "reason": "the brief asks for ambient sound only, no music",
+      "required_when": "a music file in the brief"
+    },
+    {
+      "name": "render",
+      "enabled": true,
+      "settings": {
+        "preview_height": 720
+      },
+      "reason": "a playable recap is the deliverable"
+    },
+    {
+      "name": "export_kdenlive",
+      "enabled": true,
+      "settings": {},
+      "reason": "optional export stays one command away"
+    },
+    {
+      "name": "graphics",
+      "enabled": false,
+      "settings": {},
+      "reason": "no titles or maps asked for"
+    },
+    {
+      "name": "chapters",
+      "enabled": false,
+      "settings": {},
+      "reason": "chapters belong to talking-head and tutorials"
+    },
+    {
+      "name": "shorts",
+      "enabled": false,
+      "settings": {},
+      "reason": "shorts are their own deliverable"
+    }
+  ],
+  "meta": {
+    "tool": "scripts/router.py",
+    "wall_time_s": 0.01,
+    "llm_cost_usd": 0.0
+  },
+  "warnings": []
+}

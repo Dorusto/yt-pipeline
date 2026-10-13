@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/route.schema.json",
+  "title": "route",
+  "description": "Routing decision written by scripts/router.py: the content type detected from the brief and the workspace, and which pipeline stations run with which settings. One tool for every kind of video (vacation, tutorial, presentation, talking-head) \u2014 the router picks the stations, the stations stay the same. Deterministic, no model.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "brief",
+    "content_type",
+    "stations"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "content_type": {
+      "type": "string",
+      "enum": [
+        "vacation",
+        "tutorial",
+        "presentation",
+        "talking-head"
+      ],
+      "description": "what kind of video this project is; drives which stations run and their settings"
+    },
+    "station_name": {
+      "type": "string",
+      "enum": [
+        "ingest",
+        "motion",
+        "quality",
+        "describe",
+        "similarity",
+        "audio_analysis",
+        "index",
+        "director",
+        "audio_clean",
+        "beats",
+        "render",
+        "export_kdenlive",
+        "graphics",
+        "chapters",
+        "shorts"
+      ],
+      "description": "a pipeline stage the router can switch on or off; every one of them is a standalone tool in scripts/"
+    },
+    "station": {
+      "type": "object",
+      "required": [
+        "name",
+        "enabled",
+        "settings",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/station_name"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "false when this content type does not use the station at all"
+        },
+        "settings": {
+          "type": "object",
+          "description": "station-specific knobs the router chose; empty object when nothing needs setting",
+          "additionalProperties": true
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "one short sentence: why the router enabled or disabled it"
+        },
+        "required_when": {
+          "type": "string",
+          "description": "what must be true for the station to actually run even when enabled, e.g. a music file in the brief",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the routing run"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "brief": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false,
+      "description": "the brief as given, plus the hints the router parsed out of it",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "the brief verbatim"
+        },
+        "target_duration_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "description": "length named in the brief, e.g. 'about 90 seconds'; null when the brief says nothing about length"
+        },
+        "order": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "chronological",
+            "score",
+            null
+          ],
+          "description": "timeline order named in the brief; null when the brief does not say"
+        },
+        "pacing": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "calm-to-energy",
+            "uniform",
+            null
+          ],
+          "description": "pacing named in the brief; null when the brief does not say"
+        },
+        "music_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "path of a music file named in the brief, when there is one; beat-aligned cuts only run then"
+        },
+        "ambient_only": {
+          "type": "boolean",
+          "description": "true when the brief asks for ambient sound only (no music)"
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "the phrases and keywords that decided the content type and the settings, for the audit trail"
+        }
+      }
+    },
+    "content_type": {
+      "$ref": "#/$defs/content_type"
+    },
+    "content_type_source": {
+      "type": "string",
+      "enum": [
+        "flag",
+        "brief",
+        "workspace",
+        "default"
+      ],
+      "description": "flag = --content-type was given; brief = keywords in the brief; workspace = the analysed footage decided it; default = vacation fallback"
+    },
+    "stations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/station"
+      },
+      "description": "every known station, in run order, with the router's choice"
+    },
+    "meta": {
+      "type": "object",
+      "required": [
+        "tool",
+        "wall_time_s",
+        "llm_cost_usd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "wall_time_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "llm_cost_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "always 0: the router calls no model service"
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
