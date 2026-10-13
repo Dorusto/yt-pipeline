@@ -17,7 +17,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | ✅ done 2026-10-12 — see [`reports/D0-REPORT.md`](reports/D0-REPORT.md) |
 | D1a | Ingest + motion + quality (CPU only): moves, motion phases, junk with reasons — **⛔ Doru checkpoint** | ✅ approved by Doru 2026-10-13 after D1a-2 (ground-truth eval 0.26 → 0.69, time-box reached) — see [`reports/D1a-REPORT.md`](reports/D1a-REPORT.md) and [`reports/D1a-CHECKPOINT.md`](reports/D1a-CHECKPOINT.md) |
 | S1 | First crude end-to-end slice on the Kotor footage (D1a labels → minimal director → MP4) | ✅ 2026-10-13, reviewed by Doru — see [`reports/S1-REPORT.md`](reports/S1-REPORT.md) |
-| D1b | Describe + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | 🔲 next |
+| D1b | Describe + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | ✅ 2026-10-13, checkpoint awaiting Doru — see [`reports/D1b-REPORT.md`](reports/D1b-REPORT.md) and [`reports/D1b-vision-bakeoff.md`](reports/D1b-vision-bakeoff.md) |
 | D2 | Router + director → `edit.json` → ffmpeg render; Kdenlive export optional (Mode A) | 🔲 |
 | D3 | Web editor v1, phone first (preview, light edits, final render on the homelab) | 🔲 |
 | D4 | Mode B on the same index (fillers, chapters, Shorts ranking) + graphics station | 🔲 |
