@@ -11,7 +11,9 @@
       "end_s": 2.0,
       "role": "setup",
       "confidence": 0.55,
-      "role_evidence": ["still head of the take right after record starts"],
+      "role_evidence": [
+        "still head of the take right after record starts"
+      ],
       "motion_label": "static",
       "defects": [],
       "metrics": {
@@ -22,7 +24,10 @@
         "shake": 0.01,
         "obstruction": 0.0,
         "horizon_deg": 0.4
-      }
+      },
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "motion_label_confidence": 0.7
     },
     {
       "id": "s2",
@@ -30,7 +35,9 @@
       "end_s": 13.0,
       "role": "move",
       "confidence": 0.8,
-      "role_evidence": ["steady pan right with handles"],
+      "role_evidence": [
+        "steady pan right with handles"
+      ],
       "motion_label": "pan_right",
       "defects": [
         {
@@ -47,7 +54,10 @@
         "shake": 0.05,
         "obstruction": 0.0,
         "horizon_deg": 0.8
-      }
+      },
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "motion_label_confidence": 0.7
     },
     {
       "id": "s3",
@@ -55,7 +65,9 @@
       "end_s": 21.93,
       "role": "teardown",
       "confidence": 0.6,
-      "role_evidence": ["irregular motion at the tail of the take"],
+      "role_evidence": [
+        "irregular motion at the tail of the take"
+      ],
       "motion_label": "complex_motion",
       "defects": [
         {
@@ -72,7 +84,10 @@
         "shake": 0.12,
         "obstruction": 0.0,
         "horizon_deg": 3.1
-      }
+      },
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "motion_label_confidence": 0.7
     }
   ],
   "warnings": []

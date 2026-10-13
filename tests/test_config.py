@@ -10,8 +10,8 @@ VALID = {
         "architect": "xiaomi/mimo-v2.6-pro",
         "coder": "deepseek/deepseek-v4.1-flash",
         "coder_fallback": "z-ai/glm-5.3-flash",
-        "vision": "deepseek/deepseek-v4.1-flash",
-        "vision_fallback": "z-ai/glm-5.3-flash",
+        "vision": "z-ai/glm-5.3-flash",
+        "vision_fallback": "deepseek/deepseek-v4.1-flash",
     },
     "llm_budget_usd": 5.0,
     "llm_backend": "openrouter",
@@ -38,7 +38,7 @@ def with_value(key, value):
 
 def test_valid_fixture_loads(tmp_path):
     loaded = config.load_config(write_config(tmp_path, VALID))
-    assert config.model_for(loaded, "vision") == "deepseek/deepseek-v4.1-flash"
+    assert config.model_for(loaded, "vision") == "z-ai/glm-5.3-flash"
 
 
 def test_explicit_path_works(tmp_path):
@@ -114,7 +114,7 @@ def test_committed_example_loads():
     assert config.model_for(loaded, "architect") == "xiaomi/mimo-v2.6-pro"
     assert config.model_for(loaded, "coder") == "deepseek/deepseek-v4.1-flash"
     assert config.model_for(loaded, "coder_fallback") == "z-ai/glm-5.3-flash"
-    assert config.model_for(loaded, "vision") == "deepseek/deepseek-v4.1-flash"
-    assert config.model_for(loaded, "vision_fallback") == "z-ai/glm-5.3-flash"
+    assert config.model_for(loaded, "vision") == "z-ai/glm-5.3-flash"
+    assert config.model_for(loaded, "vision_fallback") == "deepseek/deepseek-v4.1-flash"
     assert loaded["llm_budget_usd"] == 5.0
     assert loaded["llm_backend"] == "openrouter"

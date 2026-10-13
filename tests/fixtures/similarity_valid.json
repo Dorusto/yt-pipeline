@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-10-13T21:12:44+00:00",
+  "backend": "mobilenet",
+  "model": "mobilenetv2-12.onnx",
+  "threshold": 0.9,
+  "segments": [
+    {
+      "key": "0081/s5",
+      "clip": "dji_mimo_20261012_124338_0081_1791817211091_video.mp4",
+      "segment_id": "s5",
+      "start_s": 20.08,
+      "end_s": 24.96,
+      "embedding": [0.0123, -0.0456, 0.0789, 0.0012, -0.0034, 0.0056, -0.0078, 0.009]
+    },
+    {
+      "key": "0081/s6",
+      "clip": "dji_mimo_20261012_124338_0081_1791817211091_video.mp4",
+      "segment_id": "s6",
+      "start_s": 24.96,
+      "end_s": 30.08,
+      "embedding": [0.0111, -0.0442, 0.0775, 0.0011, -0.0033, 0.0055, -0.0077, 0.0089]
+    }
+  ],
+  "pairs": [
+    {"a": "0081/s5", "b": "0081/s6", "similarity": 0.964}
+  ],
+  "wall_time_s": 12.4,
+  "llm_cost_usd": 0.0,
+  "warnings": []
+}

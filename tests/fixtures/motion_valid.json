@@ -40,7 +40,10 @@
       "type": "still",
       "dominant_motion": "static",
       "speed": "slow",
-      "steadiness": "static"
+      "steadiness": "static",
+      "confidence": 0.8,
+      "uncertain": false,
+      "uncertain_reasons": []
     },
     {
       "start_s": 2.0,
@@ -48,7 +51,10 @@
       "type": "ramp_up",
       "dominant_motion": "pan_right",
       "speed": "regular",
-      "steadiness": "no_shaking"
+      "steadiness": "no_shaking",
+      "confidence": 0.8,
+      "uncertain": false,
+      "uncertain_reasons": []
     },
     {
       "start_s": 3.0,
@@ -56,7 +62,10 @@
       "type": "steady_move",
       "dominant_motion": "pan_right",
       "speed": "regular",
-      "steadiness": "minimal_shaking"
+      "steadiness": "minimal_shaking",
+      "confidence": 0.8,
+      "uncertain": false,
+      "uncertain_reasons": []
     },
     {
       "start_s": 12.0,
@@ -64,7 +73,10 @@
       "type": "ramp_down",
       "dominant_motion": "pan_right",
       "speed": "slow",
-      "steadiness": "no_shaking"
+      "steadiness": "no_shaking",
+      "confidence": 0.8,
+      "uncertain": false,
+      "uncertain_reasons": []
     },
     {
       "start_s": 13.0,
@@ -72,7 +84,10 @@
       "type": "still",
       "dominant_motion": "static",
       "speed": "slow",
-      "steadiness": "static"
+      "steadiness": "static",
+      "confidence": 0.8,
+      "uncertain": false,
+      "uncertain_reasons": []
     }
   ],
   "moves": [
@@ -93,13 +108,24 @@
       "mean_scale": 1.0,
       "mean_roll_deg": 0.05,
       "semantic_check": false,
-      "notes": ""
+      "notes": "",
+      "uncertain": false,
+      "uncertain_reasons": []
     }
   ],
   "scene_activity": [
-    {"t_s": 0.5, "activity": 0.0012},
-    {"t_s": 1.5, "activity": 0.0011},
-    {"t_s": 2.5, "activity": 0.0013}
+    {
+      "t_s": 0.5,
+      "activity": 0.0012
+    },
+    {
+      "t_s": 1.5,
+      "activity": 0.0011
+    },
+    {
+      "t_s": 2.5,
+      "activity": 0.0013
+    }
   ],
   "events": [],
   "warnings": []

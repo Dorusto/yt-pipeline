@@ -38,6 +38,16 @@
     "steadiness": {
       "type": "string",
       "enum": ["static", "no_shaking", "minimal_shaking", "unsteady", "very_unsteady"]
+    },
+    "uncertain_reason": {
+      "type": "string",
+      "enum": [
+        "scale_vs_radial_flow",
+        "parallax_vs_rotation",
+        "self_moving_regions",
+        "mixed_motion_signals"
+      ],
+      "description": "why the geometric label cannot commit: scale_vs_radial_flow = the radial expansion/contraction of the flow field contradicts the affine scale channel; parallax_vs_rotation = homography residual sits in the band where pan and truck cannot be separated; self_moving_regions = wake, traffic, water or another large self-moving region dominates the flow field, so the global transform is not trustworthy; mixed_motion_signals = two motion channels are both significant (complex_motion)"
     }
   },
   "properties": {
@@ -143,10 +153,10 @@
     },
     "phases": {
       "type": "array",
-      "description": "the take split into motion phases; they tile the clip with no gaps",
+      "description": "the take split into motion phases; they tile the clip with no gaps. Every phase carries a confidence for its dominant_motion label and an uncertain flag when the flow signals disagree; describe adjudicates uncertain phases and its verdict wins in the shotlog.",
       "items": {
         "type": "object",
-        "required": ["start_s", "end_s", "type"],
+        "required": ["start_s", "end_s", "type", "confidence", "uncertain"],
         "properties": {
           "start_s": {"type": "number", "minimum": 0},
           "end_s": {"type": "number", "minimum": 0},
@@ -156,7 +166,21 @@
           },
           "dominant_motion": {"$ref": "#/$defs/motion_label"},
           "speed": {"$ref": "#/$defs/speed"},
-          "steadiness": {"$ref": "#/$defs/steadiness"}
+          "steadiness": {"$ref": "#/$defs/steadiness"},
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "how sure the dominant_motion label is"
+          },
+          "uncertain": {
+            "type": "boolean",
+            "description": "true when the flow signals disagree or large self-moving regions dominate; the vision step adjudicates and its verdict wins in the shotlog"
+          },
+          "uncertain_reasons": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/uncertain_reason"}
+          }
         },
         "additionalProperties": true
       }
@@ -193,7 +217,7 @@
     },
     "moves": {
       "type": "array",
-      "description": "usable moves carved out of the phases: steady range, handles, CameraBench label",
+      "description": "usable moves carved out of the phases: steady range, handles, CameraBench label, confidence for that label and an uncertain flag when the flow signals disagree",
       "items": {
         "type": "object",
         "required": [
@@ -205,7 +229,8 @@
           "steadiness",
           "steady_start_s",
           "steady_end_s",
-          "confidence"
+          "confidence",
+          "uncertain"
         ],
         "properties": {
           "id": {"type": "string", "minLength": 1},
@@ -237,7 +262,16 @@
           "confidence": {
             "type": "number",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "how sure the label assignment is"
+          },
+          "uncertain": {
+            "type": "boolean",
+            "description": "true when the flow signals disagree or large self-moving regions dominate; the vision step adjudicates and its verdict wins in the shotlog"
+          },
+          "uncertain_reasons": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/uncertain_reason"}
           },
           "mean_dx": {"type": "number"},
           "mean_dy": {"type": "number"},

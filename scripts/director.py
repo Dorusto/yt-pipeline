@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Rule-based director: pick cut windows from motion/ and quality/ labels.
+"""Rule-based director: pick cut windows from the shotlog and the labels.
 
 Usage:
     python scripts/director.py --workspace DIR
     python scripts/director.py --workspace DIR --brief "..." --target-duration-s 90 --json
     python scripts/director.py --workspace DIR --order score --pacing uniform --force
 
-Reads ``ingest.json``, ``motion/<stem>.json`` and ``quality/<stem>.json`` from
-the workspace and writes ``edit.json`` (or ``--out``) validated against
-``schemas/edit.schema.json``. No model is called: every ``reason`` is built from
-the labels. Sources are read-only; the output is written atomically.
+Reads ``ingest.json``, ``motion/<stem>.json``, ``quality/<stem>.json`` and
+``shotlog.json`` from the workspace and writes ``edit.json`` (or ``--out``)
+validated against ``schemas/edit.schema.json``. When the shotlog is present the
+fused content score, the description and the reason come from it; otherwise the
+director falls back to scoring the labels. No model is called. Sources are
+read-only; the output is written atomically.
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -25,6 +28,7 @@ from common.schema import SchemaError, validate, validate_or_raise
 TOOL = "scripts/director.py"
 SCHEMA_VERSION = "0.1"
 
+CLIP_COUNTER = re.compile(r"_(\d{4})_")
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 ROLE_BASE = {"hold": 0.55, "move": 0.50, "transition_in": 0.35, "transition_out": 0.35}
 STEADINESS_BONUS = {
@@ -78,6 +82,9 @@ def build_parser():
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default="calm-to-energy")
     parser.add_argument("--min-slot-s", type=float, default=2.0, help="drop windows shorter than this")
     parser.add_argument("--max-slot-s", type=float, default=12.0, help="cap a slot at this many seconds")
+    parser.add_argument("--calm-slot-s", type=float, default=6.0, help="target length of the opening slots in calm-to-energy")
+    parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
+    parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -112,6 +119,29 @@ def first_not_none(*values):
         if value is not None:
             return value
     return None
+
+
+def clip_counter(name):
+    """The 4-digit counter in a clip file name, or the stem when there is none."""
+    match = CLIP_COUNTER.search(name)
+    return match.group(1) if match else Path(name).stem
+
+
+def candidate_key(candidate):
+    """The ``<clip counter>/<segment id>`` key the shotlog is indexed by."""
+    return f"{clip_counter(candidate['clip'])}/{candidate['segment'].get('id')}"
+
+
+def load_shotlog(workspace):
+    """The shotlog shots indexed by key, or None when there is no shotlog."""
+    path = workspace / "shotlog.json"
+    if not path.exists():
+        return None
+    data = load_json(path)
+    if not isinstance(data, dict):
+        return None
+    shots = data.get("shots") or []
+    return {shot["key"]: shot for shot in shots if shot.get("key")}
 
 
 def overlap_seconds(a_start, a_end, b_start, b_end):
@@ -154,13 +184,13 @@ def best_overlapping_move(segment, moves):
     return best
 
 
-def build_candidates(clip, clip_dt, position, content_offset, quality, motion, min_slot_s):
+def build_candidates(clip, clip_dt, position, content_offset, quality, motion, min_slot_s, skip_roles=True):
     moves = (motion or {}).get("moves") or []
     candidates = []
     skipped_roles = 0
     for segment in quality.get("segments") or []:
         role = segment.get("role")
-        if role in SKIP_ROLES:
+        if skip_roles and role in SKIP_ROLES:
             skipped_roles += 1
             continue
         move = None
@@ -241,13 +271,68 @@ def dedupe_candidates(candidates):
     return kept
 
 
-def slot_durations(target_duration_s, n_slots, pacing):
+def slot_targets(n_slots, pacing, target_duration_s, calm_slot_s, energy_slot_s, min_slot_s, max_slot_s):
+    """Per-slot target lengths from the pacing, clamped to the min/max."""
     if pacing == "calm-to-energy":
-        weights = [1.0 + (0.35 - 1.0) * index / (n_slots - 1) for index in range(n_slots)]
+        if n_slots <= 1:
+            raw = [calm_slot_s]
+        else:
+            raw = [
+                calm_slot_s + (energy_slot_s - calm_slot_s) * index / (n_slots - 1)
+                for index in range(n_slots)
+            ]
     else:
-        weights = [1.0] * n_slots
-    total = sum(weights)
-    return [target_duration_s * weight / total for weight in weights]
+        raw = [target_duration_s / n_slots] * n_slots
+    return [clamp(target, min_slot_s, max_slot_s) for target in raw]
+
+
+def shots_similar(first_key, first_links, second_key, second_links):
+    """True when two shot keys are linked by the symmetric similarity relation."""
+    if first_key is None or second_key is None:
+        return False
+    return second_key in (first_links or []) or first_key in (second_links or [])
+
+
+def slot_similar_to_candidate(slot, candidate):
+    return shots_similar(
+        slot.get("shot_key"),
+        slot.get("similar_to"),
+        candidate.get("shot_key"),
+        candidate.get("similar_to"),
+    )
+
+
+def slots_similar(first, second):
+    return shots_similar(
+        first.get("shot_key"),
+        first.get("similar_to"),
+        second.get("shot_key"),
+        second.get("similar_to"),
+    )
+
+
+def content_insert_index(chosen, position):
+    for index, existing in enumerate(chosen):
+        if existing["content_offset"] + existing["in_s"] > position:
+            return index
+    return len(chosen)
+
+
+def candidate_conflicts(candidate, chosen, allow_similar, insert_at):
+    if allow_similar:
+        neighbours = []
+        if insert_at > 0:
+            neighbours.append(chosen[insert_at - 1])
+        if insert_at < len(chosen):
+            neighbours.append(chosen[insert_at])
+        return any(slot_similar_to_candidate(slot, candidate) for slot in neighbours)
+    return any(slot_similar_to_candidate(slot, candidate) for slot in chosen)
+
+
+def warn_similar(warnings, candidate):
+    message = f"skipped similar shot {candidate.get('shot_key')}"
+    if message not in warnings:
+        warnings.append(message)
 
 
 def subtract_interval(intervals, cut_start, cut_end):
@@ -300,10 +385,29 @@ def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen):
         "position": candidate["position"],
         "content_offset": candidate["content_offset"],
         "segment": candidate["segment"],
+        "shot_key": candidate.get("shot_key"),
+        "similar_to": candidate.get("similar_to") or [],
+        "description": candidate.get("description"),
+        "shot_reason": candidate.get("shot_reason"),
     }
 
 
+def pacing_part(slot):
+    if slot["position"] <= 0.4:
+        return "calm opening"
+    if slot["position"] >= 0.6:
+        return "late hold" if slot["role"] == "hold" else "energy build"
+    return "neutral"
+
+
 def build_reason(slot):
+    if slot.get("shot_reason"):
+        parts = slot["shot_reason"].split(" · ") + [pacing_part(slot)]
+        deduped = []
+        for part in parts:
+            if part not in deduped:
+                deduped.append(part)
+        return " · ".join(deduped)
     parts = [slot["role"]]
     if slot["motion_label"]:
         parts.append(slot["motion_label"])
@@ -314,12 +418,7 @@ def build_reason(slot):
         parts.append("+".join(defect["name"] for defect in defects))
     else:
         parts.append("clean")
-    if slot["position"] <= 0.4:
-        parts.append("calm opening")
-    elif slot["position"] >= 0.6:
-        parts.append("late hold" if slot["role"] == "hold" else "energy build")
-    else:
-        parts.append("neutral")
+    parts.append(pacing_part(slot))
     deduped = []
     for part in parts:
         if part not in deduped:
@@ -327,7 +426,7 @@ def build_reason(slot):
     return " · ".join(deduped)
 
 
-def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s, min_slot_s, warnings):
+def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s, min_slot_s, warnings, allow_similar):
     bucket_width = max(1e-9, total_content) / n_slots
     chosen = []
     used = set()
@@ -335,15 +434,19 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
         bucket_start = index * bucket_width
         bucket_end = (index + 1) * bucket_width
         best = None
-        for candidate in candidates:
+        for candidate in sorted(candidates, key=lambda item: (-item["score"], item["in_s"])):
             if id(candidate) in used:
                 continue
             candidate_start = candidate["content_offset"] + candidate["in_s"]
             candidate_end = candidate["content_offset"] + candidate["out_s"]
             if overlap_seconds(candidate_start, candidate_end, bucket_start, bucket_end) <= 0:
                 continue
-            if best is None or candidate["score"] > best["score"]:
-                best = candidate
+            insert_at = content_insert_index(chosen, candidate_start)
+            if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
+                warn_similar(warnings, candidate)
+                continue
+            best = candidate
+            break
         if best is None:
             warnings.append(f"bucket {index + 1}: no candidate")
             continue
@@ -352,17 +455,20 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
         if slot is None:
             warnings.append(f"bucket {index + 1}: candidate dropped by overlap guard")
             continue
-        chosen.append(slot)
+        chosen.insert(content_insert_index(chosen, slot["content_offset"] + slot["in_s"]), slot)
     return chosen, used
 
 
-def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnings):
+def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnings, allow_similar):
     ordered = sorted(candidates, key=lambda item: (-item["score"], item["in_s"]))
     chosen = []
     used = set()
     for candidate in ordered:
         if len(chosen) >= n_slots:
             break
+        if candidate_conflicts(candidate, chosen, allow_similar, len(chosen)):
+            warn_similar(warnings, candidate)
+            continue
         used.add(id(candidate))
         slot = make_slot(candidate, durations[len(chosen)], max_slot_s, min_slot_s, chosen)
         if slot is None:
@@ -373,7 +479,7 @@ def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnin
     return chosen, used
 
 
-def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_slot_s, order, warnings):
+def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_slot_s, order, warnings, last_target, allow_similar):
     total = sum(slot["out_s"] - slot["in_s"] for slot in chosen)
     remaining = [candidate for candidate in candidates if id(candidate) not in used]
     while remaining:
@@ -383,19 +489,17 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
         remaining.sort(key=lambda item: (-item["score"], item["content_offset"] + item["in_s"]))
         candidate = remaining.pop(0)
         used.add(id(candidate))
-        slot = make_slot(candidate, min(max_slot_s, budget), max_slot_s, min_slot_s, chosen)
+        if order == "chronological":
+            insert_at = content_insert_index(chosen, candidate["content_offset"] + candidate["in_s"])
+        else:
+            insert_at = len(chosen)
+        if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
+            warn_similar(warnings, candidate)
+            continue
+        slot = make_slot(candidate, last_target, max_slot_s, min_slot_s, chosen)
         if slot is None:
             continue
-        if order == "chronological":
-            position = slot["content_offset"] + slot["in_s"]
-            insert_at = len(chosen)
-            for index, existing in enumerate(chosen):
-                if existing["content_offset"] + existing["in_s"] > position:
-                    insert_at = index
-                    break
-            chosen.insert(insert_at, slot)
-        else:
-            chosen.append(slot)
+        chosen.insert(insert_at, slot)
         total += slot["out_s"] - slot["in_s"]
     return chosen
 
@@ -420,7 +524,7 @@ def build_record(args, sources, slots, wall_time_s):
                 "speed": 1.0,
                 "role": slot["role"],
                 "motion_label": slot["motion_label"],
-                "description": None,
+                "description": slot.get("description"),
             }
         )
     return {
@@ -458,7 +562,7 @@ def atomic_write_json(path, data):
 
 
 def input_paths(workspace):
-    paths = [workspace / "ingest.json"]
+    paths = [workspace / "ingest.json", workspace / "shotlog.json"]
     paths.extend(sorted((workspace / "motion").glob("*.json")))
     paths.extend(sorted((workspace / "quality").glob("*.json")))
     return paths
@@ -519,6 +623,8 @@ def run(args, started):
     warnings = []
     candidates = []
     skipped_roles = 0
+    skipped_ineligible = 0
+    shotlog = load_shotlog(workspace)
     content_offsets = []
     running_content = 0.0
     for clip, _ in clips:
@@ -536,32 +642,66 @@ def run(args, started):
             warnings.append(f"missing motion document for {clip['file']}")
         position = clip_position(moment, first_moment, span_seconds)
         clip_candidates, clip_skipped = build_candidates(
-            clip, moment, position, content_offset, quality, motion, args.min_slot_s
+            clip, moment, position, content_offset, quality, motion, args.min_slot_s,
+            skip_roles=shotlog is None,
         )
         skipped_roles += clip_skipped
+        scored = []
         for candidate in clip_candidates:
-            candidate["score"] = score_candidate(candidate, args.pacing)
-        candidates.extend(dedupe_candidates(clip_candidates))
+            shot = shotlog.get(candidate_key(candidate)) if shotlog is not None else None
+            if shot is not None:
+                if not shot.get("eligible", True):
+                    skipped_ineligible += 1
+                    continue
+                candidate["score"] = shot["score"]
+                candidate["description"] = shot.get("description")
+                candidate["shot_reason"] = shot.get("reason")
+                candidate["shot_key"] = shot.get("key")
+                candidate["similar_to"] = list(shot.get("similar_to") or [])
+            else:
+                if shotlog is not None and candidate["role"] in SKIP_ROLES:
+                    skipped_roles += 1
+                    continue
+                candidate["score"] = score_candidate(candidate, args.pacing)
+                candidate["description"] = None
+                candidate["shot_reason"] = None
+                candidate["shot_key"] = None
+                candidate["similar_to"] = []
+            scored.append(candidate)
+        candidates.extend(dedupe_candidates(scored))
 
     if skipped_roles:
         warnings.append(f"skipped {skipped_roles} accidental/setup/teardown segments")
+    if skipped_ineligible:
+        warnings.append(f"skipped {skipped_ineligible} ineligible shots")
 
     if not candidates:
         raise DirectorError("no usable candidates")
 
     n_slots = int(clamp(round(args.target_duration_s / 6.0), 4, 24))
-    durations = slot_durations(args.target_duration_s, n_slots, args.pacing)
+    targets = slot_targets(
+        n_slots, args.pacing, args.target_duration_s, args.calm_slot_s, args.energy_slot_s,
+        args.min_slot_s, args.max_slot_s,
+    )
 
     if args.order == "chronological":
         slots, used = pick_chronological(
-            candidates, n_slots, durations, total_content, args.max_slot_s, args.min_slot_s, warnings
+            candidates, n_slots, targets, total_content, args.max_slot_s, args.min_slot_s, warnings,
+            args.allow_similar,
         )
     else:
-        slots, used = pick_by_score(candidates, n_slots, durations, args.max_slot_s, args.min_slot_s, warnings)
+        slots, used = pick_by_score(
+            candidates, n_slots, targets, args.max_slot_s, args.min_slot_s, warnings, args.allow_similar
+        )
 
     slots = fill_to_target(
-        candidates, slots, used, args.target_duration_s, args.max_slot_s, args.min_slot_s, args.order, warnings
+        candidates, slots, used, args.target_duration_s, args.max_slot_s, args.min_slot_s, args.order,
+        warnings, targets[-1], args.allow_similar,
     )
+
+    for first, second in zip(slots, slots[1:]):
+        if slots_similar(first, second):
+            warnings.append(f"adjacent similar shots: {first['shot_key']} and {second['shot_key']}")
 
     if not slots:
         raise DirectorError("no usable candidates")

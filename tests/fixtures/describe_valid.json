@@ -1,0 +1,53 @@
+{
+  "file": "dji_mimo_20261012_115636_0067_1791817289009_video.mp4",
+  "path": "/root/media/yt-test/proxy/dji_mimo_20261012_115636_0067_1791817289009_video.mp4",
+  "generated_at": "2026-10-13T19:52:41+00:00",
+  "duration_s": 54.92,
+  "model": "deepseek/deepseek-v4.1-flash",
+  "llm_cost_usd": 0.0123,
+  "wall_time_s": 12.4,
+  "segments": [
+    {
+      "id": "s1",
+      "start_s": 0.0,
+      "end_s": 35.36,
+      "status": "described",
+      "role": "move",
+      "motion_label": "complex_motion",
+      "uncertain": true,
+      "uncertain_reasons": ["mixed_motion_signals", "motion_uncertain"],
+      "frames": [
+        {"t_s": 5.89},
+        {"t_s": 17.68},
+        {"t_s": 29.47}
+      ],
+      "description": "Stern-facing view from a moving boat inside a strait; the wake fills the lower third while the shores converge toward the vanishing point.",
+      "subject": "the boat's wake and the receding strait",
+      "scenery": "steep green shores on both sides, open water behind the boat",
+      "semantic_motion": "travel",
+      "interest": 72,
+      "hero": false,
+      "verdict": {
+        "role": "move",
+        "motion_label": "travel_backward",
+        "confidence": 0.8,
+        "note": "radial contraction of the shores is travel_backward; the wake is not a valid flow region"
+      },
+      "skip_reason": null,
+      "cost_usd": 0.0041
+    },
+    {
+      "id": "s2",
+      "start_s": 35.36,
+      "end_s": 43.6,
+      "status": "skipped",
+      "role": "setup",
+      "motion_label": "static",
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "skip_reason": "confident setup",
+      "cost_usd": null
+    }
+  ],
+  "warnings": []
+}

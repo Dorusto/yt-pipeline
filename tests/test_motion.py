@@ -967,3 +967,161 @@ def test_motion_doc_validates_with_and_without_events(tmp_path):
     assert validate(data, "motion") == []
 
 
+def _uncertainty_rows(
+    radial_signed=0.0,
+    radial_dom_frac=0.0,
+    res_share=0.0,
+    flow_mag=0.0,
+    dx=0.0,
+    dy=0.0,
+    scale=1.0,
+    roll_deg=0.0,
+    inlier_ratio=0.9,
+    shake=0.0,
+    speed=0.0,
+    parallax=0.0,
+    count=10,
+    sample_fps=10.0,
+):
+    return [
+        {
+            "t": (index + 0.5) / sample_fps,
+            "dx": dx,
+            "dy": dy,
+            "scale": scale,
+            "roll_deg": roll_deg,
+            "inlier_ratio": inlier_ratio,
+            "shake": shake,
+            "speed": speed,
+            "parallax": parallax,
+            "radial_signed": radial_signed,
+            "radial_dom_frac": radial_dom_frac,
+            "res_share": res_share,
+            "flow_mag": flow_mag,
+        }
+        for index in range(count)
+    ]
+
+
+def test_uncertainty_scale_vs_radial_flow():
+    rows = _uncertainty_rows(radial_signed=-1.2, radial_dom_frac=0.4)
+
+    uncertain, reasons = motion.window_uncertainty(rows, "static", 0.0, 10.0)
+
+    assert uncertain is True
+    assert "scale_vs_radial_flow" in reasons
+
+
+def test_uncertainty_scale_confirms_radial_flow():
+    rows = _uncertainty_rows(radial_signed=-1.2, radial_dom_frac=0.4, scale=math.exp(-0.01))
+
+    uncertain, reasons = motion.window_uncertainty(rows, "static", 0.0, 10.0)
+
+    assert "scale_vs_radial_flow" not in reasons
+    assert uncertain is False
+
+
+def test_uncertainty_self_moving_regions():
+    rows = _uncertainty_rows(radial_signed=-0.9, radial_dom_frac=0.1, res_share=0.95, flow_mag=2.0)
+
+    uncertain, reasons = motion.window_uncertainty(rows, "static", 0.0, 10.0)
+
+    assert uncertain is True
+    assert "self_moving_regions" in reasons
+    assert "scale_vs_radial_flow" not in reasons
+
+
+def test_uncertainty_quiet_static_window_is_confident():
+    rows = _uncertainty_rows(radial_signed=-0.5, res_share=0.95, flow_mag=2.0)
+
+    uncertain, reasons = motion.window_uncertainty(rows, "static", 0.0, 10.0)
+
+    assert uncertain is False
+    assert reasons == []
+
+
+def test_uncertainty_parallax_band():
+    rows = _uncertainty_rows(dx=-0.05)
+
+    uncertain, reasons = motion.window_uncertainty(rows, "pan_right", 0.4, 10.0)
+    assert uncertain is True
+    assert "parallax_vs_rotation" in reasons
+
+    uncertain, reasons = motion.window_uncertainty(rows, "pan_right", 0.2, 10.0)
+    assert "parallax_vs_rotation" not in reasons
+
+
+def test_uncertainty_complex_motion():
+    rows = _uncertainty_rows(dx=0.05, dy=0.05)
+
+    uncertain, reasons = motion.window_uncertainty(rows, "complex_motion", 0.0, 10.0)
+
+    assert uncertain is True
+    assert "mixed_motion_signals" in reasons
+
+
+def test_phase_confidence_drops_per_reason_and_clamps():
+    assert motion._phase_confidence(5.0, 0.9, 0.0, []) == pytest.approx(0.8)
+    assert motion._phase_confidence(5.0, 0.9, 0.0, ["mixed_motion_signals"]) == pytest.approx(0.65)
+    assert motion._phase_confidence(5.0, 0.9, 0.0, ["a", "b"]) == pytest.approx(0.5)
+    assert motion._phase_confidence(0.5, 0.5, 0.1, ["a", "b", "c", "d"]) == pytest.approx(0.05)
+    assert motion._phase_confidence(5.0, 0.9, 0.0, []) <= 1.0
+
+
+def test_move_confidence_drops_per_reason():
+    phases = [{"type": "steady_move", "start_s": 0.5, "end_s": 4.0, "dominant_motion": "pan_right"}]
+
+    clean = motion.build_moves(phases, _uncertainty_rows(dx=-0.05, count=50), 10.0)
+    assert clean[0]["uncertain"] is False
+    assert clean[0]["confidence"] == pytest.approx(0.9)
+
+    banded = motion.build_moves(phases, _uncertainty_rows(dx=-0.05, parallax=0.4, count=50), 10.0)
+    assert banded[0]["uncertain"] is True
+    assert banded[0]["uncertain_reasons"] == ["parallax_vs_rotation"]
+    assert banded[0]["confidence"] == pytest.approx(0.75)
+
+
+def test_still_phase_with_wake_is_uncertain():
+    rows = _uncertainty_rows(
+        radial_signed=-1.37, radial_dom_frac=0.35, res_share=0.97, flow_mag=2.5, count=100
+    )
+
+    phases = motion.segment_phases(rows, 10.0, 10.0)
+    still = [phase for phase in phases if phase["type"] == "still"]
+
+    assert still
+    assert still[0]["uncertain"] is True
+    assert "scale_vs_radial_flow" in still[0]["uncertain_reasons"]
+    assert "self_moving_regions" in still[0]["uncertain_reasons"]
+
+
+def test_phases_carry_confidence_and_uncertain():
+    rows = _uncertainty_rows(dx=-0.05, count=100)
+
+    phases = motion.segment_phases(rows, 10.0, 10.0)
+
+    assert phases
+    for phase in phases:
+        assert 0.05 <= phase["confidence"] <= 1.0
+        assert isinstance(phase["uncertain"], bool)
+        assert isinstance(phase["uncertain_reasons"], list)
+
+
+def test_phases_and_moves_validate_with_uncertainty(tmp_path):
+    source = tmp_path / "clips"
+    make_pan_clip(source / "pan.mp4")
+    workspace = tmp_path / "workspace"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = read_motion(workspace, "pan")
+    assert validate(data, "motion") == []
+    for phase in data["phases"]:
+        assert "confidence" in phase
+        assert "uncertain" in phase
+    for move in data["moves"]:
+        assert "uncertain" in move
+
+
+

@@ -1,0 +1,118 @@
+{
+  "generated_at": "2026-10-13T21:52:10+00:00",
+  "workspace": "/root/media/yt-test/workspace",
+  "weights": {
+    "vision": 0.55,
+    "labels": 0.45,
+    "audio_energy": 0.0,
+    "text": 0.0
+  },
+  "shots": [
+    {
+      "key": "0067/s1",
+      "clip": "dji_mimo_20261012_115636_0067_1791817289009_video.mp4",
+      "segment_id": "s1",
+      "start_s": 0.0,
+      "end_s": 35.36,
+      "eligible": true,
+      "role": "move",
+      "role_source": "verdict",
+      "motion_label": "travel_backward",
+      "label_source": "verdict",
+      "confidence": 0.8,
+      "uncertain": true,
+      "uncertain_reasons": [
+        "scale_vs_radial_flow",
+        "self_moving_regions",
+        "motion_uncertain"
+      ],
+      "description": "Stern-facing view from a moving boat inside a strait; the wake fills the lower third while the shores converge toward the vanishing point.",
+      "subject": "the boat's wake receding toward a mountain village",
+      "scenery": "steep green shores on both sides, open water behind the boat",
+      "semantic_motion": "travel",
+      "interest": 60,
+      "hero": false,
+      "score": 0.58,
+      "scores": {
+        "vision": 0.6,
+        "labels": 0.56
+      },
+      "hook": "the boat's wake receding toward a mountain village",
+      "reason": "interest 60 \u00b7 travel_backward by verdict \u00b7 move \u00b7 obstruction",
+      "similar_to": [
+        "0067/s2"
+      ],
+      "defects": [
+        "obstruction"
+      ],
+      "suppressed_by": null
+    },
+    {
+      "key": "0067/s2",
+      "clip": "dji_mimo_20261012_115636_0067_1791817289009_video.mp4",
+      "segment_id": "s2",
+      "start_s": 35.36,
+      "end_s": 43.6,
+      "eligible": true,
+      "role": "hold",
+      "role_source": "geometry",
+      "motion_label": "static",
+      "label_source": "geometry",
+      "confidence": 0.7,
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "description": "A steady view from the stern of a boat over the wake.",
+      "subject": "boat wake",
+      "scenery": "calm bay ringed by green mountains",
+      "semantic_motion": "none",
+      "interest": 35,
+      "hero": false,
+      "score": 0.52,
+      "scores": {
+        "vision": 0.35,
+        "labels": 0.72
+      },
+      "hook": "boat wake",
+      "reason": "interest 35 \u00b7 static by geometry \u00b7 hold \u00b7 clean",
+      "similar_to": [
+        "0067/s1"
+      ],
+      "defects": [],
+      "suppressed_by": null
+    },
+    {
+      "key": "0051/s1",
+      "clip": "dji_mimo_20261012_113618_0051_1791817331815_video.mp4",
+      "segment_id": "s1",
+      "start_s": 0.0,
+      "end_s": 1.12,
+      "eligible": false,
+      "role": "accidental",
+      "role_source": "geometry",
+      "motion_label": "static",
+      "label_source": "geometry",
+      "confidence": 0.65,
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "description": null,
+      "subject": null,
+      "scenery": null,
+      "semantic_motion": null,
+      "interest": null,
+      "hero": null,
+      "score": 0.0,
+      "scores": {
+        "vision": null,
+        "labels": 0.0
+      },
+      "hook": "accidental \u00b7 static",
+      "reason": "no description \u00b7 static by geometry \u00b7 accidental \u00b7 clean \u00b7 not eligible",
+      "similar_to": [],
+      "defects": [],
+      "suppressed_by": null
+    }
+  ],
+  "wall_time_s": 3.2,
+  "llm_cost_usd": 0.0,
+  "warnings": []
+}

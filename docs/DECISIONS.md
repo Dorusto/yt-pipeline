@@ -762,3 +762,139 @@ half of the same carry-over exists precisely because precision was invisible.
 - the D1b checkpoint artifact is a re-rendered recap with the same brief, compared with S1.
 
 **Rationale:** S1 showed that the remaining errors in motion labels hurt the edit far less than the absence of content understanding, repetition and uneven pacing.
+
+---
+
+## [2026-10-13] D1b vision bake-off: GLM 5.3 Flash is the default vision model
+
+**Context:** VISION §6 leaves the vision backend to a bake-off between DeepSeek
+V4.1 Flash and GLM 5.3 Flash on image input. D1b ran both through
+`scripts/describe.py` on the kept segments of five varied Kotor clips (0067,
+0072, 0081, 0083, 0091 — 32 segments, 8 uncertain) with the same prompt and
+frames. Full results: `docs/reports/D1b-vision-bakeoff.md`.
+
+**Options:**
+- A) `deepseek/deepseek-v4.1-flash` as default
+- B) `z-ai/glm-5.3-flash` as default
+- C) route per segment type (uncertain verdicts to one, captions to the other)
+
+**Decision:** B. `models.vision = z-ai/glm-5.3-flash`, `models.vision_fallback =
+deepseek/deepseek-v4.1-flash`. Measured: GLM 32/32 parse rate vs DeepSeek 30/32
+(DeepSeek returns `content: null` when its reasoning trace eats the output
+budget — it needs `max_tokens` 8000 per segment and still loses answers);
+0.0066 USD vs 0.0590 USD for the same 32 segments; verdicts on the three
+uncertain segments with clear ground truth that GLM got right and DeepSeek did
+not (0067 wake → `travel_backward`, 0081 s7 → `travel_forward`, 0081 s15 →
+`travel_backward`); GLM sets `hero` on the tunnel and cave moments Doru named
+in the S1 review, DeepSeek never sets it.
+
+**Rationale:** The whole point of `uncertain` is that vision adjudicates where
+geometry gives up — losing the answer on the wake segment is disqualifying,
+and a 9x cost difference buys nothing back. C is premature: one model does both
+jobs well. `VisionModel` keeps the backend a config value, so the local
+Qwen3.8 on the 3090 can still take over for private footage.
+
+**Side finding recorded for the builders:** DeepSeek-style reasoning models
+need far more output tokens than a plain VLM; `scripts/common/vision.py`
+defaults `max_tokens` to 8000 and `describe.py` treats `content: null` as an
+unparseable answer instead of crashing.
+
+---
+
+## [2026-10-13] Segment visual similarity: MobileNetV2 ONNX through cv2.dnn, not histograms
+
+**Context:** D1b needs visual similarity between quality segments so the
+director can refuse near-duplicate shots ("no two similar segments in the edit
+unless the brief asks for it, never back to back" — S1 review). Measured on the
+32 kept segments of the five bake-off clips (0067, 0072, 0081, 0083, 0091),
+same-scene vs cross-scene cosine gap as the score.
+
+**Options (both CPU-only, no GPU):**
+- A) **Handcrafted numpy descriptor** — HSV hue-saturation + gradient-orientation
+  + luma histograms per frame, mean over the segment's 3 frames. Zero
+  dependencies, zero download, 0.5 s for 32 segments. Same-scene 0.945 vs
+  cross-scene 0.823 (gap 0.122) — and everything lands between 0.99 and 0.5, so
+  no usable threshold. pHash (also measured) is worse: gap 0.087, only catches
+  near-identical frames.
+- B) **MobileNetV2-12 ONNX via `cv2.dnn.readNetFromONNX`** — ImageNet logits as
+  the embedding (1000-d, L2-normalised, mean over the 3 frames). No new Python
+  dependency (OpenCV 5.0.0 already ships the DNN engine), one 14 MB model file
+  downloaded once to `~/.cache/yt-pipeline/models/` (ONNX model zoo,
+  `validated/vision/classification/mobilenet`, the model is a standard release
+  artifact). 0.8 s for 32 segments. Same-scene 0.811 vs cross-scene 0.579
+  (**gap 0.232**) — nearly 2x the separation of the histogram.
+
+**Decision:** B, with A kept as the offline/no-model fallback backend of the
+same tool (`similarity.py --backend {mobilenet,hist}`; tests run on `hist`, the
+default is `mobilenet`). Adjacent cave segments of 0081 score 0.93–0.97 and the
+tunnel approach + hold of 0072 scores 0.98 — exactly the duplicate pairs the
+S1 edit repeated. Threshold for "similar" starts at 0.90 and stays a flag.
+
+**Rationale:** The director rule needs a threshold that separates "same shot
+again" from "same trip, different shot"; only the CNN embedding gives one.
+`cv2.dnn` avoids a new dependency (onnxruntime would have been the alternative,
+MIT and well-maintained, but adds nothing once OpenCV runs the same file).
+torch stays out (D0: no torch unless needed). CLIP is the upgrade path when
+text search ("serpentine at sunset") lands at D5 — it needs a ~350 MB encoder
+and is not needed for pair similarity now.
+
+---
+
+## [2026-10-13] D1b shotlog score: 0.55 vision + 0.45 labels, verdict wins on uncertain segments
+
+**Context:** VISION leaves the fusion at "weighted, per mode in config, starting
+from `0.40·vision + 0.35·audio_energy + 0.25·text`". In D1b the audio and text
+tools do not exist yet (they land in D2/D4), while the S1 review added a
+content score from the vision model and the quality/motion labels carry
+confidences. `scripts/index.py` has to produce a usable ranking now.
+
+**Options:**
+- A) Keep the VISION weights and renormalise over vision only (`score =
+  interest/100`) — labels would not influence the ranking at all
+- B) `score = 0.55·vision + 0.45·labels`, with `vision = interest/100` (+0.15
+  for a hero shot) and `labels` the S1 director's label score
+  (`ROLE_BASE + 0.25·confidence + steadiness − defect penalty + 0.10 when
+  clean`), weights as CLI flags with these defaults; `audio_energy` and `text`
+  reserved in the schema at 0.0
+- C) Wait for the D2 audio station before the shotlog exists
+
+**Decision:** B. The schema's `weights` object carries all four components so
+the VISION formula arrives unchanged when audio and text exist; the per-mode
+config weights land with the D2 router (they are a router concern). On an
+uncertain segment the vision **verdict** supplies the effective `role` and
+`motion_label` (`role_source` / `label_source: "verdict"`) — that is the D1b
+rule "its label wins in the shotlog". Every shot carries `score + hook + reason`
+and `similar_to` from `similarity.json`; confident accidental/setup/teardown are
+`eligible: false`. Time-overlapping shots (>50% of the shorter) keep the higher
+score and the loser gets `suppressed_by` — it does not fire on the current
+tiling but keeps the VISION rule alive.
+
+**Rationale:** S1 showed label-only ranking misses the beautiful moments and
+pure-vision ranking would ignore measured defects. 0.55/0.45 makes the content
+score dominant without discarding what the geometry measured. C would leave the
+S1 problems (repetition, missing best moments) unfixed until D2.
+
+---
+
+## [2026-10-13] Missing vision in the shotlog gets a neutral prior of 0.5
+
+**Context:** The first D1b shotlog ranked two undescribed clean holds at 0.925
+above the described hero shots (0.911) — the S1 failure mode ("stable, not
+beautiful") reappearing whenever `describe` did not cover a segment. The cause
+was the degradation rule `score = labels` when the vision component is absent.
+
+**Options:**
+- A) keep `score = labels` and let the director prefer described shots
+- B) treat missing vision as an average content score (`vision = 0.5`) in the
+  fusion, while `scores.vision` stays `null` to report coverage
+- C) exclude undescribed shots from the ranking entirely
+
+**Decision:** B, applied to every eligible shot. On the full 21-clip run it
+re-orders the top 10 to cave and tunnel heroes (0080/s1 0.911, 0072/s7 0.895,
+0081/s7 0.862) with no undescribed shot above 0.75. `describe.py` also retries
+once on unparseable model output before skipping a segment — the flaky GLM
+answers that caused two of these gaps parse fine on a second call.
+
+**Rationale:** An undescribed shot is unknown, not bad and not perfect; 0.5 is
+the honest prior and it is what the interest scale means (50 = average). C
+would throw away geometry-good shots because a model call failed.
