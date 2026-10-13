@@ -645,7 +645,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** Close D1a and start S1. Known issues carried as notes, not as another D1a round:
 - Scene events report many near-zero "subject_enters/leaves" (0072 has 11); the eval scores event recall only. S1 adds precision to `eval_labels.py` and a noise floor to events.
 - Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so Doru can spot overfitting while watching the recap.
-- 0067 travel_backward (stern-facing camera, see the ground-truth note): measure scale/radial flow on the shore regions and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
+- 0067 travel_backward (stern-facing camera, see the ground-truth note): measure radial contraction toward the vanishing point on the shore regions (the shores of the strait converge toward the centre) and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
 - 0081 interior horizon false positives and short orbit: D1b vision veto.
 
 **Rationale:** The time-box exists so analysis tuning is driven by what hurts an actual edit, which S1 shows.
