@@ -798,3 +798,42 @@ Qwen3.8 on the 3090 can still take over for private footage.
 need far more output tokens than a plain VLM; `scripts/common/vision.py`
 defaults `max_tokens` to 8000 and `describe.py` treats `content: null` as an
 unparseable answer instead of crashing.
+
+---
+
+## [2026-10-13] Segment visual similarity: MobileNetV2 ONNX through cv2.dnn, not histograms
+
+**Context:** D1b needs visual similarity between quality segments so the
+director can refuse near-duplicate shots ("no two similar segments in the edit
+unless the brief asks for it, never back to back" — S1 review). Measured on the
+32 kept segments of the five bake-off clips (0067, 0072, 0081, 0083, 0091),
+same-scene vs cross-scene cosine gap as the score.
+
+**Options (both CPU-only, no GPU):**
+- A) **Handcrafted numpy descriptor** — HSV hue-saturation + gradient-orientation
+  + luma histograms per frame, mean over the segment's 3 frames. Zero
+  dependencies, zero download, 0.5 s for 32 segments. Same-scene 0.945 vs
+  cross-scene 0.823 (gap 0.122) — and everything lands between 0.99 and 0.5, so
+  no usable threshold. pHash (also measured) is worse: gap 0.087, only catches
+  near-identical frames.
+- B) **MobileNetV2-12 ONNX via `cv2.dnn.readNetFromONNX`** — ImageNet logits as
+  the embedding (1000-d, L2-normalised, mean over the 3 frames). No new Python
+  dependency (OpenCV 5.0.0 already ships the DNN engine), one 14 MB model file
+  downloaded once to `~/.cache/yt-pipeline/models/` (ONNX model zoo,
+  `validated/vision/classification/mobilenet`, the model is a standard release
+  artifact). 0.8 s for 32 segments. Same-scene 0.811 vs cross-scene 0.579
+  (**gap 0.232**) — nearly 2x the separation of the histogram.
+
+**Decision:** B, with A kept as the offline/no-model fallback backend of the
+same tool (`similarity.py --backend {mobilenet,hist}`; tests run on `hist`, the
+default is `mobilenet`). Adjacent cave segments of 0081 score 0.93–0.97 and the
+tunnel approach + hold of 0072 scores 0.98 — exactly the duplicate pairs the
+S1 edit repeated. Threshold for "similar" starts at 0.90 and stays a flag.
+
+**Rationale:** The director rule needs a threshold that separates "same shot
+again" from "same trip, different shot"; only the CNN embedding gives one.
+`cv2.dnn` avoids a new dependency (onnxruntime would have been the alternative,
+MIT and well-maintained, but adds nothing once OpenCV runs the same file).
+torch stays out (D0: no torch unless needed). CLIP is the upgrade path when
+text search ("serpentine at sunset") lands at D5 — it needs a ~350 MB encoder
+and is not needed for pair similarity now.

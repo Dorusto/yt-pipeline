@@ -82,12 +82,12 @@ def test_every_schema_file_is_valid_draft202012():
         jsonschema.Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
 
-@pytest.mark.parametrize("name", ["ingest", "motion", "quality", "describe"])
+@pytest.mark.parametrize("name", ["ingest", "motion", "quality", "describe", "similarity"])
 def test_analysis_fixtures_validate(name):
     assert schema.validate(load(f"{name}_valid.json"), name) == []
 
 
-@pytest.mark.parametrize("name", ["ingest", "motion", "quality", "describe"])
+@pytest.mark.parametrize("name", ["ingest", "motion", "quality", "describe", "similarity"])
 def test_analysis_schemas_reject_missing_required(name):
     assert schema.validate({}, name)
 
@@ -111,7 +111,7 @@ def test_quality_rejects_unknown_defect():
 
 
 def test_analysis_schemas_allow_extra_fields():
-    for name in ("ingest", "motion", "quality", "describe"):
+    for name in ("ingest", "motion", "quality", "describe", "similarity"):
         data = load(f"{name}_valid.json")
         data["director_note"] = "anything goes"
         assert schema.validate(data, name) == []
@@ -133,3 +133,19 @@ def test_describe_rejects_unknown_verdict_role():
     data = load("describe_valid.json")
     data["segments"][0]["verdict"]["role"] = "junk"
     assert schema.validate(data, "describe")
+
+
+def test_similarity_fixture_passes():
+    assert schema.validate(load("similarity_valid.json"), "similarity") == []
+
+
+def test_similarity_requires_pairs_shape():
+    data = load("similarity_valid.json")
+    data["pairs"][0] = {"a": "0081/s5", "similarity": 0.5}
+    assert any("b" in e for e in schema.validate(data, "similarity"))
+
+
+def test_similarity_rejects_unknown_backend():
+    data = load("similarity_valid.json")
+    data["backend"] = "clip"
+    assert schema.validate(data, "similarity")
