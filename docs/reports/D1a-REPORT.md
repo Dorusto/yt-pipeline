@@ -18,7 +18,7 @@ and one run over all 21 test clips (688.7 s of 720p25 DJI proxies, read-only) in
 - **`scripts/ingest.py`** — folder scan: duration, fps, resolution, every stream,
   creation time (metadata, else filename) and gyro presence (DJI `djmd` metadata
   stream, single-sample timecode tracks ignored). Verified on all 21 proxies
-  (1280x72025 fps, gyro absent — proxies lost the metadata stream) **and** on the
+  (1280x720, 25 fps, gyro absent — proxies lost the metadata stream) **and** on the
   raw folder (21/21 gyro present, `stream 2: codec_tag=djmd handler='DJI meta'`),
   output valid against `schemas/ingest.schema.json`.
 - **`scripts/motion.py`** — Lucas-Kanade optical flow at 320 px / 10 fps with a

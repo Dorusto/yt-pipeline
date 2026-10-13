@@ -290,13 +290,31 @@ def intent_evidence(defects, role, speed):
     return notes
 
 
-def _position(start_s, end_s, duration_s):
-    window = min(5.0, 0.2 * duration_s)
-    if start_s < window:
-        return "head"
-    if end_s > duration_s - window:
-        return "tail"
-    return "middle"
+def _is_content_candidate(part):
+    """Return True when a part is real content for the setup/teardown placement."""
+    if part.get("move") is not None:
+        return True
+    label = part.get("label")
+    if label is not None and label not in ("static", "minor_motion"):
+        return True
+    return (
+        part.get("phase_type") == "still"
+        and (part.get("end_s", 0.0) - part.get("start_s", 0.0)) >= HOLD_MIN_SECONDS
+    )
+
+
+def _part_positions(parts, duration_s):
+    """Return head/middle/tail per part; setup/teardown only outside the content."""
+    content = [index for index, part in enumerate(parts) if _is_content_candidate(part)]
+    if content:
+        first_content = content[0]
+        last_content = content[-1]
+        return [
+            "head" if index < first_content else "tail" if index > last_content else "middle"
+            for index in range(len(parts))
+        ]
+    midpoint = duration_s / 2.0
+    return ["head" if part["start_s"] < midpoint else "tail" for part in parts]
 
 
 def _is_transition(phase_type, speed, label, steadiness, duration_s):
@@ -375,7 +393,9 @@ def assign_role(segment_facts):
         confidence = 0.65 if triggers >= 2 else 0.5
         return "teardown", confidence, ["short irregular motion at the tail of the take"]
 
-    if move is not None or phase_type in ("steady_move", "ramp_up", "ramp_down"):
+    if label != "static" and (
+        move is not None or phase_type in ("steady_move", "ramp_up", "ramp_down")
+    ):
         confidence = move["confidence"] if move is not None else 0.5
         evidence = [f"steady {label} with handles"] if move is not None else [f"motion phase {phase_type}"]
         return "move", confidence, evidence
@@ -392,6 +412,9 @@ def assign_role(segment_facts):
             return "hold", 0.55, [f"still at take {position}"]
         names = ", ".join(defect["name"] for defect in defects)
         return "hold", 0.4, [f"still, {names}"]
+
+    if label == "static":
+        return "hold", 0.4, ["no significant camera motion"]
 
     return "move", 0.4, ["unclassified motion"]
 
@@ -435,6 +458,31 @@ def _normalize_bounds(bounds, duration_s):
     return bounds
 
 
+def _merge_slivers(intervals):
+    """Fold every sub-threshold interval into a neighbour so no sliver survives."""
+    merged = []
+    for interval in intervals:
+        if merged and interval["end_s"] - interval["start_s"] < MIN_RUN_SECONDS:
+            merged[-1]["end_s"] = interval["end_s"]
+            merged[-1]["sources"].extend(interval["sources"])
+        else:
+            merged.append(interval)
+    if len(merged) > 1 and merged[0]["end_s"] - merged[0]["start_s"] < MIN_RUN_SECONDS:
+        merged[1]["start_s"] = merged[0]["start_s"]
+        merged[1]["sources"][:0] = merged[0]["sources"]
+        merged.pop(0)
+    return merged
+
+
+def _longest_source(sources, start_s, end_s):
+    """Return the source span overlapping a merged interval the most."""
+
+    def overlap(source):
+        return min(end_s, source["end_s"]) - max(start_s, source["start_s"])
+
+    return max(sources, key=overlap)
+
+
 def _frames_in(frames, start_s, end_s):
     selected = [frame for frame in frames if start_s <= frame["t"] < end_s]
     if selected or not frames:
@@ -474,9 +522,9 @@ def _part(start_s, end_s, role, confidence, evidence, phase_type, label, speed, 
     }
 
 
-def _facts(start_s, end_s, duration_s, phase_type, label, speed, steadiness, move, metrics, frames):
+def _facts(position, start_s, end_s, phase_type, label, speed, steadiness, move, metrics, frames):
     return {
-        "position": _position(start_s, end_s, duration_s),
+        "position": position,
         "duration_s": end_s - start_s,
         "phase_type": phase_type,
         "label": label,
@@ -488,6 +536,41 @@ def _facts(start_s, end_s, duration_s, phase_type, label, speed, steadiness, mov
     }
 
 
+def _drafts_to_parts(drafts, duration_s):
+    """Assign positions and roles to interval drafts and build the final parts."""
+    positions = _part_positions(drafts, duration_s)
+    parts = []
+    for draft, position in zip(drafts, positions):
+        facts = _facts(
+            position,
+            draft["start_s"],
+            draft["end_s"],
+            draft["phase_type"],
+            draft["label"],
+            draft["speed"],
+            draft["steadiness"],
+            draft["move"],
+            draft["metrics"],
+            draft["frames"],
+        )
+        role, confidence, evidence = assign_role(facts)
+        parts.append(
+            _part(
+                draft["start_s"],
+                draft["end_s"],
+                role,
+                confidence,
+                evidence,
+                draft["phase_type"],
+                draft["label"],
+                draft["speed"],
+                draft["steadiness"],
+                draft["move"],
+            )
+        )
+    return parts
+
+
 def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian, clip_median_edge):
     """Build role-assigned parts from a motion file's phases, moves and trajectory."""
     phases = motion_data.get("phases") or []
@@ -497,42 +580,41 @@ def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian,
         [[float(phase.get("start_s", 0.0)), float(phase.get("end_s", 0.0))] for phase in phases],
         duration_s,
     )
-    parts = []
-    for phase, (start_s, end_s) in zip(phases, bounds):
+    intervals = _merge_slivers(
+        [
+            {
+                "start_s": start_s,
+                "end_s": end_s,
+                "sources": [{"phase": phase, "start_s": start_s, "end_s": end_s}],
+            }
+            for phase, (start_s, end_s) in zip(phases, bounds)
+        ]
+    )
+    drafts = []
+    for interval in intervals:
+        start_s = interval["start_s"]
+        end_s = interval["end_s"]
+        phase = _longest_source(interval["sources"], start_s, end_s)["phase"]
         seg_frames = _frames_in(frames, start_s, end_s)
         shake = _window_shake(trajectory, start_s, end_s)
         horizon = segment_horizon(seg_frames, clip_median_edge)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, shake, horizon)
         move = _overlapping_move(moves, start_s, end_s)
         label = move["label"] if move is not None else phase.get("dominant_motion")
-        facts = _facts(
-            start_s,
-            end_s,
-            duration_s,
-            phase.get("type"),
-            label,
-            phase.get("speed"),
-            phase.get("steadiness"),
-            move,
-            metrics,
-            seg_frames,
+        drafts.append(
+            {
+                "start_s": start_s,
+                "end_s": end_s,
+                "phase_type": phase.get("type"),
+                "label": label,
+                "speed": phase.get("speed"),
+                "steadiness": phase.get("steadiness"),
+                "move": move,
+                "metrics": metrics,
+                "frames": seg_frames,
+            }
         )
-        role, confidence, evidence = assign_role(facts)
-        parts.append(
-            _part(
-                start_s,
-                end_s,
-                role,
-                confidence,
-                evidence,
-                phase.get("type"),
-                label,
-                phase.get("speed"),
-                phase.get("steadiness"),
-                move,
-            )
-        )
-    return parts
+    return _drafts_to_parts(drafts, duration_s)
 
 
 def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacian, clip_median_edge):
@@ -557,18 +639,39 @@ def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacia
     bounds = _normalize_bounds(
         [[start / effective_fps, end / effective_fps] for _, start, end in runs], duration_s
     )
-    parts = []
-    for (value, _, _), (start_s, end_s) in zip(runs, bounds):
+    intervals = _merge_slivers(
+        [
+            {
+                "start_s": start_s,
+                "end_s": end_s,
+                "sources": [{"value": value, "start_s": start_s, "end_s": end_s}],
+            }
+            for (value, _, _), (start_s, end_s) in zip(runs, bounds)
+        ]
+    )
+    drafts = []
+    for interval in intervals:
+        start_s = interval["start_s"]
+        end_s = interval["end_s"]
+        value = _longest_source(interval["sources"], start_s, end_s)["value"]
         phase_type = "still" if value == "still" else "irregular"
         seg_frames = _frames_in(frames, start_s, end_s)
         horizon = segment_horizon(seg_frames, clip_median_edge)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, 0.0, horizon)
-        facts = _facts(start_s, end_s, duration_s, phase_type, None, None, None, None, metrics, seg_frames)
-        role, confidence, evidence = assign_role(facts)
-        parts.append(
-            _part(start_s, end_s, role, confidence, evidence, phase_type, None, None, None, None)
+        drafts.append(
+            {
+                "start_s": start_s,
+                "end_s": end_s,
+                "phase_type": phase_type,
+                "label": None,
+                "speed": None,
+                "steadiness": None,
+                "move": None,
+                "metrics": metrics,
+                "frames": seg_frames,
+            }
         )
-    return parts
+    return _drafts_to_parts(drafts, duration_s)
 
 
 def _merge_and_assemble(parts, frames, clip_median_laplacian, clip_median_edge, trajectory):
@@ -694,6 +797,9 @@ def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320):
     segments = _merge_and_assemble(
         parts, frames, clip_median_laplacian, clip_median_edge, trajectory
     )
+    for segment in segments:
+        if segment["end_s"] <= segment["start_s"]:
+            raise QualityError(f"zero-length segment {segment['id']} in {path.name}")
     return {
         "file": path.name,
         "path": str(path.resolve()),

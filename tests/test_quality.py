@@ -100,6 +100,8 @@ def role_facts(**overrides):
 def assert_tiles(segments, duration):
     assert segments[0]["start_s"] == pytest.approx(0.0)
     assert segments[-1]["end_s"] == pytest.approx(duration)
+    for segment in segments:
+        assert segment["end_s"] > segment["start_s"]
     for previous, following in zip(segments, segments[1:]):
         assert previous["end_s"] == pytest.approx(following["start_s"])
 
@@ -211,7 +213,7 @@ def test_assign_role_fallback_move():
             position="middle",
             duration_s=0.5,
             phase_type="still",
-            label="static",
+            label=None,
             speed="slow",
             steadiness="static",
         )
@@ -219,6 +221,155 @@ def test_assign_role_fallback_move():
     assert role == "move"
     assert confidence == pytest.approx(0.4)
     assert evidence == ["unclassified motion"]
+
+
+def test_assign_role_static_label_never_move():
+    role, confidence, evidence = quality.assign_role(
+        role_facts(
+            position="middle",
+            duration_s=0.5,
+            phase_type="steady_move",
+            label="static",
+            speed="slow",
+            steadiness="static",
+        )
+    )
+    assert role == "hold"
+    assert confidence == pytest.approx(0.4)
+    assert evidence == ["no significant camera motion"]
+
+
+def test_assign_role_static_label_with_overlapping_move_stays_hold():
+    role, _, _ = quality.assign_role(
+        role_facts(position="middle", label="static", move={"confidence": 0.7, "label": "static"})
+    )
+    assert role != "move"
+
+
+def _motion(phases, moves=(), duration_s=0.0):
+    return {
+        "duration_s": duration_s,
+        "phases": [
+            {
+                "start_s": start_s,
+                "end_s": end_s,
+                "type": phase_type,
+                "dominant_motion": label,
+                "speed": speed,
+                "steadiness": steadiness,
+            }
+            for start_s, end_s, phase_type, label, speed, steadiness in phases
+        ],
+        "moves": list(moves),
+        "trajectory": [],
+    }
+
+
+def _move(start_s, end_s, label):
+    return {"id": f"m{start_s}", "start_s": start_s, "end_s": end_s, "label": label, "confidence": 0.7}
+
+
+def _frames(duration_s, sample_fps=2):
+    steps = max(1, int(duration_s * sample_fps))
+    return [
+        {
+            "t": (index + 0.5) / sample_fps,
+            "laplacian": 200.0,
+            "mean_luma": 128.0,
+            "clip_high_pct": 0.0,
+            "clip_low_pct": 0.0,
+            "obstruction": 0.0,
+            "frame_diff": 10.0,
+            "edge_angle_deg": None,
+            "edge_line_count": 0,
+        }
+        for index in range(steps)
+    ]
+
+
+def _analyse(motion, duration_s):
+    return quality.segments_from_motion(motion, duration_s, _frames(duration_s), 1.0, None)
+
+
+def test_segments_setup_cannot_follow_content_move():
+    motion = _motion(
+        [
+            (0.0, 2.0, "still", "static", "slow", "static"),
+            (2.0, 4.0, "steady_move", "pan_right", "regular", "no_shaking"),
+            (4.0, 5.0, "irregular", "complex_motion", "fast", "very_unsteady"),
+        ],
+        [_move(2.0, 4.0, "pan_right")],
+    )
+    parts = _analyse(motion, 5.0)
+    roles = [part["role"] for part in parts]
+    assert "setup" not in roles
+    assert_tiles(parts, 5.0)
+
+
+def test_segments_setup_before_content_move_at_head():
+    motion = _motion(
+        [
+            (0.0, 2.0, "irregular", "minor_motion", "regular", "unsteady"),
+            (2.0, 4.0, "steady_move", "pan_right", "regular", "no_shaking"),
+        ],
+        [_move(2.0, 4.0, "pan_right")],
+    )
+    parts = _analyse(motion, 4.0)
+    assert [part["role"] for part in parts] == ["setup", "move"]
+
+
+def test_segments_teardown_only_after_last_content():
+    motion = _motion(
+        [
+            (0.0, 2.0, "still", "static", "slow", "static"),
+            (2.0, 3.0, "irregular", "minor_motion", "regular", "unsteady"),
+            (3.0, 5.0, "steady_move", "pan_right", "regular", "no_shaking"),
+        ],
+        [_move(3.0, 5.0, "pan_right")],
+    )
+    parts = _analyse(motion, 5.0)
+    roles = [part["role"] for part in parts]
+    assert "teardown" not in roles
+    assert roles[-1] == "move"
+
+
+def test_segments_teardown_after_last_content():
+    motion = _motion(
+        [
+            (0.0, 2.0, "still", "static", "slow", "static"),
+            (2.0, 4.0, "irregular", "minor_motion", "regular", "unsteady"),
+        ]
+    )
+    parts = _analyse(motion, 4.0)
+    assert [part["role"] for part in parts] == ["hold", "teardown"]
+
+
+def test_segments_degenerate_no_content_splits_at_midpoint():
+    motion = _motion(
+        [
+            (0.0, 2.0, "irregular", "minor_motion", "regular", "unsteady"),
+            (2.0, 4.0, "irregular", "minor_motion", "regular", "unsteady"),
+            (4.0, 6.0, "irregular", "minor_motion", "regular", "unsteady"),
+        ]
+    )
+    parts = _analyse(motion, 6.0)
+    assert parts[0]["role"] == "setup"
+    assert parts[-1]["role"] == "teardown"
+
+
+def test_segments_from_motion_merges_slivers():
+    motion = _motion(
+        [
+            (0.0, 0.2, "irregular", "minor_motion", "slow", "unsteady"),
+            (0.2, 5.0, "steady_move", "pan_right", "slow", "no_shaking"),
+            (5.0, 5.1, "ramp_down", "pan_right", "slow", "no_shaking"),
+            (5.1, 10.0, "steady_move", "pan_left", "slow", "no_shaking"),
+        ]
+    )
+    parts = _analyse(motion, 10.0)
+    assert_tiles(parts, 10.0)
+    for part in parts:
+        assert part["end_s"] - part["start_s"] >= quality.MIN_RUN_SECONDS
 
 
 def test_build_defects_blur():
