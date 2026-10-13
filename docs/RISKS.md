@@ -16,3 +16,4 @@ Current state only. Each risk has an owner phase; when a mitigation ships, updat
 | 10 | **Licences**: music/SFX models, Remotion, dependencies when the project goes public or earns money | legal exposure | licence checked per model in `docs/research/rendering-and-audio.md`; choose repo licence (MIT vs AGPL) before promoting | before going public |
 | 11 | **Feedback files grow without bound** | slow loads | append-only per project, compacted into a per-user profile; size limits in DECISIONS 2026-10-14 | D3 |
 | 12 | **Doru is the bottleneck**: every checkpoint needs his eyes | phases wait | contact sheet + phone editor; short reports with ≤ 5 checks; publish gate keeps scope small | ongoing |
+| 13 | **Private material published** (footage, frames, transcripts, keys) in the public repo | irreversible leak | `scripts/check_public.py` as pre-commit hook + CI; extended `.gitignore`; GitHub push protection (switch on in settings) | in place (2026-10-14) |

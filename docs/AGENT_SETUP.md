@@ -129,6 +129,10 @@ These are git-ignored and never appear on a fresh clone: `scripts/corrections.tx
 
 When a script's arguments, outputs or behavior change, update the matching skill in `.claude/skills/` in the same change. See `CLAUDE.md`, Working rules.
 
+## 10b. Public-repo guard
+
+The repo is public. Once per clone run `git config core.hooksPath .githooks`: every commit then runs `scripts/check_public.py`, which refuses footage, images, subtitles, model weights, files over 1 MB, API keys and embedded base64 images. `python3 scripts/check_public.py --all` scans everything tracked.
+
 ## 11. Notifications (ntfy)
 
 Agents (and humans) can post a short status message to the project's ntfy topic when a phase report is ready or when blocked.

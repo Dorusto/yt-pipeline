@@ -1039,3 +1039,15 @@ important move") — but the reviewer's taste point is in the D2 report.
 - Risk register: `docs/RISKS.md`. User guide: `docs/guides/user-guide.md`.
 
 **Rationale:** Small append-only files are easy to inspect, back up and rebuild; a current-state digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state, history lives in git).
+
+---
+
+## [2026-10-14] Public-repo guard: pre-commit check, CI check, GitHub push protection
+
+**Context:** The repo is public and agents commit unattended. Nothing automatic stopped footage, frames, transcripts, model weights or API keys from being committed; only a rule in CLAUDE.md. An audit of the full history on 2026-10-14 found no media, no keys and no other emails than the author's.
+
+**Options:** A) gitleaks (MIT, secrets only, extra binary on the LXC); B) detect-secrets (Apache, secrets only, baseline file to maintain); C) small `scripts/check_public.py` (stdlib) covering secrets **and** media/subtitles/model weights/large files/base64 images, run as a git hook and in CI, plus GitHub secret scanning with push protection on the server side.
+
+**Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by Doru in the GitHub settings (the API is not available from the agents).
+
+**Rationale:** Our main risk is personal media and transcripts, which secret scanners do not look for. The hook stops it before it exists in history; CI catches a skipped hook; push protection blocks known key formats even from other machines.
