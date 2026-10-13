@@ -221,6 +221,8 @@ def _build_shot(counter, record, segment, motion, describe_segment, similarity_m
         "uncertain": uncertainty,
         "uncertain_reasons": list(segment.get("uncertain_reasons") or []),
         "description": vision.get("description") if vision else None,
+        "summary": vision.get("summary") if vision else None,
+        "tags": list(vision.get("tags") or []) if vision else [],
         "subject": vision.get("subject") if vision else None,
         "scenery": vision.get("scenery") if vision else None,
         "semantic_motion": vision.get("semantic_motion") if vision else None,
@@ -261,6 +263,8 @@ def _vision_fields(describe_segment):
         return None
     return {
         "description": describe_segment.get("description"),
+        "summary": describe_segment.get("summary"),
+        "tags": list(describe_segment.get("tags") or []),
         "subject": describe_segment.get("subject"),
         "scenery": describe_segment.get("scenery"),
         "semantic_motion": describe_segment.get("semantic_motion"),

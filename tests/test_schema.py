@@ -165,3 +165,11 @@ def test_shotlog_rejects_score_out_of_range():
     data = load("shotlog_valid.json")
     data["shots"][0]["score"] = 1.5
     assert any("score" in e for e in schema.validate(data, "shotlog"))
+
+def test_describe_described_segment_requires_summary_and_tags():
+    data = load("describe_valid.json")
+    del data["segments"][0]["summary"]
+    assert any("summary" in e for e in schema.validate(data, "describe"))
+    data = load("describe_valid.json")
+    del data["segments"][0]["tags"]
+    assert any("tags" in e for e in schema.validate(data, "describe"))

@@ -2,9 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/describe.schema.json",
   "title": "describe",
-  "description": "Vision descriptions written by scripts/describe.py per clip: one entry per quality segment, three frames in order with timestamps and the motion label sent to the VisionModel. Confident accidental/setup/teardown segments are skipped (no model call). Every uncertain segment carries a verdict from the model whose label wins in the shotlog. Frames are never written to disk — only their timestamps.",
+  "description": "Vision descriptions written by scripts/describe.py per clip: one entry per quality segment, three frames in order with timestamps and the motion label sent to the VisionModel. Confident accidental/setup/teardown segments are skipped (no model call). Every uncertain segment carries a verdict from the model whose label wins in the shotlog. Frames are never written to disk \u2014 only their timestamps.",
   "type": "object",
-  "required": ["file", "duration_s", "model", "segments"],
+  "required": [
+    "file",
+    "duration_s",
+    "model",
+    "segments"
+  ],
   "$defs": {
     "role": {
       "type": "string",
@@ -62,29 +67,48 @@
     },
     "semantic_motion": {
       "type": "string",
-      "enum": ["orbit", "tracking", "reveal", "travel", "none"],
+      "enum": [
+        "orbit",
+        "tracking",
+        "reveal",
+        "travel",
+        "none"
+      ],
       "description": "semantic camera move read from the frames; travel covers travel_forward/travel_backward, none when no semantic move applies"
     },
     "verdict": {
       "type": "object",
       "description": "the model's adjudication of an uncertain segment; its role and motion_label win in the shotlog",
-      "required": ["role", "motion_label", "confidence", "note"],
+      "required": [
+        "role",
+        "motion_label",
+        "confidence",
+        "note"
+      ],
       "properties": {
-        "role": {"$ref": "#/$defs/role"},
-        "motion_label": {"$ref": "#/$defs/motion_label"},
+        "role": {
+          "$ref": "#/$defs/role"
+        },
+        "motion_label": {
+          "$ref": "#/$defs/motion_label"
+        },
         "confidence": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
           "description": "the model's confidence in its own verdict"
         },
-        "note": {"type": "string"}
+        "note": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
     "frame": {
       "type": "object",
-      "required": ["t_s"],
+      "required": [
+        "t_s"
+      ],
       "properties": {
         "t_s": {
           "type": "number",
@@ -144,64 +168,140 @@
           "uncertain_reasons"
         ],
         "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "start_s": {"type": "number", "minimum": 0},
-          "end_s": {"type": "number", "exclusiveMinimum": 0},
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end_s": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
           "status": {
             "type": "string",
-            "enum": ["described", "skipped"],
+            "enum": [
+              "described",
+              "skipped"
+            ],
             "description": "described = the model saw the frames; skipped = no call was made"
           },
-          "role": {"$ref": "#/$defs/role"},
+          "role": {
+            "$ref": "#/$defs/role"
+          },
           "motion_label": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "the geometric label from quality, echoed as the model input"
           },
-          "uncertain": {"type": "boolean"},
+          "uncertain": {
+            "type": "boolean"
+          },
           "uncertain_reasons": {
             "type": "array",
-            "items": {"$ref": "#/$defs/uncertain_reason"}
+            "items": {
+              "$ref": "#/$defs/uncertain_reason"
+            }
           },
           "frames": {
             "type": "array",
             "minItems": 1,
             "maxItems": 8,
-            "items": {"$ref": "#/$defs/frame"}
+            "items": {
+              "$ref": "#/$defs/frame"
+            }
           },
-          "description": {"type": ["string", "null"]},
-          "subject": {"type": ["string", "null"]},
-          "scenery": {"type": ["string", "null"]},
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scenery": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "semantic_motion": {
             "oneOf": [
-              {"$ref": "#/$defs/semantic_motion"},
-              {"type": "null"}
+              {
+                "$ref": "#/$defs/semantic_motion"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "interest": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 0,
             "maximum": 100,
             "description": "how interesting the shot is on its own, 0-100"
           },
           "hero": {
-            "type": ["boolean", "null"],
+            "type": [
+              "boolean",
+              "null"
+            ],
             "description": "true when the segment is a hero shot worth structuring the edit around"
           },
           "verdict": {
             "oneOf": [
-              {"$ref": "#/$defs/verdict"},
-              {"type": "null"}
+              {
+                "$ref": "#/$defs/verdict"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "required in practice for every uncertain segment; null on confident ones"
           },
           "skip_reason": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "why no model call was made"
           },
           "cost_usd": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 0,
             "description": "cost of this segment's call"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "one-line summary of the segment in at most 12 words, for the contact sheet and the phone review; the full description stays for the LLM director"
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 8,
+            "description": "short tag list (lowercase single words or two-word phrases) for filtering and the contact sheet",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
           }
         },
         "additionalProperties": true,
@@ -209,8 +309,14 @@
           {
             "$comment": "described segments carry the model output; skipped ones carry a reason",
             "if": {
-              "properties": {"status": {"const": "described"}},
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "described"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "required": [
@@ -221,17 +327,25 @@
                 "semantic_motion",
                 "interest",
                 "hero",
-                "verdict"
+                "verdict",
+                "summary",
+                "tags"
               ]
             },
-            "else": {"required": ["skip_reason"]}
+            "else": {
+              "required": [
+                "skip_reason"
+              ]
+            }
           }
         ]
       }
     },
     "warnings": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": true

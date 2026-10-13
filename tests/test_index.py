@@ -42,6 +42,8 @@ def described_segment(
     hero=False,
     subject=None,
     description=None,
+    summary=None,
+    tags=None,
     verdict=None,
     role="hold",
     motion_label="static",
@@ -57,6 +59,8 @@ def described_segment(
         "uncertain": uncertain,
         "uncertain_reasons": [],
         "description": description,
+        "summary": summary,
+        "tags": tags or [],
         "subject": subject,
         "scenery": None,
         "semantic_motion": None,
@@ -463,3 +467,28 @@ def test_missing_quality_folder_exits_one(tmp_path, capsys):
     exit_code = index.main(["--workspace", str(tmp_path)])
     assert exit_code == 1
     assert "[error]" in capsys.readouterr().err
+
+
+def test_shot_carries_summary_and_tags(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0, role="hold", confidence=0.7)
+    describe = described_segment(
+        "s1",
+        0.0,
+        10.0,
+        interest=60,
+        summary="boat glides toward the dark mouth of a sea cave",
+        tags=["boat", "sea cave", "approach"],
+    )
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe])
+    shot = data["shots"][0]
+    assert shot["summary"] == "boat glides toward the dark mouth of a sea cave"
+    assert shot["tags"] == ["boat", "sea cave", "approach"]
+
+
+def test_shot_without_vision_has_null_summary_and_empty_tags(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0, role="hold", confidence=0.7)
+    data, _ = build(tmp_path, segments=[segment], describe_segments=None)
+    shot = data["shots"][0]
+    assert shot["summary"] is None
+    assert shot["tags"] == []
+    assert validate(data, "shotlog") == []

@@ -677,3 +677,48 @@ def test_json_summary_has_flat_keys(tmp_path):
     assert "llm_cost_usd" in summary
     assert summary["model"] == "mock/vision"
     assert summary["described"] == 1
+
+
+def test_normalize_summary_is_capped_at_twelve_words():
+    answer = describe.normalize_answer(
+        {
+            "description": "d",
+            "summary": " ".join(f"w{i}" for i in range(20)),
+            "tags": ["Boat", "boat", " Sea Cave ", "x" * 40, "sunset", "wake", "cave", "extra"],
+            "subject": "none",
+            "scenery": "s",
+            "semantic_motion": "none",
+            "interest": 50,
+            "hero": False,
+            "verdict": None,
+        }
+    )
+    assert len(answer["summary"].split()) == 12
+    assert answer["summary"] == " ".join(f"w{i}" for i in range(12))
+    assert answer["tags"] == ["boat", "sea cave", "x" * 32, "sunset", "wake", "cave"]
+    assert len(answer["tags"]) == 6
+    assert all(len(tag) <= 32 for tag in answer["tags"])
+
+
+def test_normalize_summary_and_tags_tolerate_missing_values():
+    answer = describe.normalize_answer({"description": "d"})
+    assert answer["summary"] is None
+    assert answer["tags"] == []
+
+
+def test_described_segment_carries_summary_and_tags(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 4.0, "hold", motion_label="static", uncertain=False)],
+    )
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    seg = data["segments"][0]
+    assert seg["status"] == "described"
+    assert seg["summary"] and len(seg["summary"].split()) <= 12
+    assert isinstance(seg["tags"], list) and seg["tags"]
+    assert validate(data, "describe") == []
