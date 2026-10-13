@@ -645,7 +645,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** Close D1a and start S1. Known issues carried as notes, not as another D1a round:
 - Scene events report many near-zero "subject_enters/leaves" (0072 has 11); the eval scores event recall only. S1 adds precision to `eval_labels.py` and a noise floor to events.
 - Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so Doru can spot overfitting while watching the recap.
-- 0067 travel_backward (stern-facing camera, see the ground-truth note): measure scale/radial flow on the shore regions and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
+- 0067 travel_backward (stern-facing camera, see the ground-truth note): measure radial contraction toward the vanishing point on the shore regions (the shores of the strait converge toward the centre) and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
 - 0081 interior horizon false positives and short orbit: D1b vision veto.
 
 **Rationale:** The time-box exists so analysis tuning is driven by what hurts an actual edit, which S1 shows.
@@ -735,3 +735,30 @@ tolerance to the test set.
 
 **Rationale:** A false-positive detector must not score 1.00; the noise-floor
 half of the same carry-over exists precisely because precision was invisible.
+
+---
+
+## [2026-10-13] No more hand rules per special case: `uncertain` labels go to vision; editor corrections grow the ground truth
+
+**Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. Doru: there will be many such shots; each would need another rule.
+
+**Decision:**
+- `motion` and `quality` attach a `confidence` to each label and emit `uncertain` when their signals disagree or the frame has large self-moving regions (wake, traffic, water). In D1b, `describe` adjudicates every `uncertain` segment and its label wins in `shotlog.json`. Geometry measures; it does not guess.
+- In D3, every label Doru corrects in the web editor is appended to the ground-truth set, so `eval_labels.py` scores against real footage that grows with use.
+- New hand-written geometric rules are added only when a case recurs and the eval shows it hurts edits.
+
+**Rationale:** Matches CameraBench (geometry for primitives, VLMs for semantics) and turns the long tail of special cases into data instead of code. Gyro from SD-card originals remains the upgrade for rotation.
+
+---
+
+## [2026-10-13] S1 review: content score, diversity and shot length go into D1b
+
+**Context:** Doru watched the S1 recap (85 s, 18 slots, labels only, no vision). Verdict: static shots are chosen very well; some shots are too long, others too short; near-duplicate shots appear, sometimes after a gap; the best moments (orbit 0091, approaching boat 0083, cave 0081, tunnel 0072) are missing because the director only knows "stable", not "beautiful".
+
+**Decision:** D1b delivers, besides `describe` + `index` + the vision bake-off:
+- a content score per segment from the vision model (subject, scenery, interest, "hero shot" flag) feeding the shotlog score;
+- visual similarity between segments (image embeddings, choice by DECISIONS entry with at least two options) and a director rule: no two similar segments in the edit unless the brief asks for it, never back to back;
+- shot length from pacing and content: holds and moves get a target length from the brief's pace (calm vs energetic) and a min/max, cut inside the steady range;
+- the D1b checkpoint artifact is a re-rendered recap with the same brief, compared with S1.
+
+**Rationale:** S1 showed that the remaining errors in motion labels hurt the edit far less than the absence of content understanding, repetition and uneven pacing.

@@ -12,7 +12,7 @@ clips:
   "0067":
     summary: Behind the boat, moving away from the mountain; near mountains left and right give parallax.
     segments:
-      - {start: "00:00", end: "00:30", expect_move: travel_backward, platform: boat, horizon: level, note: "parallax from the closer mountains on both sides. Doru 2026-10-13: plain linear travel, camera at the stern facing backwards. The far mountain barely changes scale; the near shores on both sides slide out toward the frame edges and the wake fills the lower third with water that moves on its own, so global scale flow is near zero and the wake is not a valid flow region"}
+      - {start: "00:00", end: "00:30", expect_move: travel_backward, platform: boat, horizon: level, note: "parallax from the closer mountains on both sides. Doru 2026-10-13: plain linear travel, camera at the stern facing backwards. The far mountain barely changes scale; we pass through a strait, so the shores on both sides converge toward the vanishing point in the centre (radial contraction, the signature of travel_backward) and the wake fills the lower third with water that moves on its own, so global scale flow is near zero and the wake is not a valid flow region"}
       - {start: "00:30", end: "00:44", expect_move: pan_left, platform: boat, horizon: level, note: "turn to watch the left mountain slide past; a bus on the left moves at about the boat's speed"}
       - {start: "00:44", end: "00:55", expect_move: pan_right, platform: boat, horizon: level, note: "same effect to the right; a boat and the mountain recede"}
 
