@@ -21,6 +21,9 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | D3 | Web UI v1 | 🔲 |
 | D4 | Mode B on the same index (fillers, chapters, Shorts ranking) | 🔲 |
 | D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 |
+| D6 | Packaging and publishing: Remotion, thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 |
+
+**Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
 Milestones 2–7 below are the older plan for the finished-clip pipeline. Where a D-phase covers the same ground (Milestone 7 → D4), the D-phase wins; the rest stay as they are.
 
