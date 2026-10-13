@@ -55,15 +55,57 @@ def make_black_clip(path, seconds=3, width=64, height=48, fps=25):
     return write_video(path, [frame for _ in range(seconds * fps)], (width, height), fps)
 
 
-def tilted_dashes_frame(width=320, height=240, angle_deg=10.0, spacing=10, length=40, thickness=3):
+def horizon_lines_frame(width=320, height=240, angle_deg=0.0, count=3, thickness=3):
     gray = np.zeros((height, width), dtype=np.uint8)
+    segment_length = int(width * 0.28)
+    gap = int(width * 0.08)
+    total = count * segment_length + (count - 1) * gap
+    start_x = (width - total) // 2
+    slope = math.tan(math.radians(angle_deg))
+    center_y = height // 2
+    for index in range(count):
+        x0 = start_x + index * (segment_length + gap)
+        x1 = x0 + segment_length
+        y0 = int(round(center_y - slope * (x0 - width / 2)))
+        y1 = int(round(center_y - slope * (x1 - width / 2)))
+        cv2.line(gray, (x0, y0), (x1, y1), 255, thickness)
+    return gray
+
+
+def steep_lines_frame(width=320, height=240, angles=(45.0, 60.0, 30.0), thickness=3):
+    gray = np.zeros((height, width), dtype=np.uint8)
+    for index, angle_deg in enumerate(angles):
+        angle = math.radians(angle_deg)
+        length = int(height / math.sin(angle))
+        x0 = int(width * (index + 1) / (len(angles) + 1))
+        x1 = int(round(x0 + math.cos(angle) * length))
+        y1 = int(round(math.sin(angle) * length))
+        cv2.line(gray, (x0, 0), (x1, y1), 255, thickness)
+    return gray
+
+
+def short_dashes_frame(width=320, height=240, angle_deg=0.0, spacing=20, length_frac=0.1, thickness=3):
+    gray = np.zeros((height, width), dtype=np.uint8)
+    length = int(width * length_frac)
     angle = math.radians(angle_deg)
-    dx, dy = math.cos(angle), math.sin(angle)
-    for y0 in range(-20, height + 20, spacing):
-        for x0 in range(-length, width + length, length * 2):
-            start = (int(round(x0)), int(round(y0)))
-            end = (int(round(x0 + dx * length)), int(round(y0 + dy * length)))
-            cv2.line(gray, start, end, 255, thickness)
+    for y0 in range(20, height, spacing):
+        for x0 in range(0, width, length * 3):
+            x1 = x0 + length
+            y1 = int(round(y0 - math.tan(angle) * length))
+            cv2.line(gray, (x0, y0), (x1, y1), 255, thickness)
+    return gray
+
+
+def scattered_lines_frame(width=320, height=240, angles=(-12.0, 0.0, 12.0), thickness=3):
+    gray = np.zeros((height, width), dtype=np.uint8)
+    length = int(width * 0.8)
+    for index, angle_deg in enumerate(angles):
+        angle = math.radians(angle_deg)
+        y0 = int(height * (index + 1) / (len(angles) + 1))
+        x0 = (width - length) // 2
+        x1 = x0 + length
+        y1 = int(round(y0 - math.tan(angle) * length))
+        cv2.line(gray, (x0, y0), (x1, y1), 255, thickness)
     return gray
 
 
@@ -280,15 +322,14 @@ def _frames(duration_s, sample_fps=2):
             "clip_low_pct": 0.0,
             "obstruction": 0.0,
             "frame_diff": 10.0,
-            "edge_angle_deg": None,
-            "edge_line_count": 0,
+            "horizon_deg": None,
         }
         for index in range(steps)
     ]
 
 
 def _analyse(motion, duration_s):
-    return quality.segments_from_motion(motion, duration_s, _frames(duration_s), 1.0, None)
+    return quality.segments_from_motion(motion, duration_s, _frames(duration_s), 1.0)
 
 
 def test_segments_setup_cannot_follow_content_move():
@@ -394,43 +435,88 @@ def test_build_defects_obstruction():
     assert any(defect["name"] == "obstruction" for defect in defects)
 
 
-def test_build_defects_horizon_on_hold():
-    defects = quality.build_defects(clean_metrics(horizon_deg=3.0), role="hold")
+def test_build_defects_horizon_above_threshold():
+    defects = quality.build_defects(clean_metrics(horizon_deg=8.0))
     horizon = [defect for defect in defects if defect["name"] == "horizon"]
     assert len(horizon) == 1
-    assert horizon[0]["value"] == pytest.approx(0.6)
+    assert horizon[0]["value"] == pytest.approx(8.0 / 15.0)
 
 
-def test_measure_frame_edge_angle_on_tilted_dashes():
-    for drawn in (0.0, 5.0, 10.0, -8.0):
-        result = quality.measure_frame(tilted_dashes_frame(angle_deg=drawn))
-        assert result["edge_angle_deg"] is not None
-        assert result["edge_line_count"] >= 30
-        assert result["edge_angle_deg"] == pytest.approx(drawn, abs=2.0)
+def test_build_defects_level_horizon_is_clean():
+    assert quality.build_defects(clean_metrics(horizon_deg=4.9)) == []
 
 
-def test_measure_frame_edge_angle_none_without_lines():
+def test_build_defects_null_horizon_is_clean():
+    assert quality.build_defects(clean_metrics(horizon_deg=None)) == []
+
+
+def test_measure_frame_horizon_level():
+    result = quality.measure_frame(horizon_lines_frame(angle_deg=0.0))
+    assert result["horizon_deg"] == pytest.approx(0.0, abs=2.0)
+    assert quality.build_defects(clean_metrics(horizon_deg=result["horizon_deg"])) == []
+
+
+def test_measure_frame_horizon_rolled_reports_tilt_and_defect():
+    result = quality.measure_frame(horizon_lines_frame(angle_deg=8.0))
+    assert result["horizon_deg"] == pytest.approx(8.0, abs=2.0)
+    defects = quality.build_defects(clean_metrics(horizon_deg=result["horizon_deg"]))
+    horizon = [defect for defect in defects if defect["name"] == "horizon"]
+    assert len(horizon) == 1
+    assert horizon[0]["value"] > 0
+
+
+def test_measure_frame_horizon_steep_diagonals_abstain():
+    result = quality.measure_frame(steep_lines_frame())
+    assert result["horizon_deg"] is None
+    assert quality.build_defects(clean_metrics(horizon_deg=result["horizon_deg"])) == []
+
+
+def test_measure_frame_horizon_short_dashes_abstain():
+    result = quality.measure_frame(short_dashes_frame())
+    assert result["horizon_deg"] is None
+
+
+def test_measure_frame_horizon_scattered_angles_abstain():
+    result = quality.measure_frame(scattered_lines_frame())
+    assert result["horizon_deg"] is None
+
+
+def test_measure_frame_horizon_none_without_lines():
     result = quality.measure_frame(np.zeros((240, 320), dtype=np.uint8))
-    assert result["edge_angle_deg"] is None
-    assert result["edge_line_count"] < 30
+    assert result["horizon_deg"] is None
 
 
-def test_segment_horizon_relative_to_clip_median():
-    frames = [
-        {"edge_angle_deg": 2.0},
-        {"edge_angle_deg": 4.0},
-        {"edge_angle_deg": 6.0},
-    ]
-    clip_median = quality.clip_edge_reference(frames)
-    assert clip_median == pytest.approx(4.0)
-    assert quality.segment_horizon(frames[:1], clip_median) == pytest.approx(-2.0)
-    assert quality.segment_horizon(frames[2:], clip_median) == pytest.approx(2.0)
+def test_segment_horizon_all_missing_is_null():
+    frames = _frames(1.0)
+    horizon = quality.segment_horizon(frames)
+    assert horizon is None
+    metrics = quality.segment_metrics(frames, 1.0, 0.0, horizon)
+    assert metrics["horizon_deg"] is None
+    assert quality.build_defects(metrics) == []
 
 
-def test_segment_horizon_without_measurement_is_zero():
-    frames = [{"edge_angle_deg": None}, {"edge_angle_deg": None}]
-    assert quality.clip_edge_reference(frames) is None
-    assert quality.segment_horizon(frames, None) == 0.0
+def test_segment_horizon_means_measured_frames():
+    frames = [{"horizon_deg": 2.0}, {"horizon_deg": None}, {"horizon_deg": 4.0}]
+    assert quality.segment_horizon(frames) == pytest.approx(3.0)
+
+
+def test_null_horizon_passes_schema():
+    instance = {
+        "file": "clip.mp4",
+        "duration_s": 1.0,
+        "segments": [
+            {
+                "id": "s1",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "role": "hold",
+                "confidence": 0.5,
+                "defects": [],
+                "metrics": {"horizon_deg": None},
+            }
+        ],
+    }
+    assert validate(instance, "quality") == []
 
 
 def test_hold_with_obstruction_does_not_say_clean():

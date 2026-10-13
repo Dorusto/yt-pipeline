@@ -132,8 +132,8 @@
                 "description": "share of the frame that is large, low-detail and static"
               },
               "horizon_deg": {
-                "type": "number",
-                "description": "roll offset of the horizon in degrees, meaningful on holds"
+                "type": ["number", "null"],
+                "description": "roll offset of the horizon in degrees, measured from a dominant long near-horizontal line (the sea/sky boundary); null when no such line is found instead of a guess from arbitrary edges"
               }
             },
             "additionalProperties": true

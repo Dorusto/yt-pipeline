@@ -8,8 +8,8 @@ Usage:
 
 INPUT is one video file or a folder scanned non-recursively for ``.mp4``,
 ``.mov`` and ``.m4v`` files. Sampled frames are measured for blur, exposure,
-obstruction and frame difference; a matching ``motion/<stem>.json`` in the
-workspace drives segmentation and carries the camera label and shake. Every
+obstruction, frame difference and horizon; a matching ``motion/<stem>.json`` in
+the workspace drives segmentation and carries the camera label and shake. Every
 segment gets a role (move, hold, transition_in, transition_out, setup,
 teardown, accidental) with a confidence and the measured defects. Labels only:
 nothing is ever deleted, cut or trimmed here. Each clip becomes
@@ -38,7 +38,10 @@ FLAT_STD = 6.0
 STATIC_DIFF = 3.0
 FRAME_DIFF_STILL = 2.0
 MIN_RUN_SECONDS = 0.5
-EDGE_MIN_LINES = 30
+HORIZON_MAX_ANGLE = 15.0
+HORIZON_MIN_LENGTH_FRAC = 0.25
+HORIZON_MIN_LONG_LINES = 3
+HORIZON_MAD_MAX = 3.0
 
 ACCIDENTAL_MIN_SECONDS = 2.0
 OBSTRUCTION_ACCIDENTAL = 0.6
@@ -57,8 +60,8 @@ BLUR_REL = 0.5
 SHAKE_MIN = 0.03
 SHAKE_FULL = 0.15
 OBSTRUCTION_MIN = 0.25
-HORIZON_MIN = 1.5
-HORIZON_FULL = 5.0
+HORIZON_MIN = 5.0
+HORIZON_FULL = 15.0
 HIGH_PCT = 5.0
 LOW_PCT = 10.0
 LUMA_LOW = 40.0
@@ -120,24 +123,50 @@ def _dedup(items):
     return result
 
 
-def _edge_angle(gray):
-    """Median angle of the frame's dominant edges relative to horizontal, or None."""
+def _horizon_angle(gray):
+    """Median signed roll of the frame's dominant long near-horizontal lines, or None.
+
+    Positive means the right end of the line is higher on screen; 0 is level.
+    Returns None when no dominant sea/sky line is found instead of guessing from
+    arbitrary edges.
+    """
+    width = gray.shape[1]
+    min_length = HORIZON_MIN_LENGTH_FRAC * width
     edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLines(edges, 1, np.pi / 360, 60)
+    lines = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 180,
+        threshold=60,
+        minLineLength=int(min_length),
+        maxLineGap=20,
+    )
     if lines is None:
-        return None, 0
+        return None
     angles = []
-    for line in lines:
-        theta = float(line[0][1])
-        deg = math.degrees(theta) - 90.0
-        angles.append((deg + 90.0) % 180.0 - 90.0)
-    if len(angles) < EDGE_MIN_LINES:
-        return None, len(angles)
-    return float(np.median(angles)), len(angles)
+    for x1, y1, x2, y2 in lines:
+        if x1 > x2:
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        dx = x2 - x1
+        if dx == 0:
+            continue
+        if math.hypot(dx, y2 - y1) < min_length:
+            continue
+        angle = math.degrees(math.atan2(y1 - y2, dx))
+        if abs(angle) > HORIZON_MAX_ANGLE:
+            continue
+        angles.append(angle)
+    if len(angles) < HORIZON_MIN_LONG_LINES:
+        return None
+    median = float(np.median(angles))
+    mad = float(np.median([abs(angle - median) for angle in angles]))
+    if mad > HORIZON_MAD_MAX:
+        return None
+    return median
 
 
 def measure_frame(gray, prev_gray=None):
-    """Measure blur, exposure, obstruction, frame difference and edge angle on one gray frame."""
+    """Measure blur, exposure, obstruction, frame difference and horizon on one gray frame."""
     laplacian = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     mean_luma = float(gray.mean())
     clip_high_pct = float((gray >= 250).mean() * 100.0)
@@ -154,7 +183,7 @@ def measure_frame(gray, prev_gray=None):
         diff = np.abs(gray_float - prev_gray.astype(np.float32))
         obstruction = float(np.mean(flat & (diff <= STATIC_DIFF)))
         frame_diff = float(diff.mean())
-    edge_angle_deg, edge_line_count = _edge_angle(gray)
+    horizon_deg = _horizon_angle(gray)
     return {
         "laplacian": laplacian,
         "mean_luma": mean_luma,
@@ -162,8 +191,7 @@ def measure_frame(gray, prev_gray=None):
         "clip_low_pct": clip_low_pct,
         "obstruction": obstruction,
         "frame_diff": frame_diff,
-        "edge_angle_deg": edge_angle_deg,
-        "edge_line_count": edge_line_count,
+        "horizon_deg": horizon_deg,
     }
 
 
@@ -188,7 +216,7 @@ def aggregate_frames(frames):
     }
 
 
-def segment_metrics(frames, clip_median_laplacian, shake=0.0, horizon_deg=0.0):
+def segment_metrics(frames, clip_median_laplacian, shake=0.0, horizon_deg=None):
     """Aggregate a segment's frames into the raw metrics written to the output."""
     means = aggregate_frames(frames)
     if clip_median_laplacian > 0:
@@ -206,18 +234,12 @@ def segment_metrics(frames, clip_median_laplacian, shake=0.0, horizon_deg=0.0):
     }
 
 
-def clip_edge_reference(frames):
-    """Median measured edge angle over the clip's sampled frames, or None."""
-    measured = [frame["edge_angle_deg"] for frame in frames if frame.get("edge_angle_deg") is not None]
-    return _median(measured) if measured else None
-
-
-def segment_horizon(frames, clip_median_edge):
-    """Mean edge angle of a segment's measured frames relative to the clip median."""
-    measured = [frame["edge_angle_deg"] for frame in frames if frame.get("edge_angle_deg") is not None]
-    if not measured or clip_median_edge is None:
-        return 0.0
-    return _mean(measured) - clip_median_edge
+def segment_horizon(frames):
+    """Mean measured horizon roll over a segment's frames, or None when none measured."""
+    measured = [frame["horizon_deg"] for frame in frames if frame.get("horizon_deg") is not None]
+    if not measured:
+        return None
+    return _mean(measured)
 
 
 def _exposure_defect(metrics):
@@ -265,8 +287,8 @@ def build_defects(metrics, role=None, label=None, speed=None):
                 "detail": f"obstruction {obstruction:.2f} of frame",
             }
         )
-    horizon = metrics.get("horizon_deg", 0.0)
-    if abs(horizon) >= HORIZON_MIN and (role == "hold" or label == "static"):
+    horizon = metrics.get("horizon_deg")
+    if horizon is not None and abs(horizon) > HORIZON_MIN:
         defects.append(
             {
                 "name": "horizon",
@@ -571,7 +593,7 @@ def _drafts_to_parts(drafts, duration_s):
     return parts
 
 
-def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian, clip_median_edge):
+def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian):
     """Build role-assigned parts from a motion file's phases, moves and trajectory."""
     phases = motion_data.get("phases") or []
     trajectory = motion_data.get("trajectory") or []
@@ -597,7 +619,7 @@ def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian,
         phase = _longest_source(interval["sources"], start_s, end_s)["phase"]
         seg_frames = _frames_in(frames, start_s, end_s)
         shake = _window_shake(trajectory, start_s, end_s)
-        horizon = segment_horizon(seg_frames, clip_median_edge)
+        horizon = segment_horizon(seg_frames)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, shake, horizon)
         move = _overlapping_move(moves, start_s, end_s)
         label = move["label"] if move is not None else phase.get("dominant_motion")
@@ -617,7 +639,7 @@ def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian,
     return _drafts_to_parts(drafts, duration_s)
 
 
-def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacian, clip_median_edge):
+def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacian):
     """Build role-assigned parts from coarse still/moving runs of the frame-diff series."""
     if not frames:
         return [
@@ -656,7 +678,7 @@ def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacia
         value = _longest_source(interval["sources"], start_s, end_s)["value"]
         phase_type = "still" if value == "still" else "irregular"
         seg_frames = _frames_in(frames, start_s, end_s)
-        horizon = segment_horizon(seg_frames, clip_median_edge)
+        horizon = segment_horizon(seg_frames)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, 0.0, horizon)
         drafts.append(
             {
@@ -674,7 +696,7 @@ def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacia
     return _drafts_to_parts(drafts, duration_s)
 
 
-def _merge_and_assemble(parts, frames, clip_median_laplacian, clip_median_edge, trajectory):
+def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory):
     merged = []
     for part in parts:
         if merged and merged[-1]["role"] == part["role"]:
@@ -700,7 +722,7 @@ def _merge_and_assemble(parts, frames, clip_median_laplacian, clip_median_edge, 
         speed = longest["speed"]
         seg_frames = _frames_in(frames, item["start_s"], item["end_s"])
         shake = _window_shake(trajectory, item["start_s"], item["end_s"]) if trajectory else 0.0
-        horizon = segment_horizon(seg_frames, clip_median_edge)
+        horizon = segment_horizon(seg_frames)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, shake, horizon)
         defects = build_defects(metrics, item["role"], label, speed)
         evidence = _dedup(item["evidence"] + intent_evidence(defects, item["role"], speed))
@@ -778,25 +800,18 @@ def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320):
     if duration_s <= 0 and frames:
         duration_s = frames[-1]["t"] + 1.0 / effective_fps
     clip_median_laplacian = _median([frame["laplacian"] for frame in frames])
-    clip_median_edge = clip_edge_reference(frames)
     warnings = []
     motion_data, motion_file, motion_warning = _load_motion(motion_path)
     if motion_warning is not None:
         warnings.append(motion_warning)
     if motion_data is not None:
-        parts = segments_from_motion(
-            motion_data, duration_s, frames, clip_median_laplacian, clip_median_edge
-        )
+        parts = segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian)
         trajectory = motion_data.get("trajectory") or []
     else:
-        parts = segments_from_frames(
-            frames, duration_s, effective_fps, clip_median_laplacian, clip_median_edge
-        )
+        parts = segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacian)
         trajectory = None
         warnings.append("no motion file; segments are coarse")
-    segments = _merge_and_assemble(
-        parts, frames, clip_median_laplacian, clip_median_edge, trajectory
-    )
+    segments = _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory)
     for segment in segments:
         if segment["end_s"] <= segment["start_s"]:
             raise QualityError(f"zero-length segment {segment['id']} in {path.name}")
