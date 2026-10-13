@@ -248,6 +248,10 @@ def describe_segments(record, clip_path, model, model_id, base_prompt, frame_wid
         segment_cost = response.cost_usd
         answer = parse_answer(response.text)
         if answer is None:
+            retry_answer, retry_cost = _retry_parse(model, request, state)
+            segment_cost += retry_cost
+            answer = retry_answer
+        if answer is None:
             warnings.append(f"{record['file']} {segment['id']}: unparseable model output")
             segments.append(_skipped_segment(segment, "unparseable model output", segment_cost))
             continue
@@ -401,6 +405,19 @@ def main(argv=None):
             f"{summary['wall_time_s']}s"
         )
     return exit_code
+
+
+def _retry_parse(model, request, state):
+    """Retry once for an unparseable answer; return the parsed answer or None plus the cost."""
+    if not _calls_available(state):
+        state.stop_reason = "max_calls"
+        return None, 0.0
+    try:
+        retry = _call_model(model, request, state)
+    except BudgetExceeded:
+        state.stop_reason = "budget_exceeded"
+        return None, 0.0
+    return parse_answer(retry.text), retry.cost_usd
 
 
 def _retry_verdict(model, request, state, normalized, warnings, record, segment):

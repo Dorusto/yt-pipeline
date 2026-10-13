@@ -142,6 +142,38 @@ class NoneTextModel:
         )
 
 
+class FlakyParseModel:
+    """Returns unparseable text once, then valid JSON, charging per call."""
+
+    def __init__(self, cost_per_call=0.003):
+        self.calls = []
+        self.cost_per_call = cost_per_call
+
+    def describe(self, request):
+        self.calls.append(request)
+        if len(self.calls) == 1:
+            text = "I cannot answer that."
+        else:
+            text = json.dumps(
+                {
+                    "description": "a shot",
+                    "subject": "none",
+                    "scenery": "outside",
+                    "semantic_motion": "none",
+                    "interest": 40,
+                    "hero": False,
+                    "verdict": None,
+                }
+            )
+        return VisionResponse(
+            text=text,
+            model="flaky",
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=self.cost_per_call,
+        )
+
+
 class NoVerdictThenNoneModel:
     """Returns valid JSON without a verdict, then no text on the retry."""
 
@@ -390,11 +422,34 @@ def test_unparseable_output_is_skipped_with_warning(tmp_path):
     model = BrokenModel()
     summary, code = describe.run(tmp_path, model=model, model_id="broken", config=CONFIG)
     assert code == 0
+    assert len(model.calls) == 2
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]
     assert seg["status"] == "skipped"
     assert seg["skip_reason"] == "unparseable model output"
     assert data["warnings"]
+    assert validate(data, "describe") == []
+
+
+def test_unparseable_output_retries_once_then_describes(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 4.0, "hold", motion_label="static")],
+    )
+    model = FlakyParseModel(cost_per_call=0.003)
+    summary, code = describe.run(tmp_path, model=model, model_id="flaky", config=CONFIG)
+    assert code == 0
+    assert len(model.calls) == 2
+    data = read_describe(tmp_path, "clip")
+    seg = data["segments"][0]
+    assert seg["status"] == "described"
+    assert seg["cost_usd"] == pytest.approx(0.006)
+    assert not any("unparseable" in warning for warning in data["warnings"])
+    assert data["llm_cost_usd"] == pytest.approx(0.006)
+    assert summary["llm_cost_usd"] == pytest.approx(0.006)
     assert validate(data, "describe") == []
 
 
@@ -416,12 +471,12 @@ def test_unparseable_skip_carries_call_cost(tmp_path):
     assert data["segments"][0]["status"] == "described"
     assert data["segments"][1]["status"] == "skipped"
     assert data["segments"][1]["skip_reason"] == "unparseable model output"
-    assert data["segments"][1]["cost_usd"] == pytest.approx(0.002)
+    assert data["segments"][1]["cost_usd"] == pytest.approx(0.004)
     assert data["llm_cost_usd"] == pytest.approx(
         sum(seg["cost_usd"] or 0.0 for seg in data["segments"])
     )
-    assert data["llm_cost_usd"] == pytest.approx(0.004)
-    assert summary["llm_cost_usd"] == pytest.approx(0.004)
+    assert data["llm_cost_usd"] == pytest.approx(0.006)
+    assert summary["llm_cost_usd"] == pytest.approx(0.006)
     assert validate(data, "describe") == []
 
 
@@ -436,6 +491,7 @@ def test_none_text_is_skipped_with_warning(tmp_path):
     model = NoneTextModel()
     summary, code = describe.run(tmp_path, model=model, model_id="none-text", config=CONFIG)
     assert code == 0
+    assert len(model.calls) == 2
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]
     assert seg["status"] == "skipped"

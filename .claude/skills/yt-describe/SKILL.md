@@ -37,7 +37,7 @@ The `--json` output is a single object, e.g. `{"clips": 4, "described": 4, "skip
 - `description`, `subject`, `scenery`, `semantic_motion` (`orbit`, `tracking`, `reveal`, `travel`, `none`), `interest` (0–100) and `hero` are the model's answer for a described segment.
 - `verdict` is the model's adjudication of an **uncertain** segment: `role`, `motion_label`, `confidence` (0–1) and a short `note`. Its label wins in the shotlog. On a confident segment `verdict` is always `null`. When the model returns no verdict for an uncertain segment the tool retries once; if it still fails it keeps the description and falls back to the geometric role and label with `confidence: 0.0` and a warning.
 - `cost_usd` is the cost of that segment's call (the sum of both calls when a verdict retry happened); the file's `llm_cost_usd` is the sum and `model` is the id actually used.
-- `warnings` collects non-fatal problems: unparseable model output (the segment becomes `skipped` with `skip_reason: "unparseable model output"`) and a missing verdict after the retry.
+- `warnings` collects non-fatal problems: unparseable model output, retried once with the same request (the segment becomes `skipped` with `skip_reason: "unparseable model output"` only when the retry also fails, and both calls are charged to it), and a missing verdict after the retry.
 
 ## Budget and caps
 
