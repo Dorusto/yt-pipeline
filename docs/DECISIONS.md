@@ -440,3 +440,18 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in Doru's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
 
 **Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how Doru actually films and travels.
+
+---
+
+## [2026-10-13] Agent watchdog: cron script for spend and stalls; the architect reports repeated failures
+
+**Context:** ntfy already reports permission requests, OpenCode errors, phase reports and the daily external check. It stays silent when the agent burns money in a loop, sits stuck for hours, or keeps failing audits — the cases Doru most needs to hear about while travelling.
+
+**Options:**
+- A) Parse OpenCode logs for everything
+- B) Small cron script for what can be measured from outside (OpenRouter `usage_daily` for the key, `opencode` process alive + newest file change); the architect itself reports repeated audit failures and empty coder replies, since only it knows them
+- C) Rely on the morning check
+
+**Decision:** B. `scripts/agent_watchdog.py`, every 30 minutes from a separate `master` worktree, thresholds $3/day and 2 h; one alert per problem (per UTC day / per stall episode). Architect rule: notify on the second failed audit of a task or two empty coder replies.
+
+**Rationale:** A depends on an undocumented log format that changes between OpenCode versions. C reacts up to a day late. B uses stable signals and costs nothing. A dead LXC still cannot alert itself; the morning check covers that.
