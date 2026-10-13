@@ -188,7 +188,7 @@ def write_edit(tmp_path, *extra):
 
 def shotlog_shot(
     key, clip, segment_id, start, end, eligible, score, description, reason,
-    similar_to=None, hero=None, role="hold", motion_label="static",
+    similar_to=None, hero=None, role="hold", motion_label="static", semantic_motion=None,
 ):
     return {
         "key": key,
@@ -208,6 +208,7 @@ def shotlog_shot(
         "reason": reason,
         "similar_to": similar_to or [],
         "hero": hero,
+        "semantic_motion": semantic_motion,
     }
 
 
@@ -855,3 +856,152 @@ def test_slot_labels_come_from_shotlog(tmp_path):
     slot = next(slot for slot in record["video"] if slot["clip"] == "clip_0001_x.mp4")
     assert slot["role"] == "move"
     assert slot["motion_label"] == "travel_backward"
+
+
+IMPORTANT_TARGET = 10.0
+
+
+def build_important_workspace(root, segments, moves, shots=None):
+    clips = [
+        {
+            "file": "clip_0001_x.mp4",
+            "path": "/media/clip_0001_x.mp4",
+            "duration_s": 60.0,
+            "creation_time": "2026-01-01T10:00:00",
+        },
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(root / "quality" / "clip_0001_x.json", quality_doc("clip_0001_x.mp4", 60.0, segments))
+    write_json(root / "motion" / "clip_0001_x.json", motion_doc("clip_0001_x.mp4", 60.0, moves))
+    if shots is not None:
+        write_shotlog(root, shots)
+    return root
+
+
+def run_important_edit(workspace, out, *extra):
+    result = run_director(
+        "--workspace", workspace, "--out", out, "--target-duration-s", IMPORTANT_TARGET,
+        "--pacing", "uniform", "--json", *extra,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout), json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_hero_keeps_whole_window_up_to_cap(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 6.0, "move", motion_label="pan_right")],
+        [move("m1", 0.0, 6.0, "pan_right", "regular", "no_shaking", 0.0, 6.0, 0.0, 6.0)],
+        [
+            shotlog_shot(
+                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 6.0, True, 0.9, "hero move",
+                "interest 90 · hero", hero=True, role="move", motion_label="pan_right",
+            )
+        ],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 6.0
+
+
+def test_hero_window_longer_than_cap_keeps_tail(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 20.0, "move", motion_label="pan_right")],
+        [move("m1", 0.0, 20.0, "pan_right", "regular", "no_shaking", 0.0, 20.0, 0.0, 20.0)],
+        [
+            shotlog_shot(
+                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 20.0, True, 0.9, "hero move",
+                "interest 90 · hero", hero=True, role="move", motion_label="pan_right",
+            )
+        ],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+    assert slot["out_s"] == 20.0
+
+
+def test_semantic_move_without_hero_keeps_window(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 8.4, "move", motion_label="orbit_candidate")],
+        [move("m1", 0.0, 8.4, "orbit_candidate", "regular", "no_shaking", 0.0, 8.4, 0.0, 8.4)],
+        [
+            shotlog_shot(
+                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 8.4, True, 0.9, "orbit",
+                "interest 90 · orbit", hero=False, role="move", motion_label="orbit_candidate",
+                semantic_motion="orbit",
+            )
+        ],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+    assert slot["in_s"] > 0.0
+
+
+def test_static_semantic_travel_is_not_important(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 11.0, "hold", motion_label="static")],
+        [],
+        [
+            shotlog_shot(
+                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 11.0, True, 0.9, "wake",
+                "interest 90 · travel", hero=False, role="hold", motion_label="static",
+                semantic_motion="travel",
+            )
+        ],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 2.5
+
+
+def test_hero_static_hold_kept_to_cap(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 11.0, "hold", motion_label="static")],
+        [],
+        [
+            shotlog_shot(
+                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 11.0, True, 0.9, "hero hold",
+                "interest 90 · hero", hero=True, role="hold", motion_label="static",
+            )
+        ],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+
+
+def test_orbit_candidate_without_shotlog_is_important(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 10.0, "move", motion_label="orbit_candidate")],
+        [move("m1", 0.0, 10.0, "orbit_candidate", "regular", "no_shaking", 0.0, 10.0, 0.0, 10.0)],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+
+
+def test_important_max_s_flag_is_honoured(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 10.0, "move", motion_label="orbit_candidate")],
+        [move("m1", 0.0, 10.0, "orbit_candidate", "regular", "no_shaking", 0.0, 10.0, 0.0, 10.0)],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json", "--important-max-s", 5)
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 5.0
+
+
+def test_help_lists_important_max_s():
+    result = run_director("--help")
+    assert result.returncode == 0
+    assert "--important-max-s" in result.stdout

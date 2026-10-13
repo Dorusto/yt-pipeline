@@ -56,6 +56,9 @@ MOVE_ROLES = {"move", "transition_in", "transition_out"}
 LANDING_GAP_S = 0.75
 LANDING_FLOOR_S = 0.75
 CONTIGUOUS_TOLERANCE_S = 0.5
+IMPORTANT_SEMANTIC_MOTIONS = {"orbit", "reveal", "tracking", "pov", "travel"}
+IMPORTANT_MOTION_LABELS = {"orbit", "orbit_candidate", "reveal", "tracking", "pov"}
+NON_MOVE_MOTION_LABELS = {"static", "minor_motion"}
 
 
 class DirectorError(RuntimeError):
@@ -75,6 +78,7 @@ def build_parser():
             "  python scripts/director.py --workspace ~/Videos/ws --brief \"calm start\" \\\n"
             "      --target-duration-s 90 --order chronological --pacing calm-to-energy --json\n"
             "  python scripts/director.py --workspace ~/Videos/ws --order score --pacing uniform --force\n"
+            "  python scripts/director.py --workspace ~/Videos/ws --important-max-s 8.0 --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -86,6 +90,12 @@ def build_parser():
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default="calm-to-energy")
     parser.add_argument("--min-slot-s", type=float, default=2.0, help="drop windows shorter than this")
     parser.add_argument("--max-slot-s", type=float, default=12.0, help="cap a slot at this many seconds")
+    parser.add_argument(
+        "--important-max-s",
+        type=float,
+        default=8.0,
+        help="longest a hero or semantic-move slot may be (default 8.0)",
+    )
     parser.add_argument("--calm-slot-s", type=float, default=6.0, help="target length of the opening slots in calm-to-energy")
     parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
     parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
@@ -222,6 +232,8 @@ def build_candidates(clip, clip_dt, position, content_offset, quality, motion, m
                 "out_s": float(out_s),
                 "motion_label": move.get("label") if move else segment.get("motion_label"),
                 "steadiness": move.get("steadiness") if move else ("static" if role == "hold" else None),
+                "hero": None,
+                "semantic_motion": None,
             }
         )
     return candidates, skipped_roles
@@ -501,9 +513,24 @@ def apply_overlap_guard(candidate, in_s, out_s, chosen, min_slot_s):
     return best
 
 
-def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=None):
+def is_important(candidate):
+    """True when a hero or a complete semantic move keeps its whole cut window."""
+    if candidate.get("hero"):
+        return True
+    motion_label = candidate.get("motion_label")
+    if motion_label in NON_MOVE_MOTION_LABELS:
+        return False
+    if candidate.get("semantic_motion") in IMPORTANT_SEMANTIC_MOTIONS:
+        return True
+    return motion_label in IMPORTANT_MOTION_LABELS
+
+
+def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=None, important_max_s=None):
     in_s = candidate["in_s"]
-    if candidate.get("phrase"):
+    if important_max_s is not None and is_important(candidate):
+        out_s = candidate["out_s"]
+        in_s = max(candidate["in_s"], out_s - important_max_s)
+    elif candidate.get("phrase"):
         floor = min(candidate["landing_start_s"] + LANDING_FLOOR_S, candidate["out_s"])
         out_s = clamp(in_s + duration_s, floor, candidate["out_s"])
         if out_s - in_s > duration_s:
@@ -580,7 +607,7 @@ def build_reason(slot):
     return " · ".join(deduped)
 
 
-def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s, min_slot_s, warnings, allow_similar):
+def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s, min_slot_s, warnings, allow_similar, important_max_s):
     bucket_width = max(1e-9, total_content) / n_slots
     chosen = []
     used = set()
@@ -612,7 +639,7 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
         )
         if insert_at is None:
             continue
-        slot = make_slot(best, durations[index], max_slot_s, min_slot_s, chosen, warnings)
+        slot = make_slot(best, durations[index], max_slot_s, min_slot_s, chosen, warnings, important_max_s)
         if slot is None:
             if removed is not None:
                 chosen.insert(removed[0], removed[1])
@@ -624,7 +651,7 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
     return chosen, used
 
 
-def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnings, allow_similar):
+def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnings, allow_similar, important_max_s):
     ordered = sorted(candidates, key=lambda item: (-item["score"], item["in_s"]))
     chosen = []
     used = set()
@@ -639,7 +666,7 @@ def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnin
         insert_at, removed, _ = resolve_same_take(candidate, chosen, len(chosen), warnings, len)
         if insert_at is None:
             continue
-        slot = make_slot(candidate, durations[duration_index], max_slot_s, min_slot_s, chosen, warnings)
+        slot = make_slot(candidate, durations[duration_index], max_slot_s, min_slot_s, chosen, warnings, important_max_s)
         if slot is None:
             if removed is not None:
                 chosen.insert(removed[0], removed[1])
@@ -650,7 +677,7 @@ def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnin
     return chosen, used
 
 
-def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_slot_s, order, warnings, last_target, allow_similar):
+def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_slot_s, order, warnings, last_target, allow_similar, important_max_s):
     total = sum(slot["out_s"] - slot["in_s"] for slot in chosen)
     remaining = [candidate for candidate in candidates if id(candidate) not in used]
     while remaining:
@@ -672,7 +699,7 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
         insert_at, removed, upgraded = resolve_same_take(candidate, chosen, insert_at, warnings, recompute)
         if insert_at is None:
             continue
-        slot = make_slot(candidate, last_target, max_slot_s, min_slot_s, chosen, warnings)
+        slot = make_slot(candidate, last_target, max_slot_s, min_slot_s, chosen, warnings, important_max_s)
         if slot is None:
             if removed is not None:
                 chosen.insert(removed[0], removed[1])
@@ -839,6 +866,8 @@ def run(args, started):
                 candidate["shot_reason"] = shot.get("reason")
                 candidate["shot_key"] = shot.get("key")
                 candidate["similar_to"] = list(shot.get("similar_to") or [])
+                candidate["hero"] = shot.get("hero")
+                candidate["semantic_motion"] = shot.get("semantic_motion")
             else:
                 candidate["score"] = score_candidate(candidate, args.pacing)
                 candidate["description"] = None
@@ -866,16 +895,17 @@ def run(args, started):
     if args.order == "chronological":
         slots, used = pick_chronological(
             candidates, n_slots, targets, total_content, args.max_slot_s, args.min_slot_s, warnings,
-            args.allow_similar,
+            args.allow_similar, args.important_max_s,
         )
     else:
         slots, used = pick_by_score(
-            candidates, n_slots, targets, args.max_slot_s, args.min_slot_s, warnings, args.allow_similar
+            candidates, n_slots, targets, args.max_slot_s, args.min_slot_s, warnings, args.allow_similar,
+            args.important_max_s,
         )
 
     slots = fill_to_target(
         candidates, slots, used, args.target_duration_s, args.max_slot_s, args.min_slot_s, args.order,
-        warnings, targets[-1], args.allow_similar,
+        warnings, targets[-1], args.allow_similar, args.important_max_s,
     )
     slots = merge_contiguous(slots)
 
