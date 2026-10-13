@@ -5,6 +5,216 @@ analysis tools (`ingest`, `motion`, `quality`) with skills, schemas and tests,
 and one run over all 21 test clips (688.7 s of 720p25 DJI proxies, read-only) into
 `~/media/yt-test/workspace`. No LLM cost in this phase (D1a is CPU only).
 
+**D1a-2** (2026-10-13) is the post-checkpoint round: a ground-truth eval tool and
+the fixes from [`D1a-CHECKPOINT.md`](D1a-CHECKPOINT.md), each judged by that eval.
+That section comes first; the original D1a report follows as the pre-checkpoint
+record.
+
+---
+
+# D1a-2 — eval-driven fixes after Doru's checkpoint
+
+Ground truth: [`eval/ground_truth_boat_2026-10-12.yaml`](../../eval/ground_truth_boat_2026-10-12.yaml)
+(6 clips Doru filmed). Scorer: `scripts/eval_labels.py` (`yt-eval` skill,
+`schemas/eval.schema.json`). Scores are 0..1, higher is better; a component the
+ground truth does not ask for is `-`, never 0.
+
+## Ground-truth eval: before / after
+
+| Stage | move | role | horizon | events | overall |
+|---|---|---|---|---|---|
+| **Baseline** (tools as reviewed at the checkpoint) | 0.38 | 0.00 | 0.34 | 0.00 | **0.26** |
+| After D1a-2-02 audit fixes (setup/teardown, slivers, `move · static`, ledger flock) | 0.38 | 0.00 | 0.38 | 0.00 | 0.27 |
+| After D1a-2-03 platform bob + `travel_*` labels | 0.42 | 0.00 | 0.38 | 0.00 | 0.30 |
+| After D1a-2-04 parallax, pan vs truck, `orbit_candidate` | 0.53 | 0.00 | 0.38 | 0.00 | 0.39 |
+| After D1a-2-05 horizon from the sea/sky line | 0.53 | 0.00 | 0.97 | 0.00 | 0.44 |
+| After D1a-2-06 scene activity + events | 0.53 | 0.00 | 0.97 | 1.00 | 0.52 |
+| After D1a-2-07 `accidental` for junk takes | 0.53 | 1.00 | 0.97 | 1.00 | **0.69** |
+
+Final per-clip table (`.venv/bin/python scripts/eval_labels.py --ground-truth
+eval/ground_truth_boat_2026-10-12.yaml --workspace ~/media/yt-test/workspace`):
+
+```
+clip    move  role  horizon  events  overall
+0051    -     1.00  -        -       1.00
+0067    0.00  -     0.97     -       0.48
+0072    0.39  -     -        -       0.39
+0081    0.26  -     -        -       0.26
+0083    0.98  -     -        1.00    0.99
+0091    1.00  -     -        -       1.00
+TOTAL   0.53  1.00  0.97     1.00    0.69
+```
+
+Test suite grew 188 → **261 passed** (`.venv/bin/python -m pytest -q`, offline,
+no GPU, no API key). Motion + quality re-run over all 21 clips after every fix;
+sources untouched.
+
+## Works (verified in D1a-2)
+
+- **`scripts/eval_labels.py`** (+ `yt-eval` skill, `schemas/eval.schema.json`) —
+  scores interval overlap of expected vs predicted move/role (full credit for an
+  exact label, 0.5 for a geometric look-alike such as `dolly_in` for
+  `travel_forward`), horizon false positives and event recall within ±3 s. The
+  baseline above was recorded before any fix; every fix moved the score.
+- **Audit fixes (PR #7 external audit)** — `scripts/common/llm.py` spend ledger is
+  now safe across concurrent processes (`fcntl.flock` sidecar lock, re-read before
+  the budget check; a 4-process race test drops nothing without the lock); in
+  `quality`, `setup`/`teardown` only appear before the first / after the last
+  content segment, sub-second slivers merge away and every segment asserts
+  `end_s > start_s`, and role `move` can no longer carry label `static`. The
+  report's `1280x72025 fps` typo is fixed.
+- **Platform bob + travel** (`motion`) — periodic 1.5–8 s tilt oscillation is
+  detected, subtracted before labelling and reported as `platform_bob`
+  `{period_s, amplitude}` instead of fake `tilt_up`/`tilt_down` moves; sustained
+  smooth scale flow becomes `travel_forward`/`travel_backward` with
+  `platform: vehicle`, keeping the CameraBench label in `label_geometric`.
+- **Parallax** (`motion`) — a homography residual per sample pair separates
+  rotation from translation with depth: lateral moves at `parallax >= 0.5` become
+  `truck_right`/`truck_left`, and the same signal with a quiet centre proposes
+  `orbit_candidate` (D1b confirms). Verified: 0072 `02:45–02:55` is now
+  `truck_right` (was `pan_right`), 0091 and 0081's opening are `orbit_candidate`.
+- **Horizon** (`quality`) — measured only from long (≥ 25 % of width),
+  near-horizontal (≤ 15°), angle-clustered (MAD ≤ 3°) lines; absolute tilt vs true
+  horizontal, `null` when no such line exists, defect only above 5°. 0067
+  `00:00–00:30` reports **level** (−0.45°, no defect) — the checkpoint's
+  acceptance — and the horizon score went 0.38 → 0.97.
+- **Scene activity + events** (`motion`) — residual local flow after removing the
+  global camera motion, measured on the scene band so foreground wake does not
+  dominate, aggregated into per-second `scene_activity`; `events` derived per
+  floor-level active span. 0083 (locked off, another boat entering and
+  approaching) reports `subject_enters` 00:08, `activity_peak` 00:28,
+  `activity_end` 00:35 against ground truth 00:10 / 00:32 / 00:38; neighbours
+  0082/0084 report none. A later fix made one event set per active span (0072 had
+  14 duplicates before it).
+- **`accidental`** (`quality`) — a run of unstable segments (raw shake ≥ 0.1 or
+  unsteady) with no stable move or hold becomes `accidental` when it lasts ≥ 5 s
+  or ≥ 70 % of the clip; ≥ 70 % coverage marks the whole take. 0051 is now
+  `accidental` end to end and none of the other 20 clips changed role.
+
+## Mocked / not verified
+
+- **0067 move labels are still wrong** (move score 0.00): the travel_backward /
+  pan_left / pan_right ground truth is not produced. The measured scale flow is
+  almost flat there and the pans never became moves; needs either gyro or the
+  D1b vision step. The horizon detector works on the same clip.
+- **0072 `01:46–02:43` is `complex_motion`, ground truth says `travel_forward`**
+  ("leaving the tunnel"): the geometric signal in that span is weak (mean scale
+  rate ≈ 0), so the current travel rule (sustained scale flow) cannot see it.
+- **0081 opening horizon false positives** (−9.6°/−10.9°): the shot is a boat
+  interior with no horizon line at all; long canopy/seat edges at 6–12° pass every
+  per-frame 2D filter we tried (verified on the actual frames). Documented in the
+  `yt-quality` skill; the D1b vision step is expected to veto such segments.
+- **`orbit_candidate` and `travel_*` semantics** — geometric proposals only; the
+  vision bake-off in D1b is the arbiter.
+- **Gyro/telemetry path** — still optical flow only; the raw `djmd` streams are
+  untouched for the later `telemetry-parser` upgrade.
+
+## Doru, check this
+
+- `.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace ~/media/yt-test/workspace`
+  → expect `TOTAL 0.53 1.00 0.97 1.00 0.69` (was 0.26 before the fixes).
+- The six timelines below — do they now match what you filmed? Especially 0051
+  (`accidental` everywhere) and 0083 (events at 00:08/00:28/00:35 vs your
+  00:10/00:32/00:38).
+- 0091 and 0081's opening are labelled `orbit_candidate` (as `pan_left`
+  geometrically) — is that the right call for those two shots?
+- 0067 is the one clip whose move labels are still wrong (`move 0.00`) — see the
+  timeline; tell us whether travel_backward 00:00–00:30 is even visible in the
+  image motion or whether it needs gyro/vision.
+- `git log --oneline master..d1a-motion-quality` — the D1a-2 commits (eval, audit
+  fixes, bob+travel, parallax, horizon, scene events, accidental).
+
+## New timelines — the 6 ground-truth clips
+
+Format: `MM:SS-MM:SS · role · motion label · overlapping moves (annotations) ·
+defects (0..1) ; horizon`. `⏱` lines are detected scene events. `bob` is
+`platform_bob` period; `parallax` is the homography residual score (0..1).
+
+**clip 0051** — 22 s
+- 00:00-00:01 · accidental · static · clean; horizon +0.2°
+- 00:01-00:20 · accidental · complex_motion · tilt_down · shake 0.89; horizon -2.7°
+- 00:20-00:21 · accidental · static · static, bob 3.7s · clean; horizon n/a
+
+**clip 0067** — 55 s (ground truth: travel_backward, pan_left, pan_right — not detected, see Mocked)
+- 00:00-00:35 · move · complex_motion · complex_motion, parallax 0.60 · obstruction 0.27; horizon -0.4°
+- 00:35-00:43 · hold · static · clean; horizon -0.4°
+- 00:43-00:45 · move · pan_right · shake 1.00; horizon +2.3°
+- 00:45-00:54 · hold · static · obstruction 0.29; horizon -1.8°
+- 00:54-00:54 · move · pan_left · clean; horizon n/a
+- ⏱ 00:22 · subject_enters · activity 0.0000 above floor
+- ⏱ 00:27 · activity_rise · rising activity, 0.0004 above start
+- ⏱ 00:31 · activity_peak · peak 0.0025 above floor
+- ⏱ 00:34 · subject_leaves · activity falls to -0.0002 above floor
+- ⏱ 00:43 · subject_enters · activity 0.0117 above floor
+- ⏱ 00:45 · activity_peak · peak 0.0128 above floor
+
+**clip 0072** — 176 s
+- 00:00-00:08 · move · tilt_down · dolly_out, parallax 1.00, bob 1.6s; tilt_down, parallax 0.71, bob 1.6s · clean; horizon +1.7°
+- 00:08-00:10 · hold · static · obstruction 0.25; horizon +0.7°
+- 00:10-00:18 · move · dolly_out · complex_motion, parallax 0.99, bob 3.3s; dolly_out, parallax 1.00, bob 3.3s · shake 0.24; horizon +0.6°
+- 00:18-00:20 · hold · static · shake 0.61, horizon 0.40; horizon +6.0°
+- 00:20-00:25 · move · dolly_in · dolly_in, bob 3.3s; tilt_up, parallax 0.52, bob 3.3s · clean; horizon +1.0°
+- 00:25-00:28 · hold · static · obstruction 0.29; horizon +3.9°
+- 00:28-02:42 · move · travel_forward · complex_motion, bob 1.5s; complex_motion, parallax 0.52, bob 1.5s; tilt_down, bob 1.5s; travel_forward (as dolly_in), vehicle, parallax 0.57, bob 1.5s · clean; horizon -0.5°
+- 02:42-02:45 · hold · static · shake 0.60; horizon -1.4°
+- 02:45-02:55 · move · truck_right · truck_right (as pan_right), parallax 0.72 · clean; horizon n/a
+- ⏱ 00:00 · activity_start · activity 0.0030 above floor
+- ⏱ 00:19 · activity_peak · peak 0.0160 above floor
+- ⏱ 01:11 · subject_leaves · activity falls to 0.0004 above floor
+- ⏱ 01:22 · subject_enters · activity 0.0001 above floor
+- ⏱ 01:25 · activity_peak · peak 0.0131 above floor
+- ⏱ 01:27 · subject_leaves · activity falls to 0.0005 above floor
+- ⏱ 01:31 · activity_start · activity 0.0001 above floor
+- ⏱ 01:44 · activity_peak · peak 0.0164 above floor
+- ⏱ 01:47 · subject_leaves · activity falls to -0.0006 above floor
+- ⏱ 02:25 · subject_enters · activity 0.0001 above floor
+- ⏱ 02:45 · activity_peak · peak 0.0065 above floor
+
+**clip 0081** — 108 s
+- 00:00-00:05 · move · orbit_candidate · orbit_candidate (as pan_left), parallax 0.78, bob 2.0s · horizon 0.64 defect; horizon -9.6°
+- 00:05-00:09 · hold · static · static, bob 2.0s · horizon 0.73 defect; horizon -10.9°
+- 00:09-00:11 · move · complex_motion · clean; horizon -3.6°
+- 00:11-00:20 · hold · static · clean; horizon -2.6°
+- 00:20-00:24 · move · dolly_in · dolly_in, bob 2.0s · clean; horizon -4.1°
+- 00:24-00:30 · hold · static · static, bob 2.0s · clean; horizon -1.8°
+- 00:30-00:34 · move · pan_right · pan_right, bob 2.0s · clean; horizon -0.4°
+- 00:34-00:35 · hold · static · obstruction 0.26; horizon n/a
+- 00:35-00:41 · move · dolly_in · dolly_in, parallax 0.60, bob 2.0s · obstruction 0.27; horizon -0.2°
+- 00:41-00:44 · hold · static · static, parallax 0.52, bob 2.0s · clean; horizon -0.4°
+- 00:44-00:50 · move · dolly_out · dolly_out, bob 2.0s · clean; horizon -0.3°
+- 00:50-00:51 · hold · static · static, bob 2.0s · clean; horizon -0.6°
+- 00:51-01:04 · move · dolly_in · dolly_in, parallax 0.54, bob 2.0s · clean; horizon -0.0°
+- 01:04-01:14 · hold · static · static, bob 2.0s · clean; horizon +0.6°
+- 01:14-01:48 · move · complex_motion · complex_motion, bob 2.0s; complex_motion, parallax 0.82, bob 2.0s · clean; horizon +2.0°
+- ⏱ 00:00 · activity_start · activity 0.0029 above floor
+- ⏱ 00:03 · activity_peak · peak 0.0068 above floor
+- ⏱ 00:06 · subject_leaves · activity falls to 0.0001 above floor
+
+**clip 0083** — 39 s (locked-off starboard; ground truth: hold + 3 events)
+- 00:00-00:38 · hold · static · clean; horizon +0.1°
+- ⏱ 00:08 · subject_enters · activity 0.0001 above floor
+- ⏱ 00:28 · activity_peak · peak 0.0050 above floor
+- ⏱ 00:35 · activity_end · activity falls to 0.0010 above floor
+
+**clip 0091** — 16 s (ground truth: orbit 00:05–00:12)
+- 00:00-00:02 · hold · static · static, parallax 1.00 · shake 0.37, horizon 0.48; horizon -7.2°
+- 00:02-00:15 · move · orbit_candidate · orbit_candidate (as pan_left), parallax 0.61, bob 3.4s; tilt_up, parallax 0.98, bob 3.4s · shake 0.44; horizon +3.8°
+- ⏱ 00:00 · activity_start · activity 0.0124 above floor
+- ⏱ 00:00 · activity_peak · peak 0.0124 above floor
+- ⏱ 00:04 · subject_leaves · activity falls to -0.0006 above floor
+- ⏱ 00:12 · subject_enters · activity 0.0205 above floor
+- ⏱ 00:14 · activity_peak · peak 0.0250 above floor
+
+---
+
+# D1a first round (pre-checkpoint, 2026-10-12) — historical record
+
+The sections below describe the outputs as they were when Doru reviewed them at
+the checkpoint. The per-clip timelines at the end are superseded by the D1a-2
+timelines above for the six ground-truth clips; the `move · static` line for clip
+0080 is the contradiction the PR #7 audit flagged — D1a-2 forbids role `move` on
+a `static` label, so a re-run cannot produce it again.
+
 ## Works
 
 - **Budget fixes (PR #4 review)** — `scripts/common/llm.py`: an OpenRouter response

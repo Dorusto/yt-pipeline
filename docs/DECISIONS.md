@@ -470,3 +470,108 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** A D1a-2 round before D1b: first an eval tool that scores the tools against ground-truth YAML, then platform motion, parallax (pan vs truck, orbit candidates), a horizon measured only on the sea/sky line, scene activity and events inside holds, and the `accidental` role, each judged by the eval score.
 
 **Rationale:** Without ground truth the agents verified the horizon detector with the same kind of edge measurement and confirmed its own error. A small eval set from the person who filmed the footage turns "looks plausible" into a number every later change must improve, and it grows with each new shoot.
+
+---
+
+## [2026-10-13] D1a-2: ground-truth eval tool first, every fix judged by its score
+
+**Context:** the D1a checkpoint rejected the labels on boat footage ("the tools work end to end, but the labels miss what matters") and listed seven fixes. Without a number, "looks plausible" had already confirmed the horizon detector's own error once.
+
+**Options:**
+- A) Fix the seven items directly and re-review by eye
+- B) Build `scripts/eval_labels.py` first, record a baseline score against Doru's ground-truth YAML, then require every fix to move the score
+- C) Reuse an existing video-metric framework
+
+**Decision:** B. The scorer lives in `scripts/eval_labels.py` with `schemas/eval.schema.json` and the `yt-eval` skill. Scoring: interval overlap of expected vs predicted move/role with full credit for an exact label and 0.5 for a geometric look-alike (`dolly_in` for `travel_forward`, `pan_right` for `truck_right`, `pan_*` for `orbit`); horizon false positives against `horizon: level` truth (defect or |deg| > tol counts as a tilt claim, `null` abstains and never scores as success); event recall within ±3 s. `totals.overall` is the mean of the per-clip overalls. Baseline 0.26 → final 0.69 with every intermediate step recorded in `docs/reports/D1a-REPORT.md`.
+
+**Rationale:** the eval set is small, lives in `eval/` (never with footage) and grows with each shoot; it turned seven subjective fixes into seven measurable ones. C has no ground-truth concept and would not have caught the horizon false positives.
+
+---
+
+## [2026-10-13] Platform bob is an annotation, travel is a semantic upgrade of dolly
+
+**Context:** on a boat, wave bob (period 1.5–8 s) was split into `tilt_up`/`tilt_down` moves and long smooth travel on the platform was labelled `dolly_in`/`dolly_out` — both geometrically defensible and wrong in filming language.
+
+**Options:**
+- A) `platform_bob` as a motion label replacing the tilt labels on those spans
+- B) `platform_bob` as a per-move annotation `{period_s, amplitude}` after subtracting the fitted oscillation from `dy`/`roll_deg` before labelling
+- C) Wait for the gyro path to identify platform motion
+
+**Decision:** B, plus upgrading sustained smooth scale runs (≥ 8 s, `no_shaking`/`minimal_shaking`, sign-consistent) from `dolly_in`/`dolly_out` to `travel_forward`/`travel_backward` with `platform: vehicle` and the CameraBench label kept in `label_geometric`. `amplitude` is the `dy` peak-to-peak as a fraction of frame height (no FOV guess in degrees).
+
+**Rationale:** ground truth expects `hold` where the boat bobs (`0081 00:40–01:10`) and `travel_forward` where it enters the cave — a `platform_bob` *label* would fail both; an annotation keeps the underlying camera label and still reports the oscillation instead of fake tilts. Detection thresholds (`BOB_AMPLITUDE_MIN = 0.008`, autocorrelation floor, 4 s gap bridging, per-window sinusoid fits because the period drifts) were tuned so clip 0081 is detected and the clean locked-off clip 0083 and the 0091 orbit are not. C would leave the whole proxy set blind.
+
+---
+
+## [2026-10-13] Parallax from the homography residual: pan vs truck and orbit candidates
+
+**Context:** ground truth distinguishes `truck_right` (lateral slide with parallax) from `pan_right` (rotation) and `orbit` (pan + strong parallax + subject centred); the geometric labels alone cannot.
+
+**Options:**
+- A) Leave pan/tilt/dolly as-is and push everything semantic to the D1b vision step
+- B) Per-sample homography fit on the tracked matches: pure rotation fits, translation with depth does not; median reprojection residual normalised by analysis width → `parallax` score 0..1
+- C) Gyro-derived translation (needs the raw files)
+
+**Decision:** B. `parallax = min(1, residual_norm / 0.02)` on every move (median over the steady window). Lateral moves at `parallax >= 0.5` relabel to `truck_right`/`truck_left` (25–0.5 keeps `pan_*` — a wrong truck costs more than a missed one); the same signal plus a centred-subject test (centre-box residual ≤ 0.35 × periphery) proposes `orbit_candidate` with `semantic_check: true`. Precedence: `travel_*` > `orbit_candidate` > `truck_*` > `pan_*`.
+
+**Rationale:** this is the same flow data the pipeline already computes (`cv2.findHomography`), so it costs no new dependency and no GPU; "candidate" keeps the D1b vision step as the semantic arbiter while removing the worst geometric confusions (0072 truck, 0091/0081 orbit).
+
+---
+
+## [2026-10-13] Horizon: only a dominant long near-horizontal line, else null
+
+**Context:** the D1a detector took the median angle of *all* edges and normalised against the clip median; mountain slopes and wake lines became a 5–11° tilt with a `horizon` defect on level shots, and the original "cross-check" repeated the same error. The checkpoint demands `null` when there is no sea/sky line.
+
+**Options:**
+- A) Keep edge medians, only retune thresholds
+- B) HoughLinesP candidates kept only when long (≥ 25 % of width), near-horizontal (≤ 15°) and angle-clustered (median absolute deviation ≤ 3°); median signed angle vs true horizontal; `null` otherwise; defect only above 5°
+- C) Sky-vs-water texture test around the candidate line
+
+**Decision:** B (an experimental y-intercept clustering criterion was tried and reverted: it made clip 0067 abstain and crashed the horizon score 0.97 → 0.00). The defect threshold `HORIZON_MIN = 5.0` matches the eval's default tolerance exactly, so a measured level horizon can never be a false positive there.
+
+**Rationale:** B passed the acceptance (0067 `00:00–00:30` level at −0.45°, horizon score 0.38 → 0.97). C was measured on real frames and does not separate the cases (both sides of a sea line can be textured). Known limitation, documented in the `yt-quality` skill: when no horizon is in frame at all (0081's boat interior), long parallel non-horizon edges at 6–12° can still be read as horizon — indistinguishable per-frame in 2D; the D1b vision step is expected to veto such segments.
+
+---
+
+## [2026-10-13] Scene activity from residual local flow on the scene band; events per floor-level span
+
+**Context:** a locked-off hold can contain events (0083: another boat enters and approaches) that the camera-motion labels rightly ignore. The checkpoint asks for per-second `scene_activity` and events (subject enters / approaches / leaves).
+
+**Options:**
+- A) Activity from raw frame difference (already computed for `static` detection)
+- B) Residual local flow after removing the fitted global camera motion, measured on the upper 70 % of the frame (scene band), aggregated into one-second bins; events derived per floor-level active span
+- C) Vision-model event detection (D1b)
+
+**Decision:** B, in `scripts/motion.py` (it owns the flow). The residual is computed on all tracked matches, not just the RANSAC inliers — a moving subject *is* an outlier to the global fit, so an inlier-only residual cannot see it. Event types are `activity_start`/`activity_rise`/`activity_peak`/`activity_end`, renamed to `subject_enters`/`subject_approaches`/`subject_leaves` only when the pattern is clear-cut; one event set per floor-level active span (a later fix: spans that dipped below the high threshold but not the floor re-emitted identical events — 0072 had 14 duplicates). Acceptance met: 0083 reports starts/peaks/ends at 8/28/35 s against ground truth 10/32/38 s.
+
+**Rationale:** A conflates camera motion with scene motion on a moving platform; C is the paid step and should see only what survives cheap geometry. The scene band keeps foreground wake from dominating boat footage (constant `SCENE_BAND_FRACTION = 0.7`, tuned on this set — revisit on walking footage).
+
+---
+
+## [2026-10-13] `accidental` from long chaotic runs and junk-take coverage
+
+**Context:** clip 0051 ("unusable clip, makes no sense") was labelled hold/move/hold with a `complex_motion` middle. The checkpoint wants `accidental` for a whole clip or long run with very high shake and no stable move or hold.
+
+**Options:**
+- A) Per-segment shake thresholds only (extends the existing obstruction/uniform triggers)
+- B) Run rule: maximal runs of unstable segments (raw shake ≥ 0.1 or `unsteady`/`very_unsteady`) that are not stable content (≥ 2 s, low shake, clean move/hold) become `accidental` when the run lasts ≥ 5 s or ≥ 70 % of the clip; ≥ 70 % run coverage marks the whole take
+- C) Train a junk classifier
+
+**Decision:** B. Whole-clip verdict: confidence 0.65 with `junk take: Xs of Ys has no stable move or hold`; run verdict: confidence 0.6. Healthy travel segments (shake 0.007–0.012) are stable content by construction; short shaky slivers (0060, 0064) stay under the run threshold.
+
+**Rationale:** the thresholds are grounded in the measured shake distribution (0051's middle 0.134 vs 0.007–0.012 on real moves) and only *upgrade* roles to `accidental` — labels only, never deletions. A literal "no stable content anywhere in the run" reading was tried first and would have marked deliberate mid-take moves (0072's `dolly_out` at 00:10) accidental; the unstable-AND-not-stable formulation keeps every other clip untouched.
+
+---
+
+## [2026-10-13] PR #7 audit fixes: flock on the spend ledger and quality segment hygiene
+
+**Context:** the external audit on PR #7 found four correctness issues: the spend ledger loses entries and checks the cap against a stale total under concurrency; `setup`/`teardown` fire mid-take because head/tail is a time window; sub-second slivers become segments (`end_s == start_s` allowed by the schema); and role `move` can carry label `static`.
+
+**Options:**
+- A) Fix each in place without changing contracts
+- B) Fix in place and tighten the contracts: `fcntl.flock` on a sidecar lock with re-read before check/append; head/tail defined as before the first / after the last content segment (two-pass: content candidates identified position-independently); slivers merged into a neighbour with `end_s > start_s` asserted and `end_s` `exclusiveMinimum: 0` in the schema; a `static` label can never be role `move`
+- C) Rewrite the quality segmenter
+
+**Decision:** B. The lock file is a sidecar (`llm_spend.json.lock`) because the ledger itself is replaced with `os.replace` and its inode changes. A 4-process race test shows entries lost and crashes without the lock.
+
+**Rationale:** all four are contract bugs, not modelling choices; C would throw away the two-pass role logic that the ground-truth eval is already scoring.
