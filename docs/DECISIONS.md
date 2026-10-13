@@ -898,3 +898,22 @@ answers that caused two of these gaps parse fine on a second call.
 **Rationale:** An undescribed shot is unknown, not bad and not perfect; 0.5 is
 the honest prior and it is what the interest scale means (50 = average). C
 would throw away geometry-good shots because a model call failed.
+
+---
+
+## [2026-10-13] D1b approved; Doru's recap feedback becomes the first D2 tasks
+
+**Context:** Doru watched `recap_d1b_720p.mp4` next to S1 and read the 0067 and 0081 descriptions. Verdict: shorter shots are better; descriptions are correct. Problems:
+1. A slow pan left was cut mid-move and followed by the stable shot it was landing on — a jump cut. Some static holds should be kept longer.
+2. The describe JSON is dense; hard to see what the director should choose from.
+3. The orbit at the end shows only its start; 2–2.5 s is too short for a stable, important move.
+4. He cannot tell which shots are flagged hero.
+
+**Decision (D2, first tasks):**
+- A move and the hold it lands on form one phrase: either keep the move through its landing (cut inside the hold), or use only the hold; never cut out of a move and into its own landing. Two slots from the same take need a different take between them unless they are contiguous.
+- Hero shots and complete semantic moves (orbit, reveal, travel through a cave/tunnel) get their whole steady range up to a cap (default 8 s); pacing shortening applies only to ordinary shots.
+- `describe` adds a one-line `summary` (≤ 12 words) and a short tag list; the full description stays for the LLM director.
+- `index` writes a `shotlog.html` contact sheet in the workspace (thumbnail, time range, summary, score, hero, eligibility), so Doru can review on the phone. Generated, never committed.
+- `eval_labels.py` scores the final shotlog label (verdict when present), not only the geometric one.
+
+**Rationale:** The first two are classic editing grammar (cut on completion of action; avoid same-scene jump cuts) that the rule-based director lacked. The contact sheet turns checkpoints into a phone review instead of reading JSON.
