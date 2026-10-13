@@ -52,5 +52,5 @@ no extra keys.
 ## The shot facts you get per planned shot
 
 `shot_key`, `clip`, `window_in_s`, `window_out_s`, `landing_at_s` (or null),
-`keep_whole` (from the plan), `target_s` (from the plan), `score`, `summary`,
+`keep_whole` (the shot's own flag: hero or complete semantic move), `target_s` (from the plan), `score`, `summary`,
 `role`, `motion_label`, `hero`, `similar_to`.

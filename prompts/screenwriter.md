@@ -37,9 +37,12 @@ no extra keys.
 - **Structure before slots.** Two to five beats whose `target_s` sum to the
   brief's target duration. Each beat names what it does for the story.
 - **Slots serve beats.** Every slot says which beat it serves and why. The
-  `target_s` of the slots should roughly sum to the target duration and follow
-  the pacing: calm opening, shorter and more energetic toward the end when the
-  brief asks for it.
+  `target_s` of the slots must sum to the target duration and follow the pacing:
+  calm opening, shorter and more energetic toward the end when the brief asks
+  for it. **Count every `keep_whole` slot as 8 seconds** — those keep their whole
+  window and cannot be trimmed to the pacing target — so plan fewer slots when
+  several of the best shots are keep_whole. A plan whose slots do not add up to
+  the target duration will be sent back.
 - **`keep_whole: true`** for hero shots (`hero: true`) and for complete semantic
   moves (an `orbit`, a `reveal`, a travel through a cave or a tunnel). Those keep
   their whole window up to 8 seconds instead of being trimmed to the pacing
