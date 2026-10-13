@@ -42,8 +42,8 @@ ComfyUI is a Python program: each node loads a model and passes tensors to the n
 | Tool | Job | Backends (config, not code) | License status |
 |---|---|---|---|
 | `audio_clean` | noise and wind reduction, loudness to −14 LUFS | ffmpeg `arnndn` (RNNoise model, CPU) + `loudnorm`; DeepFilterNet later if needed | free; no GPU |
-| `music` | background music from a mood/brief + target length + BPM | **YuE2** (full songs, vocals + accompaniment), **ACE-Step 1.5** (MIT; tested in ComfyUI, quality judged weak for songs, kept for instrumentals), **Stable Audio Open** (short instrumental loops) | YuE2 outputs publishable and monetisable (checked in the vault); ACE-Step MIT; Stable Audio Open free under $1M yearly revenue |
-| `sfx` | whoosh, pop, click, ambience at transitions and on keywords | 1) own catalogued library (freesound.org CC0), 2) generation with Stable Audio Open (text → sound) to fill gaps, saved back into the library | CC0 / Stable Audio licence |
+| `music` | background music from a mood/brief + target length + BPM | **YuE2** first (~3B parameters, under 8 GB VRAM, a 3.5 min song in about 2 min; writes an editable ABC score before audio, so tempo, structure and length can be set by the director), **ACE-Step 1.5** fallback only (MIT; Doru's test in ComfyUI had an audible noise floor), **Stable Audio Open** (short instrumental loops) | YuE2 outputs publishable and monetisable (checked in the vault); ACE-Step MIT; Stable Audio Open free under $1M yearly revenue |
+| `sfx` | whoosh, pop, click, ambience at transitions and on keywords (YuE2 is music only and does not make sound effects) | 1) own catalogued library (freesound.org CC0), 2) generation with Stable Audio Open (text → sound) to fill gaps, saved back into the library | CC0 / Stable Audio licence |
 | `beats` | beats, downbeats, energy of the chosen track | librosa (CPU) | ISC |
 
 **Excluded:** MusicGen and AudioGen (Meta) — weights CC-BY-NC, no monetised use. MMAudio (video → sound) — code MIT but checkpoints CC-BY-NC. HunyuanVideo-Foley — licence excludes the EU, UK and South Korea, outputs included. Revisit if licences change.
