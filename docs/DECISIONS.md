@@ -575,3 +575,77 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** B. The lock file is a sidecar (`llm_spend.json.lock`) because the ledger itself is replaced with `os.replace` and its inode changes. A 4-process race test shows entries lost and crashes without the lock.
 
 **Rationale:** all four are contract bugs, not modelling choices; C would throw away the two-pass role logic that the ground-truth eval is already scoring.
+
+---
+
+## [2026-10-13] Packaging and publishing become D6; publish gate after D2
+
+**Context:** VISION listed auto-upload and voice cloning as out of scope. Doru's vault project (`70_ai-youtube-automation-pipeline/20_TODO.md`) already plans them, with Remotion motion graphics, thumbnails with a brand kit, audio/SFX/music and PeerTube, as chunks 3–7. His own rule is not to open the next chunk before the previous one is filmed and published.
+
+**Decision:** These become phase D6, one standalone tool each, after D5. A publish gate sits after D2: once the director edits the Kotor footage on its own, the devlog clip is filmed and published before D3 starts.
+
+**Rationale:** Same tool-per-stage design, so they join without touching earlier tools. The gate keeps the build tied to published content, which is what the project exists for.
+
+---
+
+## [2026-10-13] `edit.json` is the edit list; Kdenlive becomes an optional export; render and preview from the browser
+
+**Context:** VISION principle 4 made `fragments.yaml` → Kdenlive the output of the director. Doru edits from a phone while travelling and wants to drop the dependency on a desktop editor: preview the edit and make small adjustments in the browser, final render on the homelab. He also wants automatic story graphics for tutorials and talking-head (Hasan's MIT Remotion kit as a base, paid services swapped for ours), and music/SFX without ComfyUI. Research: `docs/research/rendering-and-audio.md`.
+
+**Options:**
+- A) Keep `fragments.yaml` → Kdenlive as the main output, add an ffmpeg preview
+- B) New `edit.json` schema as the single source of truth; adapters for ffmpeg render, browser preview/light editor, graphics engine and the optional Kdenlive export (via `fragments.yaml`, reusing `kdenlive_from_fragments.py`)
+- C) Adopt OpenCut (MIT, browser editor) as the editor now
+
+**Decision:** B. Plain montage renders with ffmpeg. Graphics go through a `GraphicsEngine` interface; Remotion (free for a single creator, reuses Hasan's kit) vs HyperFrames (Apache-2.0, agent-native) is decided by a bake-off at the start of D4; Revideo (MIT) is a fallback, Motion Canvas excluded (no server render API). Music, SFX and clean-up are standalone Python tools (`audio_clean`, `music`, `sfx`, `beats`), one model loaded at a time, no ComfyUI. Excluded for licence reasons: MusicGen, AudioGen, MMAudio weights (non-commercial), HunyuanVideo-Foley (excludes the EU). A router picks the stations per brief and content type, so vacation, tutorial and talking-head share one tool.
+
+**Rationale:** One schema with many readers keeps every tool independent and lets the output side change without touching the director. Kdenlive stays one command away, so nothing proven is lost. C is not possible yet: OpenCut's rewrite is at scaffold level and has no project import API; re-evaluate when its Editor API ships. ComfyUI's value is the graph UI and VRAM management; files between tools replace the graph and "one model per process" replaces the VRAM manager.
+
+**Changes:** VISION principles 4, 6, 7, architecture, backlog, phases D2/D3/D4/D6. `fragments.yaml` stays the input format of `kdenlive_from_fragments.py`; `schemas/fragments.schema.json` is kept for that adapter.
+
+---
+
+## [2026-10-13] Time-box D1a-2, add slice S1 before D1b, and five plan additions
+
+**Context:** The plan now spans D0–D6 and about twenty tools. Doru's past projects sank in development without a deliverable. D1a-2 (motion/quality accuracy) could be polished indefinitely, yet nobody knows which analysis errors hurt an actual edit, because no edit exists yet.
+
+**Decision:**
+- D1a-2 ends at ≥ 70% correct move type on ground-truth seconds plus 0051 = `accidental`, or after one pass over its eight items; leftovers become known issues.
+- New slice **S1** after the D1a checkpoint: a crude Kotor recap (minimal director on D1a labels, cheap descriptions, ffmpeg MP4 to the phone). Its faults set the priorities for D1b and D2.
+- Wind/noise detection joins the analysis, and `audio_clean` moves from D6 to D2: on action footage ambient sound is part of the shot.
+- Principle 8: web editor and services tailnet-only; footage leaves the homelab only as frames to the configured vision model.
+- D3 adds a synced footage inbox that `ingest` picks up on its own (sync tool decided by its own entry).
+- Every `--json` summary reports wall time and LLM cost.
+- D6 capstone: Hermes (Telegram) as remote control.
+- Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in Doru's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
+
+**Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how Doru actually films and travels.
+
+---
+
+## [2026-10-13] Agent watchdog: cron script for spend and stalls; the architect reports repeated failures
+
+**Context:** ntfy already reports permission requests, OpenCode errors, phase reports and the daily external check. It stays silent when the agent burns money in a loop, sits stuck for hours, or keeps failing audits — the cases Doru most needs to hear about while travelling.
+
+**Options:**
+- A) Parse OpenCode logs for everything
+- B) Small cron script for what can be measured from outside (OpenRouter `usage_daily` for the key, `opencode` process alive + newest file change); the architect itself reports repeated audit failures and empty coder replies, since only it knows them
+- C) Rely on the morning check
+
+**Decision:** B. `scripts/agent_watchdog.py`, every 30 minutes from a separate `master` worktree, thresholds $3/day and 2 h; one alert per problem (per UTC day / per stall episode). Architect rule: notify on the second failed audit of a task or two empty coder replies.
+
+**Rationale:** A depends on an undocumented log format that changes between OpenCode versions. C reacts up to a day late. B uses stable signals and costs nothing. A dead LXC still cannot alert itself; the morning check covers that.
+
+---
+
+## [2026-10-13] D1a approved after D1a-2; carried into S1
+
+**Context:** D1a-2 reached its time-box (all eight items done once; 0051 is `accidental`) with the ground-truth eval at 0.69 overall and 0.53 on move type. Doru approved D1a.
+
+**Decision:** Close D1a and start S1. Known issues carried as notes, not as another D1a round:
+- Scene events report many near-zero "subject_enters/leaves" (0072 has 11); the eval scores event recall only. S1 adds precision to `eval_labels.py` and a noise floor to events.
+- Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so Doru can spot overfitting while watching the recap.
+- 0067 travel_backward (stern-facing camera, see the ground-truth note): measure scale/radial flow on the shore regions and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
+- 0081 interior horizon false positives and short orbit: D1b vision veto.
+
+**Rationale:** The time-box exists so analysis tuning is driven by what hurts an actual edit, which S1 shows.

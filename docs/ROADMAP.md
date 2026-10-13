@@ -15,12 +15,16 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | Phase | Scope | Status |
 |:---|:---|:---|
 | D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | ✅ done 2026-10-12 — see [`reports/D0-REPORT.md`](reports/D0-REPORT.md) |
-| D1a | Ingest + motion + quality (CPU only): moves, motion phases, junk with reasons — **⛔ Doru checkpoint** | ✅ built 2026-10-12, checkpoint 2026-10-13 → D1a-2 fixes done 2026-10-13 (ground-truth eval 0.26 → 0.69), ready for Doru's re-check — see [`reports/D1a-REPORT.md`](reports/D1a-REPORT.md) and [`reports/D1a-CHECKPOINT.md`](reports/D1a-CHECKPOINT.md) |
+| D1a | Ingest + motion + quality (CPU only): moves, motion phases, junk with reasons — **⛔ Doru checkpoint** | ✅ approved by Doru 2026-10-13 after D1a-2 (ground-truth eval 0.26 → 0.69, time-box reached) — see [`reports/D1a-REPORT.md`](reports/D1a-REPORT.md) and [`reports/D1a-CHECKPOINT.md`](reports/D1a-CHECKPOINT.md) |
+| S1 | First crude end-to-end slice on the Kotor footage (D1a labels → minimal director → MP4) | 🔲 next |
 | D1b | Describe + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | 🔲 |
-| D2 | Director → `fragments.yaml` → Kdenlive + preview (Mode A) | 🔲 |
-| D3 | Web UI v1 | 🔲 |
-| D4 | Mode B on the same index (fillers, chapters, Shorts ranking) | 🔲 |
+| D2 | Router + director → `edit.json` → ffmpeg render; Kdenlive export optional (Mode A) | 🔲 |
+| D3 | Web editor v1, phone first (preview, light edits, final render on the homelab) | 🔲 |
+| D4 | Mode B on the same index (fillers, chapters, Shorts ranking) + graphics station | 🔲 |
 | D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 |
+| D6 | Packaging and publishing: thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 |
+
+**Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
 Milestones 2–7 below are the older plan for the finished-clip pipeline. Where a D-phase covers the same ground (Milestone 7 → D4), the D-phase wins; the rest stay as they are.
 
