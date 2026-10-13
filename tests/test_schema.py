@@ -189,3 +189,19 @@ def test_route_rejects_unknown_content_type():
     data = load("route_valid.json")
     data["content_type"] = "cooking"
     assert any("cooking" in e for e in schema.validate(data, "route"))
+
+
+def test_shot_plan_fixture_passes():
+    assert schema.validate(load("shot_plan_valid.json"), "shot_plan") == []
+
+
+def test_shot_plan_rejects_empty_structure():
+    data = load("shot_plan_valid.json")
+    data["structure"] = []
+    assert any("structure" in e for e in schema.validate(data, "shot_plan"))
+
+
+def test_shot_plan_requires_why():
+    data = load("shot_plan_valid.json")
+    del data["slot_plan"][0]["why"]
+    assert any("why" in e for e in schema.validate(data, "shot_plan"))
