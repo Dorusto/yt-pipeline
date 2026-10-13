@@ -795,6 +795,40 @@ def test_scene_events_two_spans():
     assert len(peaks) == 2
 
 
+def _dipped_span_series():
+    activities = [0.001 + 0.001 * (index % 10) / 10 for index in range(100)]
+    for index in range(10, 30):
+        activities[index] = 0.006
+    for index in (14, 15, 22):
+        activities[index] = 0.002
+    return activities
+
+
+def test_scene_events_long_span_with_dips_is_one_span():
+    events = motion.detect_scene_events(_dipped_span_series())
+    starts = [event for event in events if event["type"] in ("activity_start", "subject_enters")]
+    peaks = [event for event in events if event["type"] == "activity_peak"]
+    ends = [event for event in events if event["type"] in ("activity_end", "subject_leaves")]
+
+    assert len(starts) == 1
+    assert len(peaks) == 1
+    assert len(ends) == 1
+
+
+def test_scene_events_have_no_duplicates():
+    series = [
+        [0.001] * 40,
+        [0.001 + 0.0002 * (index % 3) for index in range(60)],
+        [0.002] * 20 + [0.008] * 20 + [0.002] * 20,
+        _dipped_span_series(),
+    ]
+
+    for activities in series:
+        events = motion.detect_scene_events(activities)
+        keys = [(event["t_s"], event["type"]) for event in events]
+        assert len(keys) == len(set(keys))
+
+
 def test_scene_activity_series_covers_every_second():
     rows = [
         {"t": 0.5, "residual_activity": 0.002},

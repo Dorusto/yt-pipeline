@@ -538,12 +538,59 @@ def _activity_end_event(smoothed, fall_index, peak_index, floor, noise):
     return {"t_s": float(fall_index), "type": event_type, "note": note}
 
 
+def _span_active_end(smoothed, span_start, span_end, high):
+    """Last index of a floor-level span that is above ``high``, or None when the span is not active."""
+    active_end = None
+    longest = 0
+    current = 0
+    for position in range(span_start, span_end + 1):
+        if smoothed[position] > high:
+            current += 1
+            longest = max(longest, current)
+            active_end = position
+        else:
+            current = 0
+    if longest < MIN_ACTIVE_SECONDS:
+        return None
+    return active_end
+
+
+def _span_fall_index(smoothed, active_end, low):
+    """First index from ``active_end`` where activity stays below ``low`` for MIN_QUIET_SECONDS."""
+    count = len(smoothed)
+    position = active_end
+    while position < count:
+        if all(
+            smoothed[position + offset] < low
+            for offset in range(min(MIN_QUIET_SECONDS, count - position))
+        ):
+            return position
+        position += 1
+    return None
+
+
+def _dedupe_events(events):
+    """Drop events whose ``(t_s, type)`` was already emitted."""
+    seen = set()
+    unique = []
+    for event in events:
+        key = (event["t_s"], event["type"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(event)
+    return unique
+
+
 def detect_scene_events(activities):
     """Detect scene events from a per-second activity series.
 
-    Events are proposals, never verdicts: a clear-cut pattern gets the semantic
-    name (subject_enters / subject_approaches / subject_leaves), otherwise the
-    honest activity_* name is used.
+    A floor-level span (consecutive samples above ``floor``) is one active period;
+    the ``high`` threshold only decides whether it is interesting, so a long span
+    that dips below ``high`` but stays above ``floor`` still yields one start, one
+    peak and one end. Events are proposals, never verdicts: a clear-cut pattern
+    gets the semantic name (subject_enters / subject_approaches / subject_leaves),
+    otherwise the honest activity_* name is used.
     """
     if not activities:
         return []
@@ -556,33 +603,18 @@ def detect_scene_events(activities):
     events = []
     index = 0
     while index < count:
-        if smoothed[index] <= high:
+        if smoothed[index] <= floor:
             index += 1
             continue
-        run_start = index
-        while index < count and smoothed[index] > high:
+        span_start = index
+        while index < count and smoothed[index] > floor:
             index += 1
-        run_end = index - 1
-        if run_end - run_start + 1 < MIN_ACTIVE_SECONDS:
+        span_end = index - 1
+        active_end = _span_active_end(smoothed, span_start, span_end, high)
+        if active_end is None:
             continue
-        onset = run_start
-        while onset > 0 and smoothed[onset - 1] > floor:
-            onset -= 1
-        fall = run_end + 1
-        while fall < count and smoothed[fall] > low:
-            fall += 1
-        end_index = None
-        position = fall
-        while position < count:
-            if all(
-                smoothed[position + offset] < low
-                for offset in range(min(MIN_QUIET_SECONDS, count - position))
-            ):
-                end_index = position
-                break
-            position += 1
-        events.append(_activity_start_event(smoothed, onset, low, floor))
-        peak_index = max(range(onset, fall), key=lambda position: smoothed[position])
+        peak_index = max(range(span_start, span_end + 1), key=lambda position: smoothed[position])
+        events.append(_activity_start_event(smoothed, span_start, low, floor))
         events.append(
             {
                 "t_s": float(peak_index),
@@ -590,11 +622,13 @@ def detect_scene_events(activities):
                 "note": f"peak {smoothed[peak_index] - floor:.4f} above floor",
             }
         )
-        rise = _activity_rise_event(smoothed, onset, peak_index, noise)
+        rise = _activity_rise_event(smoothed, span_start, peak_index, noise)
         if rise is not None:
             events.append(rise)
-        if end_index is not None:
-            events.append(_activity_end_event(smoothed, end_index, peak_index, floor, noise))
+        fall_index = _span_fall_index(smoothed, active_end, low)
+        if fall_index is not None:
+            events.append(_activity_end_event(smoothed, fall_index, peak_index, floor, noise))
+    events = _dedupe_events(events)
     events.sort(key=lambda event: event["t_s"])
     return events
 
