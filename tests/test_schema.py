@@ -82,12 +82,12 @@ def test_every_schema_file_is_valid_draft202012():
         jsonschema.Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
 
-@pytest.mark.parametrize("name", ["ingest", "motion", "quality"])
+@pytest.mark.parametrize("name", ["ingest", "motion", "quality", "describe"])
 def test_analysis_fixtures_validate(name):
     assert schema.validate(load(f"{name}_valid.json"), name) == []
 
 
-@pytest.mark.parametrize("name", ["ingest", "motion", "quality"])
+@pytest.mark.parametrize("name", ["ingest", "motion", "quality", "describe"])
 def test_analysis_schemas_reject_missing_required(name):
     assert schema.validate({}, name)
 
@@ -111,7 +111,25 @@ def test_quality_rejects_unknown_defect():
 
 
 def test_analysis_schemas_allow_extra_fields():
-    for name in ("ingest", "motion", "quality"):
+    for name in ("ingest", "motion", "quality", "describe"):
         data = load(f"{name}_valid.json")
         data["director_note"] = "anything goes"
         assert schema.validate(data, name) == []
+
+
+def test_describe_described_segment_requires_model_output():
+    data = load("describe_valid.json")
+    del data["segments"][0]["interest"]
+    assert any("interest" in e for e in schema.validate(data, "describe"))
+
+
+def test_describe_skipped_segment_requires_skip_reason():
+    data = load("describe_valid.json")
+    del data["segments"][1]["skip_reason"]
+    assert schema.validate(data, "describe")
+
+
+def test_describe_rejects_unknown_verdict_role():
+    data = load("describe_valid.json")
+    data["segments"][0]["verdict"]["role"] = "junk"
+    assert schema.validate(data, "describe")
