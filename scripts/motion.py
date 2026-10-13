@@ -22,6 +22,7 @@ import json
 import math
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -65,6 +66,7 @@ ACTIVITY_SMOOTH_WINDOW = 3
 ACTIVITY_FLOOR_PERCENTILE = 0.20
 ACTIVITY_START_SIGMA = 3.0
 ACTIVITY_END_SIGMA = 1.0
+ACTIVITY_EVENT_MIN_AMPLITUDE = 0.002
 MIN_ACTIVE_SECONDS = 3
 MIN_QUIET_SECONDS = 3
 MIN_RISE_SECONDS = 5
@@ -526,13 +528,18 @@ def _activity_rise_event(smoothed, onset, peak_index, noise):
     if not climbing:
         return None
     rise = smoothed[onset + MIN_RISE_SECONDS] - smoothed[onset]
+    if rise < ACTIVITY_EVENT_MIN_AMPLITUDE:
+        return None
     note = f"rising activity, {rise:.4f} above start"
     event_type = "subject_approaches" if rise > ACTIVITY_START_SIGMA * noise else "activity_rise"
     return {"t_s": float(onset + MIN_RISE_SECONDS), "type": event_type, "note": note}
 
 
 def _activity_end_event(smoothed, fall_index, peak_index, floor, noise):
-    note = f"activity falls to {smoothed[fall_index] - floor:.4f} above floor"
+    note = (
+        f"activity fell from peak {smoothed[peak_index] - floor:.4f} "
+        f"to {smoothed[fall_index] - floor:.4f} above floor"
+    )
     strong = smoothed[peak_index] - floor >= 2.0 * ACTIVITY_START_SIGMA * noise
     event_type = "subject_leaves" if strong else "activity_end"
     return {"t_s": float(fall_index), "type": event_type, "note": note}
@@ -588,7 +595,11 @@ def detect_scene_events(activities):
     A floor-level span (consecutive samples above ``floor``) is one active period;
     the ``high`` threshold only decides whether it is interesting, so a long span
     that dips below ``high`` but stays above ``floor`` still yields one start, one
-    peak and one end. Events are proposals, never verdicts: a clear-cut pattern
+    peak and one end. A span whose peak stays below ``floor`` plus
+    ``ACTIVITY_EVENT_MIN_AMPLITUDE`` is a near-zero blip and yields nothing. The
+    start event is placed at the first sample of the span that is at least
+    ``ACTIVITY_EVENT_MIN_AMPLITUDE`` above the floor, so its note never reports
+    sub-floor evidence. Events are proposals, never verdicts: a clear-cut pattern
     gets the semantic name (subject_enters / subject_approaches / subject_leaves),
     otherwise the honest activity_* name is used.
     """
@@ -614,7 +625,14 @@ def detect_scene_events(activities):
         if active_end is None:
             continue
         peak_index = max(range(span_start, span_end + 1), key=lambda position: smoothed[position])
-        events.append(_activity_start_event(smoothed, span_start, low, floor))
+        if smoothed[peak_index] - floor < ACTIVITY_EVENT_MIN_AMPLITUDE:
+            continue
+        onset = next(
+            position
+            for position in range(span_start, span_end + 1)
+            if smoothed[position] - floor >= ACTIVITY_EVENT_MIN_AMPLITUDE
+        )
+        events.append(_activity_start_event(smoothed, onset, low, floor))
         events.append(
             {
                 "t_s": float(peak_index),
@@ -1265,6 +1283,7 @@ def _atomic_write_json(path, data):
 
 def run(input_path, workspace, force=False, sample_fps=10.0, width=320):
     """Analyse every clip of ``input_path`` into ``workspace/motion``; return a summary."""
+    started = time.monotonic()
     clips = resolve_inputs(input_path)
     output_dir = Path(workspace).expanduser().resolve() / "motion"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1284,6 +1303,8 @@ def run(input_path, workspace, force=False, sample_fps=10.0, width=320):
         "analyzed": analyzed,
         "skipped": skipped,
         "output_dir": str(output_dir),
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": 0.0,
     }
 
 
