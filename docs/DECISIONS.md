@@ -662,3 +662,17 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - New hand-written geometric rules are added only when a case recurs and the eval shows it hurts edits.
 
 **Rationale:** Matches CameraBench (geometry for primitives, VLMs for semantics) and turns the long tail of special cases into data instead of code. Gyro from SD-card originals remains the upgrade for rotation.
+
+---
+
+## [2026-10-13] S1 review: content score, diversity and shot length go into D1b
+
+**Context:** Doru watched the S1 recap (85 s, 18 slots, labels only, no vision). Verdict: static shots are chosen very well; some shots are too long, others too short; near-duplicate shots appear, sometimes after a gap; the best moments (orbit 0091, approaching boat 0083, cave 0081, tunnel 0072) are missing because the director only knows "stable", not "beautiful".
+
+**Decision:** D1b delivers, besides `describe` + `index` + the vision bake-off:
+- a content score per segment from the vision model (subject, scenery, interest, "hero shot" flag) feeding the shotlog score;
+- visual similarity between segments (image embeddings, choice by DECISIONS entry with at least two options) and a director rule: no two similar segments in the edit unless the brief asks for it, never back to back;
+- shot length from pacing and content: holds and moves get a target length from the brief's pace (calm vs energetic) and a min/max, cut inside the steady range;
+- the D1b checkpoint artifact is a re-rendered recap with the same brief, compared with S1.
+
+**Rationale:** S1 showed that the remaining errors in motion labels hurt the edit far less than the absence of content understanding, repetition and uneven pacing.
