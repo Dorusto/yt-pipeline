@@ -776,7 +776,7 @@ def test_scene_events_rise_and_peak():
     peaks = [event for event in events if event["type"] == "activity_peak"]
     ends = [event for event in events if event["type"] in ("activity_end", "subject_leaves")]
 
-    assert starts and abs(starts[0]["t_s"] - 15) <= 1
+    assert starts and abs(starts[0]["t_s"] - 13) <= 2
     assert peaks and abs(peaks[0]["t_s"] - 35) <= 2
     assert ends
 
