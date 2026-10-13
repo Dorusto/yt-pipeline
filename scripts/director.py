@@ -52,6 +52,10 @@ ENERGY_LABELS = {
     "orbit_candidate",
 }
 ENERGY_SPEEDS = {"regular", "fast"}
+MOVE_ROLES = {"move", "transition_in", "transition_out"}
+LANDING_GAP_S = 0.75
+LANDING_FLOOR_S = 0.75
+CONTIGUOUS_TOLERANCE_S = 0.5
 
 
 class DirectorError(RuntimeError):
@@ -264,11 +268,145 @@ def score_candidate(candidate, pacing):
 
 def dedupe_candidates(candidates):
     kept = []
-    for candidate in sorted(candidates, key=lambda item: (-item["score"], item["in_s"])):
+    ordered = sorted(
+        candidates,
+        key=lambda item: (-item["score"], 0 if item.get("phrase") else 1, item["in_s"]),
+    )
+    for candidate in ordered:
         if any(overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0 for other in kept):
             continue
         kept.append(candidate)
     return kept
+
+
+def landing_pairs(quality):
+    """Consecutive (move, hold) quality segments that touch or nearly touch."""
+    segments = quality.get("segments") or []
+    pairs = []
+    for first, second in zip(segments, segments[1:]):
+        if first.get("role") in MOVE_ROLES and second.get("role") == "hold":
+            if second["start_s"] - first["end_s"] <= LANDING_GAP_S:
+                pairs.append((first, second))
+    return pairs
+
+
+def make_phrase_candidate(move_candidate, hold_segment):
+    """One cut window covering a move and the hold it lands on."""
+    phrase = dict(move_candidate)
+    phrase["out_s"] = float(hold_segment["end_s"])
+    phrase["score"] = move_candidate["score"]
+    phrase["phrase"] = True
+    phrase["landing_start_s"] = float(hold_segment["start_s"])
+    phrase["landing_end_s"] = float(hold_segment["end_s"])
+    return phrase
+
+
+def build_phrases(scored, quality):
+    """Add a phrase for each landing move and keep the hold alone as a rival."""
+    pairs = landing_pairs(quality)
+    if not pairs:
+        return scored
+    by_segment = {id(candidate["segment"]): candidate for candidate in scored}
+    removed = set()
+    phrases = []
+    for move_segment, hold_segment in pairs:
+        move_candidate = by_segment.get(id(move_segment))
+        if move_candidate is None:
+            continue
+        removed.add(id(move_candidate))
+        phrases.append(make_phrase_candidate(move_candidate, hold_segment))
+    kept = [candidate for candidate in scored if id(candidate) not in removed]
+    return kept + phrases
+
+
+def source_contiguous(first, second):
+    """True when two slots from the same clip touch in source time."""
+    if first["clip"] != second["clip"]:
+        return False
+    return (
+        abs(first["out_s"] - second["in_s"]) <= CONTIGUOUS_TOLERANCE_S
+        or abs(second["out_s"] - first["in_s"]) <= CONTIGUOUS_TOLERANCE_S
+    )
+
+
+def neighbours_at(chosen, insert_at):
+    neighbours = []
+    if insert_at > 0:
+        neighbours.append(chosen[insert_at - 1])
+    if insert_at < len(chosen):
+        neighbours.append(chosen[insert_at])
+    return neighbours
+
+
+def same_take_conflict(slot, chosen, insert_at):
+    """The same-clip neighbour that would make the insert a jump cut, or None."""
+    for neighbour in neighbours_at(chosen, insert_at):
+        if neighbour["clip"] == slot["clip"] and not source_contiguous(neighbour, slot):
+            return neighbour
+    return None
+
+
+def warn_same_take(warnings, slot, neighbour):
+    warnings.append(
+        f"same-take jump cut avoided: {slot['clip']} {slot['in_s']:.1f}-{slot['out_s']:.1f} "
+        f"next to {neighbour['in_s']:.1f}-{neighbour['out_s']:.1f}"
+    )
+
+
+def slot_label(item):
+    """The shot key of a candidate or slot, or its clip and window when it has none."""
+    key = item.get("shot_key")
+    if key:
+        return key
+    return f"{item['clip']} {item['in_s']:.1f}-{item['out_s']:.1f}"
+
+
+def resolve_same_take(candidate, chosen, insert_at, warnings, recompute):
+    """Resolve a same-take conflict before make_slot.
+
+    Returns ``(insert_at, removed, upgraded)``. ``removed`` is the ``(index, slot)``
+    popped for an upgrade, or None. ``upgraded`` is True when a weaker same-take
+    neighbour was replaced. Returns ``(None, None, False)`` to skip the candidate.
+    """
+    conflict = same_take_conflict(candidate, chosen, insert_at)
+    if conflict is None:
+        return insert_at, None, False
+    if candidate["score"] <= conflict["score"]:
+        warn_same_take(warnings, candidate, conflict)
+        return None, None, False
+    index = next(position for position, slot in enumerate(chosen) if slot is conflict)
+    chosen.pop(index)
+    new_at = recompute(chosen)
+    second = same_take_conflict(candidate, chosen, new_at)
+    if second is not None:
+        chosen.insert(index, conflict)
+        warn_same_take(warnings, candidate, second)
+        return None, None, False
+    warnings.append(f"same-take upgrade: {slot_label(candidate)} replaces {slot_label(conflict)}")
+    return new_at, (index, conflict), True
+
+
+def merge_contiguous(slots):
+    """Join adjacent source-contiguous slots of one take into a single slot."""
+    merged = []
+    for slot in slots:
+        if merged and merged[-1]["clip"] == slot["clip"] and source_contiguous(merged[-1], slot):
+            previous = merged[-1]
+            previous["in_s"] = min(previous["in_s"], slot["in_s"])
+            previous["out_s"] = max(previous["out_s"], slot["out_s"])
+            if slot["score"] > previous["score"]:
+                previous["score"] = slot["score"]
+                previous["shot_reason"] = slot.get("shot_reason")
+                previous["description"] = slot.get("description")
+                previous["shot_key"] = slot.get("shot_key")
+                previous["similar_to"] = list(slot.get("similar_to") or [])
+                previous["role"] = slot["role"]
+                previous["motion_label"] = slot["motion_label"]
+                previous["steadiness"] = slot["steadiness"]
+                previous["segment"] = slot["segment"]
+            continue
+        merged.append(slot)
+    return merged
 
 
 def slot_targets(n_slots, pacing, target_duration_s, calm_slot_s, energy_slot_s, min_slot_s, max_slot_s):
@@ -363,9 +501,25 @@ def apply_overlap_guard(candidate, in_s, out_s, chosen, min_slot_s):
     return best
 
 
-def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen):
+def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=None):
     in_s = candidate["in_s"]
-    out_s = min(candidate["out_s"], in_s + duration_s, in_s + max_slot_s)
+    if candidate.get("phrase"):
+        floor = min(candidate["landing_start_s"] + LANDING_FLOOR_S, candidate["out_s"])
+        out_s = clamp(in_s + duration_s, floor, candidate["out_s"])
+        if out_s - in_s > duration_s:
+            in_s = max(candidate["in_s"], out_s - duration_s)
+            if warnings is not None:
+                warnings.append(
+                    f"phrase trimmed from the head: {candidate['clip']} {candidate['segment'].get('id')} "
+                    f"keeps the last {out_s - in_s:.1f}s of the move"
+                )
+        if out_s - in_s > max_slot_s and warnings is not None:
+            warnings.append(
+                f"phrase kept through landing: {candidate['clip']} {candidate['segment'].get('id')} "
+                f"is {out_s - in_s:.1f}s (cap {max_slot_s:.1f})"
+            )
+    else:
+        out_s = min(candidate["out_s"], in_s + duration_s, in_s + max_slot_s)
     guarded = apply_overlap_guard(candidate, in_s, out_s, chosen, min_slot_s)
     if guarded is None:
         return None
@@ -451,11 +605,22 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
             warnings.append(f"bucket {index + 1}: no candidate")
             continue
         used.add(id(best))
-        slot = make_slot(best, durations[index], max_slot_s, min_slot_s, chosen)
+        insert_at = content_insert_index(chosen, best["content_offset"] + best["in_s"])
+        insert_at, removed, upgraded = resolve_same_take(
+            best, chosen, insert_at, warnings,
+            lambda current: content_insert_index(current, best["content_offset"] + best["in_s"]),
+        )
+        if insert_at is None:
+            continue
+        slot = make_slot(best, durations[index], max_slot_s, min_slot_s, chosen, warnings)
         if slot is None:
+            if removed is not None:
+                chosen.insert(removed[0], removed[1])
             warnings.append(f"bucket {index + 1}: candidate dropped by overlap guard")
             continue
-        chosen.insert(content_insert_index(chosen, slot["content_offset"] + slot["in_s"]), slot)
+        if not upgraded:
+            insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
+        chosen.insert(insert_at, slot)
     return chosen, used
 
 
@@ -470,10 +635,16 @@ def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnin
             warn_similar(warnings, candidate)
             continue
         used.add(id(candidate))
-        slot = make_slot(candidate, durations[len(chosen)], max_slot_s, min_slot_s, chosen)
-        if slot is None:
+        duration_index = len(chosen)
+        insert_at, removed, _ = resolve_same_take(candidate, chosen, len(chosen), warnings, len)
+        if insert_at is None:
             continue
-        chosen.append(slot)
+        slot = make_slot(candidate, durations[duration_index], max_slot_s, min_slot_s, chosen, warnings)
+        if slot is None:
+            if removed is not None:
+                chosen.insert(removed[0], removed[1])
+            continue
+        chosen.insert(insert_at, slot)
     if not chosen:
         warnings.append("no candidate survived the overlap guard")
     return chosen, used
@@ -491,14 +662,23 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
         used.add(id(candidate))
         if order == "chronological":
             insert_at = content_insert_index(chosen, candidate["content_offset"] + candidate["in_s"])
+            recompute = lambda current: content_insert_index(current, candidate["content_offset"] + candidate["in_s"])
         else:
             insert_at = len(chosen)
+            recompute = len
         if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
             warn_similar(warnings, candidate)
             continue
-        slot = make_slot(candidate, last_target, max_slot_s, min_slot_s, chosen)
-        if slot is None:
+        insert_at, removed, upgraded = resolve_same_take(candidate, chosen, insert_at, warnings, recompute)
+        if insert_at is None:
             continue
+        slot = make_slot(candidate, last_target, max_slot_s, min_slot_s, chosen, warnings)
+        if slot is None:
+            if removed is not None:
+                chosen.insert(removed[0], removed[1])
+            continue
+        if not upgraded and order == "chronological":
+            insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
         chosen.insert(insert_at, slot)
         total += slot["out_s"] - slot["in_s"]
     return chosen
@@ -643,7 +823,6 @@ def run(args, started):
         position = clip_position(moment, first_moment, span_seconds)
         clip_candidates, clip_skipped = build_candidates(
             clip, moment, position, content_offset, quality, motion, args.min_slot_s,
-            skip_roles=shotlog is None,
         )
         skipped_roles += clip_skipped
         scored = []
@@ -654,20 +833,20 @@ def run(args, started):
                     skipped_ineligible += 1
                     continue
                 candidate["score"] = shot["score"]
+                candidate["role"] = shot.get("role") or candidate["role"]
+                candidate["motion_label"] = shot.get("motion_label") or candidate["motion_label"]
                 candidate["description"] = shot.get("description")
                 candidate["shot_reason"] = shot.get("reason")
                 candidate["shot_key"] = shot.get("key")
                 candidate["similar_to"] = list(shot.get("similar_to") or [])
             else:
-                if shotlog is not None and candidate["role"] in SKIP_ROLES:
-                    skipped_roles += 1
-                    continue
                 candidate["score"] = score_candidate(candidate, args.pacing)
                 candidate["description"] = None
                 candidate["shot_reason"] = None
                 candidate["shot_key"] = None
                 candidate["similar_to"] = []
             scored.append(candidate)
+        scored = build_phrases(scored, quality)
         candidates.extend(dedupe_candidates(scored))
 
     if skipped_roles:
@@ -698,6 +877,7 @@ def run(args, started):
         candidates, slots, used, args.target_duration_s, args.max_slot_s, args.min_slot_s, args.order,
         warnings, targets[-1], args.allow_similar,
     )
+    slots = merge_contiguous(slots)
 
     for first, second in zip(slots, slots[1:]):
         if slots_similar(first, second):

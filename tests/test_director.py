@@ -151,6 +151,15 @@ def build_fill_workspace(root):
         {"file": "clipB.mp4", "path": "/media/clipB.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
         {"file": "clipC.mp4", "path": "/media/clipC.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:02:00"},
     ]
+    clips.extend(
+        {
+            "file": f"clipX{index:02d}.mp4",
+            "path": f"/media/clipX{index:02d}.mp4",
+            "duration_s": 60.0,
+            "creation_time": f"2026-01-01T11:{index:02d}:00",
+        }
+        for index in range(14)
+    )
     write_json(
         root / "ingest.json",
         {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
@@ -159,6 +168,11 @@ def build_fill_workspace(root):
     write_json(root / "quality" / "clipA.json", quality_doc("clipA.mp4", 60.0, holds))
     write_json(root / "quality" / "clipB.json", quality_doc("clipB.mp4", 60.0, [segment("s1", 0.0, 60.0, "setup")]))
     write_json(root / "quality" / "clipC.json", quality_doc("clipC.mp4", 60.0, holds))
+    for index in range(14):
+        write_json(
+            root / "quality" / f"clipX{index:02d}.json",
+            quality_doc(f"clipX{index:02d}.mp4", 60.0, [segment("s1", 0.0, 5.0, "hold", motion_label="static")]),
+        )
     return root
 
 
@@ -172,7 +186,10 @@ def write_edit(tmp_path, *extra):
     return workspace, out, json.loads(result.stdout), json.loads(out.read_text(encoding="utf-8"))
 
 
-def shotlog_shot(key, clip, segment_id, start, end, eligible, score, description, reason, similar_to=None, hero=None):
+def shotlog_shot(
+    key, clip, segment_id, start, end, eligible, score, description, reason,
+    similar_to=None, hero=None, role="hold", motion_label="static",
+):
     return {
         "key": key,
         "clip": clip,
@@ -180,9 +197,9 @@ def shotlog_shot(key, clip, segment_id, start, end, eligible, score, description
         "start_s": start,
         "end_s": end,
         "eligible": eligible,
-        "role": "hold",
+        "role": role,
         "role_source": "geometry",
-        "motion_label": "static",
+        "motion_label": motion_label,
         "label_source": "geometry",
         "score": score,
         "scores": {"labels": score},
@@ -276,6 +293,179 @@ def build_similarity_workspace(root):
         ],
     )
     return root
+
+
+def build_clip_a_workspace(root, segments, moves):
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clipB.mp4", "path": "/media/clipB.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
+        {"file": "clipC.mp4", "path": "/media/clipC.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:02:00"},
+        {"file": "clipD.mp4", "path": "/media/clipD.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:03:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(root / "quality" / "clipA.json", quality_doc("clipA.mp4", 60.0, segments))
+    write_json(root / "motion" / "clipA.json", motion_doc("clipA.mp4", 60.0, moves))
+    for name in ("clipB", "clipC", "clipD"):
+        write_json(
+            root / "quality" / f"{name}.json",
+            quality_doc(f"{name}.mp4", 60.0, [segment("s1", 0.0, 60.0, "hold", motion_label="static")]),
+        )
+    return root
+
+
+def phrase_workspace(root, move_score=0.9, hold_score=0.5):
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        root / "quality" / "clipA.json",
+        quality_doc(
+            "clipA.mp4",
+            60.0,
+            [
+                segment("s1", 0.0, 10.0, "move", motion_label="pan_right"),
+                segment("s2", 10.0, 20.0, "hold", motion_label="static"),
+            ],
+        ),
+    )
+    write_json(
+        root / "motion" / "clipA.json",
+        motion_doc("clipA.mp4", 60.0, [move("m1", 0.0, 10.0, "pan_right", "regular", "no_shaking", 0.0, 10.0, 0.0, 10.0)]),
+    )
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 10.0, True, move_score, "the move", "interest move · pan_right"),
+            shotlog_shot("clipA/s2", "clipA.mp4", "s2", 10.0, 20.0, True, hold_score, "the hold", "interest hold · static"),
+        ],
+    )
+    return root
+
+
+def build_upgrade_workspace(root):
+    clips = [
+        {"file": "clip_0001_x.mp4", "path": "/media/clip_0001_x.mp4", "duration_s": 120.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clip_0002_x.mp4", "path": "/media/clip_0002_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
+        {"file": "clip_0003_x.mp4", "path": "/media/clip_0003_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:02:00"},
+        {"file": "clip_0004_x.mp4", "path": "/media/clip_0004_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:03:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        root / "quality" / "clip_0001_x.json",
+        quality_doc(
+            "clip_0001_x.mp4",
+            120.0,
+            [
+                segment("s1", 0.0, 5.0, "hold", motion_label="static"),
+                segment("s2", 80.0, 85.0, "hold", motion_label="static"),
+            ],
+        ),
+    )
+    for name in ("clip_0002_x", "clip_0003_x", "clip_0004_x"):
+        write_json(
+            root / "quality" / f"{name}.json",
+            quality_doc(f"{name}.mp4", 60.0, [segment("s1", 0.0, 60.0, "hold", motion_label="static")]),
+        )
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("0001/s1", "clip_0001_x.mp4", "s1", 0.0, 5.0, True, 0.5, "weak", "interest 50 · static by geometry · hold · clean"),
+            shotlog_shot("0001/s2", "clip_0001_x.mp4", "s2", 80.0, 85.0, True, 0.9, "strong", "interest 90 · static by geometry · hold · clean"),
+            shotlog_shot("0002/s1", "clip_0002_x.mp4", "s1", 0.0, 60.0, True, 0.3, "b", "interest 30 · static by geometry · hold · clean"),
+            shotlog_shot("0003/s1", "clip_0003_x.mp4", "s1", 0.0, 60.0, True, 0.3, "c", "interest 30 · static by geometry · hold · clean"),
+            shotlog_shot("0004/s1", "clip_0004_x.mp4", "s1", 0.0, 60.0, True, 0.3, "d", "interest 30 · static by geometry · hold · clean"),
+        ],
+    )
+    return root
+
+
+def build_skip_role_workspace(root):
+    clips = [
+        {"file": "clip_0001_x.mp4", "path": "/media/clip_0001_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clip_0002_x.mp4", "path": "/media/clip_0002_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
+        {"file": "clip_0003_x.mp4", "path": "/media/clip_0003_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:02:00"},
+        {"file": "clip_0004_x.mp4", "path": "/media/clip_0004_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:03:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(root / "quality" / "clip_0001_x.json", quality_doc("clip_0001_x.mp4", 60.0, [segment("s1", 0.0, 60.0, "accidental")]))
+    write_json(root / "quality" / "clip_0002_x.json", quality_doc("clip_0002_x.mp4", 60.0, [segment("s1", 0.0, 60.0, "setup")]))
+    write_json(root / "quality" / "clip_0003_x.json", quality_doc("clip_0003_x.mp4", 60.0, [segment("s1", 0.0, 60.0, "teardown")]))
+    write_json(
+        root / "quality" / "clip_0004_x.json",
+        quality_doc("clip_0004_x.mp4", 60.0, [segment("s1", 0.0, 60.0, "hold", motion_label="static")]),
+    )
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("0001/s1", "clip_0001_x.mp4", "s1", 0.0, 60.0, True, 0.99, "junk", "interest 99 · move by verdict · move · clean", role="move", motion_label="complex_motion"),
+            shotlog_shot("0002/s1", "clip_0002_x.mp4", "s1", 0.0, 60.0, True, 0.99, "junk", "interest 99 · move by verdict · move · clean", role="move", motion_label="complex_motion"),
+            shotlog_shot("0003/s1", "clip_0003_x.mp4", "s1", 0.0, 60.0, True, 0.99, "junk", "interest 99 · move by verdict · move · clean", role="move", motion_label="complex_motion"),
+            shotlog_shot("0004/s1", "clip_0004_x.mp4", "s1", 0.0, 60.0, True, 0.5, "keep", "interest 50 · static by geometry · hold · clean"),
+        ],
+    )
+    return root
+
+
+def build_label_workspace(root):
+    clips = [
+        {"file": "clip_0001_x.mp4", "path": "/media/clip_0001_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clip_0002_x.mp4", "path": "/media/clip_0002_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    for clip in clips:
+        stem = Path(clip["file"]).stem
+        write_json(
+            root / "quality" / f"{stem}.json",
+            quality_doc(clip["file"], 60.0, [segment("s1", 0.0, 60.0, "hold", motion_label="static")]),
+        )
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("0001/s1", "clip_0001_x.mp4", "s1", 0.0, 60.0, True, 0.9, "hero", "interest 90 · travel_backward by verdict · move · clean", role="move", motion_label="travel_backward"),
+            shotlog_shot("0002/s1", "clip_0002_x.mp4", "s1", 0.0, 60.0, True, 0.4, "b", "interest 40 · static by geometry · hold · clean"),
+        ],
+    )
+    return root
+
+
+PHRASE_TARGET = 10.0
+PHRASE_SLOT = 2.5
+
+
+def run_phrase_edit(workspace, out):
+    return run_edit(workspace, out, "--pacing", "uniform", "--target-duration-s", PHRASE_TARGET)
+
+
+def crossing_slots(record):
+    return [
+        slot
+        for slot in record["video"]
+        if slot["clip"] == "clipA.mp4" and slot["in_s"] < 10.0 and slot["out_s"] > 10.0
+    ]
+
+
+def run_edit(workspace, out, *extra):
+    result = run_director(
+        "--workspace", workspace, "--out", out, "--target-duration-s", TARGET, "--json", *extra
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout), json.loads(out.read_text(encoding="utf-8"))
 
 
 def shot_keys(record, workspace):
@@ -423,7 +613,9 @@ def test_shotlog_score_description_and_ineligible(tmp_path):
 def test_shotlog_null_description_stays_null(tmp_path):
     workspace = build_shotlog_workspace(tmp_path / "ws")
     out = tmp_path / "edit.json"
-    result = run_director("--workspace", workspace, "--out", out, "--target-duration-s", TARGET, "--json")
+    result = run_director(
+        "--workspace", workspace, "--out", out, "--target-duration-s", TARGET, "--order", "score", "--json"
+    )
     assert result.returncode == 0, result.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
     null_slots = [slot for slot in record["video"] if slot["clip"] == "clip_0002_x.mp4" and slot["in_s"] >= 30.0]
@@ -472,3 +664,194 @@ def test_uniform_pacing_slots_share_target(tmp_path):
     _, _, _, record = write_edit(tmp_path, "--pacing", "uniform")
     lengths = [round(slot["out_s"] - slot["in_s"], 2) for slot in record["video"]]
     assert all(length == lengths[0] for length in lengths)
+
+
+def test_no_move_then_own_landing(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slots = record["video"]
+    for first, second in zip(slots, slots[1:]):
+        move_then_landing = (
+            first["clip"] == "clipA.mp4"
+            and first["in_s"] <= 0.01
+            and first["out_s"] <= 10.01
+            and second["clip"] == "clipA.mp4"
+            and second["in_s"] >= 9.99
+            and second["out_s"] <= 20.01
+        )
+        assert not move_then_landing
+    for slot in slots:
+        if slot["clip"] == "clipA.mp4" and slot["in_s"] <= 0.01:
+            assert slot["out_s"] > 10.0
+
+
+def test_phrase_cut_inside_hold(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    windows = crossing_slots(record)
+    assert windows
+    assert all(slot["out_s"] >= 10.75 for slot in windows)
+
+
+def test_phrase_trimmed_from_head(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    summary, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    windows = crossing_slots(record)
+    assert windows
+    slot = windows[0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == PHRASE_SLOT
+    assert slot["out_s"] >= 10.75
+    assert slot["in_s"] > 0.0
+    assert slot["in_s"] >= 0.0
+    assert any("phrase trimmed from the head" in warning for warning in summary["warnings"])
+
+
+def test_phrase_never_exceeds_target(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    windows = crossing_slots(record)
+    assert windows
+    assert all(slot["out_s"] - slot["in_s"] <= PHRASE_SLOT + 0.01 for slot in windows)
+
+
+def test_hold_alone_wins_when_move_weak(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws", move_score=0.3, hold_score=0.9)
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert slots
+    assert all(slot["in_s"] >= 10.0 for slot in slots)
+    assert all(slot["out_s"] <= 20.0 for slot in slots)
+    assert not crossing_slots(record)
+
+
+def test_phrase_wins_when_move_strong(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws", move_score=0.9, hold_score=0.5)
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert len(slots) == 1
+    assert slots[0]["in_s"] < 10.0
+    assert slots[0]["out_s"] > 10.0
+    assert slots[0]["out_s"] <= 20.0
+
+
+def test_tie_prefers_phrase(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws", move_score=0.7, hold_score=0.7)
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert len(slots) == 1
+    assert slots[0]["in_s"] < 10.0
+    assert slots[0]["out_s"] > 10.0
+
+
+def test_move_without_landing_keeps_handle_window(tmp_path):
+    workspace = build_clip_a_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 10.0, "move", motion_label="pan_right")],
+        [move("m1", 0.0, 10.0, "pan_right", "regular", "no_shaking", 0.0, 10.0, 0.0, 10.0)],
+    )
+    _, record = run_edit(workspace, tmp_path / "edit.json")
+    move_slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert len(move_slots) == 1
+    assert move_slots[0]["in_s"] == 0.0
+    assert move_slots[0]["out_s"] == 6.0
+
+
+def test_same_take_windows_never_adjacent(tmp_path):
+    workspace = build_clip_a_workspace(
+        tmp_path / "ws",
+        [
+            segment("s1", 0.0, 5.0, "hold", motion_label="static"),
+            segment("s2", 20.0, 25.0, "hold", motion_label="static"),
+        ],
+        [],
+    )
+    _, record = run_edit(workspace, tmp_path / "edit.json")
+    for first, second in zip(record["video"], record["video"][1:]):
+        if first["clip"] == second["clip"]:
+            assert abs(first["out_s"] - second["in_s"]) <= 0.5
+
+
+def test_contiguous_same_take_windows_merge(tmp_path):
+    workspace = build_clip_a_workspace(
+        tmp_path / "ws",
+        [
+            segment("s1", 0.0, 5.0, "hold", motion_label="static"),
+            segment("s2", 5.0, 10.0, "hold", motion_label="static"),
+        ],
+        [],
+    )
+    _, record = run_edit(workspace, tmp_path / "edit.json")
+    clip_a = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert len(clip_a) == 1
+    assert clip_a[0]["in_s"] == 0.0
+    assert clip_a[0]["out_s"] > 5.0
+
+
+def test_json_summary_has_required_keys(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    summary, _ = run_phrase_edit(workspace, tmp_path / "edit.json")
+    for key in (
+        "status",
+        "out",
+        "slots",
+        "total_duration_s",
+        "target_duration_s",
+        "warnings",
+        "wall_time_s",
+        "llm_cost_usd",
+    ):
+        assert key in summary
+    assert summary["llm_cost_usd"] == 0.0
+
+
+def test_phrase_edit_validates_against_schema(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    assert validate(record, "edit") == []
+
+
+def test_phrase_score_is_move_score(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws", move_score=0.9, hold_score=0.5)
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert len(slots) == 1
+    assert slots[0]["score"] == 0.9
+    assert slots[0]["in_s"] < 10.0
+    assert slots[0]["out_s"] > 10.0
+
+
+def test_hold_alone_survives_when_move_weak(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws", move_score=0.5, hold_score=0.9)
+    _, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
+    assert slots
+    assert all(slot["in_s"] >= 10.0 for slot in slots)
+    assert not crossing_slots(record)
+
+
+def test_best_of_take_upgrade_replaces_weaker_window(tmp_path):
+    workspace = build_upgrade_workspace(tmp_path / "ws")
+    summary, record = run_edit(workspace, tmp_path / "edit.json")
+    clip1 = [slot for slot in record["video"] if slot["clip"] == "clip_0001_x.mp4"]
+    assert clip1
+    assert all(slot["in_s"] >= 79.9 for slot in clip1)
+    assert not any(slot["in_s"] < 1.0 for slot in clip1)
+    assert any("same-take upgrade" in warning for warning in summary["warnings"])
+
+
+def test_geometry_skip_roles_never_slots_even_with_shotlog(tmp_path):
+    workspace = build_skip_role_workspace(tmp_path / "ws")
+    _, record = run_edit(workspace, tmp_path / "edit.json")
+    clips = {slot["clip"] for slot in record["video"]}
+    assert "clip_0001_x.mp4" not in clips
+    assert "clip_0002_x.mp4" not in clips
+    assert "clip_0003_x.mp4" not in clips
+    assert "clip_0004_x.mp4" in clips
+
+
+def test_slot_labels_come_from_shotlog(tmp_path):
+    workspace = build_label_workspace(tmp_path / "ws")
+    _, record = run_edit(workspace, tmp_path / "edit.json")
+    slot = next(slot for slot in record["video"] if slot["clip"] == "clip_0001_x.mp4")
+    assert slot["role"] == "move"
+    assert slot["motion_label"] == "travel_backward"
