@@ -10,7 +10,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Phrase window: the end cut lands inside the hold (`out >= landing_start + 0.75 s`); the head trims to the pacing target but never before the move's handle-in; a phrase never exceeds its target. — 2026-10-13
 - Phrase score is the move's score; the phrase wins on a tie; the hold alone wins exactly when the hold is the better shot on its own. — 2026-10-13
 - Two slots from one take need a different take between them unless they are source-contiguous (±0.5 s); contiguous neighbours merge into one slot. — 2026-10-13
-- One take contributes one slot: its best window; a blocked candidate with a higher score replaces the conflicting slot (`same-take upgrade`). — 2026-10-13
+- One candidate (segment or content beat) contributes at most one slot; a long take may contribute several beats as long as a different take sits between them (e.g. 0072 tunnel approach and exit). Within one candidate a higher-scoring blocked window replaces the conflicting slot (`same-take upgrade`). — 2026-10-13 / 2026-10-14
 - No two visually similar segments in one edit unless the brief asks for it; never back to back, even with `--allow-similar`. — 2026-10-13
 - Hero shots and complete semantic moves (orbit, reveal, tracking, pov, travel) keep their whole steady range up to the cap; pacing shortening applies only to ordinary shots. — 2026-10-13
 - An edit must not miss an eligible hero when one exists (golden invariant, tested on fixtures). — 2026-10-13 / 2026-10-14
