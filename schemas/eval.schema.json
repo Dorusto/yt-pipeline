@@ -348,11 +348,42 @@
                 "type": "object",
                 "required": [
                   "score",
+                  "recall",
+                  "precision",
+                  "f1",
+                  "matched_count",
+                  "predicted_count",
+                  "gt_count",
                   "events"
                 ],
                 "properties": {
                   "score": {
+                    "$ref": "#/$defs/score",
+                    "description": "F1 of precision and recall"
+                  },
+                  "recall": {
+                    "$ref": "#/$defs/score",
+                    "description": "matched ground-truth events / ground-truth events"
+                  },
+                  "precision": {
+                    "$ref": "#/$defs/score",
+                    "description": "matched predicted events / predicted events; 0 when nothing was predicted"
+                  },
+                  "f1": {
                     "$ref": "#/$defs/score"
+                  },
+                  "matched_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "one-to-one matches within event_tol_s"
+                  },
+                  "predicted_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "gt_count": {
+                    "type": "integer",
+                    "minimum": 0
                   },
                   "events": {
                     "type": "array",
@@ -447,6 +478,24 @@
         }
       },
       "additionalProperties": false
+    },
+    "meta": {
+      "type": "object",
+      "description": "run metadata; every tool reports wall time and LLM cost",
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "wall_time_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "llm_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
     }
   },
   "additionalProperties": false

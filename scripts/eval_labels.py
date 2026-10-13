@@ -10,7 +10,8 @@ The ground-truth YAML holds the labels a human wrote from what they filmed.
 Every clip id is matched to ``WS/motion/*.json`` and ``WS/quality/*.json`` by the
 4-digit counter in the file name; move and role components score interval
 overlap between the expected and predicted label, horizon counts false
-positives and level claims, and events count recall within a tolerance. The
+positives and level claims, and events score one-to-one precision and recall
+within a tolerance. The
 report is validated against ``schemas/eval.schema.json``. The workspace is read
 only; the only file written is ``--out``.
 """
@@ -20,6 +21,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,7 +51,7 @@ def build_parser():
         description=(
             "Score workspace motion and quality outputs against a ground-truth YAML: "
             "interval overlap of expected vs predicted move and role, horizon false "
-            "positives and event recall."
+            "positives and event precision/recall (F1)."
         ),
         epilog=(
             "examples:\n"
@@ -302,26 +304,55 @@ def horizon_component(gt_segments, quality_doc, tolerance):
 
 
 def events_component(gt_events, motion_doc, tolerance):
-    """Score ground-truth point events against the motion output's detected events."""
+    """Score ground-truth point events against detected events: one-to-one match, F1.
+
+    Recall is matched / ground-truth events, precision is matched / predicted
+    events, each predicted event and each ground-truth event counts at most
+    once. The component score is the F1 of the two.
+    """
     if not gt_events:
         return None
     predicted = []
     for event in (motion_doc or {}).get("events") or []:
         if event.get("t_s") is not None:
             predicted.append(float(event["t_s"]))
-    items = []
-    matched = 0
-    for event in gt_events:
-        at_s = parse_clock(event["at"])
-        matched_t_s = None
-        for candidate in predicted:
-            if abs(candidate - at_s) <= tolerance:
-                matched_t_s = candidate
-                break
-        if matched_t_s is not None:
-            matched += 1
-        items.append({"at_s": at_s, "matched_t_s": matched_t_s})
-    return {"score": matched / len(gt_events), "events": items}
+    gt_times = [parse_clock(event["at"]) for event in gt_events]
+    pairs = []
+    for gt_index, at_s in enumerate(gt_times):
+        for pred_index, candidate in enumerate(predicted):
+            distance = abs(candidate - at_s)
+            if distance <= tolerance:
+                pairs.append((distance, gt_index, pred_index))
+    pairs.sort()
+    matched_gt = {}
+    matched_pred = {}
+    for distance, gt_index, pred_index in pairs:
+        if gt_index in matched_gt or pred_index in matched_pred:
+            continue
+        matched_gt[gt_index] = pred_index
+        matched_pred[pred_index] = gt_index
+    matched = len(matched_gt)
+    predicted_count = len(predicted)
+    recall = matched / len(gt_times)
+    precision = matched / predicted_count if predicted_count else 0.0
+    f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
+    items = [
+        {
+            "at_s": at_s,
+            "matched_t_s": predicted[matched_gt[gt_index]] if gt_index in matched_gt else None,
+        }
+        for gt_index, at_s in enumerate(gt_times)
+    ]
+    return {
+        "score": f1,
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
+        "matched_count": matched,
+        "predicted_count": predicted_count,
+        "gt_count": len(gt_times),
+        "events": items,
+    }
 
 
 def score_clip(clip_id, gt_clip, motion_doc, quality_doc, notes, horizon_tolerance, event_tolerance):
@@ -494,6 +525,7 @@ def _load_ground_truth(path):
 
 
 def main(argv=None):
+    started = time.monotonic()
     args = build_parser().parse_args(argv)
     try:
         ground_truth = _load_ground_truth(Path(args.ground_truth).expanduser())
@@ -507,6 +539,11 @@ def main(argv=None):
             event_tolerance=args.event_tol_s,
             ground_truth_path=args.ground_truth,
         )
+        report["meta"] = {
+            "tool": "scripts/eval_labels.py",
+            "wall_time_s": round(time.monotonic() - started, 2),
+            "llm_cost_usd": 0.0,
+        }
         validate_or_raise(report, "eval")
     except (EvalError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

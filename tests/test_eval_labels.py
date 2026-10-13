@@ -179,6 +179,12 @@ def test_event_within_and_outside_tolerance():
     events = [{"at": "00:05"}, {"at": "00:20"}]
     component = eval_labels.events_component(events, motion_doc(events=[{"t_s": 6.5}, {"t_s": 30.0}]), 3.0)
     assert component["score"] == 0.5
+    assert component["recall"] == 0.5
+    assert component["precision"] == 0.5
+    assert component["f1"] == 0.5
+    assert component["matched_count"] == 1
+    assert component["predicted_count"] == 2
+    assert component["gt_count"] == 2
     assert component["events"][0]["matched_t_s"] == 6.5
     assert component["events"][1]["matched_t_s"] is None
 
@@ -186,7 +192,30 @@ def test_event_within_and_outside_tolerance():
 def test_event_without_motion_events_is_missed():
     component = eval_labels.events_component([{"at": "00:05"}], motion_doc(), 3.0)
     assert component["score"] == 0.0
+    assert component["recall"] == 0.0
+    assert component["precision"] == 0.0
+    assert component["predicted_count"] == 0
     assert component["events"][0]["matched_t_s"] is None
+
+
+def test_event_matching_is_one_to_one():
+    events = [{"at": "00:32"}, {"at": "00:38"}]
+    component = eval_labels.events_component(events, motion_doc(events=[{"t_s": 35.0}]), 3.0)
+    assert component["matched_count"] == 1
+    assert component["recall"] == 0.5
+    assert component["precision"] == 1.0
+    assert abs(component["f1"] - 2 / 3) < 1e-9
+    matched_times = [item["matched_t_s"] for item in component["events"] if item["matched_t_s"] is not None]
+    assert matched_times == [35.0]
+
+
+def test_event_false_positives_lower_precision():
+    events = [{"at": "00:10"}]
+    component = eval_labels.events_component(events, motion_doc(events=[{"t_s": 10.0}, {"t_s": 50.0}]), 3.0)
+    assert component["recall"] == 1.0
+    assert component["precision"] == 0.5
+    assert abs(component["f1"] - 2 / 3) < 1e-9
+    assert component["score"] == component["f1"]
 
 
 def test_missing_motion_gives_note_and_zero_move(tmp_path):
@@ -265,6 +294,8 @@ def test_fixture_run_json_validates_and_scores(capsys):
     assert code == 0
     report = json.loads(capsys.readouterr().out)
     assert validate(report, "eval") == []
+    assert report["meta"]["llm_cost_usd"] == 0.0
+    assert report["meta"]["wall_time_s"] >= 0.0
     by_id = {clip["clip_id"]: clip for clip in report["clips"]}
     assert by_id["0100"]["overall"] == 1.0
     assert by_id["0100"]["move"]["score"] == 1.0

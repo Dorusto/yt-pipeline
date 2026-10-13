@@ -1,12 +1,12 @@
 ---
 name: yt-eval
-description: Score the workspace motion/ and quality/ outputs against a ground-truth YAML written by the person who filmed the clips — per-clip and total scores from interval overlap of expected vs predicted move and role, horizon false positives and event recall. Use when the user asks how well the motion or quality tools match what was actually filmed, wants the eval baseline, or needs a before/after number to judge a D1a-2 fix. Trigger phrases - "score the tools against ground truth", "rulează evaluarea", "cât de bune sunt etichetele", "eval baseline", "compară motion/quality cu ground truth". Labels only — it never edits, cuts or re-analyses footage, and it does not fix the tools.
+description: Score the workspace motion/ and quality/ outputs against a ground-truth YAML written by the person who filmed the clips — per-clip and total scores from interval overlap of expected vs predicted move and role, horizon false positives and event precision/recall (F1). Use when the user asks how well the motion or quality tools match what was actually filmed, wants the eval baseline, or needs a before/after number to judge a D1a-2 fix. Trigger phrases - "score the tools against ground truth", "rulează evaluarea", "cât de bune sunt etichetele", "eval baseline", "compară motion/quality cu ground truth". Labels only — it never edits, cuts or re-analyses footage, and it does not fix the tools.
 compatibility: Run from the repository root. Needs the repo .venv with pyyaml and jsonschema; CPU only, no GPU and no network. Reads the ground-truth YAML and the workspace read-only; the only file written is --out. Fast (seconds for a handful of clips).
 ---
 
 # yt-eval
 
-Turn "the labels look plausible" into a number. The ground-truth YAML holds the move, role, horizon and event labels a human wrote from what they filmed; this tool matches every ground-truth clip to the workspace `motion/<stem>.json` and `quality/<stem>.json` by the 4-digit counter in the file name and scores interval overlap, horizon false positives and event recall. It baselines the current tools: every later D1a-2 fix must move the score up. All commands run from the repository root.
+Turn "the labels look plausible" into a number. The ground-truth YAML holds the move, role, horizon and event labels a human wrote from what they filmed; this tool matches every ground-truth clip to the workspace `motion/<stem>.json` and `quality/<stem>.json` by the 4-digit counter in the file name and scores interval overlap, horizon false positives and event precision/recall. It baselines the current tools: every later D1a-2 fix must move the score up. All commands run from the repository root.
 
 ## Step 1: score a ground-truth file against a workspace
 
@@ -16,7 +16,7 @@ Turn "the labels look plausible" into a number. The ground-truth YAML holds the 
 
 - `--ground-truth PATH` (required) is the YAML below. `--workspace DIR` (required) holds `motion/*.json` and `quality/*.json`.
 - The workspace is read only; the source clips are never touched. A missing file for a clip is scored 0 with a note (`missing motion output` / `missing quality output`), it does not abort the run.
-- `--horizon-tol-deg` (default 5.0) is the `|horizon_deg|` at or below which a quality segment claims a level horizon. `--event-tol-s` (default 3.0) is how close a predicted event must be to count as recalled.
+- `--horizon-tol-deg` (default 5.0) is the `|horizon_deg|` at or below which a quality segment claims a level horizon. `--event-tol-s` (default 3.0) is how close a predicted event must be to count as matched; matching is one-to-one (a predicted event matches at most one ground-truth event and the other way round), closest pairs first.
 - Exit code 0 means the report was produced, even when every score is 0. Exit 1 means the ground-truth or workspace is missing/unreadable, the YAML does not parse, or `--out` could not be written; one `[error] ...` line goes to stderr. It never asks questions.
 
 ## Step 2: read the result
@@ -26,7 +26,7 @@ Turn "the labels look plausible" into a number. The ground-truth YAML holds the 
 .venv/bin/python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --out report.json
 ```
 
-The default prints a fixed-width table, one row per ground-truth clip in ground-truth order, then a TOTAL row; `-` marks a component the ground truth does not ask for (never zero). `--json` prints the full report object (indent 2) instead, and `--out FILE` additionally writes that object atomically (`.tmp` then `os.replace`), re-run safe and overwriting. The report is always validated against `schemas/eval.schema.json` before it is printed or written.
+The default prints a fixed-width table, one row per ground-truth clip in ground-truth order, then a TOTAL row; `-` marks a component the ground truth does not ask for (never zero). `--json` prints the full report object (indent 2) instead — including `meta` with `wall_time_s` and `llm_cost_usd` (always 0.0 here, the tool calls no model) — and `--out FILE` additionally writes that object atomically (`.tmp` then `os.replace`), re-run safe and overwriting. The report is always validated against `schemas/eval.schema.json` before it is printed or written.
 
 ## Ground-truth YAML format
 
@@ -49,14 +49,14 @@ clips:
 
 - The clip key is the 4-digit counter; a segment may carry `expect_move`, `expect_role`, `horizon: level`, `platform` and `note`. Only the fields present are scored — `platform` and `note` are context.
 - `start`, `end` and `at` are `MM:SS` (`"01:35"` = 95 s) or `HH:MM:SS` (`"01:02:03"` = 3723 s).
-- `events` (point times) only score against `events[].t_s` in the motion output; today motion reports none, so events score 0 until that lands.
+- `events` (point times) score against `events[].t_s` in the motion output (scene events detected from the activity series).
 
 ## How the scores are computed
 
 - **move** — per `expect_move` segment, seconds of the expected interval covered by a predicted `moves[]` with full label credit count 1.0, geometric-family labels (`travel_forward`←`dolly_in`, `travel_backward`←`dolly_out`, `truck_left`←`pan_left`, `truck_right`←`pan_right`, `orbit`←`pan_left`/`pan_right`) count 0.5, everything else 0.0. `hold`≡`static` and `orbit`≡`orbit_candidate` are full credit. A `phases[]` entry of type `still` is a predicted `static` (so it satisfies `expect_move: hold` at full credit); where a move interval and a still phase overlap, the move wins and those seconds are counted once with the move's credit. Segment score = credit-weighted seconds / span; clip score = mean over its move segments.
 - **role** — same overlap against quality `segments[]`, full credit only when `role == expect_role` (no family credit).
 - **horizon** — per `horizon: level` segment, a quality segment claims *tilted* when it has a `horizon` defect or `metrics.horizon_deg` is non-null and above tolerance, *level* when non-null and within tolerance, and *abstains* when `horizon_deg` is null with no defect. Segment score = `level_rate * (1 - fp_rate)`. Reporting `null` everywhere is not a false positive but still scores 0 — abstention is not success.
-- **events** — matched predicted events / total ground-truth events.
+- **events** — one-to-one matching of predicted `events[].t_s` to ground-truth event times within `--event-tol-s` (closest pairs first, each side used at most once). `recall` = matched / ground-truth events, `precision` = matched / predicted events (0 when nothing was predicted), the component `score` is their F1. So a clip that fires 11 events to cover 3 real ones no longer scores 1.00.
 - **overall** — per clip, the mean of the non-null components; per run, `totals` averages each component over the clips that have it, and `totals.overall` is the mean of the per-clip overalls.
 
 ## Notes
