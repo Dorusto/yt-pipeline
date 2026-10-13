@@ -20,12 +20,13 @@ Both share one core: **analyze once → index → many edits from different brie
 ## 2. Principles
 
 1. **Every tool is independent.** Each stage is a standalone script in `scripts/` with its own skill in `.claude/skills/`, exactly like the existing tools. A human runs it from the terminal, an agent runs it through the skill, the web UI calls the same command. No tool imports another tool's code. Shared code lives only in `scripts/common/` (schemas, config, model clients).
-2. **Same contract for humans and agents.** Files and flags in, files out. `--help` with examples. `--json` prints a machine-readable summary. Safe to re-run: steps already done are skipped.
+2. **Same contract for humans and agents.** Files and flags in, files out. `--help` with examples. `--json` prints a machine-readable summary that always includes wall time and LLM cost (USD) for the run, so every report shows what a step costs. Safe to re-run: steps already done are skipped.
 3. **Files are the interface.** Stages talk through JSON/YAML on disk, validated against schemas in `schemas/`. Any stage can be re-run alone.
 4. **The edit list is `edit.json`.** One schema (`schemas/edit.schema.json`) is the single source of truth for an edit: video slots (source, in/out, score, reason), audio (music, SFX, ambience, levels), captions and graphics overlays (template + props). Everything else is an adapter that reads it: ffmpeg render, browser preview, graphics engine, and the optional Kdenlive export (`edit.json` → `fragments.yaml` → the existing `kdenlive_from_fragments.py`, reused, not rebuilt). No tool depends on Kdenlive being installed.
 5. **Originals are read-only.** All outputs go to a project workspace next to the footage.
 6. **Model backends are config, not code.** `VisionModel`, `Transcriber`, `Director`, `GraphicsEngine`, `MusicModel` are interfaces with a mock, a cloud and/or a local implementation.
 7. **One tool for every kind of video.** Vacation, tutorial, presentation and talking-head use the same stations; a router picks which stations run and with which settings from the brief and the detected content type.
+8. **Private by default.** The web editor and every service it calls are reachable only inside the tailnet (Tailscale); nothing is exposed to the public internet. Footage leaves the homelab only as frames sent to the configured vision model, and private projects can switch that to the local model.
 
 ## 3. Architecture
 
@@ -38,7 +39,7 @@ ingest → analyze → index → direct → edit.json → { web preview + light 
    - **motion**: camera trajectory from OpenCV optical flow (gyro data when the file has it), split of continuous takes into motion phases (still → ramp → steady move → ramp → still), moves labelled with the CameraBench vocabulary (pan, tilt, roll, dolly/zoom, truck, pedestal, steadiness, speed), steady range + handles per move;
    - **quality**: measured defects (blur, exposure, shake, obstruction, horizon) and a role per segment (move, hold, transition in/out, setup, teardown, accidental) — labels, never deletions; techniques catalogued in [`guides/shot-grammar.md`](guides/shot-grammar.md);
    - **describe**: vision model on all segments except confident setup/teardown/accidental — 3 frames in order with timestamps and the motion label → description, semantic motion (orbit, tracking, reveal), subject, scene;
-   - audio: transcript (existing Whisper flow), RMS energy;
+   - audio: transcript (existing Whisper flow), RMS energy, **wind and noise detection** per segment (ambient sound is part of the shot on action footage);
    - music: beats, downbeats, energy.
 3. **Index** — one `shotlog.json` per project. Score per shot = weighted fusion, weights per mode in config, starting from `0.40·vision + 0.35·audio_energy + 0.25·text`. Every candidate carries **score + hook + reason**. Overlap > 50% keeps the higher score.
 4. **Direct** — three-step loop:
@@ -50,7 +51,7 @@ ingest → analyze → index → direct → edit.json → { web preview + light 
 5. **Output** — adapters that read `edit.json`:
    - `render`: ffmpeg cuts, transitions, speed, ASS captions and audio mix; preview at 720p from proxies, final at full quality from the originals on the homelab;
    - `graphics`: story elements (titles, maps, counters, browser/terminal mockups, charts driven by the transcript) through a `GraphicsEngine` — Remotion (reusing Hasan's MIT kit, with paid services swapped for ours) or HyperFrames (Apache-2.0), chosen by a bake-off at D4;
-   - audio stations: `audio_clean` (RNNoise via ffmpeg + loudness), `music` (YuE2 / ACE-Step / Stable Audio Open), `sfx` (own CC0 library + Stable Audio Open), `beats` — plain Python tools, no ComfyUI;
+   - audio stations: `audio_clean` (RNNoise via ffmpeg + loudness), `music` (YuE2 first: it writes an editable ABC score before audio, so tempo and length are set by the director and cuts land on beats by construction; ACE-Step 1.5 and Stable Audio Open as fallbacks), `sfx` (own CC0 library + Stable Audio Open), `beats` — plain Python tools, no ComfyUI;
    - `export_kdenlive` (optional): `edit.json` → `fragments.yaml` → `kdenlive_from_fragments.py` + `srt_from_fragments.py`.
 6. **Web editor** — phone first: pick folder, write brief, ranked clips, play the edit from proxies, reorder / trim / swap a slot, approve / reject / regenerate, ask for the final render. Calls the same scripts. Not a general timeline editor; OpenCut (MIT) is the candidate for full manual editing once it gets a project import API.
 
@@ -98,16 +99,19 @@ Named D0–D5 so they don't collide with the existing Milestones 1–7 in the ro
 |---|---|---|---|
 | **D0** | Foundation: `scripts/common/`, `schemas/`, pytest with tiny fixtures, CPU-only path (libx264 fallback, no torch import unless needed), known-issue fixes that block automation | tests green on the LXC without a GPU | — |
 | **D1a** | `ingest`, `motion`, `quality` (CPU only, no model cost) + the two budget fixes from the PR #4 review | per-clip timeline of moves, transition candidates, setup/teardown and defects, for Doru's test clips | **⛔ Doru checks the timelines against what he filmed** |
+| **S1** | First end-to-end slice on the Kotor footage, crude on purpose: minimal director on the D1a labels + cheap descriptions → `edit.json` → ffmpeg MP4 to the phone. Shows which analysis errors actually hurt an edit | a watchable rough recap from one brief | Doru watches it, lists what is wrong |
 | **D1b** | `describe` + `index` → `shotlog.json`; vision bake-off (DeepSeek vs GLM) on kept segments of 5 varied clips | shotlog for a real folder + bake-off report | **⛔ Doru judges description quality** |
-| **D2** | Router + director (screenwriter / editor / reviewer) → `edit.json` → ffmpeg render (preview + final), music beats; Kdenlive export adapter | 3-min Kotor recap from a brief, playable as MP4; also opens in Kdenlive | at ~80% |
-| **D3** | Web editor v1, phone first: brief, ranked clips, preview from proxies, reorder / trim / swap, approve / reject / regenerate, final render on the homelab | full Mode A flow from the phone, no terminal, no Kdenlive | at ~80% |
+| **D2** | Router + director (screenwriter / editor / reviewer) → `edit.json` → ffmpeg render (preview + final), music beats; `audio_clean` (wind / noise reduction, loudness) on ambient sound; Kdenlive export adapter | 3-min Kotor recap from a brief, playable as MP4; also opens in Kdenlive | at ~80% |
+| **D3** | Web editor v1, phone first: brief, ranked clips, preview from proxies, reorder / trim / swap, approve / reject / regenerate, final render on the homelab; tailnet-only; footage inbox: a folder synced from phone / laptop that `ingest` picks up on its own (sync tool chosen by DECISIONS entry) | full Mode A flow from the phone, no terminal, no Kdenlive | at ~80% |
 | **D4** | Mode B on the same index: absorb `edit_workflow.py` (fillers, chapters, auto-editor), Shorts ranking feeding `shorts_generator.py`; graphics station (`GraphicsEngine` bake-off Remotion vs HyperFrames, Hasan's kit ported) | one real talking-head or tutorial video processed, with automatic graphics | at ~80% |
 | **D5** | P1 features | per feature | batch review |
-| **D6** | Packaging and publishing, each a standalone tool: thumbnail with a vision model + brand kit (`brand.json`), audio clean-up (RNNoise) + SFX library + music (YuE2 / ACE-Step, licence-checked), EN voice dubbing (F5-TTS / XTTS), background removal (MatAnyone), upload as private draft (`yt_upload`), PeerTube as the canonical source | per tool | batch review |
+| **D6** | Packaging and publishing, each a standalone tool: thumbnail with a vision model + brand kit (`brand.json`), SFX library + music (YuE2, licence-checked), EN voice dubbing (F5-TTS / XTTS), background removal (MatAnyone), upload as private draft (`yt_upload`), PeerTube as the canonical source; capstone: Hermes (Telegram) as remote control — "recap from folder X, 3 min, epic" → preview link back | per tool | batch review |
 
 **Publish gate:** when D2 works on the Kotor footage, the devlog clip (vault `2026-39_pipeline-montaj-automatizat`) is filmed and published before D3 starts — Doru's anti-sinking rule: no next chunk before the previous one is filmed and published.
 
-Do not start D1b before the D1a checkpoint, nor D2 before the D1b checkpoint.
+**D1a-2 exit rule (time-box):** D1a-2 ends when `scripts/eval_labels.py` scores the move type correct on at least 70% of the ground-truth seconds and clip 0051 is labelled `accidental`, or after the eight D1a-2 items are done once — whichever comes first. Remaining errors go into the report as known issues, not into another round. The S1 slice decides which of them are worth fixing.
+
+Order: D1a checkpoint → S1 → D1b checkpoint → D2. Do not start D2 before the D1b checkpoint.
 
 ## 6. Model routing (decided 2026-10-12)
 

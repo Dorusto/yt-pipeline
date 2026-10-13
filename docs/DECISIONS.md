@@ -422,3 +422,21 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Rationale:** One schema with many readers keeps every tool independent and lets the output side change without touching the director. Kdenlive stays one command away, so nothing proven is lost. C is not possible yet: OpenCut's rewrite is at scaffold level and has no project import API; re-evaluate when its Editor API ships. ComfyUI's value is the graph UI and VRAM management; files between tools replace the graph and "one model per process" replaces the VRAM manager.
 
 **Changes:** VISION principles 4, 6, 7, architecture, backlog, phases D2/D3/D4/D6. `fragments.yaml` stays the input format of `kdenlive_from_fragments.py`; `schemas/fragments.schema.json` is kept for that adapter.
+
+---
+
+## [2026-10-13] Time-box D1a-2, add slice S1 before D1b, and five plan additions
+
+**Context:** The plan now spans D0–D6 and about twenty tools. Doru's past projects sank in development without a deliverable. D1a-2 (motion/quality accuracy) could be polished indefinitely, yet nobody knows which analysis errors hurt an actual edit, because no edit exists yet.
+
+**Decision:**
+- D1a-2 ends at ≥ 70% correct move type on ground-truth seconds plus 0051 = `accidental`, or after one pass over its eight items; leftovers become known issues.
+- New slice **S1** after the D1a checkpoint: a crude Kotor recap (minimal director on D1a labels, cheap descriptions, ffmpeg MP4 to the phone). Its faults set the priorities for D1b and D2.
+- Wind/noise detection joins the analysis, and `audio_clean` moves from D6 to D2: on action footage ambient sound is part of the shot.
+- Principle 8: web editor and services tailnet-only; footage leaves the homelab only as frames to the configured vision model.
+- D3 adds a synced footage inbox that `ingest` picks up on its own (sync tool decided by its own entry).
+- Every `--json` summary reports wall time and LLM cost.
+- D6 capstone: Hermes (Telegram) as remote control.
+- Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in Doru's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
+
+**Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how Doru actually films and travels.
