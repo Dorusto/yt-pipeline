@@ -41,6 +41,8 @@ Read `CLAUDE.md`, `docs/VISION.md`, the D-phase status in `docs/ROADMAP.md`, and
 3. Delegate to the `coder` subagent with the full brief text, not only its path.
 4. Audit: read the whole diff, run the tests and the acceptance commands yourself, run the tool on sample media and look at visual outputs. Check the definition of done in CLAUDE.md.
 5. If it fails, send back specific fixes. After 3 failed rounds, do the task yourself and note it in the phase report.
+   - Never repeat the same command or tool call more than twice. If a tool fails, returns nothing useful, or returns the same result twice, stop, send `python scripts/notify.py "<task id>: <tool> keeps failing" --title Blocked` and end the run. Placeholder commands such as `echo ok` are not progress.
+   - You cannot look at images or frame strips yourself. For visual checks run `scripts/describe.py` (vision model) or measure frames with a script, and read the text it prints.
    - When the same task fails its audit a second time, or the coder returns an empty or truncated reply twice in a row, first send `python scripts/notify.py "<task id>: <what keeps failing>" --title Struggling` and then continue. One notification per task.
 6. When it passes, commit on the phase branch (`d<phase>-<slug>`), conventional commit message, following the commit-time rule in CLAUDE.md. Push the branch. Never push to master; open a pull request at the end of the phase.
 

@@ -54,6 +54,7 @@ def test_main_dry_run_sends_nothing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 7.0)
     monkeypatch.setattr(watchdog, "agent_running", lambda: True)
     monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
     monkeypatch.setattr(watchdog, "send", lambda *a, **k: (_ for _ in ()).throw(AssertionError("sent")))
     state_file = tmp_path / "state.json"
     code = watchdog.main(["--repo", str(tmp_path), "--state-file", str(state_file), "--dry-run", "--json"])
@@ -70,6 +71,7 @@ def test_main_sends_and_remembers(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 7.0)
     monkeypatch.setattr(watchdog, "agent_running", lambda: False)
     monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
     sent = []
     monkeypatch.setattr(watchdog, "send", lambda message, **k: sent.append(message) or 200)
     state_file = tmp_path / "state.json"
@@ -79,3 +81,15 @@ def test_main_sends_and_remembers(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert len(sent) == 1
     assert json.loads(state_file.read_text())["spend_alerted_on"]
+
+
+def test_no_progress_alert_once_per_episode():
+    state = {}
+    assert watchdog.check_no_progress(True, 1000.0, 1000.0 + 3000, 5400, state) is None
+    assert "no commit" in watchdog.check_no_progress(True, 1000.0, 1000.0 + 6000, 5400, state)
+    assert watchdog.check_no_progress(True, 1000.0, 1000.0 + 9000, 5400, state) is None
+    assert watchdog.check_no_progress(False, 1.0, 99999.0, 5400, {}) is None
+
+
+def test_last_commit_time_reads_git(tmp_path):
+    assert watchdog.last_commit_time(tmp_path) == 0.0
