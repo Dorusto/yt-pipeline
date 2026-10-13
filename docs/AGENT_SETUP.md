@@ -141,6 +141,18 @@ echo "blocked on the vision model" | .venv/bin/python scripts/notify.py - --titl
 
 The server URL comes from `NTFY_URL` and defaults to `http://10.10.1.61:8090/opencode-doru`. `--json` prints a machine-readable result; `--dry-run` resolves the target without sending.
 
+### Watchdog
+
+`scripts/agent_watchdog.py` alerts only when something is wrong: today's OpenRouter spend above a threshold, or an `opencode` process running with no file changes for hours. Run it from a separate checkout of `master`, so it never touches the agent's working tree, and schedule it with cron:
+
+```bash
+git -C ~/projects/yt-pipeline worktree add --detach ~/yt-watchdog origin/master
+mkdir -p ~/.cache/yt-pipeline
+( crontab -l 2>/dev/null; echo '*/30 * * * * cd ~/yt-watchdog/scripts && python3 agent_watchdog.py --repo ~/projects/yt-pipeline >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
+```
+
+Update it later with `git -C ~/yt-watchdog checkout --detach origin/master` after a `git fetch`.
+
 ## Troubleshooting
 
 - `KeyError: 'OPENROUTER_API_KEY'`: the variable is not set in the shell that started the agent.
