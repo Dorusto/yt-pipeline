@@ -405,3 +405,20 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** These become phase D6, one standalone tool each, after D5. A publish gate sits after D2: once the director edits the Kotor footage on its own, the devlog clip is filmed and published before D3 starts.
 
 **Rationale:** Same tool-per-stage design, so they join without touching earlier tools. The gate keeps the build tied to published content, which is what the project exists for.
+
+---
+
+## [2026-10-13] `edit.json` is the edit list; Kdenlive becomes an optional export; render and preview from the browser
+
+**Context:** VISION principle 4 made `fragments.yaml` → Kdenlive the output of the director. Doru edits from a phone while travelling and wants to drop the dependency on a desktop editor: preview the edit and make small adjustments in the browser, final render on the homelab. He also wants automatic story graphics for tutorials and talking-head (Hasan's MIT Remotion kit as a base, paid services swapped for ours), and music/SFX without ComfyUI. Research: `docs/research/rendering-and-audio.md`.
+
+**Options:**
+- A) Keep `fragments.yaml` → Kdenlive as the main output, add an ffmpeg preview
+- B) New `edit.json` schema as the single source of truth; adapters for ffmpeg render, browser preview/light editor, graphics engine and the optional Kdenlive export (via `fragments.yaml`, reusing `kdenlive_from_fragments.py`)
+- C) Adopt OpenCut (MIT, browser editor) as the editor now
+
+**Decision:** B. Plain montage renders with ffmpeg. Graphics go through a `GraphicsEngine` interface; Remotion (free for a single creator, reuses Hasan's kit) vs HyperFrames (Apache-2.0, agent-native) is decided by a bake-off at the start of D4; Revideo (MIT) is a fallback, Motion Canvas excluded (no server render API). Music, SFX and clean-up are standalone Python tools (`audio_clean`, `music`, `sfx`, `beats`), one model loaded at a time, no ComfyUI. Excluded for licence reasons: MusicGen, AudioGen, MMAudio weights (non-commercial), HunyuanVideo-Foley (excludes the EU). A router picks the stations per brief and content type, so vacation, tutorial and talking-head share one tool.
+
+**Rationale:** One schema with many readers keeps every tool independent and lets the output side change without touching the director. Kdenlive stays one command away, so nothing proven is lost. C is not possible yet: OpenCut's rewrite is at scaffold level and has no project import API; re-evaluate when its Editor API ships. ComfyUI's value is the graph UI and VRAM management; files between tools replace the graph and "one model per process" replaces the VRAM manager.
+
+**Changes:** VISION principles 4, 6, 7, architecture, backlog, phases D2/D3/D4/D6. `fragments.yaml` stays the input format of `kdenlive_from_fragments.py`; `schemas/fragments.schema.json` is kept for that adapter.

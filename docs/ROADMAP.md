@@ -17,11 +17,11 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | D0 | Foundation: `scripts/common/`, `schemas/`, tests, CPU-only path | ✅ done 2026-10-12 — see [`reports/D0-REPORT.md`](reports/D0-REPORT.md) |
 | D1a | Ingest + motion + quality (CPU only): moves, motion phases, junk with reasons — **⛔ Doru checkpoint** | 🔲 next |
 | D1b | Describe + index → `shotlog.json`, vision bake-off — **⛔ Doru checkpoint** | 🔲 |
-| D2 | Director → `fragments.yaml` → Kdenlive + preview (Mode A) | 🔲 |
-| D3 | Web UI v1 | 🔲 |
-| D4 | Mode B on the same index (fillers, chapters, Shorts ranking) | 🔲 |
+| D2 | Router + director → `edit.json` → ffmpeg render; Kdenlive export optional (Mode A) | 🔲 |
+| D3 | Web editor v1, phone first (preview, light edits, final render on the homelab) | 🔲 |
+| D4 | Mode B on the same index (fillers, chapters, Shorts ranking) + graphics station | 🔲 |
 | D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 |
-| D6 | Packaging and publishing: Remotion, thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 |
+| D6 | Packaging and publishing: thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 |
 
 **Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
