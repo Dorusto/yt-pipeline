@@ -762,3 +762,39 @@ half of the same carry-over exists precisely because precision was invisible.
 - the D1b checkpoint artifact is a re-rendered recap with the same brief, compared with S1.
 
 **Rationale:** S1 showed that the remaining errors in motion labels hurt the edit far less than the absence of content understanding, repetition and uneven pacing.
+
+---
+
+## [2026-10-13] D1b vision bake-off: GLM 5.3 Flash is the default vision model
+
+**Context:** VISION §6 leaves the vision backend to a bake-off between DeepSeek
+V4.1 Flash and GLM 5.3 Flash on image input. D1b ran both through
+`scripts/describe.py` on the kept segments of five varied Kotor clips (0067,
+0072, 0081, 0083, 0091 — 32 segments, 8 uncertain) with the same prompt and
+frames. Full results: `docs/reports/D1b-vision-bakeoff.md`.
+
+**Options:**
+- A) `deepseek/deepseek-v4.1-flash` as default
+- B) `z-ai/glm-5.3-flash` as default
+- C) route per segment type (uncertain verdicts to one, captions to the other)
+
+**Decision:** B. `models.vision = z-ai/glm-5.3-flash`, `models.vision_fallback =
+deepseek/deepseek-v4.1-flash`. Measured: GLM 32/32 parse rate vs DeepSeek 30/32
+(DeepSeek returns `content: null` when its reasoning trace eats the output
+budget — it needs `max_tokens` 8000 per segment and still loses answers);
+0.0066 USD vs 0.0590 USD for the same 32 segments; verdicts on the three
+uncertain segments with clear ground truth that GLM got right and DeepSeek did
+not (0067 wake → `travel_backward`, 0081 s7 → `travel_forward`, 0081 s15 →
+`travel_backward`); GLM sets `hero` on the tunnel and cave moments Doru named
+in the S1 review, DeepSeek never sets it.
+
+**Rationale:** The whole point of `uncertain` is that vision adjudicates where
+geometry gives up — losing the answer on the wake segment is disqualifying,
+and a 9x cost difference buys nothing back. C is premature: one model does both
+jobs well. `VisionModel` keeps the backend a config value, so the local
+Qwen3.8 on the 3090 can still take over for private footage.
+
+**Side finding recorded for the builders:** DeepSeek-style reasoning models
+need far more output tokens than a plain VLM; `scripts/common/vision.py`
+defaults `max_tokens` to 8000 and `describe.py` treats `content: null` as an
+unparseable answer instead of crashing.

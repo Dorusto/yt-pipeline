@@ -93,6 +93,91 @@ class BrokenModel:
         )
 
 
+class MixedBrokenModel:
+    """Returns valid JSON once, then unparseable text, charging per call."""
+
+    def __init__(self, cost_per_call=0.002):
+        self.calls = []
+        self.cost_per_call = cost_per_call
+
+    def describe(self, request):
+        self.calls.append(request)
+        if len(self.calls) == 1:
+            text = json.dumps(
+                {
+                    "description": "a shot",
+                    "subject": "none",
+                    "scenery": "outside",
+                    "semantic_motion": "none",
+                    "interest": 40,
+                    "hero": False,
+                    "verdict": None,
+                }
+            )
+        else:
+            text = "I cannot answer that."
+        return VisionResponse(
+            text=text,
+            model="mixed",
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=self.cost_per_call,
+        )
+
+
+class NoneTextModel:
+    """Returns a response with no text, as a reasoning model can."""
+
+    def __init__(self):
+        self.calls = []
+
+    def describe(self, request):
+        self.calls.append(request)
+        return VisionResponse(
+            text=None,
+            model="none-text",
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=0.0,
+        )
+
+
+class NoVerdictThenNoneModel:
+    """Returns valid JSON without a verdict, then no text on the retry."""
+
+    def __init__(self):
+        self.calls = []
+
+    def describe(self, request):
+        self.calls.append(request)
+        if len(self.calls) > 1:
+            return VisionResponse(
+                text=None,
+                model="no-verdict-none",
+                prompt_tokens=0,
+                completion_tokens=0,
+                cost_usd=0.0,
+            )
+        text = json.dumps(
+            {
+                "description": "a shot",
+                "subject": "none",
+                "scenery": "outside",
+                "semantic_motion": "none",
+                "interest": 40,
+                "hero": False,
+                "verdict": None,
+            }
+        )
+        return VisionResponse(
+            text=text,
+            model="no-verdict-none",
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=0.0,
+        )
+
+
 class NoVerdictModel:
     """Returns valid JSON but never a verdict, even for uncertain segments."""
 
@@ -173,6 +258,7 @@ def test_confident_skip_roles_make_no_call(tmp_path):
         "confident teardown",
         "confident accidental",
     ]
+    assert all(s["cost_usd"] is None for s in data["segments"])
     assert summary["segments_described"] == 0
     assert summary["segments_skipped"] == 3
 
@@ -312,6 +398,57 @@ def test_unparseable_output_is_skipped_with_warning(tmp_path):
     assert validate(data, "describe") == []
 
 
+def test_unparseable_skip_carries_call_cost(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [
+            segment("s1", 0.0, 2.0, "hold", motion_label="static"),
+            segment("s2", 2.0, 4.0, "hold", motion_label="static"),
+        ],
+    )
+    model = MixedBrokenModel(cost_per_call=0.002)
+    summary, code = describe.run(tmp_path, model=model, model_id="mixed", config=CONFIG)
+    assert code == 0
+    data = read_describe(tmp_path, "clip")
+    assert data["segments"][0]["status"] == "described"
+    assert data["segments"][1]["status"] == "skipped"
+    assert data["segments"][1]["skip_reason"] == "unparseable model output"
+    assert data["segments"][1]["cost_usd"] == pytest.approx(0.002)
+    assert data["llm_cost_usd"] == pytest.approx(
+        sum(seg["cost_usd"] or 0.0 for seg in data["segments"])
+    )
+    assert data["llm_cost_usd"] == pytest.approx(0.004)
+    assert summary["llm_cost_usd"] == pytest.approx(0.004)
+    assert validate(data, "describe") == []
+
+
+def test_none_text_is_skipped_with_warning(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 4.0, "hold", motion_label="static")],
+    )
+    model = NoneTextModel()
+    summary, code = describe.run(tmp_path, model=model, model_id="none-text", config=CONFIG)
+    assert code == 0
+    data = read_describe(tmp_path, "clip")
+    seg = data["segments"][0]
+    assert seg["status"] == "skipped"
+    assert seg["skip_reason"] == "unparseable model output"
+    assert data["warnings"]
+    assert validate(data, "describe") == []
+
+
+def test_parse_answer_handles_none_and_empty():
+    assert describe.parse_answer(None) is None
+    assert describe.parse_answer("") is None
+
+
 def test_missing_verdict_retries_then_falls_back(tmp_path):
     clip = write_video(tmp_path / "clip.mp4")
     write_quality(
@@ -332,6 +469,37 @@ def test_missing_verdict_retries_then_falls_back(tmp_path):
     )
     model = NoVerdictModel()
     describe.run(tmp_path, model=model, model_id="no-verdict", config=CONFIG)
+    assert len(model.calls) == 2
+    data = read_describe(tmp_path, "clip")
+    seg = data["segments"][0]
+    assert seg["status"] == "described"
+    assert seg["verdict"]["role"] == "move"
+    assert seg["verdict"]["motion_label"] == "complex_motion"
+    assert seg["verdict"]["confidence"] == 0.0
+    assert data["warnings"]
+    assert validate(data, "describe") == []
+
+
+def test_retry_with_none_text_falls_back_to_geometry(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [
+            segment(
+                "s1",
+                0.0,
+                4.0,
+                "move",
+                motion_label="complex_motion",
+                uncertain=True,
+                reasons=["mixed_motion_signals"],
+            )
+        ],
+    )
+    model = NoVerdictThenNoneModel()
+    describe.run(tmp_path, model=model, model_id="no-verdict-none", config=CONFIG)
     assert len(model.calls) == 2
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]

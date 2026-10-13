@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from common.llm import LLMResponse, make_client
 
 VISION_ROLE = "vision"
-DEFAULT_MAX_TOKENS = 1200
+DEFAULT_MAX_TOKENS = 8000
 DEFAULT_TEMPERATURE = 0.2
 SEMANTIC_BY_LABEL = {
     "orbit_candidate": "orbit",

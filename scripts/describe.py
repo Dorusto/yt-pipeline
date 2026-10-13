@@ -165,6 +165,8 @@ def build_prompt(base_prompt, clip_file, segment, times):
 
 def parse_answer(text):
     """Parse the model text as a JSON object, tolerating markdown fences."""
+    if not text:
+        return None
     data = _loads(_strip_fences(text))
     if data is None:
         start = text.find("{")
@@ -247,7 +249,7 @@ def describe_segments(record, clip_path, model, model_id, base_prompt, frame_wid
         answer = parse_answer(response.text)
         if answer is None:
             warnings.append(f"{record['file']} {segment['id']}: unparseable model output")
-            segments.append(_skipped_segment(segment, "unparseable model output"))
+            segments.append(_skipped_segment(segment, "unparseable model output", segment_cost))
             continue
         normalized = normalize_answer(answer)
         verdict = normalized["verdict"]
@@ -482,7 +484,7 @@ def _described_segment(segment, times, normalized, verdict, cost_usd):
     }
 
 
-def _skipped_segment(segment, reason):
+def _skipped_segment(segment, reason, cost_usd=None):
     return {
         "id": segment["id"],
         "start_s": segment["start_s"],
@@ -493,7 +495,7 @@ def _skipped_segment(segment, reason):
         "uncertain": bool(segment.get("uncertain")),
         "uncertain_reasons": list(segment.get("uncertain_reasons") or []),
         "skip_reason": reason,
-        "cost_usd": None,
+        "cost_usd": cost_usd,
     }
 
 
