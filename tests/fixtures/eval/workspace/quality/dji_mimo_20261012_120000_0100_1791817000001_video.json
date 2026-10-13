@@ -1,0 +1,17 @@
+{
+  "file": "dji_mimo_20261012_120000_0100_1791817000001_video.mp4",
+  "duration_s": 10.0,
+  "segments": [
+    {
+      "id": "s1",
+      "start_s": 0.0,
+      "end_s": 10.0,
+      "role": "move",
+      "confidence": 0.9,
+      "defects": [],
+      "metrics": {
+        "horizon_deg": 1.0
+      }
+    }
+  ]
+}

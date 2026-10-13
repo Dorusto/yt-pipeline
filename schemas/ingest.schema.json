@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/ingest.schema.json",
+  "title": "ingest",
+  "description": "Folder scan written by scripts/ingest.py: one row per clip with duration, fps, resolution, streams, creation time and whether gyro/IMU data is present. Gyro lives in the DJI metadata stream (codec tag djmd, handler 'DJI meta') and only when in-camera stabilization was off during recording; proxies and Mimo exports usually drop it.",
+  "type": "object",
+  "required": ["generated_at", "source_dir", "clips"],
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the scan"
+    },
+    "source_dir": {
+      "type": "string",
+      "description": "absolute path of the scanned folder"
+    },
+    "clip_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "clips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "path", "duration_s", "streams", "gyro"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "description": "file name inside source_dir"
+          },
+          "path": {
+            "type": "string",
+            "description": "absolute path of the clip"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "duration_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "container duration in seconds"
+          },
+          "creation_time": {
+            "type": ["string", "null"],
+            "description": "ISO 8601 creation time, from stream/format tags or parsed from the file name; null when unknown"
+          },
+          "creation_time_source": {
+            "type": ["string", "null"],
+            "enum": ["metadata", "filename", null]
+          },
+          "width": {
+            "type": ["integer", "null"],
+            "description": "primary video stream width in pixels"
+          },
+          "height": {
+            "type": ["integer", "null"],
+            "description": "primary video stream height in pixels"
+          },
+          "fps": {
+            "type": ["number", "null"],
+            "description": "primary video stream average frame rate"
+          },
+          "video_codec": {
+            "type": ["string", "null"]
+          },
+          "nb_frames": {
+            "type": ["integer", "null"],
+            "description": "primary video stream frame count when reported"
+          },
+          "streams": {
+            "type": "array",
+            "minItems": 1,
+            "description": "every stream ffprobe reports, in index order",
+            "items": {
+              "type": "object",
+              "required": ["index", "codec_type"],
+              "properties": {
+                "index": {"type": "integer", "minimum": 0},
+                "codec_type": {"type": "string"},
+                "codec_name": {"type": ["string", "null"]},
+                "codec_tag": {"type": ["string", "null"]},
+                "handler_name": {"type": ["string", "null"]},
+                "width": {"type": ["integer", "null"]},
+                "height": {"type": ["integer", "null"]},
+                "fps": {"type": ["number", "null"]},
+                "sample_rate": {"type": ["integer", "null"]},
+                "channels": {"type": ["integer", "null"]},
+                "nb_frames": {"type": ["integer", "null"]},
+                "duration_s": {"type": ["number", "null"]}
+              },
+              "additionalProperties": true
+            }
+          },
+          "gyro": {
+            "type": "object",
+            "required": ["present"],
+            "description": "whether IMU/gyro telemetry is available for this clip",
+            "properties": {
+              "present": {"type": "boolean"},
+              "evidence": {
+                "type": ["string", "null"],
+                "description": "which stream carries the gyro data and how it was recognised; null when absent"
+              }
+            },
+            "additionalProperties": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

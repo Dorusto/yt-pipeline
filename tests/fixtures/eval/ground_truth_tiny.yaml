@@ -1,0 +1,17 @@
+clips:
+  "0100":
+    summary: Perfect match, level horizon and one event.
+    segments:
+      - {start: "00:00", end: "00:10", expect_move: pan_left, expect_role: move, horizon: level}
+    events:
+      - {at: "00:05", what: "subject enters frame"}
+
+  "0101":
+    summary: Expected travel_forward, the motion output says dolly_in.
+    segments:
+      - {start: "00:00", end: "00:10", expect_move: travel_forward}
+
+  "0102":
+    summary: Expected hold but the workspace has no motion output for this clip.
+    segments:
+      - {start: "00:00", end: "00:10", expect_move: hold}

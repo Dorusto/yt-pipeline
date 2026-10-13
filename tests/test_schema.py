@@ -51,3 +51,45 @@ def test_validate_or_raise_raises_schema_error():
 
 def test_schema_path_accepts_extensionless_name():
     assert schema.schema_path("fragments").name == "fragments.schema.json"
+
+
+def test_every_schema_file_is_valid_draft202012():
+    import jsonschema
+
+    for path in sorted(schema.SCHEMA_DIR.glob("*.schema.json")):
+        jsonschema.Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("name", ["ingest", "motion", "quality"])
+def test_analysis_fixtures_validate(name):
+    assert schema.validate(load(f"{name}_valid.json"), name) == []
+
+
+@pytest.mark.parametrize("name", ["ingest", "motion", "quality"])
+def test_analysis_schemas_reject_missing_required(name):
+    assert schema.validate({}, name)
+
+
+def test_motion_rejects_unknown_label():
+    data = load("motion_valid.json")
+    data["moves"][0]["label"] = "whip_something"
+    assert schema.validate(data, "motion")
+
+
+def test_quality_rejects_unknown_role():
+    data = load("quality_valid.json")
+    data["segments"][0]["role"] = "junk"
+    assert schema.validate(data, "quality")
+
+
+def test_quality_rejects_unknown_defect():
+    data = load("quality_valid.json")
+    data["segments"][1]["defects"][0]["name"] = "wind"
+    assert schema.validate(data, "quality")
+
+
+def test_analysis_schemas_allow_extra_fields():
+    for name in ("ingest", "motion", "quality"):
+        data = load(f"{name}_valid.json")
+        data["director_note"] = "anything goes"
+        assert schema.validate(data, name) == []

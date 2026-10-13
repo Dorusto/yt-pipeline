@@ -12,7 +12,11 @@
   "permission": {
     "webfetch": "allow",
     "websearch": "allow",
-    "external_directory": "ask",
+    "external_directory": {
+      "*": "ask",
+      "/tmp/**": "allow",
+      "~/media/**": "allow"
+    },
     "doom_loop": "ask"
   }
 }

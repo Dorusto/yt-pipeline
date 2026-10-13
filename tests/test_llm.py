@@ -1,3 +1,7 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -8,9 +12,12 @@ from common.llm import (
     LLMClient,
     LLMError,
     LLMResponse,
+    MissingUsageCost,
     MockClient,
     OpenRouterClient,
     make_client,
+    read_ledger,
+    resolve_ledger_path,
 )
 
 MESSAGES = [{"role": "user", "content": "hi"}]
@@ -198,28 +205,171 @@ def test_openrouter_resolves_role_from_config():
     assert fake.completions.calls[0]["model"] == "coder/model"
 
 
-def test_usage_without_cost_charges_zero():
+def test_usage_without_cost_raises_on_openrouter():
     response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))],
         usage=SimpleNamespace(prompt_tokens=3, completion_tokens=4),
     )
     client = OpenRouterClient(client=FakeOpenAI(response))
-    result = client.complete("vision", MESSAGES, model="vision/model")
-    assert result.cost_usd == 0.0
-    assert result.prompt_tokens == 3
-    assert result.completion_tokens == 4
+    with pytest.raises(MissingUsageCost):
+        client.complete("vision", MESSAGES, model="vision/model")
     assert client.spent_usd == 0.0
 
 
-def test_missing_usage_charges_zero():
+def test_missing_usage_raises_on_openrouter():
     response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))],
         usage=None,
     )
     client = OpenRouterClient(client=FakeOpenAI(response))
-    result = client.complete("vision", MESSAGES, model="vision/model")
-    assert result.cost_usd == 0.0
-    assert result.prompt_tokens == 0
+    with pytest.raises(MissingUsageCost):
+        client.complete("vision", MESSAGES, model="vision/model")
+    assert client.spent_usd == 0.0
+
+
+def test_missing_cost_error_does_not_leak_keys():
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))],
+        usage=SimpleNamespace(prompt_tokens=1),
+    )
+    client = OpenRouterClient(client=FakeOpenAI(response))
+    with pytest.raises(MissingUsageCost) as exc:
+        client.complete("vision", MESSAGES, model="vision/model")
+    message = str(exc.value)
+    assert "usage.cost" in message
+    assert "sk-" not in message
+
+
+def test_no_ledger_path_means_no_ledger_file():
+    client = MockClient(cost_per_call=0.01)
+    client.complete("vision", MESSAGES)
+    assert client.ledger_path is None
+    assert client.spent_usd == pytest.approx(0.01)
+
+
+def test_ledger_records_entries_and_total(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    client = MockClient(cost_per_call=0.01, ledger_path=ledger)
+    client.complete("vision", MESSAGES)
+    client.complete("coder", MESSAGES)
+    data = read_ledger(ledger)
+    assert data["total_usd"] == pytest.approx(0.02)
+    assert len(data["entries"]) == 2
+    assert data["entries"][0]["role"] == "vision"
+    assert data["entries"][0]["cost_usd"] == pytest.approx(0.01)
+    assert data["entries"][1]["role"] == "coder"
+    assert data["entries"][0]["ts"]
+
+
+def test_ledger_caps_the_job_across_processes(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    first = MockClient(budget_usd=0.05, cost_per_call=0.02, ledger_path=ledger)
+    first.complete("vision", MESSAGES)
+    first.complete("vision", MESSAGES)
+    assert first.spent_usd == pytest.approx(0.04)
+    second = MockClient(budget_usd=0.05, cost_per_call=0.02, ledger_path=ledger)
+    assert second.spent_usd == pytest.approx(0.04)
+    assert second.remaining_usd == pytest.approx(0.01)
+    second.complete("vision", MESSAGES)
+    assert second.spent_usd == pytest.approx(0.06)
+    third = MockClient(budget_usd=0.05, cost_per_call=0.02, ledger_path=ledger)
+    with pytest.raises(BudgetExceeded):
+        third.complete("vision", MESSAGES)
+
+
+def test_ledger_message_names_the_ledger(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    client = MockClient(budget_usd=0.01, cost_per_call=0.02, ledger_path=ledger)
+    client.complete("vision", MESSAGES)
+    with pytest.raises(BudgetExceeded) as exc:
+        client.complete("vision", MESSAGES)
+    assert str(ledger) in str(exc.value)
+
+
+def test_ledger_created_in_missing_directory(tmp_path):
+    ledger = tmp_path / "workspace" / "llm_spend.json"
+    client = MockClient(cost_per_call=0.01, ledger_path=ledger)
+    client.complete("vision", MESSAGES)
+    assert read_ledger(ledger)["total_usd"] == pytest.approx(0.01)
+
+
+def test_corrupt_ledger_raises(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    ledger.write_text("{not json", encoding="utf-8")
+    with pytest.raises(LLMError):
+        MockClient(ledger_path=ledger)
+
+
+def test_ledger_entry_without_cost_raises(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    ledger.write_text(
+        json.dumps({"total_usd": 0.0, "entries": [{"role": "vision"}]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(LLMError):
+        MockClient(ledger_path=ledger)
+
+
+def test_missing_ledger_file_is_empty(tmp_path):
+    assert read_ledger(tmp_path / "absent.json") == {"total_usd": 0.0, "entries": []}
+
+
+def test_resolve_ledger_path_explicit(tmp_path):
+    assert resolve_ledger_path(tmp_path / "x.json") == tmp_path / "x.json"
+
+
+def test_resolve_ledger_path_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("YT_SPEND_LEDGER", str(tmp_path / "env.json"))
+    assert resolve_ledger_path() == tmp_path / "env.json"
+
+
+def test_resolve_ledger_path_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("YT_SPEND_LEDGER", raising=False)
+    monkeypatch.delenv("YT_WORKSPACE", raising=False)
+    config = {"spend_ledger": str(tmp_path / "cfg.json")}
+    assert resolve_ledger_path(config=config) == tmp_path / "cfg.json"
+
+
+def test_resolve_ledger_path_workspace_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("YT_SPEND_LEDGER", raising=False)
+    monkeypatch.setenv("YT_WORKSPACE", str(tmp_path))
+    assert resolve_ledger_path() == tmp_path / "llm_spend.json"
+
+
+def test_resolve_ledger_path_none_without_clues(monkeypatch):
+    monkeypatch.delenv("YT_SPEND_LEDGER", raising=False)
+    monkeypatch.delenv("YT_WORKSPACE", raising=False)
+    assert resolve_ledger_path() is None
+
+
+def test_make_client_wires_ledger(tmp_path, monkeypatch):
+    monkeypatch.delenv("YT_SPEND_LEDGER", raising=False)
+    monkeypatch.delenv("YT_WORKSPACE", raising=False)
+    ledger = tmp_path / "llm_spend.json"
+    client = make_client(config_with(backend="mock", budget=3.0), ledger_path=ledger)
+    assert client.ledger_path == ledger
+
+
+def test_openrouter_records_ledger(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    fake = FakeOpenAI(fake_response())
+    client = OpenRouterClient(client=fake, ledger_path=ledger)
+    client.complete("vision", MESSAGES, model="vision/model")
+    data = read_ledger(ledger)
+    assert data["total_usd"] == pytest.approx(0.0042)
+    assert data["entries"][0]["model"] == "vision/model"
+
+
+def test_missing_cost_is_not_written_to_ledger(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))],
+        usage=SimpleNamespace(prompt_tokens=3),
+    )
+    client = OpenRouterClient(client=FakeOpenAI(response), ledger_path=ledger)
+    with pytest.raises(MissingUsageCost):
+        client.complete("vision", MESSAGES, model="vision/model")
+    assert not ledger.exists()
 
 
 def test_missing_api_key_raises_without_leaking(monkeypatch):
@@ -240,3 +390,45 @@ def test_injected_client_needs_no_api_key(monkeypatch):
 def test_base_client_requires_backend():
     with pytest.raises(NotImplementedError):
         LLMClient().complete("vision", MESSAGES, model="vision/model")
+
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+
+CONCURRENT_WORKER = """
+import sys
+sys.path.insert(0, sys.argv[2])
+from common.llm import MockClient
+client = MockClient(cost_per_call=0.01, ledger_path=sys.argv[1])
+for _ in range(int(sys.argv[3])):
+    client.complete("vision", [{"role": "user", "content": "hi"}])
+"""
+
+
+def run_worker(ledger, calls):
+    return subprocess.run(
+        [sys.executable, "-c", CONCURRENT_WORKER, str(ledger), str(SCRIPTS_DIR), str(calls)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_ledger_survives_concurrent_processes(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    workers = [subprocess.Popen(
+        [sys.executable, "-c", CONCURRENT_WORKER, str(ledger), str(SCRIPTS_DIR), "5"]
+    ) for _ in range(4)]
+    for worker in workers:
+        assert worker.wait() == 0
+    data = read_ledger(ledger)
+    assert len(data["entries"]) == 20
+    assert data["total_usd"] == pytest.approx(0.2)
+
+
+def test_budget_check_sees_other_process_spend(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    watcher = MockClient(budget_usd=0.05, cost_per_call=0.01, ledger_path=ledger)
+    assert watcher.spent_usd == 0.0
+    result = run_worker(ledger, 5)
+    assert result.returncode == 0, result.stderr
+    with pytest.raises(BudgetExceeded):
+        watcher.complete("vision", MESSAGES)
