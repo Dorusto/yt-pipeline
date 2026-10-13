@@ -450,3 +450,23 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 **Decision:** B, in `scripts/quality.py` (audit round 2). Fewer than 30 Hough lines → frame not measured; segments without measurements fall back to `0.0`.
 
 **Rationale:** B is a real measurement of the picture, cheap on CPU, and needs no motion file; cross-checks on the test clips agree with independent edge measurements (11.5° reported vs 10° measured on clip 0067; -10° vs -9° on clip 0080). A is a random walk presented as a fact. C is the later upgrade and needs footage these proxies do not carry.
+
+---
+
+## [2026-10-13] Docstrings allowed, inline comments not
+
+**Context:** Rule 5 said "Comments in code → none". The D0 and D1a code has a docstring on every public function. The external audit flagged the mismatch and asked Doru to decide.
+
+**Decision:** Short docstrings on public functions and modules are allowed; inline comments stay out. CLAUDE.md rule 5 updated.
+
+**Rationale:** The code is written and read by agents that did not write it; a one-line contract per function makes briefs and audits cheaper. Inline comments still tend to drift from the code, so the self-documenting-names rule stays for everything else.
+
+---
+
+## [2026-10-13] D1a not approved at checkpoint; ground-truth eval before more tuning
+
+**Context:** Doru reviewed 6 clips against what he filmed (`eval/ground_truth_boat_2026-10-12.yaml`). The tools mislabel boat motion (wave bob as tilt, travel as dolly or complex), confuse pan with truck and orbit, report a tilted horizon on level shots, and see nothing inside a locked-off hold where another boat approaches. Details in `docs/reports/D1a-CHECKPOINT.md`.
+
+**Decision:** A D1a-2 round before D1b: first an eval tool that scores the tools against ground-truth YAML, then platform motion, parallax (pan vs truck, orbit candidates), a horizon measured only on the sea/sky line, scene activity and events inside holds, and the `accidental` role, each judged by the eval score.
+
+**Rationale:** Without ground truth the agents verified the horizon detector with the same kind of edge measurement and confirmed its own error. A small eval set from the person who filmed the footage turns "looks plausible" into a number every later change must improve, and it grows with each new shoot.

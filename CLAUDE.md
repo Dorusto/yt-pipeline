@@ -32,7 +32,7 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 2. **Update `docs/DECISIONS.md`** after any significant architectural decision.
 3. **Update `docs/ROADMAP.md`** after completing a milestone or changing priorities.
 4. **GitHub commits** → backdate after 18:00, non-round times (e.g. 19:43:17). Repo is public.
-5. **Code and documentation** → in English. Comments in code → none (self-documenting code).
+5. **Code and documentation** → in English. No inline comments in code (self-documenting names); short docstrings on public functions and modules are allowed — they help the agents that read code they did not write.
 6. **`--skip-alignment`** → use only when the JSON is already correct and only ASS + video re-render is needed.
 7. **Skills** → when a script's arguments, outputs or behavior change, update the matching skill in `.claude/skills/` in the same change.
 
