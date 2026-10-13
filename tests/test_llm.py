@@ -1,4 +1,7 @@
 import json
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -387,3 +390,45 @@ def test_injected_client_needs_no_api_key(monkeypatch):
 def test_base_client_requires_backend():
     with pytest.raises(NotImplementedError):
         LLMClient().complete("vision", MESSAGES, model="vision/model")
+
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+
+CONCURRENT_WORKER = """
+import sys
+sys.path.insert(0, sys.argv[2])
+from common.llm import MockClient
+client = MockClient(cost_per_call=0.01, ledger_path=sys.argv[1])
+for _ in range(int(sys.argv[3])):
+    client.complete("vision", [{"role": "user", "content": "hi"}])
+"""
+
+
+def run_worker(ledger, calls):
+    return subprocess.run(
+        [sys.executable, "-c", CONCURRENT_WORKER, str(ledger), str(SCRIPTS_DIR), str(calls)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_ledger_survives_concurrent_processes(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    workers = [subprocess.Popen(
+        [sys.executable, "-c", CONCURRENT_WORKER, str(ledger), str(SCRIPTS_DIR), "5"]
+    ) for _ in range(4)]
+    for worker in workers:
+        assert worker.wait() == 0
+    data = read_ledger(ledger)
+    assert len(data["entries"]) == 20
+    assert data["total_usd"] == pytest.approx(0.2)
+
+
+def test_budget_check_sees_other_process_spend(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    watcher = MockClient(budget_usd=0.05, cost_per_call=0.01, ledger_path=ledger)
+    assert watcher.spent_usd == 0.0
+    result = run_worker(ledger, 5)
+    assert result.returncode == 0, result.stderr
+    with pytest.raises(BudgetExceeded):
+        watcher.complete("vision", MESSAGES)

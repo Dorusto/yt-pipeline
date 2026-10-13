@@ -13,9 +13,11 @@ one process. An OpenRouter response without ``usage.cost`` raises instead of
 being counted as free.
 """
 
+import fcntl
 import json
 import os
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +106,24 @@ def write_ledger(path, entries):
         raise LLMError(f"could not write spend ledger {path}: {exc}") from exc
 
 
+@contextmanager
+def ledger_lock(path):
+    """Hold an exclusive ``fcntl.flock`` on a sidecar lock file for one ledger."""
+    path = Path(path)
+    lock = path.with_name(path.name + ".lock")
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock, "a", encoding="utf-8")
+    except OSError as exc:
+        raise LLMError(f"could not open spend ledger lock {lock}: {exc}") from exc
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
 def _value(source, name, default=None):
     if source is None:
         return default
@@ -145,7 +165,6 @@ class LLMClient:
         resolved = model if model is not None else self._resolve(role)
         response = self._create(resolved, messages, **kwargs)
         prompt_tokens, completion_tokens, cost_usd = self._usage_of(response)
-        self.spent_usd += cost_usd
         self._record(
             role=role,
             model=resolved,
@@ -178,10 +197,8 @@ class LLMClient:
             cost_usd = float(cost)
         return int(prompt_tokens), int(completion_tokens), cost_usd
 
-    def _record(self, role, model, cost_usd, prompt_tokens, completion_tokens):
-        if self.ledger_path is None:
-            return
-        entry = {
+    def _entry(self, role, model, cost_usd, prompt_tokens, completion_tokens):
+        return {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "role": role,
             "model": model,
@@ -189,11 +206,29 @@ class LLMClient:
             "prompt_tokens": int(prompt_tokens),
             "completion_tokens": int(completion_tokens),
         }
-        self._entries.append(entry)
-        write_ledger(self.ledger_path, self._entries)
+
+    def _record(self, role, model, cost_usd, prompt_tokens, completion_tokens):
+        entry = self._entry(role, model, cost_usd, prompt_tokens, completion_tokens)
+        if self.ledger_path is None:
+            self._entries.append(entry)
+            self.spent_usd = round(self.spent_usd + float(cost_usd), 8)
+            return
+        with ledger_lock(self.ledger_path):
+            ledger = read_ledger(self.ledger_path)
+            entries = ledger["entries"] + [entry]
+            write_ledger(self.ledger_path, entries)
+            self._entries = entries
+            self.spent_usd = round(ledger["total_usd"] + float(cost_usd), 8)
 
     def _check_budget(self):
-        if self.budget_usd is not None and self.spent_usd >= self.budget_usd:
+        if self.budget_usd is None:
+            return
+        if self.ledger_path is not None:
+            with ledger_lock(self.ledger_path):
+                ledger = read_ledger(self.ledger_path)
+            self._entries = ledger["entries"]
+            self.spent_usd = ledger["total_usd"]
+        if self.spent_usd >= self.budget_usd:
             ledger_note = (
                 f"; spend ledger {self.ledger_path}" if self.ledger_path is not None else ""
             )
