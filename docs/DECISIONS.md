@@ -917,3 +917,50 @@ would throw away geometry-good shots because a model call failed.
 - `eval_labels.py` scores the final shotlog label (verdict when present), not only the geometric one.
 
 **Rationale:** The first two are classic editing grammar (cut on completion of action; avoid same-scene jump cuts) that the rule-based director lacked. The contact sheet turns checkpoints into a phone review instead of reading JSON.
+
+---
+
+## [2026-10-13] D2-01 phrase implementation: the phrase scores as its move, head trim, best-of-take
+
+**Context:** Implementing the D1b recap feedback ("a move and the hold it lands on
+form one phrase: either keep the move through its landing (cut inside the hold),
+or use only the hold; never cut out of a move and into its own landing. Two slots
+from the same take need a different take between them unless they are
+contiguous"). Three implementation choices had to be made, each measured on the
+21-clip Kotor workspace.
+
+**Options for the phrase score (decides whether the phrase or the hold alone
+survives `dedupe_candidates`):**
+- A) `max(move, hold)` — the phrase always wins; a defective move gets dragged in
+  to reach a good landing (0060 s3: move 0.36 + hold 0.691).
+- B) `(move + hold) / 2` — a hero move loses to a slightly better hold from the
+  same take (0080 travel 0.911 diluted to 0.876 vs its own hold 0.884).
+- C) `move_score` — the phrase is the move's shot, the landing is grammar; "use
+  only the hold" wins exactly when the hold is the better shot on its own.
+
+**Decision:** C. Measured on the 33 landing pairs: the phrase wins when the move
+is the better part (0080 s1 0.911, 0072 s7 tunnel 0.895, 0081 s7 0.862) and the
+hold alone wins when the hold is (0060 s5 Doru's pan case, 0080 s6 hero static).
+On an exact tie the phrase wins. Phrase length: the end cut always lands inside
+the hold (`out_s >= H.start_s + 0.75`), the head is trimmed to the pacing target
+but never before the move's handle-in — so a phrase is never longer than its
+target ("shorter shots are better") and the move always completes.
+
+**Same-take rule:** adjacent slots from one take must be source-contiguous (±0.5 s)
+or the candidate is skipped; contiguous neighbours merge into one slot. In a
+chronological edit same-take windows are always neighbours in content time, so a
+take contributes one slot; that slot is its **best** window — a blocked candidate
+with a higher score replaces the conflicting slot (`same-take upgrade` warning).
+Without this the tunnel hero (0.895) lost its take to a weaker dolly_in (0.729).
+
+**Geometry `accidental`/`setup`/`teardown` are never slots**, whatever the
+shotlog says. `0051` (ground truth: "Unusable clip, makes no sense") has a
+quality segment labelled `accidental` whose vision verdict said `move`, so the
+shotlog marked it eligible and it became the opener of the edit. The tools label;
+the director decides (shot-grammar §1). The shotlog keeps the verdict and the
+slot's `role`/`motion_label` follow it — only candidacy is decided here.
+
+**Rationale:** A is what the first implementation did and it puts junk on screen;
+B is what the second round did and it lost the best shot of the film. C is the
+reading of the rule that keeps both Doru's constraints: no jump cut, and the
+motion worth showing is shown through its landing.
