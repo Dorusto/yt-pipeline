@@ -27,7 +27,8 @@
         "pedestal_down",
         "complex_motion",
         "travel_forward",
-        "travel_backward"
+        "travel_backward",
+        "orbit_candidate"
       ]
     },
     "speed": {
@@ -215,6 +216,12 @@
           "semantic_check": {
             "type": "boolean",
             "description": "true when the geometric signal alone is ambiguous (dolly vs zoom) and the vision step should decide"
+          },
+          "parallax": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "homography-fit residual score: 0 means pure rotation explains the flow field, 1 means strong translation with depth parallax; separates pan from truck and supports orbit_candidate"
           },
           "label_geometric": {
             "type": ["string", "null"],

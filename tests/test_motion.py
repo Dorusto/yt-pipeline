@@ -618,3 +618,144 @@ def test_moves_carry_new_fields_and_validate(tmp_path):
         assert "platform" in move
         assert "platform_bob" in move
 
+
+LATERAL_PHASE = [{"type": "steady_move", "start_s": 0.5, "end_s": 4.0, "dominant_motion": "pan_right"}]
+
+
+def _lateral_rows(
+    parallax,
+    centre_sum=0.0,
+    centre_count=0,
+    periphery_sum=0.0,
+    periphery_count=0,
+    dx=-0.05,
+    count=50,
+    sample_fps=10.0,
+):
+    rows = []
+    for index in range(count):
+        rows.append(
+            {
+                "t": (index + 0.5) / sample_fps,
+                "dx": dx,
+                "dy": 0.0,
+                "scale": 1.0,
+                "roll_deg": 0.0,
+                "inlier_ratio": 0.9,
+                "parallax": parallax,
+                "subject_centre_sum": centre_sum,
+                "subject_centre_count": centre_count,
+                "subject_periphery_sum": periphery_sum,
+                "subject_periphery_count": periphery_count,
+            }
+        )
+    return rows
+
+
+def _orbit_field(slide_centre=False, seed=3):
+    rng = np.random.default_rng(seed)
+    width, height = 320, 180
+    theta = math.radians(5)
+    matrix = np.array(
+        [[math.cos(theta), -math.sin(theta), 0.0], [math.sin(theta), math.cos(theta), 0.0]]
+    )
+    source = rng.uniform([0, 0], [width, height], size=(80, 2))
+    centre = (
+        (source[:, 0] >= 0.3 * width)
+        & (source[:, 0] <= 0.7 * width)
+        & (source[:, 1] >= 0.3 * height)
+        & (source[:, 1] <= 0.7 * height)
+    )
+    target = source @ matrix[:, :2].T + matrix[:, 2]
+    slide = 10.0 * rng.uniform(0, 1, size=len(source))
+    if slide_centre:
+        target[:, 0] += slide
+    else:
+        target[~centre, 0] += slide[~centre]
+    return source, target, matrix, width, height
+
+
+def test_parallax_pure_pan_is_low():
+    rng = np.random.default_rng(0)
+    source = rng.uniform([0, 0], [320, 180], size=(60, 2))
+    target = source + np.array([-5.0, 0.0])
+
+    parallax = motion._parallax_score(source, target, 320)
+
+    assert parallax < 0.2
+    moves = motion.build_moves(LATERAL_PHASE, _lateral_rows(parallax), 10.0)
+    assert moves[0]["label"] == "pan_right"
+    assert moves[0]["label_geometric"] is None
+
+
+def test_parallax_depth_translation_is_truck():
+    rng = np.random.default_rng(0)
+    width, height = 320, 180
+    source = rng.uniform([0, 0], [width, height], size=(80, 2))
+    depth = 1.0 + 2.0 * (0.5 + 0.5 * np.sin(2.0 * np.pi * source[:, 0] / width))
+    target = source + np.column_stack([-15.0 * depth, np.zeros(len(source))])
+
+    parallax = motion._parallax_score(source, target, width)
+
+    assert parallax >= 0.5
+    moves = motion.build_moves(LATERAL_PHASE, _lateral_rows(parallax), 10.0)
+    assert moves[0]["label"] == "truck_right"
+    assert moves[0]["label_geometric"] == "pan_right"
+
+
+def test_orbit_candidate_from_centred_subject():
+    source, target, matrix, width, height = _orbit_field()
+    parallax = motion._parallax_score(source, target, width)
+    centre_sum, centre_count, periphery_sum, periphery_count = motion._subject_residuals(
+        source, target, matrix, width, height
+    )
+
+    assert parallax >= 0.5
+    rows = _lateral_rows(parallax, centre_sum, centre_count, periphery_sum, periphery_count)
+    moves = motion.build_moves(LATERAL_PHASE, rows, 10.0)
+
+    assert moves[0]["label"] == "orbit_candidate"
+    assert moves[0]["label_geometric"] == "pan_right"
+    assert moves[0]["semantic_check"] is True
+
+
+def test_orbit_without_quiet_centre_is_truck():
+    source, target, matrix, width, height = _orbit_field(slide_centre=True)
+    parallax = motion._parallax_score(source, target, width)
+    centre_sum, centre_count, periphery_sum, periphery_count = motion._subject_residuals(
+        source, target, matrix, width, height
+    )
+
+    rows = _lateral_rows(parallax, centre_sum, centre_count, periphery_sum, periphery_count)
+    moves = motion.build_moves(LATERAL_PHASE, rows, 10.0)
+
+    assert moves[0]["label"] in ("truck_left", "truck_right")
+    assert moves[0]["label_geometric"] == "pan_right"
+
+
+def test_few_matches_parallax_zero():
+    source = np.zeros((5, 2))
+    target = np.zeros((5, 2))
+
+    assert motion._parallax_score(source, target, 320) == 0.0
+
+    moves = motion.build_moves(LATERAL_PHASE, _lateral_rows(0.0), 10.0)
+    assert moves[0]["parallax"] == 0.0
+    assert moves[0]["label"] == "pan_right"
+
+
+def test_moves_carry_parallax_and_validate(tmp_path):
+    source = tmp_path / "clips"
+    make_pan_clip(source / "pan.mp4")
+    workspace = tmp_path / "workspace"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = read_motion(workspace, "pan")
+    assert validate(data, "motion") == []
+    assert data["moves"]
+    for move in data["moves"]:
+        assert 0.0 <= move["parallax"] <= 1.0
+
+

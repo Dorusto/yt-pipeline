@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -53,6 +54,17 @@ BOB_MIN_CYCLES = 2.0
 BOB_MIN_SPAN_SECONDS = 3.0
 BOB_GAP_SECONDS = 4.0
 ROLL_BOB_MIN_DEG = 0.5
+PARALLAX_SCALE = 0.002
+TRUCK_PARALLAX_MIN = 0.5
+SUBJECT_RATIO_MAX = 0.7
+SUBJECT_BOX_FRACTION = 0.4
+INTERNAL_ROW_FIELDS = (
+    "parallax",
+    "subject_centre_sum",
+    "subject_centre_count",
+    "subject_periphery_sum",
+    "subject_periphery_count",
+)
 
 
 class MotionError(RuntimeError):
@@ -99,7 +111,59 @@ def smooth_series(values, window=5):
 
 
 def _invalid_pair():
-    return {"dx": 0.0, "dy": 0.0, "scale": 1.0, "roll_deg": 0.0, "inlier_ratio": 0.0}
+    return {
+        "dx": 0.0,
+        "dy": 0.0,
+        "scale": 1.0,
+        "roll_deg": 0.0,
+        "inlier_ratio": 0.0,
+        "parallax": 0.0,
+        "subject_centre_sum": 0.0,
+        "subject_centre_count": 0,
+        "subject_periphery_sum": 0.0,
+        "subject_periphery_count": 0,
+    }
+
+
+def _parallax_score(source_points, target_points, width):
+    """Homography-fit residual score for one frame pair, 0..1."""
+    if source_points is None or target_points is None or width <= 0:
+        return 0.0
+    source = np.asarray(source_points, dtype=np.float64).reshape(-1, 2)
+    target = np.asarray(target_points, dtype=np.float64).reshape(-1, 2)
+    if len(source) < 8 or len(target) < 8:
+        return 0.0
+    homography, _ = cv2.findHomography(
+        source.reshape(-1, 1, 2), target.reshape(-1, 1, 2), cv2.RANSAC
+    )
+    if homography is None:
+        return 0.0
+    projected = cv2.perspectiveTransform(source.reshape(-1, 1, 2), homography).reshape(-1, 2)
+    residuals = np.linalg.norm(projected - target, axis=1)
+    median_residual = float(np.median(residuals))
+    return min(1.0, (median_residual / width) / PARALLAX_SCALE)
+
+
+def _subject_residuals(source_points, target_points, matrix, width, height):
+    """Centre/periphery residual sums after removing the global affine motion."""
+    if source_points is None or target_points is None or matrix is None:
+        return 0.0, 0, 0.0, 0
+    source = np.asarray(source_points, dtype=np.float64).reshape(-1, 2)
+    target = np.asarray(target_points, dtype=np.float64).reshape(-1, 2)
+    if len(source) == 0 or len(source) != len(target):
+        return 0.0, 0, 0.0, 0
+    predicted = source @ matrix[:, :2].T + matrix[:, 2]
+    residuals = np.linalg.norm(target - predicted, axis=1)
+    half = SUBJECT_BOX_FRACTION / 2.0
+    centre_x = (source[:, 0] >= (0.5 - half) * width) & (source[:, 0] <= (0.5 + half) * width)
+    centre_y = (source[:, 1] >= (0.5 - half) * height) & (source[:, 1] <= (0.5 + half) * height)
+    centre_mask = centre_x & centre_y
+    return (
+        float(residuals[centre_mask].sum()),
+        int(centre_mask.sum()),
+        float(residuals[~centre_mask].sum()),
+        int((~centre_mask).sum()),
+    )
 
 
 def compute_trajectory(prev_gray, next_gray):
@@ -139,12 +203,21 @@ def compute_trajectory(prev_gray, next_gray):
     scale = math.hypot(a, c)
     if scale <= 0:
         return _invalid_pair()
+    parallax = _parallax_score(points[tracked], next_points[tracked], width)
+    centre_sum, centre_count, periphery_sum, periphery_count = _subject_residuals(
+        points[tracked], next_points[tracked], matrix, width, height
+    )
     return {
         "dx": float(tx) / width,
         "dy": float(ty) / height,
         "scale": float(scale),
         "roll_deg": float(math.degrees(math.atan2(c, a))),
         "inlier_ratio": inlier_count / len(inlier_mask),
+        "parallax": parallax,
+        "subject_centre_sum": centre_sum,
+        "subject_centre_count": centre_count,
+        "subject_periphery_sum": periphery_sum,
+        "subject_periphery_count": periphery_count,
     }
 
 
@@ -586,6 +659,21 @@ def _platform_bob_for_move(start_s, end_s, spans):
     }
 
 
+def _subject_is_centred(rows):
+    """True when the centre of frame moves with the global motion and the periphery does not."""
+    centre_sum = sum(row.get("subject_centre_sum", 0.0) for row in rows)
+    centre_count = sum(row.get("subject_centre_count", 0) for row in rows)
+    periphery_sum = sum(row.get("subject_periphery_sum", 0.0) for row in rows)
+    periphery_count = sum(row.get("subject_periphery_count", 0) for row in rows)
+    if centre_count == 0 or periphery_count == 0:
+        return False
+    centre_mean = centre_sum / centre_count
+    periphery_mean = periphery_sum / periphery_count
+    if periphery_mean <= 0:
+        return False
+    return centre_mean <= SUBJECT_RATIO_MAX * periphery_mean
+
+
 def _runs(classes):
     runs = []
     for index, value in enumerate(classes):
@@ -789,6 +877,7 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
         mean_inlier = sum(row["inlier_ratio"] for row in steady_rows) / len(steady_rows)
         steady_length = group["steady_end_s"] - group["steady_start_s"]
         steadiness = steadiness_word(mean_shake, label)
+        parallax = _median([row.get("parallax", 0.0) for row in steady_rows])
         label_geometric = None
         platform = None
         if label == "static":
@@ -797,6 +886,13 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
             label_geometric = label
             label = "travel_forward" if label == "dolly_in" else "travel_backward"
             platform = "vehicle"
+        elif label in ("pan_left", "pan_right") and parallax >= TRUCK_PARALLAX_MIN:
+            label_geometric = label
+            if steadiness in SMOOTH_STEADINESS and _subject_is_centred(steady_rows):
+                label = "orbit_candidate"
+                semantic = True
+            else:
+                label = "truck_right" if label == "pan_right" else "truck_left"
         confidence = 0.5
         if steady_length >= 3:
             confidence += 0.2
@@ -819,6 +915,7 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
                 "label_geometric": label_geometric,
                 "platform": platform,
                 "platform_bob": _platform_bob_for_move(start_s, end_s, bob_spans),
+                "parallax": parallax,
                 "speed": speed_word(mean_speed),
                 "steadiness": steadiness,
                 "steady_start_s": group["steady_start_s"],
@@ -895,6 +992,10 @@ def analyze_clip(path, sample_fps=10.0, width=320):
         warnings.append("no valid trajectory rows")
     elif invalid:
         warnings.append(f"invalid trajectory rows: {invalid}")
+    trajectory = [
+        {key: value for key, value in row.items() if key not in INTERNAL_ROW_FIELDS}
+        for row in rows
+    ]
     return {
         "file": path.name,
         "path": str(path.resolve()),
@@ -908,7 +1009,7 @@ def analyze_clip(path, sample_fps=10.0, width=320):
             "width": analysis_width,
             "frames_analyzed": frames_analyzed,
         },
-        "trajectory": rows,
+        "trajectory": trajectory,
         "phases": phases,
         "moves": moves,
         "warnings": warnings,
