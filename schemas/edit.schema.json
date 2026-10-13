@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/edit.schema.json",
+  "title": "edit",
+  "description": "The edit list: the single source of truth for one edit. Written by the director and read by every output adapter (ffmpeg render, browser preview, graphics engine, optional Kdenlive export). Video slots carry source, in/out, score and reason; audio carries music, SFX, ambience and levels; captions and graphics overlays carry a template and its props.",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "brief", "sources", "video"],
+  "additionalProperties": false,
+  "$defs": {
+    "slot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "0..1, higher is better"
+    },
+    "transition": {
+      "type": "object",
+      "required": ["type", "duration_s"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["cut", "crossfade"]
+        },
+        "duration_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "blend length in seconds; 0 for cut"
+        }
+      }
+    },
+    "video_slot": {
+      "type": "object",
+      "required": ["id", "clip", "in_s", "out_s", "score", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/slot_id"},
+        "clip": {
+          "type": "string",
+          "minLength": 1,
+          "description": "file name of the source clip, matched against sources[].file"
+        },
+        "in_s": {"$ref": "#/$defs/seconds"},
+        "out_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "must be greater than in_s; the writer asserts it"
+        },
+        "score": {"$ref": "#/$defs/score"},
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "why the director picked this window, in plain words"
+        },
+        "transition": {
+          "$ref": "#/$defs/transition",
+          "description": "transition INTO this slot; ignored on the first slot"
+        },
+        "speed": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.0,
+          "description": "playback rate of the slot; 1.0 is real time"
+        },
+        "role": {
+          "type": ["string", "null"],
+          "enum": ["move", "hold", "transition_in", "transition_out", "setup", "teardown", "accidental", null],
+          "description": "quality role the window came from, context only"
+        },
+        "motion_label": {
+          "type": ["string", "null"],
+          "description": "camera motion label of the window, context only"
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "vision-model description of the window; null when no model was used"
+        }
+      }
+    },
+    "audio_source": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "gain_db": {"type": "number", "default": 0},
+        "fade_in_s": {"type": "number", "minimum": 0},
+        "fade_out_s": {"type": "number", "minimum": 0},
+        "start_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "position on the edit timeline where this source starts"
+        }
+      }
+    },
+    "overlay": {
+      "type": "object",
+      "required": ["template", "props"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/slot_id"},
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "named template rendered by the captions or graphics engine"
+        },
+        "props": {
+          "type": "object",
+          "description": "template properties; the template defines what it reads"
+        },
+        "start_s": {"$ref": "#/$defs/seconds"},
+        "end_s": {"type": "number", "exclusiveMinimum": 0},
+        "slot": {
+          "type": ["string", "null"],
+          "description": "video slot id this overlay is bound to; null when it uses start_s/end_s"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the write"
+    },
+    "tool": {
+      "type": "string",
+      "description": "tool that wrote the file, e.g. scripts/director.py"
+    },
+    "brief": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "the brief in plain language"
+        },
+        "target_duration_s": {"type": ["number", "null"], "minimum": 0},
+        "order": {
+          "type": ["string", "null"],
+          "enum": ["chronological", "score", null]
+        },
+        "pacing": {
+          "type": ["string", "null"],
+          "enum": ["calm-to-energy", "uniform", null]
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "description": "clips the video slots cut from; original files are read-only",
+      "items": {
+        "type": "object",
+        "required": ["file", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "file": {"type": "string", "minLength": 1},
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "absolute path of the clip, proxy or original"
+          },
+          "duration_s": {"type": ["number", "null"], "minimum": 0}
+        }
+      }
+    },
+    "video": {
+      "type": "array",
+      "minItems": 1,
+      "description": "video slots in timeline order",
+      "items": {"$ref": "#/$defs/video_slot"}
+    },
+    "audio": {
+      "type": "object",
+      "description": "audio plan: ambience from the slots or a file, optional music and SFX, output levels",
+      "additionalProperties": false,
+      "properties": {
+        "ambience": {
+          "type": "object",
+          "required": ["enabled"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "gain_db": {"type": "number", "default": 0},
+            "source": {
+              "type": "string",
+              "enum": ["slot", "file"],
+              "description": "slot: each slot's own ambient audio; file: one ambience file for the whole edit"
+            },
+            "file": {"type": ["string", "null"]}
+          }
+        },
+        "music": {
+          "anyOf": [{"$ref": "#/$defs/audio_source"}, {"type": "null"}]
+        },
+        "sfx": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/audio_source"}
+        },
+        "levels": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "target_lufs": {"type": ["number", "null"]},
+            "true_peak_db": {"type": ["number", "null"]}
+          }
+        }
+      }
+    },
+    "captions": {
+      "type": "array",
+      "description": "caption overlays; empty when the edit has none",
+      "items": {"$ref": "#/$defs/overlay"}
+    },
+    "graphics": {
+      "type": "array",
+      "description": "graphics overlays (titles, maps, counters); empty when the edit has none",
+      "items": {"$ref": "#/$defs/overlay"}
+    },
+    "meta": {
+      "type": "object",
+      "description": "run metadata; every tool reports wall time and LLM cost",
+      "additionalProperties": false,
+      "properties": {
+        "tool": {"type": "string"},
+        "wall_time_s": {"type": "number", "minimum": 0},
+        "llm_cost_usd": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

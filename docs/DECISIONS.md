@@ -652,6 +652,92 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ---
 
+## [2026-10-13] S1 recap: labels-only director, no vision descriptions; content-time buckets
+
+**Context:** S1 needs a watchable ~90 s recap from one brief ("about 90 seconds,
+chronological, calm start, more energy towards the end, ambient sound only").
+The brief allows cheap vision descriptions (DeepSeek V4.1 Flash, 2 USD cap).
+Wall-clock buckets turned out empty on this set: the 21 clips span 11:36–14:19
+but hold only ~689 s of content, so 7 of 15 buckets fell in the lunch gap and
+the first director run produced 38 s.
+
+**Options:**
+- A) Director on labels + vision descriptions per kept slot
+- B) Director on labels only (`description: null`), reasons built from role,
+  label, steadiness and defects; buckets over content time (clips laid
+  end-to-end in chronological order) with a fill pass that tops the edit up to
+  the target length
+- C) Director with a full screenwriter/editor/reviewer loop (D2 scope)
+
+**Decision:** B. No vision model was called in S1 (phase LLM spend 0.00 USD of
+the 2 USD budget; descriptions join at D1b where they are the point). Pacing
+position still comes from wall-clock creation times, so a calm morning and an
+energetic afternoon survive content-time bucketing. `edit.json` is written per
+`schemas/edit.schema.json`; `render.py` is a plain ffmpeg adapter (xfade
+crossfades 0.3 s, ambient audio, 1280x720 from the proxies). The Kdenlive
+export stays D2.
+
+**Rationale:** S1 exists to show which analysis errors hurt an edit; a vision
+model would blur that signal and spend budget before D1b's bake-off. C is D2.
+Content-time buckets are what "spread the recap over the footage" means when
+the footage has gaps.
+
+---
+
+## [2026-10-13] Event noise floor at 0.001 and event start above the floor
+
+**Context:** Carry-over from D1a: scene events report many near-zero
+"subject_enters/leaves" (0072 has 11; notes read `activity 0.0000 above
+floor`). The first S1 attempt gated spans on peak amplitude and moved the start
+event to the first sample ≥ `floor + 0.002` above the floor. That removed the
+blip spans but pushed 0083's start (ground truth: boat enters at 00:10) from
+8 s to 17 s — a regression on the only clip with ground-truth events.
+
+**Options:**
+- A) Span peak gate only (start stays on the bare floor crossing)
+- B) Span peak gate + start at the first sample meaningfully above the floor,
+  with the amplitude set at 0.002
+- C) Same as B with the amplitude set at 0.001
+
+**Decision:** C, `ACTIVITY_EVENT_MIN_AMPLITUDE = 0.001` in `scripts/motion.py`
+(residual displacement as a fraction of frame height). Measured on the Kotor
+set: baseline noise excess over the floor ≤ 0.0006, blip spans peak ≤ 0.0008,
+real event onsets ≥ 0.0011 (0083 crosses 0.001 at 11 s, ground truth 10 s).
+The start event is placed at the first sample at least 0.001 above the floor,
+rise events need a rise of at least 0.001, and a span whose peak stays below
+0.001 emits nothing. End notes report the peak they fell from.
+
+**Rationale:** 0.002 sat inside the real slow-onset range and 0.001 still
+clears every measured blip; the eval is the judge and 0.001 keeps 0083 within
+tolerance. 0072 keeps its 11 events — its spans have real peaks — which the
+S1 report lists as a known issue for D1b.
+
+---
+
+## [2026-10-13] Eval events score is F1 with one-to-one matching
+
+**Context:** `eval_labels.py` scored events as matched / ground-truth events
+and allowed one predicted event to match several ground-truth events. On 0083
+the event at 35 s matched both 32 s and 38 s, so events scored 1.00 while the
+peak event was 4 s early (outside the 3 s tolerance).
+
+**Options:**
+- A) Keep recall, add precision as a reported side number
+- B) One-to-one matching (closest pairs first, each side used at most once) and
+  F1 as the component score, with recall and precision reported alongside
+- C) Widen `--event-tol-s` until 0083 reaches 1.00
+
+**Decision:** B. The report now carries `recall`, `precision`, `f1`,
+`matched_count`, `predicted_count`, `gt_count` per clip and `meta.wall_time_s`
+/ `meta.llm_cost_usd` for the run. 0083 scores F1 0.67 (2 of 3 matched) and the
+run overall drops from 0.69 to 0.66 — the honest number. C would tune the
+tolerance to the test set.
+
+**Rationale:** A false-positive detector must not score 1.00; the noise-floor
+half of the same carry-over exists precisely because precision was invisible.
+
+---
+
 ## [2026-10-13] No more hand rules per special case: `uncertain` labels go to vision; editor corrections grow the ground truth
 
 **Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. Doru: there will be many such shots; each would need another rule.

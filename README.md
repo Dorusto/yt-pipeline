@@ -104,6 +104,42 @@ writes nothing unless `--out` is given.
 
 ---
 
+## Render (edit.json → 720p MP4)
+
+The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p MP4. It cuts each video slot from the proxy clip named in `sources[]`, scales and pads it to the requested frame, joins the slots in timeline order with crossfades or hard cuts and keeps each slot's own ambient audio. Captions, graphics, music and SFX are warned about and ignored. Skill: `yt-render`.
+
+```bash
+.venv/bin/python scripts/render.py --edit /path/to/ws/edit.json --out /path/to/ws/recap_720p.mp4 --json
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `render.py` | `edit.json` + the clips in `sources[]` | `--out` MP4 (1280x720, libx264 + AAC) |
+
+`--edit` is validated against `schemas/edit.schema.json`; `--media-dir` resolves clip names not in `sources[]`; `--width`/`--height` set the frame; `--xfade-s` is the fallback crossfade length. Re-running skips when `--out` is newer than `--edit` unless `--force` is given. The MP4 is written atomically and never touches the source clips.
+
+---
+
+## Director (AI Director, phase S1)
+
+`director.py` turns the workspace `motion/` and `quality/` labels into an
+`edit.json` edit list — rule-based and deterministic, no model. It picks cut
+windows, scores them from role, confidence, steadiness and defects, applies a
+pacing and writes the edit list validated against `schemas/edit.schema.json`.
+Skill: `yt-director`.
+
+```bash
+.venv/bin/python scripts/director.py --workspace /path/to/ws \
+  --brief "about 90 seconds, calm start, more energy towards the end" \
+  --target-duration-s 90 --order chronological --pacing calm-to-energy --json
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `director.py` | `ws/ingest.json` + `ws/motion/*.json` + `ws/quality/*.json` | `ws/edit.json` — video slots (clip, in/out, score, reason) + audio/captions/graphics plan |
+
+---
+
 ## Rough-cut assembly (raw footage → Kdenlive project)
 
 For narrative clips with a lot of raw, uncut footage (multi-day trips, vlogs), scrubbing through every source file to find the moments already selected in the written structure doc wastes time. These two scripts skip that: given a list of (source file, in, out) fragments already identified (from raw transcripts, matched to quotes), they generate a ready-to-open Kdenlive project with those fragments placed on the timeline, plus a subtitle file retimed to match.

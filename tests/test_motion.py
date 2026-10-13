@@ -420,12 +420,13 @@ def test_folder_skip_and_force(tmp_path):
 
     first = run_cli(source, "--workspace", workspace, "--json")
     assert first.returncode == 0, first.stderr
-    assert json.loads(first.stdout) == {
-        "clips": 2,
-        "analyzed": 2,
-        "skipped": 0,
-        "output_dir": str((workspace / "motion").resolve()),
-    }
+    first_summary = json.loads(first.stdout)
+    assert first_summary["clips"] == 2
+    assert first_summary["analyzed"] == 2
+    assert first_summary["skipped"] == 0
+    assert first_summary["output_dir"] == str((workspace / "motion").resolve())
+    assert first_summary["llm_cost_usd"] == 0.0
+    assert first_summary["wall_time_s"] >= 0
     assert (workspace / "motion" / "one.json").exists()
     assert (workspace / "motion" / "two.json").exists()
 
@@ -775,7 +776,7 @@ def test_scene_events_rise_and_peak():
     peaks = [event for event in events if event["type"] == "activity_peak"]
     ends = [event for event in events if event["type"] in ("activity_end", "subject_leaves")]
 
-    assert starts and abs(starts[0]["t_s"] - 10) <= 1
+    assert starts and abs(starts[0]["t_s"] - 13) <= 2
     assert peaks and abs(peaks[0]["t_s"] - 35) <= 2
     assert ends
 
@@ -827,6 +828,79 @@ def test_scene_events_have_no_duplicates():
         events = motion.detect_scene_events(activities)
         keys = [(event["t_s"], event["type"]) for event in events]
         assert len(keys) == len(set(keys))
+
+
+def _near_zero_span_series(span_value, span_start=20, span_len=12, count=60):
+    activities = [0.001 + 0.0001 * (index % 2) for index in range(count)]
+    for index in range(span_start, span_start + span_len):
+        activities[index] = span_value
+    return activities
+
+
+def test_scene_events_near_zero_span_is_gated():
+    events = motion.detect_scene_events(_near_zero_span_series(0.0014))
+
+    assert events == []
+
+
+def test_scene_events_span_above_noise_floor_fires():
+    events = motion.detect_scene_events(_near_zero_span_series(0.0031))
+    starts = [event for event in events if event["type"] in ("activity_start", "subject_enters")]
+    peaks = [event for event in events if event["type"] == "activity_peak"]
+    ends = [event for event in events if event["type"] in ("activity_end", "subject_leaves")]
+
+    assert len(starts) == 1
+    assert len(peaks) == 1
+    assert len(ends) == 1
+
+
+def test_scene_events_start_moves_above_noise_floor():
+    activities = [0.001] * 60
+    activities[20] = 0.0011
+    for index in range(21, 41):
+        activities[index] = 0.0011 + 0.013 * (index - 20) / 20
+    for index in range(41, 50):
+        activities[index] = 0.0141 - 0.013 * (index - 40) / 10
+
+    smoothed = motion.smooth_series(activities, motion.ACTIVITY_SMOOTH_WINDOW)
+    floor = motion._percentile(smoothed, motion.ACTIVITY_FLOOR_PERCENTILE)
+    expected_onset = next(
+        index
+        for index, value in enumerate(smoothed)
+        if value - floor >= motion.ACTIVITY_EVENT_MIN_AMPLITUDE
+    )
+
+    events = motion.detect_scene_events(activities)
+    starts = [event for event in events if event["type"] in ("activity_start", "subject_enters")]
+
+    assert len(starts) == 1
+    assert starts[0]["t_s"] == expected_onset
+    for event in starts:
+        assert float(event["note"].split()[1]) >= motion.ACTIVITY_EVENT_MIN_AMPLITUDE
+
+
+def test_scene_events_small_rise_is_not_an_event():
+    activities = [0.001] * 60
+    for index in range(10, 31):
+        activities[index] = 0.0011 + 0.00015 * (index - 10)
+    for index in range(31, 40):
+        activities[index] = 0.0041 - 0.00015 * (index - 30)
+
+    events = motion.detect_scene_events(activities)
+
+    assert any(event["type"] == "activity_peak" for event in events)
+    assert not any(event["type"] in ("activity_rise", "subject_approaches") for event in events)
+
+
+def test_run_summary_reports_wall_time_and_cost(tmp_path):
+    source = tmp_path / "clips"
+    make_static_clip(source / "still.mp4", seconds=1)
+    workspace = tmp_path / "workspace"
+
+    summary = motion.run(source, workspace)
+
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_scene_activity_series_covers_every_second():
