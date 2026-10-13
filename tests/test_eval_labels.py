@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 import eval_labels
 from common.schema import validate
 
@@ -388,3 +390,218 @@ def test_exit_one_unparseable_ground_truth(tmp_path, capsys):
     code = eval_labels.main(["--ground-truth", str(ground_truth), "--workspace", str(workspace)])
     assert code == 1
     assert "[error]" in capsys.readouterr().err
+
+
+def shotlog_doc(shots):
+    return {
+        "generated_at": "2026-10-13T00:00:00+00:00",
+        "weights": {"vision": 0.55, "labels": 0.45},
+        "shots": shots,
+    }
+
+
+def shot(
+    clip,
+    start,
+    end,
+    motion_label="static",
+    label_source="geometry",
+    role="move",
+    role_source="geometry",
+):
+    return {
+        "key": f"{clip}/s1",
+        "clip": clip,
+        "segment_id": "s1",
+        "start_s": start,
+        "end_s": end,
+        "eligible": True,
+        "role": role,
+        "role_source": role_source,
+        "motion_label": motion_label,
+        "label_source": label_source,
+        "score": 0.5,
+        "scores": {"labels": 0.5},
+        "hook": "hook",
+        "reason": "reason",
+    }
+
+
+def write_shotlog(workspace, shots):
+    (workspace / "shotlog.json").write_text(json.dumps(shotlog_doc(shots)), encoding="utf-8")
+
+
+def test_shotlog_move_label_beats_geometry(tmp_path):
+    motion = tmp_path / "motion"
+    motion.mkdir()
+    (tmp_path / "quality").mkdir()
+    (motion / "clip_0100_x.json").write_text(
+        json.dumps(motion_doc([move(0, 10, "pan_left")])), encoding="utf-8"
+    )
+    write_shotlog(
+        tmp_path,
+        [shot("clip_0100_x.mp4", 0, 10, motion_label="travel_backward", label_source="verdict")],
+    )
+    gt = {"clips": {"0100": gt_clip([{"start": "00:00", "end": "00:10", "expect_move": "travel_backward"}])}}
+    geometry = eval_labels.evaluate(gt, tmp_path, labels="geometry")
+    shotlog = eval_labels.evaluate(gt, tmp_path, labels="shotlog")
+    assert geometry["clips"][0]["move"]["score"] == 0.0
+    assert shotlog["clips"][0]["move"]["score"] == 1.0
+
+
+def test_shotlog_role_from_verdict(tmp_path):
+    (tmp_path / "motion").mkdir()
+    quality = tmp_path / "quality"
+    quality.mkdir()
+    (quality / "clip_0100_x.json").write_text(
+        json.dumps(quality_doc([qseg(0, 10, "move")])), encoding="utf-8"
+    )
+    write_shotlog(tmp_path, [shot("clip_0100_x.mp4", 0, 10, role="hold", role_source="verdict")])
+    gt = {"clips": {"0100": gt_clip([{"start": "00:00", "end": "00:10", "expect_role": "hold"}])}}
+    geometry = eval_labels.evaluate(gt, tmp_path, labels="geometry")
+    shotlog = eval_labels.evaluate(gt, tmp_path, labels="shotlog")
+    assert geometry["clips"][0]["role"]["score"] == 0.0
+    assert shotlog["clips"][0]["role"]["score"] == 1.0
+
+
+def test_auto_picks_shotlog_when_present(tmp_path):
+    motion = tmp_path / "motion"
+    motion.mkdir()
+    (tmp_path / "quality").mkdir()
+    (motion / "clip_0100_x.json").write_text(
+        json.dumps(motion_doc([move(0, 10, "pan_left")])), encoding="utf-8"
+    )
+    write_shotlog(
+        tmp_path,
+        [shot("clip_0100_x.mp4", 0, 10, motion_label="travel_backward", label_source="verdict")],
+    )
+    gt = {"clips": {"0100": gt_clip([{"start": "00:00", "end": "00:10", "expect_move": "travel_backward"}])}}
+    report = eval_labels.evaluate(gt, tmp_path, labels="auto")
+    assert report["clips"][0]["move"]["score"] == 1.0
+    assert any(note.startswith("labels: shotlog") for note in report["clips"][0]["notes"])
+
+
+def test_auto_falls_back_to_geometry_without_shotlog(tmp_path):
+    motion = tmp_path / "motion"
+    motion.mkdir()
+    (tmp_path / "quality").mkdir()
+    (motion / "clip_0100_x.json").write_text(
+        json.dumps(motion_doc([move(0, 10, "pan_left")])), encoding="utf-8"
+    )
+    gt = {"clips": {"0100": gt_clip([{"start": "00:00", "end": "00:10", "expect_move": "travel_backward"}])}}
+    report = eval_labels.evaluate(gt, tmp_path, labels="auto")
+    assert report["clips"][0]["move"]["score"] == 0.0
+    assert "labels: geometry" in report["clips"][0]["notes"]
+
+
+def test_labels_shotlog_without_shotlog_exits_one(tmp_path, capsys):
+    (tmp_path / "motion").mkdir()
+    (tmp_path / "quality").mkdir()
+    ground_truth = tmp_path / "gt.yaml"
+    ground_truth.write_text("clips: {}\n", encoding="utf-8")
+    code = eval_labels.main(
+        ["--ground-truth", str(ground_truth), "--workspace", str(tmp_path), "--labels", "shotlog"]
+    )
+    assert code == 1
+    assert "[error]" in capsys.readouterr().err
+
+
+def test_geometry_report_matches_default_without_shotlog(tmp_path):
+    motion = tmp_path / "motion"
+    motion.mkdir()
+    (tmp_path / "quality").mkdir()
+    (motion / "clip_0100_x.json").write_text(
+        json.dumps(motion_doc([move(0, 10, "pan_left")])), encoding="utf-8"
+    )
+    gt = {"clips": {"0100": gt_clip([{"start": "00:00", "end": "00:10", "expect_move": "pan_left"}])}}
+    default = eval_labels.evaluate(gt, tmp_path, labels="auto", generated_at="2026-10-13T00:00:00+00:00")
+    geometry = eval_labels.evaluate(gt, tmp_path, labels="geometry", generated_at="2026-10-13T00:00:00+00:00")
+    assert default == geometry
+    assert "labels: geometry" in geometry["clips"][0]["notes"]
+
+
+def test_notes_name_the_label_source(tmp_path):
+    motion = tmp_path / "motion"
+    motion.mkdir()
+    (tmp_path / "quality").mkdir()
+    (motion / "clip_0100_x.json").write_text(
+        json.dumps(motion_doc([move(0, 10, "pan_left")])), encoding="utf-8"
+    )
+    write_shotlog(
+        tmp_path,
+        [
+            shot("clip_0100_x.mp4", 0, 5, motion_label="pan_left", label_source="geometry"),
+            shot("clip_0100_x.mp4", 5, 10, motion_label="travel_backward", label_source="verdict"),
+        ],
+    )
+    gt = {"clips": {"0100": gt_clip([{"start": "00:00", "end": "00:10", "expect_move": "travel_backward"}])}}
+    shotlog = eval_labels.evaluate(gt, tmp_path, labels="shotlog")
+    assert "labels: shotlog (1 of 2 segments by verdict)" in shotlog["clips"][0]["notes"]
+    geometry = eval_labels.evaluate(gt, tmp_path, labels="geometry")
+    assert "labels: geometry" in geometry["clips"][0]["notes"]
+
+
+def test_shotlog_clip_without_rows_keeps_null_components(tmp_path):
+    (tmp_path / "motion").mkdir()
+    (tmp_path / "quality").mkdir()
+    write_shotlog(tmp_path, [shot("clip_9999_x.mp4", 0, 10, motion_label="pan_left")])
+    gt = {
+        "clips": {
+            "0100": gt_clip(
+                [{"start": "00:00", "end": "00:10", "expect_move": "pan_left", "expect_role": "move"}]
+            )
+        }
+    }
+    report = eval_labels.evaluate(gt, tmp_path, labels="shotlog")
+    row = report["clips"][0]
+    assert row["move"] is None
+    assert row["role"] is None
+    assert "labels: shotlog (0 of 0 segments by verdict)" in row["notes"]
+
+
+def test_shotlog_report_validates_and_json_keys(tmp_path, capsys):
+    motion = tmp_path / "motion"
+    motion.mkdir()
+    (tmp_path / "quality").mkdir()
+    (motion / "clip_0100_x.json").write_text(
+        json.dumps(motion_doc([move(0, 10, "pan_left")])), encoding="utf-8"
+    )
+    write_shotlog(
+        tmp_path,
+        [shot("clip_0100_x.mp4", 0, 10, motion_label="travel_backward", label_source="verdict")],
+    )
+    ground_truth = tmp_path / "gt.yaml"
+    ground_truth.write_text(
+        "clips:\n  \"0100\":\n    segments:\n"
+        "      - {start: \"00:00\", end: \"00:10\", expect_move: travel_backward}\n",
+        encoding="utf-8",
+    )
+    code = eval_labels.main(
+        [
+            "--ground-truth",
+            str(ground_truth),
+            "--workspace",
+            str(tmp_path),
+            "--labels",
+            "shotlog",
+            "--json",
+        ]
+    )
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert validate(report, "eval") == []
+    assert report["meta"]["llm_cost_usd"] == 0.0
+    assert report["meta"]["wall_time_s"] >= 0.0
+    assert report["clips"][0]["move"]["score"] == 1.0
+
+
+def test_help_lists_labels(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        eval_labels.main(["--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "--labels" in out
+    assert "auto" in out
+    assert "shotlog" in out
+    assert "geometry" in out
+    assert "--labels shotlog" in out
