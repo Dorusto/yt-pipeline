@@ -105,15 +105,18 @@ def check_spend(daily_usd, threshold, state, today):
 
 
 def last_commit_time(repo):
-    """Return the newest commit time (epoch seconds) across all local branches, 0 when unknown."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(Path(repo).expanduser()), "log", "-1", "--all", "--format=%ct"],
-            capture_output=True, text=True, check=False,
-        )
-        return float(result.stdout.strip() or 0)
-    except (FileNotFoundError, ValueError):
-        return 0.0
+    """Return when a branch last moved (epoch seconds, from the ref files), 0 when unknown.
+
+    Commit dates are backdated by project rule, so the ref files' modification
+    time is the real signal of a new commit.
+    """
+    git_dir = Path(repo).expanduser() / ".git"
+    candidates = [git_dir / "logs" / "HEAD"]
+    heads = git_dir / "refs" / "heads"
+    if heads.exists():
+        candidates.extend(path for path in heads.rglob("*") if path.is_file())
+    times = [path.stat().st_mtime for path in candidates if path.exists()]
+    return max(times) if times else 0.0
 
 
 def check_no_progress(running, last_commit, now, limit_seconds, state):

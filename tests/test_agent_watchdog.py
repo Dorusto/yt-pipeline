@@ -91,5 +91,10 @@ def test_no_progress_alert_once_per_episode():
     assert watchdog.check_no_progress(False, 1.0, 99999.0, 5400, {}) is None
 
 
-def test_last_commit_time_reads_git(tmp_path):
+def test_last_commit_time_uses_ref_mtime(tmp_path):
     assert watchdog.last_commit_time(tmp_path) == 0.0
+    ref = tmp_path / ".git" / "refs" / "heads" / "d2-2-fixes"
+    ref.parent.mkdir(parents=True)
+    ref.write_text("abc\n")
+    os.utime(ref, (5000, 5000))
+    assert watchdog.last_commit_time(tmp_path) == 5000
