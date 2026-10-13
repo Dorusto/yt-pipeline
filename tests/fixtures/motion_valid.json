@@ -96,5 +96,11 @@
       "notes": ""
     }
   ],
+  "scene_activity": [
+    {"t_s": 0.5, "activity": 0.0012},
+    {"t_s": 1.5, "activity": 0.0011},
+    {"t_s": 2.5, "activity": 0.0013}
+  ],
+  "events": [],
   "warnings": []
 }

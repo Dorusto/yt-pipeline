@@ -10,7 +10,9 @@ INPUT is one video file or a folder scanned non-recursively for ``.mp4``,
 ``.mov`` and ``.m4v`` files. One Lucas-Kanade optical-flow pass with a
 partial-affine RANSAC fit per sampled frame pair builds a camera trajectory,
 splits the take into motion phases and labels the steady spans as CameraBench
-moves with a steady range and cut handles. Each clip becomes
+moves with a steady range and cut handles. The residual local flow after the
+global motion is removed becomes a per-second ``scene_activity`` series and
+scene ``events`` (a subject entering, approaching or leaving). Each clip becomes
 ``DIR/motion/<stem>.json``, validated against ``schemas/motion.schema.json``
 and written atomically. Source files are read only.
 """
@@ -58,12 +60,22 @@ PARALLAX_SCALE = 0.002
 TRUCK_PARALLAX_MIN = 0.5
 SUBJECT_RATIO_MAX = 0.7
 SUBJECT_BOX_FRACTION = 0.4
+SCENE_BAND_FRACTION = 0.7
+ACTIVITY_SMOOTH_WINDOW = 3
+ACTIVITY_FLOOR_PERCENTILE = 0.20
+ACTIVITY_START_SIGMA = 3.0
+ACTIVITY_END_SIGMA = 1.0
+MIN_ACTIVE_SECONDS = 3
+MIN_QUIET_SECONDS = 3
+MIN_RISE_SECONDS = 5
+QUIET_BEFORE_SECONDS = 5
 INTERNAL_ROW_FIELDS = (
     "parallax",
     "subject_centre_sum",
     "subject_centre_count",
     "subject_periphery_sum",
     "subject_periphery_count",
+    "residual_activity",
 )
 
 
@@ -122,6 +134,7 @@ def _invalid_pair():
         "subject_centre_count": 0,
         "subject_periphery_sum": 0.0,
         "subject_periphery_count": 0,
+        "residual_activity": 0.0,
     }
 
 
@@ -166,6 +179,29 @@ def _subject_residuals(source_points, target_points, matrix, width, height):
     )
 
 
+def _residual_activity(source_points, target_points, matrix, height):
+    """Mean residual displacement of the tracked matches after removing the global motion.
+
+    The residual is measured over the scene band (the upper part of the frame,
+    excluding the near-field wake) and normalised by frame height, so a locked-off
+    shot of still scenery stays near zero while an independent subject moving
+    through the scene raises it.
+    """
+    if source_points is None or target_points is None or matrix is None or height <= 0:
+        return 0.0
+    source = np.asarray(source_points, dtype=np.float64).reshape(-1, 2)
+    target = np.asarray(target_points, dtype=np.float64).reshape(-1, 2)
+    if len(source) == 0 or len(source) != len(target):
+        return 0.0
+    predicted = source @ matrix[:, :2].T + matrix[:, 2]
+    residuals = np.linalg.norm(target - predicted, axis=1)
+    band = source[:, 1] < SCENE_BAND_FRACTION * height
+    selected = residuals[band]
+    if selected.size == 0:
+        return 0.0
+    return float(selected.mean()) / height
+
+
 def compute_trajectory(prev_gray, next_gray):
     """Estimate the image motion between two sampled frames as a partial affine fit."""
     height, width = prev_gray.shape[:2]
@@ -207,6 +243,7 @@ def compute_trajectory(prev_gray, next_gray):
     centre_sum, centre_count, periphery_sum, periphery_count = _subject_residuals(
         points[tracked], next_points[tracked], matrix, width, height
     )
+    residual_activity = _residual_activity(points[tracked], next_points[tracked], matrix, height)
     return {
         "dx": float(tx) / width,
         "dy": float(ty) / height,
@@ -218,6 +255,7 @@ def compute_trajectory(prev_gray, next_gray):
         "subject_centre_count": centre_count,
         "subject_periphery_sum": periphery_sum,
         "subject_periphery_count": periphery_count,
+        "residual_activity": residual_activity,
     }
 
 
@@ -433,6 +471,132 @@ def _median(values):
     if count % 2:
         return ordered[middle]
     return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _percentile(values, fraction):
+    """Linear-interpolated percentile of a list of numbers."""
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    position = fraction * (len(ordered) - 1)
+    low = int(math.floor(position))
+    high = int(math.ceil(position))
+    if low == high:
+        return ordered[low]
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def scene_activity_series(rows, duration_s):
+    """Aggregate per-sample residual activity into one-second bins covering the clip.
+
+    Every second of ``0 .. duration_s`` gets a row; ``activity`` is the mean
+    residual displacement as a fraction of frame height, kept on its raw scale.
+    """
+    bin_count = max(1, int(math.ceil(duration_s)))
+    sums = [0.0] * bin_count
+    counts = [0] * bin_count
+    for row in rows:
+        index = int(row["t"])
+        if index < 0:
+            continue
+        if index >= bin_count:
+            index = bin_count - 1
+        sums[index] += row.get("residual_activity", 0.0)
+        counts[index] += 1
+    return [
+        {"t_s": index + 0.5, "activity": sums[index] / counts[index] if counts[index] else 0.0}
+        for index in range(bin_count)
+    ]
+
+
+def _activity_start_event(smoothed, onset, low, floor):
+    quiet = onset >= QUIET_BEFORE_SECONDS and all(
+        value <= low for value in smoothed[onset - QUIET_BEFORE_SECONDS:onset]
+    )
+    note = f"activity {smoothed[onset] - floor:.4f} above floor"
+    return {"t_s": float(onset), "type": "subject_enters" if quiet else "activity_start", "note": note}
+
+
+def _activity_rise_event(smoothed, onset, peak_index, noise):
+    if peak_index - onset < MIN_RISE_SECONDS:
+        return None
+    climbing = all(
+        smoothed[index + 1] >= smoothed[index] for index in range(onset, onset + MIN_RISE_SECONDS)
+    )
+    if not climbing:
+        return None
+    rise = smoothed[onset + MIN_RISE_SECONDS] - smoothed[onset]
+    note = f"rising activity, {rise:.4f} above start"
+    event_type = "subject_approaches" if rise > ACTIVITY_START_SIGMA * noise else "activity_rise"
+    return {"t_s": float(onset + MIN_RISE_SECONDS), "type": event_type, "note": note}
+
+
+def _activity_end_event(smoothed, fall_index, peak_index, floor, noise):
+    note = f"activity falls to {smoothed[fall_index] - floor:.4f} above floor"
+    strong = smoothed[peak_index] - floor >= 2.0 * ACTIVITY_START_SIGMA * noise
+    event_type = "subject_leaves" if strong else "activity_end"
+    return {"t_s": float(fall_index), "type": event_type, "note": note}
+
+
+def detect_scene_events(activities):
+    """Detect scene events from a per-second activity series.
+
+    Events are proposals, never verdicts: a clear-cut pattern gets the semantic
+    name (subject_enters / subject_approaches / subject_leaves), otherwise the
+    honest activity_* name is used.
+    """
+    if not activities:
+        return []
+    smoothed = smooth_series(activities, ACTIVITY_SMOOTH_WINDOW)
+    floor = _percentile(smoothed, ACTIVITY_FLOOR_PERCENTILE)
+    noise = _median([abs(value - floor) for value in smoothed])
+    high = floor + ACTIVITY_START_SIGMA * noise
+    low = floor + ACTIVITY_END_SIGMA * noise
+    count = len(smoothed)
+    events = []
+    index = 0
+    while index < count:
+        if smoothed[index] <= high:
+            index += 1
+            continue
+        run_start = index
+        while index < count and smoothed[index] > high:
+            index += 1
+        run_end = index - 1
+        if run_end - run_start + 1 < MIN_ACTIVE_SECONDS:
+            continue
+        onset = run_start
+        while onset > 0 and smoothed[onset - 1] > floor:
+            onset -= 1
+        fall = run_end + 1
+        while fall < count and smoothed[fall] > low:
+            fall += 1
+        end_index = None
+        position = fall
+        while position < count:
+            if all(
+                smoothed[position + offset] < low
+                for offset in range(min(MIN_QUIET_SECONDS, count - position))
+            ):
+                end_index = position
+                break
+            position += 1
+        events.append(_activity_start_event(smoothed, onset, low, floor))
+        peak_index = max(range(onset, fall), key=lambda position: smoothed[position])
+        events.append(
+            {
+                "t_s": float(peak_index),
+                "type": "activity_peak",
+                "note": f"peak {smoothed[peak_index] - floor:.4f} above floor",
+            }
+        )
+        rise = _activity_rise_event(smoothed, onset, peak_index, noise)
+        if rise is not None:
+            events.append(rise)
+        if end_index is not None:
+            events.append(_activity_end_event(smoothed, end_index, peak_index, floor, noise))
+    events.sort(key=lambda event: event["t_s"])
+    return events
 
 
 def _solve_3x3(matrix, vector):
@@ -996,6 +1160,8 @@ def analyze_clip(path, sample_fps=10.0, width=320):
         {key: value for key, value in row.items() if key not in INTERNAL_ROW_FIELDS}
         for row in rows
     ]
+    scene_activity = scene_activity_series(rows, duration_s)
+    events = detect_scene_events([row["activity"] for row in scene_activity])
     return {
         "file": path.name,
         "path": str(path.resolve()),
@@ -1012,6 +1178,8 @@ def analyze_clip(path, sample_fps=10.0, width=320):
         "trajectory": trajectory,
         "phases": phases,
         "moves": moves,
+        "scene_activity": scene_activity,
+        "events": events,
         "warnings": warnings,
     }
 

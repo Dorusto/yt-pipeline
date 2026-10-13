@@ -759,3 +759,103 @@ def test_moves_carry_parallax_and_validate(tmp_path):
         assert 0.0 <= move["parallax"] <= 1.0
 
 
+def test_scene_events_quiet_clip():
+    assert motion.detect_scene_events([0.001] * 30) == []
+
+
+def test_scene_events_rise_and_peak():
+    activities = [0.001] * 60
+    for index in range(10, 36):
+        activities[index] = 0.001 + 0.01 * (index - 10) / 25
+    for index in range(36, 50):
+        activities[index] = 0.011 - 0.01 * (index - 35) / 15
+
+    events = motion.detect_scene_events(activities)
+    starts = [event for event in events if event["type"] in ("activity_start", "subject_enters")]
+    peaks = [event for event in events if event["type"] == "activity_peak"]
+    ends = [event for event in events if event["type"] in ("activity_end", "subject_leaves")]
+
+    assert starts and abs(starts[0]["t_s"] - 10) <= 1
+    assert peaks and abs(peaks[0]["t_s"] - 35) <= 2
+    assert ends
+
+
+def test_scene_events_two_spans():
+    activities = [0.001] * 60
+    for index in range(5, 15):
+        activities[index] = 0.001 + 0.01 * (1 - abs(index - 10) / 5)
+    for index in range(30, 45):
+        activities[index] = 0.001 + 0.01 * (1 - abs(index - 37) / 7)
+
+    events = motion.detect_scene_events(activities)
+    starts = [event for event in events if event["type"] in ("activity_start", "subject_enters")]
+    peaks = [event for event in events if event["type"] == "activity_peak"]
+
+    assert len(starts) == 2
+    assert len(peaks) == 2
+
+
+def test_scene_activity_series_covers_every_second():
+    rows = [
+        {"t": 0.5, "residual_activity": 0.002},
+        {"t": 1.5, "residual_activity": 0.004},
+    ]
+
+    series = motion.scene_activity_series(rows, 3.2)
+
+    assert [row["t_s"] for row in series] == [0.5, 1.5, 2.5, 3.5]
+    assert series[0]["activity"] == pytest.approx(0.002)
+    assert series[1]["activity"] == pytest.approx(0.004)
+    assert series[2]["activity"] == 0.0
+
+
+def make_moving_object_clip(path, seconds=4, width=320, height=180, fps=25):
+    background = noise_frame(width, height, seed=7)
+    frames = []
+    for index in range(seconds * fps):
+        frame = background.copy()
+        moment = index / fps
+        left = int(20 + (width - 100) * moment / seconds)
+        top = int(0.3 * height)
+        cv2.rectangle(frame, (left, top), (left + 70, top + 45), (255, 255, 255), -1)
+        for x in range(left, left + 70, 12):
+            cv2.line(frame, (x, top), (x, top + 45), (0, 0, 0), 2)
+        frames.append(frame)
+    return write_video(path, frames, (width, height), fps)
+
+
+def test_scene_activity_moving_object_beats_static(tmp_path):
+    source = tmp_path / "clips"
+    make_moving_object_clip(source / "moving.mp4")
+    make_static_clip(source / "static.mp4", seconds=4, width=320, height=180)
+    workspace = tmp_path / "workspace"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    moving = read_motion(workspace, "moving")
+    static = read_motion(workspace, "static")
+    moving_peak = max(row["activity"] for row in moving["scene_activity"])
+    static_peak = max(row["activity"] for row in static["scene_activity"])
+
+    assert moving_peak > 0.001
+    assert static_peak < 0.001
+
+
+def test_motion_doc_validates_with_and_without_events(tmp_path):
+    source = tmp_path / "clips"
+    make_static_clip(source / "still.mp4")
+    workspace = tmp_path / "workspace"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = read_motion(workspace, "still")
+    assert validate(data, "motion") == []
+    assert data["events"] == []
+    assert data["scene_activity"]
+
+    data["events"] = [{"t_s": 1.0, "type": "activity_start", "note": "test"}]
+    assert validate(data, "motion") == []
+
+

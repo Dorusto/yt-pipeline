@@ -4,7 +4,7 @@
   "title": "motion",
   "description": "Camera motion analysis written by scripts/motion.py per clip: sampled trajectory, motion phases and labelled moves with steady range and handles. Labels follow the CameraBench geometric vocabulary; semantic moves (orbit, tracking, reveal) and the dolly-vs-zoom split are left to the vision step and flagged with semantic_check. Optical flow alone cannot separate dolly from zoom, so scale change is labelled dolly_in/dolly_out; sustained smooth scale flow is upgraded to travel_forward/travel_backward with platform: vehicle, keeping the CameraBench label in label_geometric.",
   "type": "object",
-  "required": ["file", "duration_s", "analysis", "trajectory", "phases", "moves"],
+  "required": ["file", "duration_s", "analysis", "trajectory", "phases", "moves", "scene_activity", "events"],
   "$defs": {
     "motion_label": {
       "type": "string",
@@ -159,6 +159,36 @@
           "steadiness": {"$ref": "#/$defs/steadiness"}
         },
         "additionalProperties": true
+      }
+    },
+    "scene_activity": {
+      "type": "array",
+      "description": "per-second residual local flow after removing the global camera motion: 0 means the picture only moves with the camera, higher means independent activity in the scene (a subject entering, approaching or leaving)",
+      "items": {
+        "type": "object",
+        "required": ["t_s", "activity"],
+        "properties": {
+          "t_s": {"type": "number", "minimum": 0},
+          "activity": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "scene events detected from the activity series: activity_start, activity_rise, activity_peak, activity_end and the semantic subject_enters / subject_approaches / subject_leaves when the pattern is clear. Proposals for the director and the vision step, never verdicts.",
+      "items": {
+        "type": "object",
+        "required": ["t_s", "type"],
+        "properties": {
+          "t_s": {"type": "number", "minimum": 0},
+          "type": {
+            "type": "string",
+            "enum": ["activity_start", "activity_rise", "activity_peak", "activity_end", "subject_enters", "subject_approaches", "subject_leaves"]
+          },
+          "note": {"type": "string"}
+        },
+        "additionalProperties": false
       }
     },
     "moves": {
