@@ -1,12 +1,29 @@
 import json
+import re
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 import index
 from common.schema import validate
 
+ROOT = Path(__file__).resolve().parents[1]
+FOURCC = cv2.VideoWriter_fourcc(*"mp4v")
 CLIP_STEM = "dji_20261012_000000_{counter}_0000000000000_video"
+
+
+def write_video(path, seconds=8, fps=10, size=(64, 48)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(str(path), FOURCC, fps, size)
+    if not writer.isOpened():
+        pytest.skip("OpenCV mp4v VideoWriter is unavailable on this build")
+    for index in range(seconds * fps):
+        frame = np.full((size[1], size[0], 3), (index * 7) % 255, dtype=np.uint8)
+        writer.write(frame)
+    writer.release()
+    return path
 
 
 def quality_segment(
@@ -70,7 +87,7 @@ def described_segment(
     }
 
 
-def write_quality(workspace, counter, segments):
+def write_quality(workspace, counter, segments, path=None):
     directory = workspace / "quality"
     directory.mkdir(parents=True, exist_ok=True)
     record = {
@@ -78,6 +95,8 @@ def write_quality(workspace, counter, segments):
         "duration_s": max(segment["end_s"] for segment in segments),
         "segments": segments,
     }
+    if path is not None:
+        record["path"] = str(path)
     (directory / f"{CLIP_STEM.format(counter=counter)}.json").write_text(
         json.dumps(record), encoding="utf-8"
     )
@@ -128,9 +147,10 @@ def build(
     describe_segments=None,
     motion_moves=None,
     similarity_pairs=None,
+    clip_path=None,
 ):
     segments = segments if segments is not None else [quality_segment("s1", 0.0, 10.0)]
-    write_quality(workspace, counter, segments)
+    write_quality(workspace, counter, segments, path=clip_path)
     if motion_moves is not None:
         write_motion(workspace, counter, motion_moves)
     if describe_segments is not None:
@@ -492,3 +512,130 @@ def test_shot_without_vision_has_null_summary_and_empty_tags(tmp_path):
     assert shot["summary"] is None
     assert shot["tags"] == []
     assert validate(data, "shotlog") == []
+
+
+def shot_record(key, score, clip="clip.mp4"):
+    return {
+        "key": key,
+        "clip": clip,
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "eligible": True,
+        "role": "hold",
+        "motion_label": "static",
+        "score": score,
+        "scores": {"vision": score, "labels": score},
+        "hook": key,
+        "summary": None,
+        "tags": [],
+        "hero": False,
+    }
+
+
+def test_html_is_written_next_to_the_shotlog(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    _, summary = build(tmp_path, clip_path=clip)
+    html_path = tmp_path / "shotlog.html"
+    assert html_path.exists()
+    assert Path(summary["html"]).resolve() == html_path.resolve()
+
+
+def test_html_is_self_contained(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    build(tmp_path, clip_path=clip)
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    assert "data:image/jpeg;base64," in text
+    assert "http://" not in text
+    assert "https://" not in text
+    for src in re.findall(r'src="([^"]*)"', text):
+        assert src.startswith("data:")
+
+
+def test_cards_carry_summary_tags_hero_and_eligibility(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    segment = quality_segment("s1", 0.0, 10.0, role="accidental", confidence=0.9, uncertain=False)
+    describe = described_segment(
+        "s1",
+        0.0,
+        10.0,
+        interest=80,
+        hero=True,
+        summary="a boat glides into a sea cave",
+        tags=["boat", "sea cave"],
+    )
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe], clip_path=clip)
+    shot = data["shots"][0]
+    assert shot["eligible"] is False
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    assert "a boat glides into a sea cave" in text
+    assert "boat" in text
+    assert "sea cave" in text
+    assert "HERO" in text
+    assert "not eligible" in text
+    assert f"{shot['score']:.2f}" in text
+
+
+def test_cards_are_in_score_order(tmp_path):
+    record = {
+        "workspace": str(tmp_path),
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "shots": [shot_record("0081/s1", 0.4), shot_record("0081/s2", 0.9)],
+    }
+    html_path = tmp_path / "shotlog.html"
+    index._write_html(html_path, record, {})
+    text = html_path.read_text(encoding="utf-8")
+    assert text.index("0081/s2") < text.index("0081/s1")
+
+
+def test_missing_clip_file_does_not_fail(tmp_path):
+    missing = tmp_path / "missing.mp4"
+    data, summary = build(tmp_path, clip_path=missing)
+    assert summary["html"] is not None
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    assert data["shots"][0]["clip"] in text
+    assert "placeholder" in text
+
+
+def test_no_html_skips_the_contact_sheet(tmp_path):
+    write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
+    summary, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    assert summary["html"] is None
+    assert not (tmp_path / "shotlog.html").exists()
+
+
+def test_html_inside_repo_is_refused(tmp_path, capsys):
+    write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
+    target = ROOT / "shotlog.html"
+    exit_code = index.main(["--workspace", str(tmp_path), "--html", str(target), "--force"])
+    assert exit_code == 1
+    assert "[error]" in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_json_summary_keeps_previous_keys_and_adds_html(tmp_path, capsys):
+    write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
+    exit_code = index.main(["--workspace", str(tmp_path), "--force", "--json"])
+    assert exit_code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert set(summary) == {
+        "shots",
+        "eligible",
+        "with_vision",
+        "suppressed",
+        "weights",
+        "wall_time_s",
+        "llm_cost_usd",
+        "output",
+        "html",
+        "skipped",
+    }
+    assert summary["llm_cost_usd"] == 0.0
+    assert Path(summary["html"]).resolve() == (tmp_path / "shotlog.html").resolve()
+
+
+def test_shotlog_still_validates_with_html(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    data, _ = build(tmp_path, clip_path=clip)
+    assert validate(data, "shotlog") == []
+    assert (tmp_path / "shotlog.html").exists()

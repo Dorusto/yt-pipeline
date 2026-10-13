@@ -5,24 +5,31 @@ Usage:
     python scripts/index.py --workspace DIR
     python scripts/index.py --workspace DIR --json
     python scripts/index.py --workspace DIR --clips 0072,0081 --force --json
+    python scripts/index.py --workspace DIR --html /path/to/out.html
+    python scripts/index.py --workspace DIR --no-html
 
 Reads ``quality/<stem>.json`` (required) plus ``motion/<stem>.json``,
 ``describe/<stem>.json`` and ``similarity.json`` (all optional) from the
 workspace and writes one ``shotlog.json`` validated against
 ``schemas/shotlog.schema.json``. Every quality segment becomes a scored
 candidate with a hook and a reason; the vision verdict supplies the effective
-role and motion label on uncertain segments. No model is called. Sources are
-read-only; the output is written atomically.
+role and motion label on uncertain segments. A self-contained ``shotlog.html``
+contact sheet is written next to it, with one base64 thumbnail per shot. No
+model is called. Sources are read-only; the outputs are written atomically.
 """
 
 import argparse
+import base64
 import json
 import os
 import re
 import sys
 import time
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
+
+import cv2
 
 from common.schema import SchemaError, validate_or_raise
 
@@ -43,6 +50,9 @@ INELIGIBLE_ROLES = {"accidental", "setup", "teardown"}
 NO_VISION_PRIOR = 0.5
 SUPPRESS_OVERLAP_RATIO = 0.5
 HOOK_WORDS = 8
+THUMBNAIL_WIDTH = 320
+THUMBNAIL_QUALITY = 70
+HTML_NAME = "shotlog.html"
 
 
 class ShotlogError(RuntimeError):
@@ -62,6 +72,9 @@ def build_parser():
             "  python scripts/index.py --workspace ~/Videos/workspace --json\n"
             "  python scripts/index.py --workspace ~/Videos/workspace \\\n"
             "      --clips 0072,0081 --force --json\n"
+            "  python scripts/index.py --workspace ~/Videos/workspace \\\n"
+            "      --html /tmp/shotlog.html\n"
+            "  python scripts/index.py --workspace ~/Videos/workspace --no-html\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -70,6 +83,8 @@ def build_parser():
     parser.add_argument("--weight-labels", type=float, default=DEFAULT_WEIGHT_LABELS, help="fusion weight of the label component (default 0.45)")
     parser.add_argument("--clips", default=None, help="comma-separated 4-digit counters or stem substrings to include")
     parser.add_argument("--force", action="store_true", help="recompute even when shotlog.json is up to date")
+    parser.add_argument("--html", default=None, help="contact sheet path (default WORKSPACE/shotlog.html)")
+    parser.add_argument("--no-html", action="store_true", help="skip writing the contact sheet")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -99,8 +114,10 @@ def run(
     weight_labels=DEFAULT_WEIGHT_LABELS,
     clips=None,
     force=False,
+    html=None,
+    no_html=False,
 ):
-    """Build ``workspace/shotlog.json``; return the summary and the exit code."""
+    """Build ``workspace/shotlog.json`` and its contact sheet; return the summary and the exit code."""
     started = time.monotonic()
     if weight_vision < 0 or weight_labels < 0:
         raise ShotlogError("fusion weights must be non-negative")
@@ -110,11 +127,13 @@ def run(
     quality_dir = workspace_path / "quality"
     if not quality_dir.is_dir():
         raise ShotlogError(f"no quality folder in workspace: {quality_dir}")
+    html_path = _html_path(workspace_path, html, no_html)
     selected = _select_quality_files(quality_dir, clips)
     output_path = workspace_path / "shotlog.json"
     inputs = _input_files(workspace_path, selected)
     if not force and _output_is_up_to_date(output_path, inputs):
-        return _skipped_summary(output_path, started), 0
+        return _skipped_summary(output_path, started, html_path), 0
+    clip_paths = _clip_path_map(workspace_path, selected)
     similarity_map = _similarity_map(_load_json(workspace_path / "similarity.json"))
     shots = []
     for quality_file in selected:
@@ -154,7 +173,9 @@ def run(
     }
     validate_or_raise(record, "shotlog")
     _atomic_write_json(output_path, record)
-    summary = _summary(shots, weights, wall_time_s, output_path)
+    if html_path is not None:
+        _write_html(html_path, record, clip_paths)
+    summary = _summary(shots, weights, wall_time_s, output_path, html_path)
     return summary, 0
 
 
@@ -167,6 +188,8 @@ def main(argv=None):
             weight_labels=args.weight_labels,
             clips=args.clips,
             force=args.force,
+            html=args.html,
+            no_html=args.no_html,
         )
     except (ShotlogError, SchemaError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
@@ -468,7 +491,7 @@ def _output_is_up_to_date(output_path, inputs):
     return output_mtime >= newest_input
 
 
-def _summary(shots, weights, wall_time_s, output_path):
+def _summary(shots, weights, wall_time_s, output_path, html_path):
     return {
         "shots": len(shots),
         "eligible": sum(1 for shot in shots if shot["eligible"]),
@@ -478,11 +501,12 @@ def _summary(shots, weights, wall_time_s, output_path):
         "wall_time_s": wall_time_s,
         "llm_cost_usd": 0.0,
         "output": str(output_path),
+        "html": str(html_path) if html_path is not None else None,
         "skipped": False,
     }
 
 
-def _skipped_summary(output_path, started):
+def _skipped_summary(output_path, started, html_path):
     data = _load_json(output_path) or {}
     shots = data.get("shots") or []
     return {
@@ -494,8 +518,207 @@ def _skipped_summary(output_path, started):
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": 0.0,
         "output": str(output_path),
+        "html": str(html_path) if html_path is not None and html_path.exists() else None,
         "skipped": True,
     }
+
+
+def _html_path(workspace_path, html, no_html):
+    if no_html:
+        return None
+    path = Path(html).expanduser().resolve() if html else workspace_path / HTML_NAME
+    if _is_inside_repo(path):
+        raise ShotlogError(f"refusing to write the contact sheet inside the repository: {path}")
+    return path
+
+
+def _is_inside_repo(path):
+    repo_root = Path(__file__).resolve().parents[1]
+    resolved = Path(path).resolve()
+    return resolved == repo_root or repo_root in resolved.parents
+
+
+def _clip_path_map(workspace_path, quality_files):
+    paths = {}
+    ingest = _load_json(workspace_path / "ingest.json")
+    if isinstance(ingest, dict):
+        for clip in ingest.get("clips") or []:
+            name = clip.get("file")
+            path = clip.get("path")
+            if name and path:
+                paths.setdefault(name, path)
+    for quality_file in quality_files:
+        record = _load_json(quality_file)
+        if not isinstance(record, dict):
+            continue
+        name = record.get("file")
+        path = record.get("path")
+        if name and path:
+            paths[name] = path
+    return paths
+
+
+def _write_html(html_path, record, clip_paths):
+    shots = sorted(record.get("shots") or [], key=lambda shot: shot.get("score") or 0.0, reverse=True)
+    workspace_name = Path(record.get("workspace") or "").name
+    eligible = sum(1 for shot in shots if shot.get("eligible"))
+    cards = "\n".join(_shot_card(shot, clip_paths) for shot in shots)
+    document = _html_document(workspace_name, len(shots), eligible, record.get("generated_at"), cards)
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = html_path.with_name(html_path.name + ".tmp")
+    try:
+        temporary.write_text(document, encoding="utf-8")
+        os.replace(temporary, html_path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _shot_card(shot, clip_paths):
+    eligible = bool(shot.get("eligible"))
+    card_class = "card" if eligible else "card ineligible"
+    clip = str(shot.get("clip") or "")
+    key = str(shot.get("key") or "")
+    start = _format_time(shot.get("start_s") or 0.0)
+    end = _format_time(shot.get("end_s") or 0.0)
+    summary = shot.get("summary")
+    summary_text = escape(summary) if summary else "—"
+    tags = "".join(f'<span class="tag">{escape(str(tag))}</span>' for tag in shot.get("tags") or [])
+    tags_html = f'<div class="tags">{tags}</div>' if tags else ""
+    score_text, components = _score_text(shot)
+    badges = []
+    if shot.get("hero"):
+        badges.append('<span class="badge hero">HERO</span>')
+    if eligible:
+        badges.append('<span class="badge eligible">eligible</span>')
+    else:
+        badges.append('<span class="badge ineligible">not eligible</span>')
+    role = escape(str(shot.get("role") or ""))
+    motion = escape(str(shot.get("motion_label") or ""))
+    hook = escape(str(shot.get("hook") or ""))
+    return (
+        f'<article class="{card_class}">'
+        f"{_thumbnail_html(shot, clip_paths)}"
+        f'<div class="body">'
+        f'<div class="range">{escape(clip)} · {start}–{end} · {escape(key)}</div>'
+        f'<p class="summary">{summary_text}</p>'
+        f"{tags_html}"
+        f'<div class="score">{score_text}<span class="components">{components}</span></div>'
+        f'<div class="badges">{"".join(badges)}</div>'
+        f'<div class="meta">{role} · {motion} · {hook}</div>'
+        f"</div>"
+        f"</article>"
+    )
+
+
+def _thumbnail_html(shot, clip_paths):
+    clip = str(shot.get("clip") or "")
+    path = clip_paths.get(clip)
+    start = float(shot.get("start_s") or 0.0)
+    end = float(shot.get("end_s") or 0.0)
+    data_uri = _thumbnail_data_uri(path, start + (end - start) / 2)
+    if data_uri is None:
+        return f'<div class="thumb placeholder">{escape(clip)}</div>'
+    return f'<img class="thumb" src="{data_uri}" alt="{escape(clip)}">'
+
+
+def _thumbnail_data_uri(path, t_s):
+    if not path:
+        return None
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        capture.release()
+        return None
+    try:
+        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_s) * 1000.0)
+        ok, frame = capture.read()
+        if not ok:
+            return None
+        return _encode_thumbnail(frame)
+    finally:
+        capture.release()
+
+
+def _encode_thumbnail(frame):
+    height, width = frame.shape[:2]
+    if width > THUMBNAIL_WIDTH:
+        scaled_height = max(1, int(round(height * THUMBNAIL_WIDTH / width)))
+        frame = cv2.resize(frame, (THUMBNAIL_WIDTH, scaled_height), interpolation=cv2.INTER_AREA)
+    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_QUALITY])
+    if not ok:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
+
+
+def _score_text(shot):
+    score = shot.get("score")
+    score_text = f"{float(score):.2f}" if score is not None else "–"
+    scores = shot.get("scores") or {}
+    vision = scores.get("vision")
+    labels = scores.get("labels")
+    vision_text = f"{float(vision):.2f}" if vision is not None else "–"
+    labels_text = f"{float(labels):.2f}" if labels is not None else "–"
+    return score_text, f"vision {vision_text} · labels {labels_text}"
+
+
+def _format_time(seconds):
+    total = max(0.0, float(seconds))
+    minutes = int(total // 60)
+    remainder = total - minutes * 60
+    return f"{minutes:02d}:{remainder:04.1f}"
+
+
+def _html_document(workspace_name, shot_count, eligible_count, generated_at, cards):
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>shotlog · {escape(workspace_name)}</title>\n"
+        "<style>\n"
+        ":root { color-scheme: dark; }\n"
+        "* { box-sizing: border-box; }\n"
+        "body { margin: 0; padding: 12px; font-family: system-ui, -apple-system, sans-serif; "
+        "background: #111; color: #eee; }\n"
+        "header { margin-bottom: 12px; }\n"
+        "h1 { font-size: 1.2rem; margin: 0 0 4px; }\n"
+        "header p { margin: 0; color: #aaa; font-size: 0.85rem; }\n"
+        "main { display: flex; flex-direction: column; gap: 12px; }\n"
+        ".card { background: #1c1c1e; border-radius: 12px; overflow: hidden; }\n"
+        ".card.ineligible { opacity: 0.5; }\n"
+        ".thumb { display: block; width: 100%; max-width: 320px; aspect-ratio: 16 / 9; "
+        "object-fit: cover; background: #333; }\n"
+        ".thumb.placeholder { display: flex; align-items: center; justify-content: center; "
+        "color: #888; font-size: 0.8rem; padding: 24px 8px; text-align: center; }\n"
+        ".body { padding: 10px 12px 14px; }\n"
+        ".range { font-size: 0.8rem; color: #99a; margin-bottom: 6px; }\n"
+        ".summary { font-size: 1rem; margin: 0 0 6px; }\n"
+        ".tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }\n"
+        ".tag { background: #2c2c2e; border-radius: 999px; padding: 2px 8px; "
+        "font-size: 0.72rem; color: #ccc; }\n"
+        ".score { font-size: 1.1rem; font-weight: 700; }\n"
+        ".components { font-size: 0.78rem; color: #99a; margin-left: 6px; font-weight: 400; }\n"
+        ".badges { display: flex; gap: 6px; margin: 6px 0; }\n"
+        ".badge { border-radius: 999px; padding: 2px 8px; font-size: 0.72rem; font-weight: 600; }\n"
+        ".badge.hero { background: #f5c518; color: #111; }\n"
+        ".badge.eligible { background: #1f6f43; color: #d7ffe7; }\n"
+        ".badge.ineligible { background: #5a1f1f; color: #ffd7d7; }\n"
+        ".meta { font-size: 0.78rem; color: #99a; }\n"
+        "</style>\n"
+        "</head>\n"
+        "<body>\n"
+        "<header>\n"
+        f"<h1>{escape(workspace_name)}</h1>\n"
+        f"<p>{shot_count} shots · {eligible_count} eligible</p>\n"
+        f'<p class="generated">generated {escape(str(generated_at or ""))}</p>\n'
+        "</header>\n"
+        "<main>\n"
+        f"{cards}\n"
+        "</main>\n"
+        "</body>\n"
+        "</html>\n"
+    )
 
 
 def _atomic_write_json(path, data):
