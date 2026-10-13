@@ -1,0 +1,12 @@
+{
+  "file": "dji_mimo_20261012_120001_0101_1791817000002_video.mp4",
+  "duration_s": 10.0,
+  "moves": [
+    {
+      "id": "m1",
+      "start_s": 0.0,
+      "end_s": 10.0,
+      "label": "dolly_in"
+    }
+  ]
+}

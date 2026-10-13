@@ -1,0 +1,453 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/eval.schema.json",
+  "title": "eval",
+  "description": "Ground-truth evaluation report written by scripts/eval_labels.py: how well the workspace motion and quality outputs match the labels Doru wrote from what he filmed. Scores are interval-overlap based, 0..1, higher is better. Components absent from a clip's ground truth are null, never zero.",
+  "type": "object",
+  "required": [
+    "generated_at",
+    "ground_truth",
+    "workspace",
+    "horizon_tol_deg",
+    "event_tol_s",
+    "clips",
+    "totals"
+  ],
+  "$defs": {
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "0..1, higher is better"
+    },
+    "move_segment": {
+      "type": "object",
+      "required": [
+        "start_s",
+        "end_s",
+        "expected",
+        "score",
+        "seconds_exact",
+        "seconds_family",
+        "seconds_wrong",
+        "seconds_uncovered"
+      ],
+      "properties": {
+        "start_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "expected": {
+          "type": "string",
+          "minLength": 1,
+          "description": "expected move label from the ground truth"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        },
+        "seconds_exact": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds of the expected interval covered by a predicted move with full label credit"
+        },
+        "seconds_family": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds covered by a geometric-family move worth half credit"
+        },
+        "seconds_wrong": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds covered by a predicted move with no label credit"
+        },
+        "seconds_uncovered": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds of the expected interval no predicted move covers"
+        }
+      },
+      "additionalProperties": false
+    },
+    "role_segment": {
+      "type": "object",
+      "required": [
+        "start_s",
+        "end_s",
+        "expected",
+        "score",
+        "seconds_exact",
+        "seconds_wrong",
+        "seconds_uncovered"
+      ],
+      "properties": {
+        "start_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "expected": {
+          "type": "string",
+          "minLength": 1,
+          "description": "expected role from the ground truth"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        },
+        "seconds_exact": {
+          "type": "number",
+          "minimum": 0
+        },
+        "seconds_wrong": {
+          "type": "number",
+          "minimum": 0
+        },
+        "seconds_uncovered": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "horizon_segment": {
+      "type": "object",
+      "required": [
+        "start_s",
+        "end_s",
+        "expected",
+        "score",
+        "fp_seconds",
+        "level_seconds",
+        "abstain_seconds"
+      ],
+      "properties": {
+        "start_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "expected": {
+          "type": "string",
+          "const": "level",
+          "description": "ground truth only records level horizons; a tilt would be recorded as a note"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        },
+        "fp_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds where the tools claimed a tilted horizon on a level shot"
+        },
+        "level_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds where the tools correctly reported a level horizon"
+        },
+        "abstain_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "seconds where the tools reported no horizon value (null)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_item": {
+      "type": "object",
+      "required": [
+        "at_s",
+        "matched_t_s"
+      ],
+      "properties": {
+        "at_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "ground-truth event time"
+        },
+        "matched_t_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "predicted event time within tolerance, or null when not recalled"
+        }
+      },
+      "additionalProperties": false
+    },
+    "component_scored": {
+      "type": "object",
+      "required": [
+        "score"
+      ],
+      "properties": {
+        "score": {
+          "$ref": "#/$defs/score"
+        }
+      }
+    }
+  },
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 timestamp of the evaluation run"
+    },
+    "ground_truth": {
+      "type": "string",
+      "minLength": 1,
+      "description": "path of the ground-truth YAML that was scored against"
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "description": "workspace directory whose motion/ and quality/ outputs were scored"
+    },
+    "horizon_tol_deg": {
+      "type": "number",
+      "minimum": 0,
+      "description": "|horizon_deg| at or below this counts as a level claim"
+    },
+    "event_tol_s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "a predicted event matches a ground-truth event within this many seconds"
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 0,
+      "description": "one row per clip in the ground truth, in ground-truth order",
+      "items": {
+        "type": "object",
+        "required": [
+          "clip_id",
+          "file",
+          "move",
+          "role",
+          "horizon",
+          "events",
+          "overall",
+          "notes"
+        ],
+        "properties": {
+          "clip_id": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "description": "4-digit counter from the clip file name"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "clip file name found in the workspace outputs, or null when nothing matched"
+          },
+          "move": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "score",
+                  "segments"
+                ],
+                "properties": {
+                  "score": {
+                    "$ref": "#/$defs/score"
+                  },
+                  "segments": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/move_segment"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "score",
+                  "segments"
+                ],
+                "properties": {
+                  "score": {
+                    "$ref": "#/$defs/score"
+                  },
+                  "segments": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/role_segment"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "horizon": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "score",
+                  "fp_rate",
+                  "level_rate",
+                  "segments"
+                ],
+                "properties": {
+                  "score": {
+                    "$ref": "#/$defs/score"
+                  },
+                  "fp_rate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "false-positive seconds over ground-truth level seconds; lower is better"
+                  },
+                  "level_rate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "correct level-claim seconds over ground-truth level seconds"
+                  },
+                  "segments": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/horizon_segment"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "score",
+                  "events"
+                ],
+                "properties": {
+                  "score": {
+                    "$ref": "#/$defs/score"
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/event_item"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "overall": {
+            "$ref": "#/$defs/score"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "problems while scoring this clip, e.g. a missing motion output"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "move",
+        "role",
+        "horizon",
+        "events",
+        "overall",
+        "clips_scored"
+      ],
+      "properties": {
+        "move": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "mean over clips that have expect_move segments"
+        },
+        "role": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "mean over clips that have expect_role segments"
+        },
+        "horizon": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "mean over clips that have horizon expectations"
+        },
+        "events": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/score"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "mean over clips that have events"
+        },
+        "overall": {
+          "$ref": "#/$defs/score"
+        },
+        "clips_scored": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "clips present in the ground truth"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

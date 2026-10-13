@@ -78,12 +78,15 @@ Shared building blocks for the AI Director track (see `docs/VISION.md`). Indepen
 
 Three standalone CPU-only tools that label raw footage before any edit decision.
 They only label — nothing is deleted or trimmed. Sources are read-only; every
-output goes into the workspace. Skills: `yt-ingest`, `yt-motion`, `yt-quality`.
+output goes into the workspace. A fourth tool, `eval_labels.py`, scores those
+outputs against a ground-truth YAML instead of labelling footage.
+Skills: `yt-ingest`, `yt-motion`, `yt-quality`, `yt-eval`.
 
 ```bash
 .venv/bin/python scripts/ingest.py  /path/to/footage --workspace /path/to/ws
 .venv/bin/python scripts/motion.py  /path/to/footage --workspace /path/to/ws
 .venv/bin/python scripts/quality.py /path/to/footage --workspace /path/to/ws
+.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth.yaml --workspace /path/to/ws
 ```
 
 | Script | Input | Output |
@@ -91,11 +94,13 @@ output goes into the workspace. Skills: `yt-ingest`, `yt-motion`, `yt-quality`.
 | `ingest.py` | folder of clips | `ws/ingest.json` — duration, fps, resolution, streams, creation time, gyro present |
 | `motion.py` | one clip or a folder | `ws/motion/<stem>.json` — trajectory, motion phases, CameraBench moves with steady range + handles |
 | `quality.py` | one clip or a folder | `ws/quality/<stem>.json` — per segment: role (move, hold, transition in/out, setup, teardown, accidental) with confidence + measured defects (blur, exposure, shake, obstruction, horizon) |
+| `eval_labels.py` | ground-truth YAML + workspace | per-clip and total move/role/horizon/event scores (table, or `--json`/`--out` report validated against `eval.schema.json`) |
 
-All three accept `--json`, re-run safely (existing outputs are skipped, `--force`
-re-analyses) and validate their output against `schemas/`. `quality.py` prefers a
-matching `ws/motion/<stem>.json` and falls back to coarse frame-diff segmentation
-without it.
+All three analysis tools accept `--json`, re-run safely (existing outputs are
+skipped, `--force` re-analyses) and validate their output against `schemas/`.
+`quality.py` prefers a matching `ws/motion/<stem>.json` and falls back to coarse
+frame-diff segmentation without it. `eval_labels.py` reads the workspace only and
+writes nothing unless `--out` is given.
 
 ---
 
