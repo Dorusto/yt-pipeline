@@ -22,8 +22,9 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 | `srt_from_fragments.py` | Generates a subtitle file retimed to match a rough-cut assembled by the script above |
 | `daily_summary_srt.py` | Groups raw `.srt` transcripts in a folder by day (parsed from filename, e.g. `DJI_YYYYMMDDHHMMSS_...`) and generates a full narrative summary per day (DeepSeek) — memory aid, not filtered for editing angle |
 | `.claude/skills/` | Agent skills (`yt-transcript`, `yt-shorts`, `yt-rough-cut`) — keep in sync with the scripts, setup in `docs/AGENT_SETUP.md` |
-| `docs/VISION.md` | AI Director plan — modes, principles, architecture, phases D0–D5, model routing |
+| `docs/VISION.md` | AI Director plan — modes, principles, architecture, phases D0–D6, model routing |
 | `docs/research/prior-art.md` | Open-source and market research behind the AI Director plan |
+| `docs/research/rendering-and-audio.md` | Render engines, web editor (OpenCut), music/SFX/clean-up without ComfyUI — read before any output, graphics or audio task |
 | `docs/guides/shot-grammar.md` | Filming and editing techniques the tools must detect and the director may use — read before any motion, quality, describe or director task |
 
 ## Working rules
@@ -46,7 +47,7 @@ Read `docs/VISION.md` before starting any D-phase task. These rules add to the w
 - Decide reversible things yourself, record them in `docs/DECISIONS.md` (existing format), move on.
 - Stop and ask only for: anything irreversible or expensive (overwriting footage, paid APIs beyond OpenRouter model calls, downloads > 20 GB, changing an interface Doru approved), a pure taste/product choice between equal options, or a phase checkpoint.
 - Before any new library, model or format: check current version, maintenance, license and fit; compare at least two options; log the decision.
-- Reuse before building. Prefer maintained libraries and the existing scripts (`kdenlive_from_fragments.py` is the Kdenlive export, not something new).
+- Reuse before building. Prefer maintained libraries and the existing scripts (`kdenlive_from_fragments.py` is the optional Kdenlive export adapter, not something new; the edit list is `edit.json`).
 - Footage is read-only. Outputs go to the project workspace.
 - Mock what you cannot run here (no GPU on the build machine) and say so in the phase report.
 - LLM spend: respect the per-run budget cap in config; stop and report when reached.
