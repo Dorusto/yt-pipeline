@@ -1009,3 +1009,20 @@ the edit. The edit list stays `edit.json`.
 the chapel walk shorter than the `keep_whole` rule allows (8 s vs 5–5.5 s). The
 rule wins — it is the D1b feedback ("2–2.5 s is too short for a stable,
 important move") — but the reviewer's taste point is in the D2 report.
+
+---
+
+## [2026-10-14] D2 reviewed by Doru; small D2-2 round before the publish gate
+
+**Context:** Doru watched `recap_d2_720p.mp4`: "much better, everything else is very good". Two faults: (1) the approach into the submarine tunnel (0072, ~00:20–00:50) is missing, only the exit is used; (2) a closing shot is too long — the camera keeps moving without purpose. D2 report question 5 (vision rescuing a geometry `accidental`) was decided by Claude as architect.
+
+**Cause of (1):** `motion` labels 0072 00:28–02:42 as one 134 s `travel_forward` move. One segment gives one window (≤ 8 s), so approach, interior and exit compete inside the same segment and only one survives.
+
+**Decision (D2-2, before the publish gate):**
+- Long segments (> 20 s) are split into content beats: `describe` samples one frame every ~5 s over the segment and marks where the scene changes (approach / inside / exit, enters / leaves); each beat becomes its own shotlog candidate. Validate on 0072: approach and exit both eligible, director may use both with another take between.
+- Important-shot cap default 6 s (was 8 s); a window ends where the steady motion ends, never on aimless movement after it. The reviewer gets the same rules so it can approve.
+- Geometry `accidental` is final: `describe` may describe it but its verdict never changes the role.
+- Wire `audio_clean` into `render.py` (ambient bus) and fetch an RNNoise `.rnnn` model (licence check) into the model cache.
+- Beat-aligned cuts in the director stay for the first brief with a music file.
+
+**Rationale:** Both faults come from granularity, not taste: a long take holds several moments. Fine trims are D3's job (Doru trims in the web editor), so the defaults only need to be sensible.
