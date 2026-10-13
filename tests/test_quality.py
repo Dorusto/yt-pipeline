@@ -332,6 +332,14 @@ def _analyse(motion, duration_s):
     return quality.segments_from_motion(motion, duration_s, _frames(duration_s), 1.0)
 
 
+def _final_segments(motion, duration_s):
+    frames = _frames(duration_s)
+    parts = quality.segments_from_motion(motion, duration_s, frames, 1.0)
+    return quality._merge_and_assemble(
+        parts, frames, 1.0, motion.get("trajectory") or [], duration_s
+    )
+
+
 def test_segments_setup_cannot_follow_content_move():
     motion = _motion(
         [
@@ -513,6 +521,7 @@ def test_null_horizon_passes_schema():
                 "confidence": 0.5,
                 "defects": [],
                 "metrics": {"horizon_deg": None},
+                "uncertain": False,
             }
         ],
     }
@@ -644,12 +653,13 @@ def test_folder_skip_and_force(tmp_path):
 
     first = run_cli(source, "--workspace", workspace, "--json")
     assert first.returncode == 0, first.stderr
-    assert json.loads(first.stdout) == {
-        "clips": 2,
-        "analyzed": 2,
-        "skipped": 0,
-        "output_dir": str((workspace / "quality").resolve()),
-    }
+    first_summary = json.loads(first.stdout)
+    assert first_summary["clips"] == 2
+    assert first_summary["analyzed"] == 2
+    assert first_summary["skipped"] == 0
+    assert first_summary["output_dir"] == str((workspace / "quality").resolve())
+    assert isinstance(first_summary["wall_time_s"], float)
+    assert first_summary["llm_cost_usd"] == 0.0
     assert (workspace / "quality" / "one.json").exists()
     assert (workspace / "quality" / "two.json").exists()
 
@@ -802,3 +812,175 @@ def test_end_to_end_junk_take_is_accidental(tmp_path):
     assert_tiles(data["segments"], data["duration_s"])
     assert [segment["role"] for segment in data["segments"]] == ["accidental", "accidental", "accidental"]
     assert all("junk take" in segment["role_evidence"][0] for segment in data["segments"])
+
+
+def test_segment_inherits_uncertain_phase_source():
+    motion = {
+        "duration_s": 4.0,
+        "phases": [
+            {
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "type": "steady_move",
+                "dominant_motion": "pan_right",
+                "speed": "regular",
+                "steadiness": "no_shaking",
+                "confidence": 0.4,
+                "uncertain": True,
+                "uncertain_reasons": ["self_moving_regions"],
+            }
+        ],
+        "moves": [],
+        "trajectory": [],
+    }
+    segments = _final_segments(motion, 4.0)
+    assert len(segments) == 1
+    segment = segments[0]
+    assert segment["uncertain"] is True
+    assert "self_moving_regions" in segment["uncertain_reasons"]
+    assert "motion_uncertain" in segment["uncertain_reasons"]
+    assert segment["motion_label_confidence"] == pytest.approx(0.4)
+    assert validate({"file": "x.mp4", "duration_s": 4.0, "segments": segments}, "quality") == []
+
+
+def test_segment_inherits_uncertain_move_source():
+    motion = {
+        "duration_s": 4.0,
+        "phases": [
+            {
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "type": "steady_move",
+                "dominant_motion": "pan_right",
+                "speed": "regular",
+                "steadiness": "no_shaking",
+                "confidence": 0.5,
+                "uncertain": False,
+                "uncertain_reasons": [],
+            }
+        ],
+        "moves": [
+            {
+                "id": "m1",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "label": "pan_right",
+                "confidence": 0.45,
+                "uncertain": True,
+                "uncertain_reasons": ["self_moving_regions"],
+            }
+        ],
+        "trajectory": [],
+    }
+    segment = _final_segments(motion, 4.0)[0]
+    assert segment["motion_label"] == "pan_right"
+    assert segment["motion_label_confidence"] == pytest.approx(0.45)
+    assert "self_moving_regions" in segment["uncertain_reasons"]
+    assert "motion_uncertain" in segment["uncertain_reasons"]
+
+
+def test_segment_confident_source_is_certain():
+    motion = {
+        "duration_s": 4.0,
+        "phases": [
+            {
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "type": "steady_move",
+                "dominant_motion": "pan_right",
+                "speed": "regular",
+                "steadiness": "no_shaking",
+                "confidence": 0.8,
+                "uncertain": False,
+                "uncertain_reasons": [],
+            }
+        ],
+        "moves": [],
+        "trajectory": [],
+    }
+    segment = _final_segments(motion, 4.0)[0]
+    assert segment["uncertain"] is False
+    assert segment["uncertain_reasons"] == []
+    assert segment["motion_label_confidence"] == pytest.approx(0.8)
+
+
+def test_role_signals_disagree_setup_vs_transition():
+    facts = role_facts(
+        position="head",
+        duration_s=2.0,
+        phase_type="steady_move",
+        label="roll_cw",
+        speed="fast",
+        steadiness="no_shaking",
+    )
+    assert quality._is_transition("steady_move", "fast", "roll_cw", "no_shaking", 2.0)
+    assert quality._is_setup("steady_move", "no_shaking", "fast", 2.0)
+    assert quality.role_signals_disagree(facts, ["fast clean rotation at take head"])
+
+
+def test_role_signals_disagree_accidental_vs_move():
+    facts = role_facts(
+        duration_s=3.0,
+        metrics=clean_metrics(obstruction=0.8),
+        move={"confidence": 0.7, "label": "pan_right"},
+    )
+    assert quality.role_signals_disagree(facts, ["obstruction 0.80 of frame"])
+
+
+def test_role_signals_disagree_unclassified():
+    facts = role_facts(
+        position="middle",
+        duration_s=0.5,
+        phase_type="still",
+        label=None,
+        speed="slow",
+        steadiness="static",
+    )
+    assert quality.role_signals_disagree(facts, ["unclassified motion"])
+
+
+def test_segment_confidence_deductions_and_clamp():
+    assert quality._segment_confidence(0.7, []) == pytest.approx(0.7)
+    assert quality._segment_confidence(0.7, ["role_signals_disagree"]) == pytest.approx(0.55)
+    assert quality._segment_confidence(0.7, ["motion_uncertain"]) == pytest.approx(0.55)
+    assert quality._segment_confidence(
+        0.7, ["role_signals_disagree", "motion_uncertain"]
+    ) == pytest.approx(0.4)
+    assert quality._segment_confidence(
+        0.1, ["role_signals_disagree", "motion_uncertain"]
+    ) == pytest.approx(0.05)
+    assert quality._segment_confidence(1.0, []) == pytest.approx(1.0)
+
+
+def test_old_motion_file_without_uncertainty_fields(tmp_path):
+    source = tmp_path / "clips"
+    make_noisy_still_clip(source / "old.mp4", seconds=3)
+    workspace = tmp_path / "workspace"
+    motion_dir = workspace / "motion"
+    motion_dir.mkdir(parents=True)
+    motion = {
+        "file": "old.mp4",
+        "duration_s": 3.0,
+        "phases": [
+            {
+                "start_s": 0.0,
+                "end_s": 3.0,
+                "type": "still",
+                "dominant_motion": "static",
+                "speed": "slow",
+                "steadiness": "static",
+            }
+        ],
+        "moves": [],
+        "trajectory": [],
+    }
+    (motion_dir / "old.json").write_text(json.dumps(motion), encoding="utf-8")
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = read_quality(workspace, "old")
+    assert validate(data, "quality") == []
+    for segment in data["segments"]:
+        assert segment["uncertain"] is False
+        assert segment["motion_label_confidence"] is None

@@ -39,6 +39,17 @@ TILT_FLOOR = 0.03
 ROLL_FLOOR = 5.0
 DOLLY_FLOOR = 0.05
 DOLLY_CONSISTENCY = 0.7
+RADIAL_FLOW_FLOOR = 1.0
+RADIAL_CLAIM_FLOOR = 0.8
+RADIAL_SIGN_FLOOR = 0.5
+RADIAL_DOM_FLOOR = 0.30
+RES_SHARE_FLOOR = 0.90
+FLOW_MAG_FLOOR = 0.5
+PARALLAX_BAND_LOW = 0.25
+PARALLAX_BAND_HIGH = 0.5
+FOE_FRAME_LIMIT = 5.0
+CONFIDENCE_STEP = 0.15
+CONFIDENCE_MIN = 0.05
 COMPLEX_SCORE = 0.05
 HYSTERESIS_SECONDS = 0.6
 MIN_RUN_SECONDS = 0.4
@@ -78,6 +89,10 @@ INTERNAL_ROW_FIELDS = (
     "subject_periphery_sum",
     "subject_periphery_count",
     "residual_activity",
+    "radial_signed",
+    "radial_dom_frac",
+    "res_share",
+    "flow_mag",
 )
 
 
@@ -137,6 +152,10 @@ def _invalid_pair():
         "subject_periphery_sum": 0.0,
         "subject_periphery_count": 0,
         "residual_activity": 0.0,
+        "radial_signed": 0.0,
+        "radial_dom_frac": 0.0,
+        "res_share": 0.0,
+        "flow_mag": 0.0,
     }
 
 
@@ -204,6 +223,48 @@ def _residual_activity(source_points, target_points, matrix, height):
     return float(selected.mean()) / height
 
 
+def _focus_of_expansion(matrix, width, height):
+    """Fixed point of the affine flow, or the frame centre when it is unusable."""
+    system = np.eye(2) - matrix[:, :2]
+    translation = matrix[:, 2]
+    try:
+        foe = np.linalg.solve(system, translation)
+    except np.linalg.LinAlgError:
+        return np.array([width / 2.0, height / 2.0])
+    if not np.all(np.isfinite(foe)):
+        return np.array([width / 2.0, height / 2.0])
+    if abs(foe[0]) > FOE_FRAME_LIMIT * width or abs(foe[1]) > FOE_FRAME_LIMIT * height:
+        return np.array([width / 2.0, height / 2.0])
+    return foe
+
+
+def _radial_flow_signals(source, target, matrix, width, height):
+    """Signed radial flow, residual share and flow magnitude for one frame pair."""
+    flow = target - source
+    foe = _focus_of_expansion(matrix, width, height)
+    offsets = source - foe
+    norms = np.linalg.norm(offsets, axis=1)
+    unit = np.zeros_like(offsets)
+    valid = norms > 0
+    unit[valid] = offsets[valid] / norms[valid, None]
+    if np.any(~valid):
+        fallback = foe - np.array([width / 2.0, height / 2.0])
+        fallback_norm = float(np.linalg.norm(fallback))
+        direction = fallback / fallback_norm if fallback_norm > 0 else np.array([1.0, 0.0])
+        unit[~valid] = direction
+    radial = np.sum(flow * unit, axis=1)
+    radial_signed = float(radial.mean())
+    radial_dom_frac = float(
+        max((radial > RADIAL_SIGN_FLOOR).mean(), (radial < -RADIAL_SIGN_FLOOR).mean())
+    )
+    predicted = source @ matrix[:, :2].T + matrix[:, 2]
+    residual = np.linalg.norm(target - predicted, axis=1)
+    flow_magnitudes = np.linalg.norm(flow, axis=1)
+    res_share = float(residual.mean() / (flow_magnitudes.mean() + 1e-9))
+    flow_mag = float(flow_magnitudes.mean())
+    return radial_signed, radial_dom_frac, res_share, flow_mag
+
+
 def compute_trajectory(prev_gray, next_gray):
     """Estimate the image motion between two sampled frames as a partial affine fit."""
     height, width = prev_gray.shape[:2]
@@ -246,6 +307,11 @@ def compute_trajectory(prev_gray, next_gray):
         points[tracked], next_points[tracked], matrix, width, height
     )
     residual_activity = _residual_activity(points[tracked], next_points[tracked], matrix, height)
+    source = points[tracked].reshape(-1, 2).astype(np.float64)
+    target = next_points[tracked].reshape(-1, 2).astype(np.float64)
+    radial_signed, radial_dom_frac, res_share, flow_mag = _radial_flow_signals(
+        source, target, matrix, width, height
+    )
     return {
         "dx": float(tx) / width,
         "dy": float(ty) / height,
@@ -258,6 +324,10 @@ def compute_trajectory(prev_gray, next_gray):
         "subject_periphery_sum": periphery_sum,
         "subject_periphery_count": periphery_count,
         "residual_activity": residual_activity,
+        "radial_signed": radial_signed,
+        "radial_dom_frac": radial_dom_frac,
+        "res_share": res_share,
+        "flow_mag": flow_mag,
     }
 
 
@@ -919,11 +989,65 @@ def _merge_short_runs(runs, sample_fps):
     return coalesced
 
 
+def window_uncertainty(rows, label, parallax, sample_fps, label_geometric=None):
+    """Return ``(uncertain, reasons)`` for a labelled window of trajectory rows.
+
+    A reason is added at most once; ``uncertain`` is true when any reason fired.
+    """
+    reasons = []
+    if label == "complex_motion":
+        reasons.append("mixed_motion_signals")
+    pan_family = label in ("pan_left", "pan_right") or label_geometric in ("pan_left", "pan_right")
+    if pan_family and PARALLAX_BAND_LOW <= parallax < PARALLAX_BAND_HIGH:
+        reasons.append("parallax_vs_rotation")
+    if not rows:
+        return bool(reasons), reasons
+    count = len(rows)
+    radial_signed = sum(row.get("radial_signed", 0.0) for row in rows) / count
+    radial_dom_frac = sum(row.get("radial_dom_frac", 0.0) for row in rows) / count
+    res_share = sum(row.get("res_share", 0.0) for row in rows) / count
+    flow_mag = sum(row.get("flow_mag", 0.0) for row in rows) / count
+    scale_rate = sum(math.log(row["scale"]) for row in rows) / count * sample_fps
+    rate_dx = sum(row["dx"] for row in rows) / count * sample_fps
+    rate_dy = sum(row["dy"] for row in rows) / count * sample_fps
+    rate_roll = sum(row["roll_deg"] for row in rows) / count * sample_fps
+    if (
+        abs(radial_signed) >= RADIAL_FLOW_FLOOR
+        and radial_dom_frac >= RADIAL_DOM_FLOOR
+        and abs(scale_rate) < DOLLY_FLOOR
+    ):
+        reasons.append("scale_vs_radial_flow")
+    camera_claim = (
+        abs(radial_signed) >= RADIAL_CLAIM_FLOOR
+        or abs(scale_rate) >= DOLLY_FLOOR
+        or abs(rate_dx) >= PAN_FLOOR
+        or abs(rate_dy) >= TILT_FLOOR
+        or abs(rate_roll) >= ROLL_FLOOR
+    )
+    if res_share >= RES_SHARE_FLOOR and flow_mag >= FLOW_MAG_FLOOR and camera_claim:
+        reasons.append("self_moving_regions")
+    return bool(reasons), reasons
+
+
+def _phase_confidence(length_s, mean_inlier, mean_shake, reasons):
+    confidence = 0.5
+    if length_s >= 3:
+        confidence += 0.1
+    if mean_inlier >= 0.7:
+        confidence += 0.1
+    if mean_shake < 0.03:
+        confidence += 0.1
+    confidence -= CONFIDENCE_STEP * len(reasons)
+    return min(1.0, max(CONFIDENCE_MIN, confidence))
+
+
 def _make_phase(start_s, end_s, rows, sample_fps, phase_type, label_rows=None):
     label_source = label_rows if label_rows is not None else rows
     label, _ = label_window(label_source, sample_fps)
     mean_speed = sum(row["speed"] for row in rows) / len(rows)
     mean_shake = sum(row["shake"] for row in rows) / len(rows)
+    mean_inlier = sum(row["inlier_ratio"] for row in rows) / len(rows)
+    parallax = _median([row.get("parallax", 0.0) for row in rows])
     if phase_type == "still":
         dominant = "static"
         speed = "slow"
@@ -934,6 +1058,8 @@ def _make_phase(start_s, end_s, rows, sample_fps, phase_type, label_rows=None):
         steadiness = steadiness_word(mean_shake, label)
         if phase_type == "steady_move":
             dominant = _travel_upgrade(dominant, end_s - start_s, steadiness)
+    uncertain, reasons = window_uncertainty(rows, dominant, parallax, sample_fps)
+    confidence = _phase_confidence(end_s - start_s, mean_inlier, mean_shake, reasons)
     return {
         "start_s": start_s,
         "end_s": end_s,
@@ -941,6 +1067,9 @@ def _make_phase(start_s, end_s, rows, sample_fps, phase_type, label_rows=None):
         "dominant_motion": dominant,
         "speed": speed,
         "steadiness": steadiness,
+        "confidence": confidence,
+        "uncertain": uncertain,
+        "uncertain_reasons": reasons,
     }
 
 
@@ -1016,6 +1145,9 @@ def segment_phases(rows, duration_s, sample_fps, label_rows=None):
                 "dominant_motion": "static",
                 "speed": "slow",
                 "steadiness": steadiness_word(0.0),
+                "confidence": _phase_confidence(total, 1.0, 0.0, []),
+                "uncertain": False,
+                "uncertain_reasons": [],
             }
         ]
     if "speed" not in rows[0]:
@@ -1118,7 +1250,11 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
             confidence += 0.1
         if semantic:
             confidence -= 0.2
-        confidence = min(1.0, max(0.0, confidence))
+        uncertain, reasons = window_uncertainty(
+            steady_rows, label, parallax, sample_fps, label_geometric
+        )
+        confidence -= CONFIDENCE_STEP * len(reasons)
+        confidence = min(1.0, max(CONFIDENCE_MIN, confidence))
         invalid = sum(
             1 for row in rows if start_s <= row["t"] < end_s and row.get("inlier_ratio", 1.0) == 0
         )
@@ -1144,6 +1280,8 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
                 "mean_scale": sum(row["scale"] for row in steady_rows) / len(steady_rows),
                 "mean_roll_deg": sum(row["roll_deg"] for row in steady_rows) / len(steady_rows),
                 "semantic_check": semantic,
+                "uncertain": uncertain,
+                "uncertain_reasons": reasons,
                 "notes": f"invalid trajectory rows: {invalid}" if invalid else "",
             }
         )

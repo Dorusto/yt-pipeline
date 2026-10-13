@@ -22,6 +22,7 @@ import json
 import math
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -365,6 +366,24 @@ def _is_setup(phase_type, steadiness, speed, duration_s):
     )
 
 
+def _accidental_trigger(facts):
+    """Return ``(message, bonus)`` when the accidental trigger fires, else None."""
+    if facts.get("duration_s", 0.0) < ACCIDENTAL_MIN_SECONDS:
+        return None
+    metrics = facts.get("metrics") or {}
+    laplacian_rel = metrics.get("laplacian_rel", 1.0)
+    mean_luma = metrics.get("mean_luma", 128.0)
+    obstruction = metrics.get("obstruction", 0.0)
+    frame_diff = facts.get("frame_diff_mean", 0.0)
+    if obstruction >= OBSTRUCTION_ACCIDENTAL:
+        return f"obstruction {obstruction:.2f} of frame", True
+    if laplacian_rel <= UNIFORM_REL and (mean_luma <= DARK_LUMA or mean_luma >= BRIGHT_LUMA):
+        return f"near-uniform frame (laplacian {laplacian_rel:.2f}x, luma {mean_luma:.0f})", True
+    if frame_diff <= STATIC_DIFF_MEAN and laplacian_rel <= STATIC_REL:
+        return f"static low-detail frame (diff {frame_diff:.2f}, laplacian {laplacian_rel:.2f}x)", False
+    return None
+
+
 def assign_role(segment_facts):
     """Return ``(role, confidence, evidence)`` for a segment's plain facts dict."""
     metrics = segment_facts.get("metrics") or {}
@@ -375,25 +394,13 @@ def assign_role(segment_facts):
     speed = segment_facts.get("speed")
     steadiness = segment_facts.get("steadiness")
     move = segment_facts.get("move")
-    frame_diff = segment_facts.get("frame_diff_mean", 0.0)
     laplacian_rel = metrics.get("laplacian_rel", 1.0)
-    mean_luma = metrics.get("mean_luma", 128.0)
-    obstruction = metrics.get("obstruction", 0.0)
 
-    if duration_s >= ACCIDENTAL_MIN_SECONDS:
-        trigger = None
-        bonus = False
-        if obstruction >= OBSTRUCTION_ACCIDENTAL:
-            trigger = f"obstruction {obstruction:.2f} of frame"
-            bonus = True
-        elif laplacian_rel <= UNIFORM_REL and (mean_luma <= DARK_LUMA or mean_luma >= BRIGHT_LUMA):
-            trigger = f"near-uniform frame (laplacian {laplacian_rel:.2f}x, luma {mean_luma:.0f})"
-            bonus = True
-        elif frame_diff <= STATIC_DIFF_MEAN and laplacian_rel <= STATIC_REL:
-            trigger = f"static low-detail frame (diff {frame_diff:.2f}, laplacian {laplacian_rel:.2f}x)"
-        if trigger is not None:
-            confidence = 0.55 + (0.15 if bonus else 0.0)
-            return "accidental", confidence, [trigger]
+    trigger = _accidental_trigger(segment_facts)
+    if trigger is not None:
+        message, bonus = trigger
+        confidence = 0.55 + (0.15 if bonus else 0.0)
+        return "accidental", confidence, [message]
 
     if position == "head" and _is_transition(phase_type, speed, label, steadiness, duration_s):
         confidence = 0.5 + (0.1 if label in ROTATION_LABELS else 0.0)
@@ -447,6 +454,40 @@ def assign_role(segment_facts):
         return "hold", 0.4, ["no significant camera motion"]
 
     return "move", 0.4, ["unclassified motion"]
+
+
+def role_signals_disagree(facts, evidence):
+    """Return True when the role triggers contradict each other."""
+    position = facts.get("position")
+    duration_s = facts.get("duration_s", 0.0)
+    phase_type = facts.get("phase_type")
+    label = facts.get("label")
+    speed = facts.get("speed")
+    steadiness = facts.get("steadiness")
+    move = facts.get("move")
+    if (
+        position in ("head", "tail")
+        and _is_transition(phase_type, speed, label, steadiness, duration_s)
+        and _is_setup(phase_type, steadiness, speed, duration_s)
+    ):
+        return True
+    if _accidental_trigger(facts) is not None and (
+        move is not None or label not in ("static", "minor_motion", None)
+    ):
+        return True
+    if "unclassified motion" in evidence:
+        return True
+    return False
+
+
+def _segment_confidence(role_confidence, uncertain_reasons):
+    """Apply one deduction per quality-level flag and clamp to [0.05, 1.0]."""
+    confidence = role_confidence
+    if "role_signals_disagree" in uncertain_reasons:
+        confidence -= 0.15
+    if "motion_uncertain" in uncertain_reasons:
+        confidence -= 0.15
+    return min(1.0, max(0.05, confidence))
 
 
 def _runs(classes):
@@ -537,7 +578,20 @@ def _overlapping_move(moves, start_s, end_s):
     return best
 
 
-def _part(start_s, end_s, role, confidence, evidence, phase_type, label, speed, steadiness, move):
+def _part(
+    start_s,
+    end_s,
+    role,
+    confidence,
+    evidence,
+    phase_type,
+    label,
+    speed,
+    steadiness,
+    move,
+    label_source=None,
+    role_signals_disagree=False,
+):
     return {
         "start_s": start_s,
         "end_s": end_s,
@@ -549,6 +603,8 @@ def _part(start_s, end_s, role, confidence, evidence, phase_type, label, speed, 
         "speed": speed,
         "steadiness": steadiness,
         "move": move,
+        "label_source": label_source,
+        "role_signals_disagree": role_signals_disagree,
     }
 
 
@@ -584,6 +640,7 @@ def _drafts_to_parts(drafts, duration_s):
             draft["frames"],
         )
         role, confidence, evidence = assign_role(facts)
+        disagree = role_signals_disagree(facts, evidence)
         parts.append(
             _part(
                 draft["start_s"],
@@ -596,6 +653,8 @@ def _drafts_to_parts(drafts, duration_s):
                 draft["speed"],
                 draft["steadiness"],
                 draft["move"],
+                draft["label_source"],
+                disagree,
             )
         )
     return parts
@@ -631,6 +690,7 @@ def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, shake, horizon)
         move = _overlapping_move(moves, start_s, end_s)
         label = move["label"] if move is not None else phase.get("dominant_motion")
+        label_source = move if move is not None else phase
         drafts.append(
             {
                 "start_s": start_s,
@@ -640,6 +700,7 @@ def segments_from_motion(motion_data, duration_s, frames, clip_median_laplacian)
                 "speed": phase.get("speed"),
                 "steadiness": phase.get("steadiness"),
                 "move": move,
+                "label_source": label_source,
                 "metrics": metrics,
                 "frames": seg_frames,
             }
@@ -662,6 +723,7 @@ def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacia
                 None,
                 None,
                 None,
+                role_signals_disagree=True,
             )
         ]
     classes = ["moving" if frame["frame_diff"] > FRAME_DIFF_STILL else "still" for frame in frames]
@@ -697,6 +759,7 @@ def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacia
                 "speed": None,
                 "steadiness": None,
                 "move": None,
+                "label_source": None,
                 "metrics": metrics,
                 "frames": seg_frames,
             }
@@ -722,6 +785,18 @@ def _is_stable_content(segment, steadiness, move):
     if segment["role"] == "hold":
         return True
     return move is not None and move.get("steadiness") in STABLE_STEADINESS
+
+
+def _upgrade_to_accidental(segment, fact, confidence, evidence):
+    """Set the accidental role, keeping uncertainty and flagging a contradicted move."""
+    if segment["role"] == "move" and fact["move"] is not None:
+        segment["uncertain_reasons"] = _dedup(
+            list(segment.get("uncertain_reasons") or []) + ["role_signals_disagree"]
+        )
+        segment["uncertain"] = True
+    segment["role"] = "accidental"
+    segment["confidence"] = confidence
+    segment["role_evidence"] = [evidence]
 
 
 def apply_accidental_runs(segments, facts, duration_s):
@@ -761,18 +836,14 @@ def apply_accidental_runs(segments, facts, duration_s):
     covered_s = sum(run_s for _, _, run_s in qualifying)
     if covered_s >= ACCIDENTAL_RUN_FRACTION * duration_s:
         evidence = f"junk take: {covered_s:.1f}s of {duration_s:.1f}s has no stable move or hold"
-        for segment in segments:
-            segment["role"] = "accidental"
-            segment["confidence"] = ACCIDENTAL_TAKE_CONFIDENCE
-            segment["role_evidence"] = [evidence]
+        for segment, fact in zip(segments, facts):
+            _upgrade_to_accidental(segment, fact, ACCIDENTAL_TAKE_CONFIDENCE, evidence)
         return
     for start, end, run_s in qualifying:
         mean_shake = _mean([segments[i]["metrics"].get("shake", 0.0) for i in range(start, end)])
         evidence = f"chaotic run of {run_s:.1f}s with no stable move or hold (shake {mean_shake:.2f})"
         for i in range(start, end):
-            segments[i]["role"] = "accidental"
-            segments[i]["confidence"] = ACCIDENTAL_RUN_CONFIDENCE
-            segments[i]["role_evidence"] = [evidence]
+            _upgrade_to_accidental(segments[i], facts[i], ACCIDENTAL_RUN_CONFIDENCE, evidence)
 
 
 def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, duration_s):
@@ -800,21 +871,35 @@ def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, durati
         longest = max(item["parts"], key=lambda part: part["end_s"] - part["start_s"])
         label = longest["label"]
         speed = longest["speed"]
+        label_source = longest["label_source"]
         seg_frames = _frames_in(frames, item["start_s"], item["end_s"])
         shake = _window_shake(trajectory, item["start_s"], item["end_s"]) if trajectory else 0.0
         horizon = segment_horizon(seg_frames)
         metrics = segment_metrics(seg_frames, clip_median_laplacian, shake, horizon)
         defects = build_defects(metrics, item["role"], label, speed)
         evidence = _dedup(item["evidence"] + intent_evidence(defects, item["role"], speed))
+        motion_label_confidence = None
+        uncertain_reasons = []
+        if label is not None and label_source is not None:
+            motion_label_confidence = label_source.get("confidence")
+            uncertain_reasons = list(label_source.get("uncertain_reasons") or [])
+            if label_source.get("uncertain"):
+                uncertain_reasons.append("motion_uncertain")
+        if longest["role_signals_disagree"]:
+            uncertain_reasons.append("role_signals_disagree")
+        uncertain_reasons = _dedup(uncertain_reasons)
         segments.append(
             {
                 "id": f"s{index + 1}",
                 "start_s": item["start_s"],
                 "end_s": item["end_s"],
                 "role": item["role"],
-                "confidence": item["confidence"],
+                "confidence": _segment_confidence(item["confidence"], uncertain_reasons),
                 "role_evidence": evidence,
                 "motion_label": label,
+                "motion_label_confidence": motion_label_confidence,
+                "uncertain": bool(uncertain_reasons),
+                "uncertain_reasons": uncertain_reasons,
                 "defects": defects,
                 "metrics": metrics,
             }
@@ -955,6 +1040,7 @@ def _atomic_write_json(path, data):
 
 def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, width=320):
     """Analyse every clip of ``input_path`` into ``workspace/quality``; return a summary."""
+    started = time.monotonic()
     clips = resolve_inputs(input_path)
     workspace_path = Path(workspace).expanduser().resolve()
     output_dir = workspace_path / "quality"
@@ -984,6 +1070,8 @@ def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, wid
         "analyzed": analyzed,
         "skipped": skipped,
         "output_dir": str(output_dir),
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": 0.0,
     }
 
 
