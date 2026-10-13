@@ -25,6 +25,8 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 | `docs/VISION.md` | AI Director plan — modes, principles, architecture, phases D0–D6, model routing |
 | `docs/research/prior-art.md` | Open-source and market research behind the AI Director plan |
 | `docs/research/rendering-and-audio.md` | Render engines, web editor (OpenCut), music/SFX/clean-up without ComfyUI — read before any output, graphics or audio task |
+| `docs/guides/user-guide.md` | How to use the AI Director: flow, commands, briefs, how it learns |
+| `docs/RISKS.md` | Risk register with mitigations — check before planning a phase |
 | `docs/guides/shot-grammar.md` | Filming and editing techniques the tools must detect and the director may use — read before any motion, quality, describe or director task |
 
 ## Working rules
