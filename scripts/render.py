@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Render an ``edit.json`` edit list to a 720p MP4 with ffmpeg.
+"""Render an ``edit.json`` edit list to a preview or final MP4 with ffmpeg.
 
 Usage:
     python scripts/render.py --edit edit.json --out recap_720p.mp4
-    python scripts/render.py --edit edit.json --out recap_720p.mp4 --json
+    python scripts/render.py --edit edit.json --out final.mp4 --originals-dir ~/media/yt-test/raw
 
-The tool cuts each video slot from the proxy clip named in ``sources[]``,
-scales and pads it to the requested frame, joins the slots in timeline order
-with crossfades or hard cuts and keeps each slot's own ambient audio. It is the
-S1 preview adapter: captions, graphics, music and SFX are warned about and
-ignored. Sources are read-only; the MP4 is written atomically to ``--out``.
+The tool cuts each video slot from the clip named in ``sources[]`` (the proxy)
+or, when ``--originals-dir`` is given, from the full-resolution original of the
+same name, scales and pads it to the requested frame, joins the slots in
+timeline order with crossfades or hard cuts and keeps each slot's own ambient
+audio. Captions, graphics, music and SFX are warned about and ignored. Sources
+are read-only; the MP4 is written atomically to ``--out``.
 """
 
 import argparse
@@ -25,6 +26,7 @@ from common.schema import SchemaError, validate_or_raise
 
 FPS = 25
 SAMPLE_RATE = 48000
+PREVIEW_FRAME = (1280, 720)
 
 
 class RenderError(RuntimeError):
@@ -34,22 +36,37 @@ class RenderError(RuntimeError):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="render.py",
-        description="Render an edit.json edit list to a 720p MP4 with ffmpeg crossfades.",
+        description="Render an edit.json edit list to a preview or final MP4 with ffmpeg.",
         epilog=(
             "examples:\n"
             "  python scripts/render.py --edit edit.json --out recap_720p.mp4\n"
-            "  python scripts/render.py --edit edit.json --out recap_720p.mp4 --json\n"
+            "  python scripts/render.py --edit edit.json --out final.mp4"
+            " --originals-dir ~/media/yt-test/raw\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--edit", required=True, help="edit.json to render")
     parser.add_argument("--out", required=True, help="MP4 file to write")
     parser.add_argument(
+        "--originals-dir",
+        help="directory of full-resolution originals, resolved before sources[]",
+    )
+    parser.add_argument(
         "--media-dir",
         help="fallback directory for clip names that are not in sources[]",
     )
-    parser.add_argument("--width", type=int, default=1280, help="output width (default 1280)")
-    parser.add_argument("--height", type=int, default=720, help="output height (default 720)")
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="output width (default: native of the first source, else 1280)",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="output height (default: native of the first source, else 720)",
+    )
     parser.add_argument(
         "--xfade-s",
         type=float,
@@ -138,16 +155,47 @@ def has_audio_stream(path):
         raise RenderError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
 
 
-def resolve_clip(clip, sources, media_dir):
-    """Resolve a slot's ``clip`` to a path via ``sources[]`` then ``--media-dir``."""
+def resolve_clip(clip, sources, media_dir, originals_dir):
+    """Resolve a slot's ``clip`` to a path and its origin.
+
+    Order: ``--originals-dir``, then ``sources[]``, then ``--media-dir``.
+    Origin is ``"originals"`` or ``"sources"``.
+    """
+    if originals_dir is not None:
+        candidate = Path(originals_dir).expanduser() / clip
+        if candidate.is_file():
+            return candidate, "originals"
     for source in sources:
         if source.get("file") == clip:
-            return Path(source["path"])
+            return Path(source["path"]), "sources"
     if media_dir is not None:
         candidate = Path(media_dir).expanduser() / clip
         if candidate.is_file():
-            return candidate
-    return None
+            return candidate, "sources"
+    return None, None
+
+
+def is_within(path, directory):
+    path = Path(path).expanduser().resolve()
+    directory = Path(directory).expanduser().resolve()
+    return path == directory or directory in path.parents
+
+
+def probe_native_size(path):
+    """Return ``(width, height)`` of the first video stream in ``path``."""
+    data = run_ffprobe(path)
+    video = next((s for s in data["streams"] if s.get("codec_type") == "video"), None)
+    if video is None:
+        raise RenderError(f"no video stream in {path}")
+    return int(video["width"]), int(video["height"])
+
+
+def probe_video_size(path):
+    try:
+        _, width, height = probe_output(path)
+        return width, height
+    except RenderError:
+        return None
 
 
 def fade_for_join(slot, dur_prev, dur_next, xfade_s):
@@ -231,13 +279,15 @@ def collect_warnings(document, ambience):
     return warnings
 
 
-def render(edit_path, out_path, media_dir, width, height, xfade_s, force):
+def render(edit_path, out_path, media_dir, originals_dir, width, height, xfade_s, force):
     """Render ``edit_path`` to ``out_path`` and return the run summary."""
     started = time.monotonic()
     edit_path = Path(edit_path).expanduser()
     out_path = Path(out_path).expanduser()
     if not edit_path.is_file():
         raise RenderError(f"edit file not found: {edit_path}")
+    if originals_dir is not None and is_within(out_path, originals_dir):
+        raise RenderError(f"--out must not be inside --originals-dir: {out_path}")
     try:
         document = json.loads(edit_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -250,24 +300,47 @@ def render(edit_path, out_path, media_dir, width, height, xfade_s, force):
     ambience = audio.get("ambience") or {}
     ambience_enabled = bool(ambience.get("enabled", False))
     warnings = collect_warnings(document, ambience)
+    source = "originals" if originals_dir is not None else "sources"
+    originals_label = (
+        str(Path(originals_dir).expanduser()) if originals_dir is not None else None
+    )
 
     if out_path.exists() and not force and out_path.stat().st_mtime > edit_path.stat().st_mtime:
+        size = probe_video_size(out_path)
         return {
             "status": "skipped",
             "out": str(out_path),
             "duration_s": probe_duration(out_path),
             "slots": len(slots),
+            "width": size[0] if size else width,
+            "height": size[1] if size else height,
             "warnings": warnings,
+            "originals_dir": originals_label,
+            "source": source,
             "wall_time_s": round(time.monotonic() - started, 3),
             "llm_cost_usd": 0.0,
         }
 
     clip_paths = []
+    missing = []
     for slot in slots:
-        resolved = resolve_clip(slot["clip"], sources, media_dir)
+        resolved, origin = resolve_clip(slot["clip"], sources, media_dir, originals_dir)
         if resolved is None:
             raise RenderError(f"could not resolve clip: {slot['clip']}")
         clip_paths.append(resolved)
+        if origin == "sources" and originals_dir is not None:
+            missing.append(slot["clip"])
+    if missing:
+        warnings.append(
+            "clips missing from originals dir, fell back to sources: " + ", ".join(missing)
+        )
+
+    if width is None or height is None:
+        native = probe_native_size(clip_paths[0]) if originals_dir is not None else PREVIEW_FRAME
+        if width is None:
+            width = native[0]
+        if height is None:
+            height = native[1]
 
     durations = [float(slot["out_s"]) - float(slot["in_s"]) for slot in slots]
     if ambience_enabled:
@@ -330,7 +403,11 @@ def render(edit_path, out_path, media_dir, width, height, xfade_s, force):
         "out": str(out_path),
         "duration_s": round(duration, 3),
         "slots": len(slots),
+        "width": width,
+        "height": height,
         "warnings": warnings,
+        "originals_dir": originals_label,
+        "source": source,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -343,6 +420,7 @@ def main(argv=None):
             args.edit,
             args.out,
             args.media_dir,
+            args.originals_dir,
             args.width,
             args.height,
             args.xfade_s,
@@ -358,7 +436,10 @@ def main(argv=None):
             print(f"skipped {summary['out']} (up to date)")
         else:
             print(f"wrote {summary['out']}")
-            print(f"{summary['duration_s']}s, {summary['slots']} slots, {args.width}x{args.height}")
+            print(
+                f"{summary['duration_s']}s, {summary['slots']} slots,"
+                f" {summary['width']}x{summary['height']}"
+            )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
     return 0
