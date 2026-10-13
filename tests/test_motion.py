@@ -460,3 +460,161 @@ def test_unreadable_video_errors(tmp_path):
     result = run_cli(source, "--workspace", tmp_path / "workspace")
     assert result.returncode == 1
     assert "[error]" in result.stderr
+
+
+def _bob_rows(sample_fps=10.0, seconds=20.0, period=3.0, amplitude=0.015, dx=0.0):
+    rows = []
+    for index in range(int(seconds * sample_fps)):
+        moment = (index + 0.5) / sample_fps
+        rows.append(
+            {
+                "t": moment,
+                "dx": dx,
+                "dy": amplitude * math.sin(2.0 * math.pi * moment / period),
+                "scale": 1.0,
+                "roll_deg": 0.0,
+                "inlier_ratio": 0.9,
+            }
+        )
+    return rows
+
+
+def _scale_ramp_rows(sample_fps=10.0, seconds=20.0, per_frame=0.01):
+    rows = []
+    for index in range(int(seconds * sample_fps)):
+        rows.append(
+            {
+                "t": (index + 0.5) / sample_fps,
+                "dx": 0.0,
+                "dy": 0.0,
+                "scale": math.exp(per_frame),
+                "roll_deg": 0.0,
+                "inlier_ratio": 0.9,
+            }
+        )
+    return rows
+
+
+def test_bob_only_is_static_with_platform_bob():
+    sample_fps = 10.0
+    rows = _bob_rows(sample_fps=sample_fps)
+
+    spans = motion.detect_platform_bob(rows, sample_fps)
+    assert spans
+    assert spans[0]["period_s"] == pytest.approx(3.0, abs=0.5)
+
+    cleaned = motion._clean_bob(rows, spans, sample_fps)
+    phases = motion.segment_phases(rows, 20.0, sample_fps, label_rows=cleaned)
+    assert not any(phase["dominant_motion"] in ("tilt_up", "tilt_down") for phase in phases)
+
+    moves = motion.build_moves(phases, cleaned, sample_fps, spans)
+    assert moves
+    assert not any(move["label"] in ("tilt_up", "tilt_down") for move in moves)
+    assert moves[0]["label"] in ("static", "minor_motion")
+    assert moves[0]["platform_bob"] is not None
+    assert moves[0]["platform_bob"]["period_s"] == pytest.approx(3.0, abs=0.5)
+
+
+def test_bob_on_pan_keeps_pan_label():
+    sample_fps = 10.0
+    rows = _bob_rows(sample_fps=sample_fps, dx=-0.05)
+
+    spans = motion.detect_platform_bob(rows, sample_fps)
+    assert spans
+
+    cleaned = motion._clean_bob(rows, spans, sample_fps)
+    phases = motion.segment_phases(rows, 20.0, sample_fps, label_rows=cleaned)
+    moves = motion.build_moves(phases, cleaned, sample_fps, spans)
+
+    assert moves
+    assert any(move["label"] == "pan_right" for move in moves)
+    assert all(move["platform_bob"] is not None for move in moves)
+
+
+def test_long_smooth_scale_ramp_is_travel_forward():
+    sample_fps = 10.0
+    rows = _scale_ramp_rows(sample_fps=sample_fps)
+
+    phases = motion.segment_phases(rows, 20.0, sample_fps)
+    moves = motion.build_moves(phases, rows, sample_fps)
+
+    assert len(moves) == 1
+    move = moves[0]
+    assert move["label"] == "travel_forward"
+    assert move["label_geometric"] == "dolly_in"
+    assert move["platform"] == "vehicle"
+    assert move["semantic_check"] is True
+
+
+def test_shrinking_scale_ramp_is_travel_backward():
+    sample_fps = 10.0
+    rows = _scale_ramp_rows(sample_fps=sample_fps, per_frame=-0.01)
+
+    phases = motion.segment_phases(rows, 20.0, sample_fps)
+    moves = motion.build_moves(phases, rows, sample_fps)
+
+    assert len(moves) == 1
+    move = moves[0]
+    assert move["label"] == "travel_backward"
+    assert move["label_geometric"] == "dolly_out"
+    assert move["platform"] == "vehicle"
+    assert move["semantic_check"] is True
+
+
+def test_short_scale_blip_stays_dolly_in():
+    sample_fps = 10.0
+    rows = []
+    for index in range(100):
+        moment = (index + 0.5) / sample_fps
+        scale = math.exp(0.01) if 4.0 <= moment < 6.0 else 1.0
+        rows.append(
+            {
+                "t": moment,
+                "dx": 0.0,
+                "dy": 0.0,
+                "scale": scale,
+                "roll_deg": 0.0,
+                "inlier_ratio": 0.9,
+            }
+        )
+
+    phases = motion.segment_phases(rows, 10.0, sample_fps)
+    moves = motion.build_moves(phases, rows, sample_fps)
+    dolly_moves = [move for move in moves if move["label"] in ("dolly_in", "dolly_out")]
+
+    assert dolly_moves
+    move = dolly_moves[0]
+    assert move["label"] == "dolly_in"
+    assert move["label_geometric"] is None
+    assert move["platform"] is None
+
+
+def test_static_move_has_platform_static():
+    phases = [{"type": "steady_move", "start_s": 0.5, "end_s": 4.0, "dominant_motion": "static"}]
+    rows = fabricated_rows(dx=0.001, count=50)
+
+    moves = motion.build_moves(phases, rows, 10.0)
+
+    assert len(moves) == 1
+    assert moves[0]["label"] == "static"
+    assert moves[0]["platform"] == "static"
+    assert moves[0]["label_geometric"] is None
+    assert moves[0]["platform_bob"] is None
+
+
+def test_moves_carry_new_fields_and_validate(tmp_path):
+    source = tmp_path / "clips"
+    make_pan_clip(source / "pan.mp4")
+    workspace = tmp_path / "workspace"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = read_motion(workspace, "pan")
+    assert validate(data, "motion") == []
+    assert data["moves"]
+    for move in data["moves"]:
+        assert "label_geometric" in move
+        assert "platform" in move
+        assert "platform_bob" in move
+

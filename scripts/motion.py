@@ -41,6 +41,18 @@ MIN_RUN_SECONDS = 0.4
 MIN_STEADY_SECONDS = 1.5
 RAMP_SECONDS = 0.5
 RAMP_BAND = 0.6
+TRAVEL_MIN_SECONDS = 8.0
+SMOOTH_STEADINESS = ("no_shaking", "minimal_shaking")
+BOB_WINDOW_SECONDS = 8.0
+BOB_WINDOW_STEP_SECONDS = 1.0
+BOB_PERIOD_MIN = 1.5
+BOB_PERIOD_MAX = 8.0
+BOB_AMPLITUDE_MIN = 0.008
+BOB_CORRELATION_MIN = 0.15
+BOB_MIN_CYCLES = 2.0
+BOB_MIN_SPAN_SECONDS = 3.0
+BOB_GAP_SECONDS = 4.0
+ROLL_BOB_MIN_DEG = 0.5
 
 
 class MotionError(RuntimeError):
@@ -350,6 +362,230 @@ def _median(values):
     return (ordered[middle - 1] + ordered[middle]) / 2
 
 
+def _solve_3x3(matrix, vector):
+    a, b, c = matrix[0]
+    d, e, f = matrix[1]
+    g, h, i = matrix[2]
+    determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    if abs(determinant) < 1e-12:
+        return None
+    x = (
+        vector[0] * (e * i - f * h)
+        - b * (vector[1] * i - f * vector[2])
+        + c * (vector[1] * h - e * vector[2])
+    ) / determinant
+    y = (
+        a * (vector[1] * i - f * vector[2])
+        - vector[0] * (d * i - f * g)
+        + c * (d * vector[2] - vector[1] * g)
+    ) / determinant
+    z = (
+        a * (e * vector[2] - vector[1] * h)
+        - b * (d * vector[2] - vector[1] * g)
+        + vector[0] * (d * h - e * g)
+    ) / determinant
+    return x, y, z
+
+
+def _sinusoid_fit(times, values, period):
+    """Least-squares constant/sin/cos fit at ``period``; returns (c, a, b) or None."""
+    if period <= 0 or len(values) < 4:
+        return None
+    omega = 2.0 * math.pi / period
+    count = len(values)
+    sum_s = sum_c = sum_y = 0.0
+    sum_ss = sum_cc = sum_sc = 0.0
+    sum_sy = sum_cy = 0.0
+    for moment, value in zip(times, values):
+        sine = math.sin(omega * moment)
+        cosine = math.cos(omega * moment)
+        sum_s += sine
+        sum_c += cosine
+        sum_y += value
+        sum_ss += sine * sine
+        sum_cc += cosine * cosine
+        sum_sc += sine * cosine
+        sum_sy += sine * value
+        sum_cy += cosine * value
+    matrix = [
+        [count, sum_s, sum_c],
+        [sum_s, sum_ss, sum_sc],
+        [sum_c, sum_sc, sum_cc],
+    ]
+    solution = _solve_3x3(matrix, [sum_y, sum_sy, sum_cy])
+    if solution is None:
+        return None
+    return solution[0], solution[1], solution[2]
+
+
+def _autocorr_period(values, sample_fps):
+    """Dominant period in seconds of a detrended series and its correlation, or None."""
+    count = len(values)
+    if count < 4 or sample_fps <= 0:
+        return None
+    mean = sum(values) / count
+    centered = [value - mean for value in values]
+    energy = sum(value * value for value in centered)
+    if energy <= 0:
+        return None
+    low = max(1, int(round(BOB_PERIOD_MIN * sample_fps)))
+    high = min(count - 2, int(round(BOB_PERIOD_MAX * sample_fps)))
+    if high <= low:
+        return None
+    correlations = {}
+    best_lag = None
+    best_value = -2.0
+    for lag in range(low, high + 1):
+        total = sum(centered[index] * centered[index + lag] for index in range(count - lag))
+        value = total / energy
+        correlations[lag] = value
+        if value > best_value:
+            best_value = value
+            best_lag = lag
+    if best_lag is None:
+        return None
+    threshold = 0.7 * best_value
+    for lag in range(low + 1, best_lag):
+        if (
+            correlations[lag] >= threshold
+            and correlations[lag] >= correlations[lag - 1]
+            and correlations[lag] >= correlations[lag + 1]
+        ):
+            return lag / sample_fps, correlations[lag]
+    return best_lag / sample_fps, best_value
+
+
+def detect_platform_bob(rows, sample_fps):
+    """Find spans where the camera bobs periodically on a floating platform."""
+    if not rows or sample_fps <= 0:
+        return []
+    window = max(4, int(round(BOB_WINDOW_SECONDS * sample_fps)))
+    step = max(1, int(round(BOB_WINDOW_STEP_SECONDS * sample_fps)))
+    if len(rows) < window:
+        return []
+    accepted = []
+    for start in range(0, len(rows) - window + 1, step):
+        chunk = rows[start : start + window]
+        dy = [row["dy"] for row in chunk]
+        amplitude = max(dy) - min(dy)
+        if amplitude < BOB_AMPLITUDE_MIN:
+            continue
+        estimate = _autocorr_period(dy, sample_fps)
+        if estimate is None:
+            continue
+        period, correlation = estimate
+        if correlation < BOB_CORRELATION_MIN:
+            continue
+        if not (BOB_PERIOD_MIN <= period <= BOB_PERIOD_MAX):
+            continue
+        if BOB_WINDOW_SECONDS / period < BOB_MIN_CYCLES:
+            continue
+        accepted.append((start // step, chunk[0]["t"], chunk[-1]["t"], period, amplitude))
+    spans = []
+    for ordinal, start_s, end_s, period, amplitude in accepted:
+        if spans and ordinal == spans[-1]["last_ordinal"] + 1:
+            spans[-1]["last_ordinal"] = ordinal
+            spans[-1]["end_s"] = end_s
+            spans[-1]["windows"].append({"start_s": start_s, "end_s": end_s, "period_s": period})
+            spans[-1]["periods"].append(period)
+            spans[-1]["amplitudes"].append(amplitude)
+        else:
+            spans.append(
+                {
+                    "last_ordinal": ordinal,
+                    "start_s": start_s,
+                    "end_s": end_s,
+                    "windows": [{"start_s": start_s, "end_s": end_s, "period_s": period}],
+                    "periods": [period],
+                    "amplitudes": [amplitude],
+                }
+            )
+    for index in range(len(spans) - 1):
+        spans[index]["end_s"] = min(spans[index]["end_s"], spans[index + 1]["start_s"])
+    merged = []
+    for span in spans:
+        if merged and span["start_s"] - merged[-1]["end_s"] <= BOB_GAP_SECONDS:
+            merged[-1]["end_s"] = max(merged[-1]["end_s"], span["end_s"])
+            merged[-1]["windows"].extend(span["windows"])
+            merged[-1]["periods"].extend(span["periods"])
+            merged[-1]["amplitudes"].extend(span["amplitudes"])
+        else:
+            merged.append(span)
+    result = []
+    for span in merged:
+        if span["end_s"] - span["start_s"] < BOB_MIN_SPAN_SECONDS:
+            continue
+        result.append(
+            {
+                "start_s": span["start_s"],
+                "end_s": span["end_s"],
+                "period_s": _median(span["periods"]),
+                "amplitude": _median(span["amplitudes"]),
+                "windows": span["windows"],
+            }
+        )
+    return result
+
+
+def _clean_bob(rows, spans, sample_fps):
+    """Return copies of ``rows`` with the fitted platform oscillation removed."""
+    cleaned = [dict(row) for row in rows]
+    for span in spans:
+        windows = span.get("windows") or [span]
+        fits = []
+        for window in windows:
+            indices = [index for index, row in enumerate(rows) if window["start_s"] <= row["t"] <= window["end_s"]]
+            if len(indices) < 4:
+                continue
+            times = [rows[index]["t"] for index in indices]
+            dy_fit = _sinusoid_fit(times, [rows[index]["dy"] for index in indices], window["period_s"])
+            roll_fit = _sinusoid_fit(times, [rows[index]["roll_deg"] for index in indices], window["period_s"])
+            fits.append((window, dy_fit, roll_fit))
+        if not fits:
+            continue
+        for row in cleaned:
+            if not (span["start_s"] <= row["t"] <= span["end_s"]):
+                continue
+            window, dy_fit, roll_fit = min(
+                fits, key=lambda item: abs((item[0]["start_s"] + item[0]["end_s"]) / 2 - row["t"])
+            )
+            omega = 2.0 * math.pi / window["period_s"]
+            if dy_fit is not None:
+                constant, a, b = dy_fit
+                row["dy"] = row["dy"] - (
+                    constant + a * math.sin(omega * row["t"]) + b * math.cos(omega * row["t"])
+                )
+            if roll_fit is not None and math.hypot(roll_fit[1], roll_fit[2]) >= ROLL_BOB_MIN_DEG:
+                constant, a, b = roll_fit
+                row["roll_deg"] = row["roll_deg"] - (
+                    constant + a * math.sin(omega * row["t"]) + b * math.cos(omega * row["t"])
+                )
+    return cleaned
+
+
+def _travel_upgrade(label, duration_s, steadiness):
+    """Upgrade a long smooth scale run to a travel label."""
+    if duration_s < TRAVEL_MIN_SECONDS or steadiness not in SMOOTH_STEADINESS:
+        return label
+    if label == "dolly_in":
+        return "travel_forward"
+    if label == "dolly_out":
+        return "travel_backward"
+    return label
+
+
+def _platform_bob_for_move(start_s, end_s, spans):
+    if not spans:
+        return None
+    overlapping = [span for span in spans if span["start_s"] < end_s and span["end_s"] > start_s]
+    if not overlapping:
+        return None
+    return {
+        "period_s": _median([span["period_s"] for span in overlapping]),
+        "amplitude": _median([span["amplitude"] for span in overlapping]),
+    }
+
+
 def _runs(classes):
     runs = []
     for index, value in enumerate(classes):
@@ -379,8 +615,9 @@ def _merge_short_runs(runs, sample_fps):
     return coalesced
 
 
-def _make_phase(start_s, end_s, rows, sample_fps, phase_type):
-    label, _ = label_window(rows, sample_fps)
+def _make_phase(start_s, end_s, rows, sample_fps, phase_type, label_rows=None):
+    label_source = label_rows if label_rows is not None else rows
+    label, _ = label_window(label_source, sample_fps)
     mean_speed = sum(row["speed"] for row in rows) / len(rows)
     mean_shake = sum(row["shake"] for row in rows) / len(rows)
     if phase_type == "still":
@@ -391,6 +628,8 @@ def _make_phase(start_s, end_s, rows, sample_fps, phase_type):
         dominant = label
         speed = speed_word(mean_speed)
         steadiness = steadiness_word(mean_shake, label)
+        if phase_type == "steady_move":
+            dominant = _travel_upgrade(dominant, end_s - start_s, steadiness)
     return {
         "start_s": start_s,
         "end_s": end_s,
@@ -401,12 +640,12 @@ def _make_phase(start_s, end_s, rows, sample_fps, phase_type):
     }
 
 
-def _split_moving_run(run_rows, start_s, end_s, sample_fps):
+def _split_moving_run(run_rows, start_s, end_s, sample_fps, label_rows=None):
     if end_s - start_s <= 1.0:
-        return [_make_phase(start_s, end_s, run_rows, sample_fps, "irregular")]
+        return [_make_phase(start_s, end_s, run_rows, sample_fps, "irregular", label_rows)]
     mean_shake = sum(row["shake"] for row in run_rows) / len(run_rows)
     if mean_shake > 0.08:
-        return [_make_phase(start_s, end_s, run_rows, sample_fps, "irregular")]
+        return [_make_phase(start_s, end_s, run_rows, sample_fps, "irregular", label_rows)]
     band = RAMP_BAND * _median([row["speed"] for row in run_rows])
     ramp_up_end = 0
     for index, row in enumerate(run_rows):
@@ -424,11 +663,18 @@ def _split_moving_run(run_rows, start_s, end_s, sample_fps):
             break
         ramp_down_start = index
     if ramp_up_end >= ramp_down_start:
-        return [_make_phase(start_s, end_s, run_rows, sample_fps, "irregular")]
+        return [_make_phase(start_s, end_s, run_rows, sample_fps, "irregular", label_rows)]
     phases = []
     if ramp_up_end > 0:
         phases.append(
-            _make_phase(start_s, start_s + ramp_up_end / sample_fps, run_rows[:ramp_up_end], sample_fps, "ramp_up")
+            _make_phase(
+                start_s,
+                start_s + ramp_up_end / sample_fps,
+                run_rows[:ramp_up_end],
+                sample_fps,
+                "ramp_up",
+                label_rows[:ramp_up_end] if label_rows is not None else None,
+            )
         )
     phases.append(
         _make_phase(
@@ -437,16 +683,24 @@ def _split_moving_run(run_rows, start_s, end_s, sample_fps):
             run_rows[ramp_up_end:ramp_down_start],
             sample_fps,
             "steady_move",
+            label_rows[ramp_up_end:ramp_down_start] if label_rows is not None else None,
         )
     )
     if ramp_down_start < len(run_rows):
         phases.append(
-            _make_phase(start_s + ramp_down_start / sample_fps, end_s, run_rows[ramp_down_start:], sample_fps, "ramp_down")
+            _make_phase(
+                start_s + ramp_down_start / sample_fps,
+                end_s,
+                run_rows[ramp_down_start:],
+                sample_fps,
+                "ramp_down",
+                label_rows[ramp_down_start:] if label_rows is not None else None,
+            )
         )
     return phases
 
 
-def segment_phases(rows, duration_s, sample_fps):
+def segment_phases(rows, duration_s, sample_fps, label_rows=None):
     """Split the take into motion phases that tile ``[0, duration_s]`` exactly."""
     if not rows or duration_s <= 0:
         total = max(duration_s, 0.0)
@@ -465,12 +719,13 @@ def segment_phases(rows, duration_s, sample_fps):
     phases = []
     for key, start, end in _merge_short_runs(_runs(_run_keys(rows, sample_fps)), sample_fps):
         run_rows = rows[start:end]
+        run_label_rows = label_rows[start:end] if label_rows is not None else None
         start_s = start / sample_fps
         end_s = end / sample_fps
         if key == "still":
-            phases.append(_make_phase(start_s, end_s, run_rows, sample_fps, "still"))
+            phases.append(_make_phase(start_s, end_s, run_rows, sample_fps, "still", run_label_rows))
         else:
-            phases.extend(_split_moving_run(run_rows, start_s, end_s, sample_fps))
+            phases.extend(_split_moving_run(run_rows, start_s, end_s, sample_fps, run_label_rows))
     phases[0]["start_s"] = 0.0
     for index in range(1, len(phases)):
         phases[index]["start_s"] = phases[index - 1]["end_s"]
@@ -482,7 +737,7 @@ def _window_rows(rows, start_s, end_s):
     return [row for row in rows if start_s <= row["t"] < end_s]
 
 
-def build_moves(phases, rows, sample_fps):
+def build_moves(phases, rows, sample_fps, bob_spans=None):
     """Carve usable moves out of the steady phases, with range, handles and label."""
     if rows and "speed" not in rows[0]:
         speed_and_shake(rows, sample_fps)
@@ -533,6 +788,15 @@ def build_moves(phases, rows, sample_fps):
         mean_shake = sum(row["shake"] for row in steady_rows) / len(steady_rows)
         mean_inlier = sum(row["inlier_ratio"] for row in steady_rows) / len(steady_rows)
         steady_length = group["steady_end_s"] - group["steady_start_s"]
+        steadiness = steadiness_word(mean_shake, label)
+        label_geometric = None
+        platform = None
+        if label == "static":
+            platform = "static"
+        elif label in ("dolly_in", "dolly_out") and steady_length >= TRAVEL_MIN_SECONDS and steadiness in SMOOTH_STEADINESS:
+            label_geometric = label
+            label = "travel_forward" if label == "dolly_in" else "travel_backward"
+            platform = "vehicle"
         confidence = 0.5
         if steady_length >= 3:
             confidence += 0.2
@@ -552,8 +816,11 @@ def build_moves(phases, rows, sample_fps):
                 "start_s": start_s,
                 "end_s": end_s,
                 "label": label,
+                "label_geometric": label_geometric,
+                "platform": platform,
+                "platform_bob": _platform_bob_for_move(start_s, end_s, bob_spans),
                 "speed": speed_word(mean_speed),
-                "steadiness": steadiness_word(mean_shake, label),
+                "steadiness": steadiness,
                 "steady_start_s": group["steady_start_s"],
                 "steady_end_s": group["steady_end_s"],
                 "handle_in_s": max(start_s, group["steady_start_s"] - 0.25),
@@ -617,8 +884,11 @@ def analyze_clip(path, sample_fps=10.0, width=320):
     if duration_s <= 0 and frames_analyzed:
         duration_s = frames_analyzed * step / fps_source
     speed_and_shake(rows, effective_fps)
-    phases = segment_phases(rows, duration_s, effective_fps)
-    moves = build_moves(phases, rows, effective_fps)
+    bob_spans = detect_platform_bob(rows, effective_fps)
+    cleaned = _clean_bob(rows, bob_spans, effective_fps)
+    speed_and_shake(cleaned, effective_fps)
+    phases = segment_phases(rows, duration_s, effective_fps, label_rows=cleaned)
+    moves = build_moves(phases, cleaned, effective_fps, bob_spans)
     warnings = []
     invalid = sum(1 for row in rows if row["inlier_ratio"] == 0)
     if rows and invalid == len(rows):
