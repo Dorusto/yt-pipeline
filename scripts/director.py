@@ -374,16 +374,16 @@ def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnin
 
 
 def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_slot_s, order, warnings):
-    threshold = 0.8 * target_duration_s
     total = sum(slot["out_s"] - slot["in_s"] for slot in chosen)
-    if total >= threshold:
-        return chosen
     remaining = [candidate for candidate in candidates if id(candidate) not in used]
-    while total < threshold and remaining:
+    while remaining:
+        budget = target_duration_s - total
+        if budget < min_slot_s:
+            break
         remaining.sort(key=lambda item: (-item["score"], item["content_offset"] + item["in_s"]))
         candidate = remaining.pop(0)
         used.add(id(candidate))
-        slot = make_slot(candidate, max_slot_s, max_slot_s, min_slot_s, chosen)
+        slot = make_slot(candidate, min(max_slot_s, budget), max_slot_s, min_slot_s, chosen)
         if slot is None:
             continue
         if order == "chronological":

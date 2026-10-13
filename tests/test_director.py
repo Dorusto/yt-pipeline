@@ -263,7 +263,7 @@ def test_fill_pass_tops_up_short_pick_set(tmp_path):
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)
     assert summary["total_duration_s"] >= 0.8 * 90
-    assert summary["total_duration_s"] < 0.8 * 90 + 12.0
+    assert summary["total_duration_s"] <= 90 + 12.0
     assert summary["slots"] > 10
 
 
