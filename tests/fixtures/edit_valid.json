@@ -1,0 +1,72 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-10-13T19:43:17+00:00",
+  "tool": "scripts/director.py",
+  "brief": {
+    "text": "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only",
+    "target_duration_s": 90,
+    "order": "chronological",
+    "pacing": "calm-to-energy"
+  },
+  "sources": [
+    {
+      "file": "dji_mimo_20261012_134720_0083_1791817176821_video.mp4",
+      "path": "/root/media/yt-test/proxy/dji_mimo_20261012_134720_0083_1791817176821_video.mp4",
+      "duration_s": 38.76
+    },
+    {
+      "file": "dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
+      "path": "/root/media/yt-test/proxy/dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
+      "duration_s": 15.56
+    }
+  ],
+  "video": [
+    {
+      "id": "v1",
+      "clip": "dji_mimo_20261012_134720_0083_1791817176821_video.mp4",
+      "in_s": 4.0,
+      "out_s": 14.0,
+      "score": 0.82,
+      "reason": "hold, clean, calm opening",
+      "transition": {"type": "cut", "duration_s": 0},
+      "speed": 1.0,
+      "role": "hold",
+      "motion_label": "static",
+      "description": null
+    },
+    {
+      "id": "v2",
+      "clip": "dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
+      "in_s": 1.25,
+      "out_s": 8.75,
+      "score": 0.71,
+      "reason": "travel_forward, steady, energy towards the end",
+      "transition": {"type": "crossfade", "duration_s": 0.3},
+      "speed": 1.0,
+      "role": "move",
+      "motion_label": "travel_forward",
+      "description": null
+    }
+  ],
+  "audio": {
+    "ambience": {
+      "enabled": true,
+      "gain_db": 0,
+      "source": "slot",
+      "file": null
+    },
+    "music": null,
+    "sfx": [],
+    "levels": {
+      "target_lufs": null,
+      "true_peak_db": null
+    }
+  },
+  "captions": [],
+  "graphics": [],
+  "meta": {
+    "tool": "scripts/director.py",
+    "wall_time_s": 0.42,
+    "llm_cost_usd": 0.0
+  }
+}

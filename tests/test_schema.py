@@ -16,6 +16,28 @@ def test_valid_fixture_passes():
     assert schema.validate(load("fragments_valid.json"), "fragments") == []
 
 
+def test_valid_edit_fixture_passes():
+    assert schema.validate(load("edit_valid.json"), "edit") == []
+
+
+def test_edit_without_video_is_rejected():
+    data = load("edit_valid.json")
+    del data["video"]
+    assert any("video" in e for e in schema.validate(data, "edit"))
+
+
+def test_edit_slot_requires_reason():
+    data = load("edit_valid.json")
+    del data["video"][0]["reason"]
+    assert any("reason" in e for e in schema.validate(data, "edit"))
+
+
+def test_edit_rejects_unknown_top_level_field():
+    data = load("edit_valid.json")
+    data["render_cache"] = {}
+    assert schema.validate(data, "edit")
+
+
 def test_missing_out_is_reported():
     data = load("fragments_valid.json")
     del data["fragments"][0]["out"]
