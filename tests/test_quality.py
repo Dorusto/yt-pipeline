@@ -686,3 +686,119 @@ def test_unreadable_motion_json_falls_back(tmp_path):
     assert data["motion_file"] is None
     assert any("unreadable motion file" in warning for warning in data["warnings"])
     assert_tiles(data["segments"], data["duration_s"])
+
+
+def final_segment(start_s, end_s, role, shake, confidence=0.7, evidence=None):
+    return {
+        "id": f"s{start_s}",
+        "start_s": start_s,
+        "end_s": end_s,
+        "role": role,
+        "confidence": confidence,
+        "role_evidence": list(evidence or []),
+        "motion_label": None,
+        "defects": [],
+        "metrics": clean_metrics(shake=shake),
+    }
+
+
+def run_fact(steadiness, move=None):
+    return {"steadiness": steadiness, "move": move}
+
+
+def test_accidental_runs_whole_clip_junk_take():
+    segments = [
+        final_segment(0.0, 1.1, "hold", 0.006),
+        final_segment(1.1, 20.1, "move", 0.13),
+        final_segment(20.1, 22.0, "hold", 0.01),
+    ]
+    facts = [run_fact("static"), run_fact("very_unsteady"), run_fact("static")]
+
+    quality.apply_accidental_runs(segments, facts, 22.0)
+
+    assert [segment["role"] for segment in segments] == ["accidental", "accidental", "accidental"]
+    assert all(segment["confidence"] == pytest.approx(0.65) for segment in segments)
+    assert all("junk take" in segment["role_evidence"][0] for segment in segments)
+
+
+def test_accidental_runs_long_stable_move_untouched():
+    segments = [final_segment(0.0, 17.0, "move", 0.01)]
+    facts = [run_fact("no_shaking", {"steadiness": "no_shaking"})]
+
+    quality.apply_accidental_runs(segments, facts, 17.0)
+
+    assert segments[0]["role"] == "move"
+
+
+def test_accidental_runs_short_shaky_sliver_untouched():
+    segments = [
+        final_segment(0.0, 10.0, "move", 0.01),
+        final_segment(10.0, 11.0, "move", 0.6),
+        final_segment(11.0, 20.0, "move", 0.01),
+    ]
+    facts = [run_fact("no_shaking"), run_fact("very_unsteady"), run_fact("no_shaking")]
+
+    quality.apply_accidental_runs(segments, facts, 20.0)
+
+    assert [segment["role"] for segment in segments] == ["move", "move", "move"]
+
+
+def test_accidental_runs_chaotic_run_between_holds():
+    segments = [
+        final_segment(0.0, 3.0, "hold", 0.01),
+        final_segment(3.0, 9.0, "move", 0.2),
+        final_segment(9.0, 12.0, "hold", 0.01),
+    ]
+    facts = [run_fact("static"), run_fact("very_unsteady"), run_fact("static")]
+
+    quality.apply_accidental_runs(segments, facts, 12.0)
+
+    assert [segment["role"] for segment in segments] == ["hold", "accidental", "hold"]
+    assert segments[1]["confidence"] == pytest.approx(0.6)
+    assert "chaotic run" in segments[1]["role_evidence"][0]
+
+
+def test_accidental_runs_short_clip_no_stable_content():
+    segments = [
+        final_segment(0.0, 1.5, "move", 0.2),
+        final_segment(1.5, 3.0, "move", 0.3),
+    ]
+    facts = [run_fact("very_unsteady"), run_fact("very_unsteady")]
+
+    quality.apply_accidental_runs(segments, facts, 3.0)
+
+    assert [segment["role"] for segment in segments] == ["accidental", "accidental"]
+    assert all(segment["confidence"] == pytest.approx(0.65) for segment in segments)
+
+
+def test_end_to_end_junk_take_is_accidental(tmp_path):
+    source = tmp_path / "clips"
+    make_noisy_still_clip(source / "junk.mp4", seconds=22)
+    workspace = tmp_path / "workspace"
+    motion_dir = workspace / "motion"
+    motion_dir.mkdir(parents=True)
+    motion = {
+        "file": "junk.mp4",
+        "duration_s": 22.0,
+        "phases": [
+            {"start_s": 0.0, "end_s": 1.1, "type": "still", "dominant_motion": "static", "speed": "slow", "steadiness": "static"},
+            {"start_s": 1.1, "end_s": 20.1, "type": "irregular", "dominant_motion": "complex_motion", "speed": "regular", "steadiness": "very_unsteady"},
+            {"start_s": 20.1, "end_s": 22.0, "type": "still", "dominant_motion": "static", "speed": "slow", "steadiness": "static"},
+        ],
+        "moves": [],
+        "trajectory": [
+            {"t": 0.5, "dx": 0.0, "dy": 0.0, "scale": 1.0, "roll_deg": 0.0, "inlier_ratio": 0.9, "shake": 0.0},
+            {"t": 10.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "roll_deg": 0.0, "inlier_ratio": 0.9, "shake": 0.3},
+            {"t": 21.0, "dx": 0.0, "dy": 0.0, "scale": 1.0, "roll_deg": 0.0, "inlier_ratio": 0.9, "shake": 0.0},
+        ],
+    }
+    (motion_dir / "junk.json").write_text(json.dumps(motion), encoding="utf-8")
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    data = read_quality(workspace, "junk")
+    assert validate(data, "quality") == []
+    assert_tiles(data["segments"], data["duration_s"])
+    assert [segment["role"] for segment in data["segments"]] == ["accidental", "accidental", "accidental"]
+    assert all("junk take" in segment["role_evidence"][0] for segment in data["segments"])

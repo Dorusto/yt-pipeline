@@ -51,6 +51,14 @@ BRIGHT_LUMA = 235.0
 STATIC_DIFF_MEAN = 0.5
 STATIC_REL = 0.25
 
+ACCIDENTAL_RUN_SECONDS = 5.0
+ACCIDENTAL_RUN_FRACTION = 0.7
+ACCIDENTAL_SHAKE = 0.1
+ACCIDENTAL_RUN_CONFIDENCE = 0.6
+ACCIDENTAL_TAKE_CONFIDENCE = 0.65
+UNSTABLE_STEADINESS = {"unsteady", "very_unsteady"}
+STABLE_STEADINESS = {"no_shaking", "minimal_shaking"}
+
 TRANSITION_MAX_SECONDS = 3.0
 SETUP_MAX_SECONDS = 4.0
 HOLD_MIN_SECONDS = 1.0
@@ -696,7 +704,78 @@ def segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacia
     return _drafts_to_parts(drafts, duration_s)
 
 
-def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory):
+def _is_unstable(segment, steadiness):
+    """Return True when a final segment is shaky or its steadiness word is unsteady."""
+    if segment["metrics"].get("shake", 0.0) >= ACCIDENTAL_SHAKE:
+        return True
+    return steadiness in UNSTABLE_STEADINESS
+
+
+def _is_stable_content(segment, steadiness, move):
+    """Return True when a final segment is a long, low-shake move or hold."""
+    if segment["end_s"] - segment["start_s"] < ACCIDENTAL_MIN_SECONDS:
+        return False
+    if segment["metrics"].get("shake", 0.0) >= ACCIDENTAL_SHAKE:
+        return False
+    if segment["role"] not in ("move", "hold"):
+        return False
+    if segment["role"] == "hold":
+        return True
+    return move is not None and move.get("steadiness") in STABLE_STEADINESS
+
+
+def apply_accidental_runs(segments, facts, duration_s):
+    """Upgrade long chaotic runs and junk takes to the accidental role.
+
+    ``facts`` is one ``{"steadiness", "move"}`` dict per final segment, taken from
+    its longest part. A run is a maximal sequence of segments that are unstable and
+    not stable content; it qualifies when it lasts at least ``ACCIDENTAL_RUN_SECONDS``
+    or at least ``ACCIDENTAL_RUN_FRACTION`` of the clip. When the qualifying runs
+    cover that fraction of the clip, the whole clip becomes one ``accidental`` verdict.
+    """
+    if not segments or duration_s <= 0:
+        return
+    chaotic = [
+        _is_unstable(segment, fact["steadiness"])
+        and not _is_stable_content(segment, fact["steadiness"], fact["move"])
+        for segment, fact in zip(segments, facts)
+    ]
+    runs = []
+    index = 0
+    while index < len(segments):
+        if not chaotic[index]:
+            index += 1
+            continue
+        end = index
+        while end < len(segments) and chaotic[end]:
+            end += 1
+        runs.append((index, end))
+        index = end
+    qualifying = []
+    for start, end in runs:
+        run_s = segments[end - 1]["end_s"] - segments[start]["start_s"]
+        if run_s >= ACCIDENTAL_RUN_SECONDS or run_s >= ACCIDENTAL_RUN_FRACTION * duration_s:
+            qualifying.append((start, end, run_s))
+    if not qualifying:
+        return
+    covered_s = sum(run_s for _, _, run_s in qualifying)
+    if covered_s >= ACCIDENTAL_RUN_FRACTION * duration_s:
+        evidence = f"junk take: {covered_s:.1f}s of {duration_s:.1f}s has no stable move or hold"
+        for segment in segments:
+            segment["role"] = "accidental"
+            segment["confidence"] = ACCIDENTAL_TAKE_CONFIDENCE
+            segment["role_evidence"] = [evidence]
+        return
+    for start, end, run_s in qualifying:
+        mean_shake = _mean([segments[i]["metrics"].get("shake", 0.0) for i in range(start, end)])
+        evidence = f"chaotic run of {run_s:.1f}s with no stable move or hold (shake {mean_shake:.2f})"
+        for i in range(start, end):
+            segments[i]["role"] = "accidental"
+            segments[i]["confidence"] = ACCIDENTAL_RUN_CONFIDENCE
+            segments[i]["role_evidence"] = [evidence]
+
+
+def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, duration_s):
     merged = []
     for part in parts:
         if merged and merged[-1]["role"] == part["role"]:
@@ -716,6 +795,7 @@ def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory):
                 }
             )
     segments = []
+    facts = []
     for index, item in enumerate(merged):
         longest = max(item["parts"], key=lambda part: part["end_s"] - part["start_s"])
         label = longest["label"]
@@ -739,6 +819,8 @@ def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory):
                 "metrics": metrics,
             }
         )
+        facts.append({"steadiness": longest["steadiness"], "move": longest["move"]})
+    apply_accidental_runs(segments, facts, duration_s)
     return segments
 
 
@@ -811,7 +893,7 @@ def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320):
         parts = segments_from_frames(frames, duration_s, effective_fps, clip_median_laplacian)
         trajectory = None
         warnings.append("no motion file; segments are coarse")
-    segments = _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory)
+    segments = _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, duration_s)
     for segment in segments:
         if segment["end_s"] <= segment["start_s"]:
             raise QualityError(f"zero-length segment {segment['id']} in {path.name}")
