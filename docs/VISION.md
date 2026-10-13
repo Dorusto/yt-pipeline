@@ -78,7 +78,7 @@ P0 = first usable version, P1 = next, P2 = later.
 | Faces and smiles preference | DJI LightCut | A | P2 |
 | Export to Premiere / Resolve via OpenTimelineIO | CutBack, Eddie AI | A+B | P2 |
 
-Out of scope for now: auto-upload and social posting, team features, generative video, voice cloning.
+Out of scope for now: social posting beyond YouTube/PeerTube, team features, generative video footage. Upload, voice dubbing and the rest of packaging are D6, not out of scope (Doru's vault project `70_ai-youtube-automation-pipeline/20_TODO.md`, chunks 3–7).
 
 Lesson from the market: a large share of AI-picked clips get discarded, so a fast reject/regenerate loop matters more than a perfect first pick.
 
@@ -95,6 +95,9 @@ Named D0–D5 so they don't collide with the existing Milestones 1–7 in the ro
 | **D3** | Web UI v1 | full Mode A flow without a terminal | at ~80% |
 | **D4** | Mode B on the same index: absorb `edit_workflow.py` (fillers, chapters, auto-editor), Shorts ranking feeding `shorts_generator.py` | one real talking-head video processed | at ~80% |
 | **D5** | P1 features | per feature | batch review |
+| **D6** | Packaging and publishing, each a standalone tool: Remotion motion graphics (reference: hassancs91/claude-youtube-editor), thumbnail with a vision model + brand kit (`brand.json`), audio clean-up (RNNoise) + SFX library + music (YuE2 / ACE-Step, licence-checked), EN voice dubbing (F5-TTS / XTTS), background removal (MatAnyone), upload as private draft (`yt_upload`), PeerTube as the canonical source | per tool | batch review |
+
+**Publish gate:** when D2 works on the Kotor footage, the devlog clip (vault `2026-39_pipeline-montaj-automatizat`) is filmed and published before D3 starts — Doru's anti-sinking rule: no next chunk before the previous one is filmed and published.
 
 Do not start D1b before the D1a checkpoint, nor D2 before the D1b checkpoint.
 
