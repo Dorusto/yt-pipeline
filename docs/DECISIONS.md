@@ -649,3 +649,16 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - 0081 interior horizon false positives and short orbit: D1b vision veto.
 
 **Rationale:** The time-box exists so analysis tuning is driven by what hurts an actual edit, which S1 shows.
+
+---
+
+## [2026-10-13] No more hand rules per special case: `uncertain` labels go to vision; editor corrections grow the ground truth
+
+**Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. Doru: there will be many such shots; each would need another rule.
+
+**Decision:**
+- `motion` and `quality` attach a `confidence` to each label and emit `uncertain` when their signals disagree or the frame has large self-moving regions (wake, traffic, water). In D1b, `describe` adjudicates every `uncertain` segment and its label wins in `shotlog.json`. Geometry measures; it does not guess.
+- In D3, every label Doru corrects in the web editor is appended to the ground-truth set, so `eval_labels.py` scores against real footage that grows with use.
+- New hand-written geometric rules are added only when a case recurs and the eval shows it hurts edits.
+
+**Rationale:** Matches CameraBench (geometry for primitives, VLMs for semantics) and turns the long tail of special cases into data instead of code. Gyro from SD-card originals remains the upgrade for rotation.
