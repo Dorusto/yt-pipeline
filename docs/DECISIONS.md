@@ -964,3 +964,48 @@ slot's `role`/`motion_label` follow it — only candidacy is decided here.
 B is what the second round did and it lost the best shot of the film. C is the
 reading of the rule that keeps both Doru's constraints: no jump cut, and the
 motion worth showing is shown through its landing.
+
+---
+
+## [2026-10-13] D2 routing, the LLM director loop and the final render
+
+**Context:** D2 proper after the five D1b feedback tasks. Three design choices
+had to be made and each was measured on the 21-clip Kotor workspace.
+
+**Router.** `scripts/router.py` is deterministic — keyword rules on the brief,
+then workspace signals (a shotlog whose shots mostly travel is a vacation),
+then the vacation default. An LLM would add cost and non-determinism to a step
+that only sorts the brief's own words. `schemas/route.schema.json` is strict
+(like `edit.schema.json`): a route is a decision, not an analysis.
+
+**LLM director.** One tool, `scripts/llm_director.py`, with the three roles from
+VISION §3.4 and a **code validator** between the editor and the reviewer: the
+Llm chooses which shots and roughly how long; the validator enforces the phrase,
+landing, same-take, similar and keep-whole rules. Options considered: (A) let
+the LLM write timecodes and trust it, (B) let the LLM choose shots and compute
+the windows in code, (C) LLM writes timecodes, code validates and normalises the
+length rules. **C.** A failed A puts jump cuts on screen; B throws away the
+editor role VISION asks for. On the real workspace C produced a 92.5 s edit
+with zero grammar violations; the rule-based `director.py` stays the fallback
+and the `--dry-run` baseline (92.6 s on the same brief).
+
+**The screenwriter's menu is the cuttable pool.** The first loop crashed because
+the plan named shots with no usable window (0051 among them). The screenwriter
+now only sees the shots `build_shot_facts` can cut — the same candidacy rule the
+rule-based director uses (geometry `accidental`/`setup`/`teardown` never become
+slots). Measured: 40 cuttable windows out of 88 eligible shotlog rows.
+
+**Final render.** `render.py --originals-dir` resolves clips from the originals
+first (read-only) and, with `--width`/`--height` omitted, renders at their
+native size (1920x1080 here). The 720p preview from `sources[]` (the proxies)
+stays the default. `--out` inside the originals folder is refused.
+
+**Kdenlive export.** `scripts/edit_to_fragments.py` maps `edit.json` to the
+`fragments.yaml` `kdenlive_from_fragments.py` already consumes, with
+frame-inclusive `out` timecodes (`out_s - 1/fps`) so the fragment lengths match
+the edit. The edit list stays `edit.json`.
+
+**Known conflict reported to Doru:** the reviewer wants the closing orbit and
+the chapel walk shorter than the `keep_whole` rule allows (8 s vs 5–5.5 s). The
+rule wins — it is the D1b feedback ("2–2.5 s is too short for a stable,
+important move") — but the reviewer's taste point is in the D2 report.
