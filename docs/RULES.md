@@ -78,7 +78,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Proxies keep the source's global metadata (`-map_metadata 0`) so `creation_time` survives for clips whose names carry no date. — 2026-10-14
 - Inbox grouping: a `YYYY-MM-DD` folder in the inbox wins over the filename date, then mtime; one workspace per day under `--projects`; a day whose clips share one folder is passed to `recap.py` directly, otherwise a rebuilt symlink farm (the inbox is read-only). — 2026-10-14
 - `inbox.py` waits for the inbox to be quiet (`--quiet-minutes`, default 5) and re-invokes `recap.py` on a new clip, a changed brief or `--force`; the station skip rule stays the only caching. — 2026-10-14
-- Phone sync is Syncthing: phone send-only camera folder → LXC receive-only `~/media/inbox`; setup steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14
+- Phone flow: the web app (`serve.py` Upload) is the primary path — files stream into `~/media/inbox/<folder>/` and `recap.py` starts in the background; Syncthing (phone send-only camera folder → LXC receive-only `~/media/inbox` plus `inbox.py`) is the optional automatic path. Steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14 / 2026-10-15
 - The web Upload endpoint streams into `inbox/<folder>/` (allowlisted extensions, per-file and per-request size caps, atomic `.part` writes, never overwrites, never outside the inbox) and starts `recap.py` in the background; the run is recorded in `<workspace>/.run.json` (`pid`, `source`, `options`) which is what Re-edit and the status badge read. — 2026-10-15
 
 ## Photos and music (D2-6)
