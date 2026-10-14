@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import sys
 import threading
 import time
 
@@ -965,22 +966,19 @@ def test_running_project_shows_progress_and_refreshes(tmp_path, monkeypatch):
     assert 'http-equiv="refresh"' in page
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="zombie state is checked on Linux")
 def test_a_finished_child_that_was_not_reaped_is_not_running():
     import subprocess
-    import sys
+
+    import psutil
 
     child = subprocess.Popen([sys.executable, "-c", "pass"])
     deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-        except ChildProcessError:
-            break
-        if not serve.pid_alive(child.pid):
-            break
+    while time.time() < deadline and psutil.Process(child.pid).status() != psutil.STATUS_ZOMBIE:
         time.sleep(0.05)
     assert not serve.pid_alive(child.pid)
     child.wait()
+    assert not serve.pid_alive(child.pid)
 
 
 def test_exact_seconds_win_over_the_length_menu(tmp_path):
