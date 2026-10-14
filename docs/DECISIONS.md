@@ -1436,3 +1436,42 @@ unambiguous.
 **Context:** during D2-6 the DeepSeek V4.1 Flash coder returned empty replies twice on three separate tasks (proxy photo pass-through, paired beat snap, one more), so the architect did the work itself and finally stalled. The routing rule allows a coder switch on outage, never mid-task.
 
 **Decision:** D2-7 starts with GLM 5.3 Flash as the coder (`.opencode/agents/coder.md`). DeepSeek stays the fallback. Revisit after D2-7: keep whichever coder needed fewer architect takeovers.
+
+---
+
+## [2026-10-15] D2-7 decisions list, shot keys and music recorded in edit.json
+
+**Context:** D2-7 must show *why* the edit looks the way it does. The directors
+picked slots but never said what they refused, so explain.html had nothing to
+render; the D2-6 gap (the music track and the ambient level coming from flags
+never reach `edit.json`) also has to close here, because the web app passes
+options through the edit list.
+
+**Schema (`schemas/edit.schema.json`), all optional so old files keep
+validating:**
+- `video_slot.shot_key` / `photo_slot.shot_key`: the short candidate id
+  (`0071/s2`, `0072/p1`) that feedback and explain.html refer to.
+- `decisions[]`: one row per candidate the director considered —
+  `{id, status: used|rejected, reason, slot, score, clip, window_in_s,
+  window_out_s}`. The reason taxonomy is fixed: `near-duplicate of <id>`,
+  `defect: <names>`, `setup/teardown` / `accidental`, `low score`,
+  `did not fit the length`; used rows carry the slot's own reason.
+- `audio.ambient_under_music_db` next to `audio.music`, so the render's mix
+  rule is in the edit list and not only in a CLI flag.
+
+**Recording.** Both directors build the list with
+`scripts/common/decisions.py` (shared code lives in `scripts/common/`): the
+shotlog is the candidate universe, the used rows come from the final slots
+(a phrase's landing hold is marked used with the move it belongs to), the pool
+drops carry their own reason (overlapping window of X), and the rest is
+derived from the shot (`suppressed_by`, role, defects, score versus the used
+floor). `director.py` and `llm_director.py` take `--music` and
+`--ambient-under-music-db` and write them into `audio`; `recap.py` forwards
+both flags to the directors and to `render.py`, which now falls back to the
+edit's `audio.ambient_under_music_db` before its own default (12).
+
+**Rationale:** `edit.json` stays the single source of truth — render,
+explain.html and the web app all read the same reasons; a sidecar decisions
+file would have drifted. The shot key on the slot is what makes feedback
+("drop 0071/s2") and the timeline's "source in/out versus the segment range"
+possible without re-deriving ids.

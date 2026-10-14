@@ -20,6 +20,8 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Long segments (>20 s) split into content beats: `describe` samples a frame every ~5 s, marks scene changes; each beat becomes its own candidate. — 2026-10-14
 - The screenwriter's menu is the cuttable pool: only windows the candidacy rule above allows. — 2026-10-13
 - `edit.json` is the edit list and the only source of truth; render, preview, graphics and Kdenlive export are adapters that read it. — 2026-10-13
+- The directors record a reason for every candidate they do not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length) in `edit.json` `decisions[]`, with the short id (`0071/s2`) also on the used slots (`shot_key`); `explain.html` renders that list. — 2026-10-15
+- `edit.json` records the music track (`audio.music`) and the ambient level under it (`audio.ambient_under_music_db`) whenever they come from flags, so the render's mix is reproducible from the edit alone. — 2026-10-15
 - Router is deterministic (brief keywords → workspace signals → vacation default); a route is a decision, not an analysis. — 2026-10-13
 - LLM director: the model chooses shots and rough lengths, a code validator enforces the grammar above, the reviewer approves or sends fixes back (max 3 rounds); `director.py` is the fallback and the `--dry-run` baseline. — 2026-10-13
 - New hand-written geometric rules only when a case recurs and the eval shows it hurts edits; the long tail goes to vision verdicts, not per-case code. — 2026-10-13

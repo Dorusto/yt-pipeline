@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from common.decisions import build_decisions
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -110,6 +111,17 @@ def build_parser():
         "--beats",
         default=None,
         help="beat grid JSON from beats.py; snap every cut to the nearest beat and join with hard cuts",
+    )
+    parser.add_argument(
+        "--music",
+        default=None,
+        help="music track to record in edit.json audio.music (the render mixes it under the ambient bus)",
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=None,
+        help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
     )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -477,15 +489,27 @@ def score_candidate(candidate, pacing):
 
 def dedupe_candidates(candidates):
     kept = []
+    dropped = []
     ordered = sorted(
         candidates,
         key=lambda item: (-item["score"], 0 if item.get("phrase") else 1, item["in_s"]),
     )
     for candidate in ordered:
-        if any(overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0 for other in kept):
+        clash = next(
+            (
+                other
+                for other in kept
+                if overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0
+            ),
+            None,
+        )
+        if clash is not None:
+            dropped.append(
+                (candidate, f"overlapping window of {slot_label(clash)}, lower score")
+            )
             continue
         kept.append(candidate)
-    return kept
+    return kept, dropped
 
 
 def landing_pairs(quality):
@@ -757,6 +781,7 @@ def make_photo_slot(candidate, duration_s):
         "content_offset": candidate["content_offset"],
         "segment": candidate["segment"],
         "shot_key": candidate.get("shot_key"),
+        "landing_hold_key": candidate.get("landing_hold_key"),
         "similar_to": candidate.get("similar_to") or [],
         "description": candidate.get("description"),
         "shot_reason": candidate.get("shot_reason"),
@@ -816,6 +841,7 @@ def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=No
         "content_offset": candidate["content_offset"],
         "segment": candidate["segment"],
         "shot_key": candidate.get("shot_key"),
+        "landing_hold_key": candidate.get("landing_hold_key"),
         "similar_to": candidate.get("similar_to") or [],
         "description": candidate.get("description"),
         "shot_reason": candidate.get("shot_reason"),
@@ -1186,7 +1212,7 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
     return chosen
 
 
-def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
+def build_record(args, sources, slots, wall_time_s, hard_cuts=False, decisions=None):
     video = []
     video_index = 0
     photo_index = 0
@@ -1210,6 +1236,7 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
                     "transition": transition,
                     "description": slot.get("description"),
                     "capture_time": slot.get("capture_time"),
+                    "shot_key": slot.get("shot_key"),
                 }
             )
             continue
@@ -1227,9 +1254,13 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
                 "role": slot["role"],
                 "motion_label": slot["motion_label"],
                 "description": slot.get("description"),
+                "shot_key": slot.get("shot_key"),
             }
         )
-    return {
+    music = None
+    if args.music:
+        music = {"path": str(Path(args.music).expanduser())}
+    record = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tool": TOOL,
@@ -1243,7 +1274,8 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
         "video": video,
         "audio": {
             "ambience": {"enabled": True, "gain_db": 0, "source": "slot", "file": None},
-            "music": None,
+            "music": music,
+            "ambient_under_music_db": args.ambient_under_music_db,
             "sfx": [],
             "levels": {"target_lufs": None, "true_peak_db": None},
         },
@@ -1251,6 +1283,9 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
         "graphics": [],
         "meta": {"tool": TOOL, "wall_time_s": round(wall_time_s, 2), "llm_cost_usd": 0.0},
     }
+    if decisions is not None:
+        record["decisions"] = decisions
+    return record
 
 
 def atomic_write_json(path, data):
@@ -1349,6 +1384,7 @@ def run(args, started):
     candidates = []
     skipped_roles = 0
     skipped_ineligible = 0
+    drop_reasons = {}
     shotlog = load_shotlog(workspace)
     photos_by_name = {
         photo.get("file") or Path(photo["path"]).name: photo
@@ -1401,7 +1437,11 @@ def run(args, started):
                 candidate["similar_to"] = []
             scored.append(candidate)
         scored = build_phrases(scored, quality)
-        candidates.extend(dedupe_candidates(scored))
+        kept, dropped = dedupe_candidates(scored)
+        for candidate, reason in dropped:
+            key = candidate.get("shot_key") or candidate_key(candidate)
+            drop_reasons.setdefault(key, reason)
+        candidates.extend(kept)
 
     clip_timeline = (
         first_moment,
@@ -1462,6 +1502,22 @@ def run(args, started):
 
     wall_time_s = time.monotonic() - started
     record = build_record(args, sources + photo_sources, slots, wall_time_s, hard_cuts=beat_grid is not None)
+    used_rows = []
+    for slot, item in zip(slots, record["video"]):
+        row = {
+            "id": slot.get("shot_key") or candidate_key(slot),
+            "slot": item["id"],
+            "reason": item["reason"],
+            "score": item.get("score"),
+            "clip": item.get("clip") or item.get("photo"),
+            "window_in_s": slot.get("window_in_s"),
+            "window_out_s": slot.get("window_out_s"),
+        }
+        if slot.get("landing_hold_key"):
+            row["extra_ids"] = [slot["landing_hold_key"]]
+        used_rows.append(row)
+    pool_keys = {candidate.get("shot_key") or candidate_key(candidate) for candidate in candidates}
+    record["decisions"] = build_decisions(shotlog, used_rows, pool_keys, drop_reasons)
     validate_or_raise(record, "edit")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(out_path, record)

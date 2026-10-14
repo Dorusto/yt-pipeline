@@ -50,6 +50,7 @@ class Context:
         python,
         repo_root,
         music=None,
+        ambient_under_music_db=None,
         notify=False,
         preview_base=None,
     ):
@@ -63,6 +64,7 @@ class Context:
         self.python = python
         self.repo_root = repo_root
         self.music = music
+        self.ambient_under_music_db = ambient_under_music_db
         self.notify = notify
         self.preview_base = preview_base
 
@@ -112,6 +114,12 @@ def build_parser():
         "--music",
         default=None,
         help="music track: detect beats and mix it under the recap",
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=None,
+        help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
     )
     parser.add_argument(
         "--force",
@@ -279,7 +287,9 @@ def director_args(ctx):
         str(ctx.workspace / "brief.txt"),
     ]
     if ctx.music is not None:
-        args += ["--beats", str(ctx.workspace / "beats.json")]
+        args += ["--beats", str(ctx.workspace / "beats.json"), "--music", str(ctx.music)]
+    if ctx.ambient_under_music_db is not None:
+        args += ["--ambient-under-music-db", str(ctx.ambient_under_music_db)]
     return args
 
 
@@ -287,6 +297,8 @@ def render_args(ctx, out_path):
     args = ["--edit", str(ctx.workspace / "edit.json"), "--out", str(out_path)]
     if ctx.music is not None:
         args += ["--music", str(ctx.music)]
+    if ctx.ambient_under_music_db is not None:
+        args += ["--ambient-under-music-db", str(ctx.ambient_under_music_db)]
     return args
 
 
@@ -754,6 +766,7 @@ def main(argv=None):
         python=sys.executable,
         repo_root=REPO_ROOT,
         music=music,
+        ambient_under_music_db=args.ambient_under_music_db,
         notify=args.notify,
         preview_base=args.preview_base,
     )

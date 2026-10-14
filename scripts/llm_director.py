@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config
+from common.decisions import build_decisions
 from common.llm import BudgetExceeded, LLMError, make_client
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
@@ -156,7 +157,18 @@ def build_parser():
     parser.add_argument(
         "--beats",
         default=None,
-        help="beat grid JSON from beats.py; snap cuts to beats (structure boundaries to downbeats) and join with hard cuts",
+        help="beat grid JSON from beats.py; snap every cut to the nearest beat and join with hard cuts",
+    )
+    parser.add_argument(
+        "--music",
+        default=None,
+        help="music track to record in edit.json audio.music (the render mixes it under the ambient bus)",
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=None,
+        help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
     )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -386,14 +398,27 @@ def _phrase_move(candidates):
     return max(candidates, key=lambda item: (item["out_s"], item.get("score") or 0.0))
 
 
-def dedupe_candidates(candidates):
+def dedupe_candidates(candidates, drop_reasons=None):
     kept = []
     ordered = sorted(
         candidates,
         key=lambda item: (-item["score"], 0 if item.get("phrase") else 1, item["in_s"]),
     )
     for candidate in ordered:
-        if any(overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0 for other in kept):
+        clash = next(
+            (
+                other
+                for other in kept
+                if overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0
+            ),
+            None,
+        )
+        if clash is not None:
+            if drop_reasons is not None:
+                key = candidate.get("shot_key") or candidate_key(candidate)
+                drop_reasons.setdefault(
+                    key, f"overlapping window of {clash.get('shot_key') or candidate_key(clash)}, lower score"
+                )
             continue
         kept.append(candidate)
     return kept
@@ -462,7 +487,7 @@ def make_photo_fact(shot, photo):
     }
 
 
-def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S):
+def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S, drop_reasons=None):
     clips = order_clips(load_ingest(workspace))
     first_moment = clips[0][1]
     last_clip, last_moment = clips[-1]
@@ -506,7 +531,7 @@ def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S
             candidate["summary"] = shot.get("summary")
             scored.append(candidate)
         scored = build_phrases(scored, quality)
-        for candidate in dedupe_candidates(scored):
+        for candidate in dedupe_candidates(scored, drop_reasons):
             key = candidate.get("shot_key")
             if key:
                 facts[key] = make_fact(candidate, important_max_s)
@@ -1014,6 +1039,7 @@ def make_photo_slot_record(sid, fact, shot, plan_slot, duration, transition):
         "transition": transition,
         "description": shot.get("description") or fact.get("description"),
         "capture_time": fact.get("capture_time"),
+        "shot_key": fact.get("shot_key"),
     }
 
 
@@ -1279,7 +1305,7 @@ def normalise_window(in_s, out_s, fact, plan_slot, important_max_s):
     return new_in, new_out, notes
 
 
-def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief_obj, wall_time_s, cost_usd, warnings=None, important_max_s=DEFAULT_IMPORTANT_MAX_S, beats=None):
+def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief_obj, wall_time_s, cost_usd, warnings=None, important_max_s=DEFAULT_IMPORTANT_MAX_S, beats=None, music=None, ambient_under_db=None):
     answer_by_id = {}
     for slot in answer.get("slots") or []:
         if isinstance(slot, dict) and slot.get("id"):
@@ -1326,6 +1352,7 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
                 "role": shot.get("role") or fact.get("role"),
                 "motion_label": shot.get("motion_label") or fact.get("motion_label"),
                 "description": shot.get("description"),
+                "shot_key": fact.get("shot_key"),
             }
         )
     if warnings is not None:
@@ -1349,7 +1376,8 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
         "video": video,
         "audio": {
             "ambience": {"enabled": True, "gain_db": 0, "source": "slot", "file": None},
-            "music": None,
+            "music": {"path": str(Path(music).expanduser())} if music else None,
+            "ambient_under_music_db": ambient_under_db,
             "sfx": [],
             "levels": {"target_lufs": None, "true_peak_db": None},
         },
@@ -1432,6 +1460,27 @@ def write_plan(path, plan, started, cost_usd):
     atomic_write_json(path, plan)
 
 
+def attach_decisions(record, facts_by_key, shotlog_by_key, drop_reasons=None):
+    """Set ``record["decisions"]``: every candidate used or rejected with a reason."""
+    used_rows = []
+    for slot in record.get("video") or []:
+        key = slot.get("shot_key")
+        fact = facts_by_key.get(key) or {}
+        row = {
+            "id": key or slot.get("id"),
+            "slot": slot.get("id"),
+            "reason": slot.get("reason") or "llm director",
+            "score": slot.get("score"),
+            "clip": slot.get("clip") or slot.get("photo"),
+            "window_in_s": fact.get("window_in_s"),
+            "window_out_s": fact.get("window_out_s"),
+        }
+        if fact.get("landing_hold_key"):
+            row["extra_ids"] = [fact["landing_hold_key"]]
+        used_rows.append(row)
+    record["decisions"] = build_decisions(shotlog_by_key, used_rows, set(facts_by_key), drop_reasons)
+
+
 def write_edit(path, record, started, cost_usd):
     record["meta"] = {
         "tool": TOOL,
@@ -1442,7 +1491,7 @@ def write_edit(path, record, started, cost_usd):
     atomic_write_json(path, record)
 
 
-def hint_flags(hints):
+def hint_flags(hints, music=None, ambient_under_db=None):
     flags = []
     if hints.get("target_duration_s") is not None:
         flags += ["--target-duration-s", str(hints["target_duration_s"])]
@@ -1450,10 +1499,14 @@ def hint_flags(hints):
         flags += ["--order", hints["order"]]
     if hints.get("pacing") is not None:
         flags += ["--pacing", hints["pacing"]]
+    if music is not None:
+        flags += ["--music", str(music)]
+    if ambient_under_db is not None:
+        flags += ["--ambient-under-music-db", str(ambient_under_db)]
     return flags
 
 
-def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None):
+def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, music=None, ambient_under_db=None):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir) / "rules_edit.json"
         command = [
@@ -1466,7 +1519,7 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None):
             "--out",
             str(tmp),
             "--json",
-        ] + hint_flags(hints)
+        ] + hint_flags(hints, music, ambient_under_db)
         if beats_path is not None:
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
@@ -1480,7 +1533,7 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None):
     return data, summary.get("beat_snap")
 
 
-def run_baseline(workspace, brief_text, hints, beats_path=None):
+def run_baseline(workspace, brief_text, hints, beats_path=None, music=None, ambient_under_db=None):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir) / "baseline_edit.json"
         command = [
@@ -1493,7 +1546,7 @@ def run_baseline(workspace, brief_text, hints, beats_path=None):
             "--out",
             str(tmp),
             "--json",
-        ] + hint_flags(hints)
+        ] + hint_flags(hints, music, ambient_under_db)
         if beats_path is not None:
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
@@ -1554,9 +1607,9 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
     }
 
 
-def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None):
+def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None):
     try:
-        data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path)
+        data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db)
     except LLMDirectorError as exc:
         warnings.append(str(exc))
         return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates), 1
@@ -1588,6 +1641,8 @@ def run(
     order=None,
     pacing=None,
     beats=None,
+    music=None,
+    ambient_under_music_db=None,
 ):
     """Run the three-role loop and return ``(summary, exit_code)``."""
     started = time.monotonic()
@@ -1635,15 +1690,16 @@ def run(
     if shotlog is None:
         warnings.append("no shotlog.json in the workspace; using the rule-based director")
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db)
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
 
-    facts, clips, fact_warnings = build_shot_facts(workspace_path, shotlog, important_max_s)
+    drop_reasons = {}
+    facts, clips, fact_warnings = build_shot_facts(workspace_path, shotlog, important_max_s, drop_reasons)
     warnings.extend(fact_warnings)
     if not facts:
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db)
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
 
     sources = [
@@ -1695,7 +1751,8 @@ def run(
 
         def build_record_fn(answer):
             return build_edit_record(
-                plan, answer, facts, shotlog, sources, brief_obj, time.monotonic() - started, state.cost_usd, warnings, important_max_s, beats=beat_grid
+                plan, answer, facts, shotlog, sources, brief_obj, time.monotonic() - started, state.cost_usd, warnings, important_max_s, beats=beat_grid,
+                music=music, ambient_under_db=ambient_under_music_db,
             )
 
         review = None
@@ -1716,16 +1773,17 @@ def run(
     except BudgetExceeded as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db)
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 2, candidates)
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db)
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
 
     if approved:
         beat_snap = apply_beat_snap(record, plan, facts, beat_grid, warnings) if beat_grid is not None else None
+        attach_decisions(record, facts, shotlog, drop_reasons)
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
@@ -1743,6 +1801,7 @@ def run(
     if not violations:
         warnings.append("reviewer did not approve; keeping the last valid draft")
         beat_snap = apply_beat_snap(record, plan, facts, beat_grid, warnings) if beat_grid is not None else None
+        attach_decisions(record, facts, shotlog, drop_reasons)
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
@@ -1754,7 +1813,7 @@ def run(
         if note not in warnings:
             warnings.append(note)
     if fallback_rules:
-        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path)
+        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db)
     return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
 
 
@@ -1801,6 +1860,8 @@ def main(argv=None):
             order=args.order,
             pacing=args.pacing,
             beats=args.beats,
+            music=args.music,
+            ambient_under_music_db=args.ambient_under_music_db,
         )
     except (LLMDirectorError, ConfigError, SchemaError, LLMError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

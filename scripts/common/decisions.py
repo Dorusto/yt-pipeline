@@ -1,0 +1,98 @@
+"""Build the edit.json ``decisions`` list: every candidate used or rejected.
+
+The directors call :func:`build_decisions` with the shotlog, the slots they
+used and the pool drops they know about; the result is one row per candidate
+id (``0071/s2``) with a plain-word reason, which ``scripts/explain.py`` renders
+and feedback refers to. Sources are read only; nothing here writes files.
+"""
+
+ROLE_REJECT_REASONS = {
+    "setup": "setup/teardown",
+    "teardown": "setup/teardown",
+    "accidental": "accidental",
+}
+
+
+def _reject_reason(shot, in_pool, used_floor, used_ids=()):
+    """The plain-word reason a shotlog shot was not used, from its own state."""
+    suppressed = shot.get("suppressed_by")
+    if suppressed:
+        return f"near-duplicate of {suppressed}"
+    role = shot.get("role") or ""
+    if role in ROLE_REJECT_REASONS:
+        return ROLE_REJECT_REASONS[role]
+    if not shot.get("eligible", True):
+        return ROLE_REJECT_REASONS.get(role, "not eligible")
+    for other in shot.get("similar_to") or ():
+        if other in used_ids:
+            return f"near-duplicate of {other}"
+    defects = list(shot.get("defects") or [])
+    if defects:
+        return f"defect: {', '.join(defects)}"
+    score = shot.get("score")
+    if used_floor is not None and score is not None and score < used_floor:
+        return "low score"
+    if in_pool:
+        return "did not fit the length"
+    return "low score"
+
+
+def build_decisions(shotlog, used_rows, pool_keys=None, drop_reasons=None):
+    """Return the ``decisions`` rows for one edit, sorted by candidate id.
+
+    ``used_rows`` is an iterable of dicts with ``id`` (the shot key), ``slot``,
+    ``reason`` and optionally ``score``/``clip``/``window_in_s``/``window_out_s``
+    plus ``extra_ids`` (a phrase's landing hold, marked used with the same
+    slot). ``pool_keys`` are the ids that entered the director's candidate
+    pool; ``drop_reasons`` maps pool ids dropped before picking to a reason
+    (near-duplicate, overlapping window). Every id in the shotlog, the used
+    rows, ``pool_keys`` or ``drop_reasons`` gets exactly one row.
+    """
+    shotlog = shotlog or {}
+    used_rows = list(used_rows or [])
+    pool_keys = set(pool_keys or ())
+    drop_reasons = dict(drop_reasons or {})
+    used_by_id = {}
+    for row in used_rows:
+        used_by_id[row["id"]] = row
+        for extra in row.get("extra_ids") or ():
+            used_by_id.setdefault(extra, row)
+    scores = [row["score"] for row in used_rows if row.get("score") is not None]
+    used_floor = min(scores) if scores else None
+    universe = set(shotlog) | set(used_by_id) | pool_keys | set(drop_reasons)
+    decisions = []
+    for key in universe:
+        shot = shotlog.get(key) or {}
+        row = used_by_id.get(key)
+        if row is not None:
+            reason = row["reason"]
+            if key != row["id"]:
+                reason = f"kept with {row['id']} (move and its landing)"
+            decisions.append(
+                {
+                    "id": key,
+                    "status": "used",
+                    "reason": reason,
+                    "slot": row.get("slot"),
+                    "score": row.get("score", shot.get("score")),
+                    "clip": row.get("clip", shot.get("clip")),
+                    "window_in_s": row.get("window_in_s", shot.get("start_s")),
+                    "window_out_s": row.get("window_out_s", shot.get("end_s")),
+                }
+            )
+            continue
+        reason = drop_reasons.get(key) or _reject_reason(shot, key in pool_keys, used_floor, set(used_by_id))
+        decisions.append(
+            {
+                "id": key,
+                "status": "rejected",
+                "reason": reason,
+                "slot": None,
+                "score": shot.get("score"),
+                "clip": shot.get("clip"),
+                "window_in_s": shot.get("start_s"),
+                "window_out_s": shot.get("end_s"),
+            }
+        )
+    decisions.sort(key=lambda item: item["id"])
+    return decisions
