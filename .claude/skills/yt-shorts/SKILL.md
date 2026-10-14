@@ -1,7 +1,7 @@
 ---
 name: yt-shorts
 description: Generate vertical 9:16 Shorts / Reels (608x1080) with burnt-in karaoke-style subtitles from segments of a finished 1920x1080 video and its corrected Romanian .srt. Use when the user wants to cut Shorts or Reels, make vertical clips, or turn moments of a finished video into Shorts. Trigger phrases - "generează shorts pentru clipul X", "taie Shorts din video", "fă reels verticale cu subtitrări", "generate shorts from this video". For Short titles and descriptions see the yt-transcript skill, step 5 (it asks first).
-compatibility: Run from the repository root. Needs ffmpeg; uses h264_nvenc when an NVIDIA GPU is present, otherwise falls back to libx264 (works on CPU). Needs the repo .venv with requirements.txt installed. torch and whisperx are no longer needed (lazy import, only for the unused forced-alignment path).
+compatibility: Run from the repository root. Needs ffmpeg; uses h264_nvenc with an NVIDIA GPU, h264_videotoolbox on macOS, otherwise falls back to libx264 (works on CPU). Needs the repo .venv with requirements.txt installed. torch and whisperx are no longer needed (lazy import, only for the unused forced-alignment path).
 ---
 
 # yt-shorts
@@ -10,7 +10,7 @@ Cut segments of a finished 1920x1080 video into vertical 608x1080 clips with bur
 
 ## Prerequisites
 
-- NVIDIA GPU optional. The render selects `h264_nvenc` when an NVIDIA GPU is detected (`nvidia-smi`) and it is available in ffmpeg, otherwise it uses `libx264`. If the chosen encoder fails at render time it retries once with `libx264` (unless already using it). Force one with `--encoder`.
+- NVIDIA GPU optional. The render selects `h264_nvenc` when an NVIDIA GPU is detected (`nvidia-smi`) and it is available in ffmpeg, `h264_videotoolbox` on macOS, otherwise `libx264`. If the chosen encoder fails at render time it retries once with `libx264` (unless already using it). Force one with `--encoder`.
 - The repo `.venv` with `requirements.txt` installed. `torch` and `whisperx` are imported lazily inside the unused forced-alignment path, so they are not needed for the active pipeline (SRT-interpolated timing).
 - Source video is 1920x1080 (the crop is a fixed 608-pixel-wide window).
 - A corrected Romanian `.srt` that matches the timeline of that same video (see the yt-transcript skill). Subtitles from a different edit burn the wrong text.
@@ -49,7 +49,7 @@ segments:
 
 - Always pass both `--video` and `--srt`. Without `--video` the script asks for the path with `input()`; without `--srt` it looks in the video folder, `../subtitles/` and `..`, and asks interactively if it finds nothing. An interactive prompt hangs a non-interactive agent, so pass `--yes` to turn those prompts into hard errors (exit code 1).
 - `--json` prints a machine-readable summary (one line per run) and, together with `--yes`, makes the run fully non-interactive. The summary lists, per short: name, start, end, x_offset, word count, output path and the encoder actually used.
-- `--encoder libx264|h264_nvenc` forces an encoder; the `YT_VIDEO_ENCODER` environment variable does the same.
+- `--encoder libx264|h264_nvenc|h264_videotoolbox` forces an encoder; the `YT_VIDEO_ENCODER` environment variable does the same.
 - `--skip-alignment` is accepted but does nothing. Do not use it.
 - Keep the video path free of `:`, `,` and `'`. The path of the generated subtitle file is passed to ffmpeg inside a `-vf` filter string, so these characters are likely to break it (inferred from the code, not tested).
 - Output goes next to the video: `shorts/Short<N>-<name>.mp4` (N is the segment's position in the config) and `auto/<name>_karaoke.ass`. Existing files with the same names are overwritten without asking.

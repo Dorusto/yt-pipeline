@@ -386,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio", type=str, default=None)
     parser.add_argument("--srt", type=str, default=None)
     parser.add_argument("--encoder", type=str, default=None,
-                        help="force a video encoder (default: auto, nvenc if a GPU is present else libx264)")
+                        help="force a video encoder (default: auto, h264_nvenc with an NVIDIA GPU, h264_videotoolbox on macOS, else libx264)")
     parser.add_argument("--yes", action="store_true",
                         help="never prompt; fail instead when a file or config entry is missing")
     parser.add_argument("--skip-alignment", action="store_true",

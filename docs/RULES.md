@@ -49,7 +49,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `config.yaml` holds model ids per role and the per-run budget; `llm_backend: mock` for offline runs; no secrets in the file. — 2026-10-12
 - Music: YuE2 first (editable ABC score → cuts land on beats by construction), ACE-Step 1.5 fallback; excluded for licence: MusicGen, AudioGen, MMAudio, HunyuanVideo-Foley. — 2026-10-13
 - No ComfyUI: music, SFX and clean-up are plain Python tools, one model loaded at a time. — 2026-10-13
-- No torch unless needed; the encoder is `h264_nvenc` only when a GPU is present, else `libx264` with a runtime retry. — 2026-10-12
+- No torch unless needed; the encoder is `h264_nvenc` with an NVIDIA GPU, `h264_videotoolbox` on macOS, else `libx264`, with a runtime retry to `libx264`. — 2026-10-12 / 2026-10-14
 
 ## Safety rules
 

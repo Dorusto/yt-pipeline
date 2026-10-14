@@ -1328,3 +1328,15 @@ $0. All 21 originals verified unchanged by md5.
 **Pacing rule (D2-7, director):** shot length scales with the target length so a short recap carries more, shorter shots: ~20 s → 1.5–2.5 s per shot (≈8–10 shots), ~90 s → 2–5 s (≈20–25), 3 min → up to 6 s with whole moves. Hero and semantic moves stay the longest shots but shrink in proportion. Today's 20 s inbox recap had only 4 shots, which Doru finds too few.
 
 **Later:** `--music auto` picks a track from `~/media/music` by brief and shot tags (needs the library analysed with `beats.py`); generated music (YuE2) waits for the 3090.
+
+---
+
+## [2026-10-14] D2-5 encoder per platform: `h264_videotoolbox` with `-b:v`, not `-q:v`
+
+**Context:** `scripts/common/ffmpeg_tools.py` knew only `h264_nvenc` and `libx264`; macOS, a D2-5 demo target, has no nvenc and would always fall to the CPU. Selection must prefer the platform's hardware encoder and fall back to `libx264` when that encoder is missing from the local ffmpeg build.
+
+**Options for the videotoolbox flags:** (a) constant quality `-q:v` — ffmpeg maps `global_quality` to `kVTCompressionPropertyKey_Quality`, but the encoder only accepts it when `vtenc_qscale_enabled()` holds, i.e. Apple Silicon (`!TARGET_OS_IPHONE && TARGET_CPU_ARM64` in `libavcodec/videotoolboxenc.c`, FFmpeg n6.1.1); on Intel Macs ffmpeg fails with "qscale not available for encoder. Use -b:v bitrate instead"; (b) a plain bitrate `-b:v` — accepted on every macOS. Chosen: (b), basic flags `["-c:v", "h264_videotoolbox", "-b:v", "8M"]` (a sane rate for 720p proxies and 608x1080 shorts).
+
+**Selection.** `preferred_video_encoder()`: `h264_nvenc` when `nvidia-smi` reports a GPU, `h264_videotoolbox` on `darwin`, else `libx264`. `pick_video_encoder(available, prefer)` tries the preferred encoder first, then the rest of `H264_ENCODERS` (`libx264` last) and raises when the build has none of the three — the old last resort of "any video encoder" (which could be `amv` or `png`) is gone. The runtime retry to `libx264` in `proxy.py` and `shorts_generator.py` is unchanged. `proxy.py` now builds its codec args through `video_encode_args(encoder, crf=crf, preset="veryfast")` instead of its own copy, so the three encoders live in one place (`video_encode_args` gained `crf`/`preset`, defaults unchanged for `shorts_generator.py`). Smoke test 2026-10-14: a synthetic 3 s clip through `proxy.py` auto-picked `libx264` on the GPU-less LXC and wrote a 1280x720@25 H.264 proxy; `tests/test_ffmpeg_tools.py` covers the preference order, the missing-encoder fallback to `libx264`, the auto-detection per platform (mocked `sys.platform` / GPU probe) and the args per encoder.
+
+**Rationale:** `-b:v` is the only rate control that works on every macOS target, and one fixed bitrate is what "basic flags" means for now — quality tuning per resolution is not needed before the D2-5 demo. Failing loudly on an ffmpeg build without any of the three H.264 encoders beats silently picking an image encoder.
