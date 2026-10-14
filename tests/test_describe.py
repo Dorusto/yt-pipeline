@@ -387,7 +387,7 @@ def test_frame_timestamps_match_formula_and_order(tmp_path):
         [segment("s1", 1.0, 7.0, "hold", motion_label="static")],
     )
     model = MockVisionModel()
-    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, frame_mode="legacy")
     data = read_describe(tmp_path, "clip")
     times = [frame["t_s"] for frame in data["segments"][0]["frames"]]
     expected = [1.0 + (index + 0.5) / 3 * 6.0 for index in range(3)]
@@ -416,7 +416,7 @@ def test_prompt_contains_segment_facts(tmp_path):
         ],
     )
     model = MockVisionModel()
-    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, frame_mode="legacy")
     prompt = model.calls[0].prompt
     assert "Segment facts:" in prompt
     assert "complex_motion" in prompt
@@ -807,6 +807,168 @@ def test_frame_times_sample_every_five_seconds_on_long_segment():
     assert len(mid) == 5
     assert mid == sorted(mid)
     assert all(0.0 < t < 25.0 for t in mid)
+
+
+def write_cut_video(path, cut_s=4.0, seconds=10, fps=10, size=(64, 48)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(str(path), FOURCC, fps, size)
+    if not writer.isOpened():
+        pytest.skip("OpenCV mp4v VideoWriter is unavailable on this build")
+    for index in range(seconds * fps):
+        t_s = index / fps
+        color = (10, 10, 10) if t_s < cut_s else (240, 240, 240)
+        writer.write(np.full((size[1], size[0], 3), color, dtype=np.uint8))
+    writer.release()
+    return path
+
+
+def write_motion(workspace, stem, phases):
+    motion_dir = workspace / "motion"
+    motion_dir.mkdir(parents=True, exist_ok=True)
+    (motion_dir / f"{stem}.json").write_text(
+        json.dumps({"file": f"{stem}.mp4", "phases": phases}), encoding="utf-8"
+    )
+
+
+def test_frame_mode_legacy_keeps_the_old_formula(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 1.0, 7.0, "hold", motion_label="static")],
+    )
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, frame_mode="legacy")
+    times = [frame["t_s"] for frame in read_describe(tmp_path, "clip")["segments"][0]["frames"]]
+    assert times == pytest.approx([1.0 + (index + 0.5) / 3 * 6.0 for index in range(3)])
+    assert len(model.calls[0].frames) == 3
+
+
+def test_mosaic_frame_times_hit_scene_changes_and_phase_boundaries(tmp_path):
+    clip = write_cut_video(tmp_path / "clip.mp4", cut_s=4.0, seconds=10)
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 10.0, "move", motion_label="pan_right")],
+        duration_s=10.0,
+    )
+    write_motion(
+        tmp_path,
+        "clip",
+        [
+            {"start_s": 0.0, "end_s": 6.0, "type": "steady_move", "confidence": 0.9, "uncertain": False},
+            {"start_s": 6.0, "end_s": 10.0, "type": "still", "confidence": 0.9, "uncertain": False},
+        ],
+    )
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    times = [frame["t_s"] for frame in read_describe(tmp_path, "clip")["segments"][0]["frames"]]
+    assert len(times) == 6
+    assert any(abs(t_s - 4.0) <= 0.3 for t_s in times)
+    assert any(abs(t_s - 6.0) <= 0.3 for t_s in times)
+    assert times[0] == pytest.approx(0.05, abs=0.01)
+    assert times[-1] == pytest.approx(9.95, abs=0.01)
+    assert times == sorted(times)
+
+
+def test_mosaic_tiles_carry_timestamps_and_grid():
+    frame = np.full((360, 640, 3), 40, dtype=np.uint8)
+    pairs = [(float(index), frame) for index in range(6)]
+    image = cv2.imdecode(
+        np.frombuffer(describe.build_mosaic(pairs), np.uint8), cv2.IMREAD_COLOR
+    )
+    assert image.shape[1] == 3 * describe.MOSAIC_TILE_W
+    assert image.shape[0] == 2 * 270
+    groups = describe.mosaic_groups([float(index) for index in range(24)])
+    assert [len(group) for group in groups] == [8, 8, 8]
+    for group in groups:
+        mosaic = cv2.imdecode(
+            np.frombuffer(
+                describe.build_mosaic([(t_s, frame) for t_s in group]), np.uint8
+            ),
+            cv2.IMREAD_COLOR,
+        )
+        assert mosaic.shape[1] == 3 * describe.MOSAIC_TILE_W
+        assert mosaic.shape[0] == 3 * 270
+
+
+def test_mosaic_mode_sends_one_frame_per_mosaic(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4", seconds=120, fps=2, size=(64, 48))
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 120.0, "move", motion_label="pan_right")],
+        duration_s=120.0,
+    )
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    assert len(model.calls[0].frames) == 3
+    data = read_describe(tmp_path, "clip")
+    assert len(data["segments"][0]["frames"]) == 24
+    assert validate(data, "describe") == []
+    legacy_model = MockVisionModel()
+    describe.run(
+        tmp_path,
+        model=legacy_model,
+        model_id="mock/vision",
+        config=CONFIG,
+        frame_mode="legacy",
+        force=True,
+    )
+    assert len(legacy_model.calls[0].frames) == 24
+
+
+def test_json_summary_reports_frame_mode_and_counts(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 8.0, "hold", motion_label="static")],
+    )
+    summary, code = describe.run(
+        tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG
+    )
+    assert code == 0
+    assert summary["frame_mode"] == "mosaic"
+    assert summary["frames_sampled"] == 6
+    assert summary["mosaics_sent"] == 1
+    assert "llm_cost_usd" in summary
+    assert "wall_time_s" in summary
+    legacy, _ = describe.run(
+        tmp_path,
+        model=MockVisionModel(),
+        model_id="mock/vision",
+        config=CONFIG,
+        frame_mode="legacy",
+        force=True,
+    )
+    assert legacy["frame_mode"] == "legacy"
+    assert legacy["frames_sampled"] == 3
+    assert legacy["mosaics_sent"] == 3
+
+
+def test_missing_motion_file_falls_back_to_scene_changes_and_anchors(tmp_path):
+    clip = write_cut_video(tmp_path / "clip.mp4", cut_s=4.0, seconds=10)
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 10.0, "move", motion_label="pan_right")],
+        duration_s=10.0,
+    )
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    assert any("no motion phases" in warning for warning in data["warnings"])
+    times = [frame["t_s"] for frame in data["segments"][0]["frames"]]
+    assert len(times) == 6
+    assert times[0] == pytest.approx(0.05, abs=0.01)
+    assert times[-1] == pytest.approx(9.95, abs=0.01)
+    assert any(abs(t_s - 4.0) <= 0.3 for t_s in times)
 
 
 def test_normalize_beats_tiles_and_renumbers():

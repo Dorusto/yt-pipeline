@@ -8,9 +8,14 @@ Usage:
     python scripts/describe.py --workspace DIR --backend mock --photos-only
 
 Reads ``quality/<stem>.json`` from the workspace, samples frames per kept
-segment (three frames, or one every ~5 s on a segment longer than 20 s), sends
-them with the segment facts to the vision model and writes
+segment and sends them with the segment facts to the vision model, then writes
 ``describe/<stem>.json`` validated against ``schemas/describe.schema.json``.
+Default (``--frame-mode mosaic``): the frames of a segment are chosen at OpenCV
+scene changes and at the motion phase boundaries recorded in
+``motion/<stem>.json``, tiled 6-9 per image with their timestamps burned in,
+and one mosaic image per group is sent instead of separate frames. The old path
+(``--frame-mode legacy``) samples three fixed interior frames (or one every
+~5 s on a segment longer than 20 s) and sends each frame as its own image.
 A long segment also returns its content beats — a contiguous tiling into
 scene-change parts (approach / inside / exit) — and each beat becomes its own
 shotlog candidate. Confident accidental/setup/teardown segments are skipped
@@ -31,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
+import numpy as np
 from PIL import Image
 
 from common.config import ConfigError, load_config
@@ -44,6 +50,15 @@ DEFAULT_PROMPT = REPO_ROOT / "prompts" / "describe_segment.md"
 DEFAULT_PHOTO_PROMPT = REPO_ROOT / "prompts" / "describe_photo.md"
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 FRAME_COUNT = 3
+MOSAIC_MIN_FRAMES = 6
+MOSAIC_MAX_FRAMES = 9
+MOSAIC_TILE_W = 480
+SCENE_SAMPLE_S = 0.5
+SCENE_MAX_SAMPLES = 48
+SCENE_MERGE_S = 1.0
+SCENE_MIN_DIFF = 8.0
+EVENT_MIN_SPACING_S = 0.25
+FRAME_MODES = ("mosaic", "legacy")
 BEATS_MIN_DURATION_S = 20.0
 BEATS_SAMPLE_S = 5.0
 BEATS_MAX_FRAMES = 24
@@ -105,15 +120,18 @@ class RunState:
         self.max_calls = max_calls
         self.cost_usd = 0.0
         self.stop_reason = None
+        self.frames_sampled = 0
+        self.mosaics_sent = 0
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="describe.py",
         description=(
-            "Describe every kept quality segment with the vision model: three frames "
-            "in time order plus the motion label, one structured answer per segment "
-            "and a verdict for every uncertain segment. Still photos listed in "
+            "Describe every kept quality segment with the vision model: frames in time "
+            "order tiled into one mosaic image per group (or, with --frame-mode legacy, "
+            "three separate frames) plus the motion label, one structured answer per "
+            "segment and a verdict for every uncertain segment. Still photos listed in "
             "ingest.json are described with one frame as pseudo-segment p1."
         ),
         epilog=(
@@ -136,7 +154,17 @@ def build_parser():
     parser.add_argument("--max-calls", type=int, default=None, help="stop after this many model calls")
     parser.add_argument("--budget-usd", type=float, default=None, help="refuse calls past this spend (default llm_budget_usd)")
     parser.add_argument("--spend-ledger", default=None, help="spend ledger path (default WORKSPACE/llm_spend.json)")
-    parser.add_argument("--frame-width", type=int, default=640, help="width frames are resized to before sending (default 640)")
+    parser.add_argument("--frame-width", type=int, default=640, help="width frames are resized to before sending (default 640; mosaic tiles are always 480 wide)")
+    parser.add_argument(
+        "--frame-mode",
+        choices=list(FRAME_MODES),
+        default="mosaic",
+        help=(
+            "how frames reach the model: mosaic picks frames at OpenCV scene changes and "
+            "motion phase boundaries and tiles 6-9 of them per image (default), legacy sends "
+            "three fixed interior frames (or one every ~5 s on a long segment) as separate images"
+        ),
+    )
     parser.add_argument("--photos-only", action="store_true", help="describe only still photos from ingest.json, skip video segments")
     parser.add_argument("--force", action="store_true", help="re-describe clips whose output already exists")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -144,7 +172,7 @@ def build_parser():
 
 
 def frame_times(start_s, end_s):
-    """Sample timestamps inside the segment interior, in time order.
+    """Sample timestamps inside the segment interior, in time order (legacy mode).
 
     Short segments get three frames; segments longer than 20 s get one frame
     every ~5 s (capped at 24) so the model can mark content beats.
@@ -157,6 +185,176 @@ def frame_times(start_s, end_s):
     return [start_s + (index + 0.5) / count * span for index in range(count)]
 
 
+def detect_scene_changes(path, start_s, end_s):
+    """Measure scene-change times inside the segment, strongest first, with OpenCV."""
+    span = end_s - start_s
+    if span <= 0:
+        return []
+    step = max(SCENE_SAMPLE_S, span / SCENE_MAX_SAMPLES)
+    times = []
+    t_s = start_s
+    while t_s < end_s and len(times) < SCENE_MAX_SAMPLES:
+        times.append(t_s)
+        t_s += step
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise DescribeError(f"cannot read video: {path}")
+    samples = []
+    try:
+        for sample_t in times:
+            capture.set(cv2.CAP_PROP_POS_MSEC, sample_t * 1000.0)
+            ok, frame = capture.read()
+            if not ok:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            height = max(1, int(round(gray.shape[0] * 160 / gray.shape[1])))
+            gray = cv2.resize(gray, (160, height), interpolation=cv2.INTER_AREA)
+            samples.append((sample_t, gray.astype(np.float32)))
+    finally:
+        capture.release()
+    if len(samples) < 2:
+        return []
+    diffs = [
+        float(np.mean(np.abs(samples[index][1] - samples[index - 1][1])))
+        for index in range(1, len(samples))
+    ]
+    threshold = max(3.0 * float(np.median(diffs)), SCENE_MIN_DIFF)
+    peaks = []
+    for index, diff in enumerate(diffs):
+        if diff <= threshold:
+            continue
+        left = diffs[index - 1] if index > 0 else -1.0
+        right = diffs[index + 1] if index + 1 < len(diffs) else -1.0
+        if diff >= left and diff >= right:
+            peaks.append((samples[index + 1][0], diff))
+    merged = []
+    for peak_t, diff in sorted(peaks):
+        if merged and peak_t - merged[-1][0] <= SCENE_MERGE_S:
+            if diff > merged[-1][1]:
+                merged[-1] = (peak_t, diff)
+            continue
+        merged.append((peak_t, diff))
+    return [peak_t for peak_t, _ in sorted(merged, key=lambda peak: -peak[1])]
+
+
+def motion_phase_times(motion_record, start_s, end_s):
+    """Phase boundary times from the motion analysis that fall inside the segment."""
+    if not motion_record:
+        return []
+    times = []
+    for phase in motion_record.get("phases") or []:
+        for key in ("start_s", "end_s"):
+            value = phase.get(key)
+            if isinstance(value, (int, float)) and start_s < value < end_s:
+                times.append(float(value))
+    return sorted(set(round(t_s, 3) for t_s in times))
+
+
+def event_frame_times(start_s, end_s, event_times):
+    """Pick tile timestamps at event times (priority order), anchored at the segment edges."""
+    span = end_s - start_s
+    if span <= 0:
+        return []
+    if span <= BEATS_MIN_DURATION_S:
+        count = MOSAIC_MIN_FRAMES
+    else:
+        count = min(BEATS_MAX_FRAMES, max(MOSAIC_MIN_FRAMES, int(math.ceil(span / BEATS_SAMPLE_S))))
+    chosen = [start_s + 0.05, end_s - 0.05]
+    for event_t in event_times:
+        if len(chosen) >= count:
+            break
+        if start_s < event_t < end_s and all(
+            abs(event_t - kept) >= EVENT_MIN_SPACING_S for kept in chosen
+        ):
+            chosen.append(event_t)
+    if len(chosen) < count:
+        grid_size = max(count * 4, 32)
+        for index in range(grid_size):
+            if len(chosen) >= count:
+                break
+            candidate = start_s + (index + 1) * span / (grid_size + 1)
+            if all(abs(candidate - kept) >= EVENT_MIN_SPACING_S for kept in chosen):
+                chosen.append(candidate)
+    chosen = sorted(chosen)
+    if len(chosen) > count:
+        middle = chosen[1:-1]
+        if len(middle) > count - 2:
+            step = len(middle) / (count - 2)
+            middle = [middle[int(index * step)] for index in range(count - 2)]
+        chosen = [chosen[0]] + middle + [chosen[-1]]
+    deduped = []
+    for t_s in sorted(chosen):
+        if deduped and t_s - deduped[-1] < EVENT_MIN_SPACING_S:
+            continue
+        deduped.append(round(t_s, 3))
+    return deduped
+
+
+def mosaic_groups(times):
+    """Split tile timestamps into consecutive groups of at most MOSAIC_MAX_FRAMES."""
+    if not times:
+        return []
+    group_count = int(math.ceil(len(times) / MOSAIC_MAX_FRAMES))
+    base, extra = divmod(len(times), group_count)
+    groups = []
+    index = 0
+    for group_index in range(group_count):
+        size = base + (1 if group_index < extra else 0)
+        groups.append(times[index : index + size])
+        index += size
+    return groups
+
+
+def build_mosaic(pairs):
+    """Tile (t_s, frame) pairs into one JPEG mosaic with burned-in timestamps."""
+    if not pairs:
+        raise DescribeError("a mosaic needs at least one frame")
+    first = pairs[0][1]
+    tile_h = max(1, int(round(first.shape[0] * MOSAIC_TILE_W / first.shape[1])))
+    cols = 3 if len(pairs) > 4 else 2
+    rows = int(math.ceil(len(pairs) / cols))
+    canvas = np.zeros((rows * tile_h, cols * MOSAIC_TILE_W, 3), dtype=np.uint8)
+    for index, (t_s, frame) in enumerate(pairs):
+        tile = cv2.resize(frame, (MOSAIC_TILE_W, tile_h), interpolation=cv2.INTER_AREA)
+        label = f"{t_s:.1f}s"
+        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        cv2.rectangle(tile, (0, 0), (text_w + 12, text_h + 12), (0, 0, 0), -1)
+        cv2.putText(
+            tile,
+            label,
+            (6, text_h + 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        row, col = divmod(index, cols)
+        canvas[row * tile_h : (row + 1) * tile_h, col * MOSAIC_TILE_W : (col + 1) * MOSAIC_TILE_W] = tile
+    ok, buffer = cv2.imencode(".jpg", canvas, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+    if not ok:
+        raise DescribeError("could not encode a mosaic as JPEG")
+    return buffer.tobytes()
+
+
+def read_raw_frames(path, times):
+    """Read one BGR frame per timestamp from a clip; frames stay in memory."""
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise DescribeError(f"cannot read video: {path}")
+    frames = []
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        for t_s in times:
+            frame = _read_frame_near(capture, t_s, fps)
+            if frame is None:
+                raise DescribeError(f"cannot read frame at {t_s:.2f}s from {path}")
+            frames.append((t_s, frame))
+    finally:
+        capture.release()
+    return frames
+
+
 def read_frames(path, times, width):
     """Read one JPEG frame per timestamp from a clip; frames stay in memory."""
     capture = cv2.VideoCapture(str(path))
@@ -164,10 +362,10 @@ def read_frames(path, times, width):
         raise DescribeError(f"cannot read video: {path}")
     frames = []
     try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
         for t_s in times:
-            capture.set(cv2.CAP_PROP_POS_MSEC, t_s * 1000.0)
-            ok, frame = capture.read()
-            if not ok:
+            frame = _read_frame_near(capture, t_s, fps)
+            if frame is None:
                 raise DescribeError(f"cannot read frame at {t_s:.2f}s from {path}")
             frames.append(VisionFrame(t_s=t_s, jpeg_bytes=_encode_jpeg(frame, width)))
     finally:
@@ -175,7 +373,18 @@ def read_frames(path, times, width):
     return frames
 
 
-def build_prompt(base_prompt, clip_file, segment, times):
+def _read_frame_near(capture, t_s, fps):
+    """Read the frame at t_s, stepping one frame back when the seek lands past the end."""
+    step = 1.0 / fps if fps and fps > 0 else 0.04
+    for attempt in range(4):
+        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_s - attempt * step) * 1000.0)
+        ok, frame = capture.read()
+        if ok:
+            return frame
+    return None
+
+
+def build_prompt(base_prompt, clip_file, segment, times, frame_mode="legacy"):
     """Append the segment facts block to the model prompt."""
     uncertain = bool(segment.get("uncertain"))
     reasons = segment.get("uncertain_reasons") or []
@@ -192,6 +401,9 @@ def build_prompt(base_prompt, clip_file, segment, times):
         f"- uncertain: {uncertain_text}",
         "- frames (in order): " + ", ".join(f"{t} s" for t in times),
     ]
+    if frame_mode == "mosaic":
+        span = segment["end_s"] - segment["start_s"]
+        lines.append("- long: " + ("yes" if span > BEATS_MIN_DURATION_S else "no"))
     return base_prompt + "\n\nSegment facts:\n" + "\n".join(lines)
 
 
@@ -343,7 +555,42 @@ def normalize_verdict(value):
     }
 
 
-def describe_segments(record, clip_path, model, model_id, base_prompt, frame_width, state):
+def segment_frames(clip_path, segment, frame_width, frame_mode, motion_record, state):
+    """Sample the segment and build the model images: one mosaic per group or one per frame."""
+    start_s = segment["start_s"]
+    end_s = segment["end_s"]
+    if frame_mode == "legacy":
+        times = frame_times(start_s, end_s)
+        frames = read_frames(clip_path, times, frame_width)
+        state.frames_sampled += len(times)
+        state.mosaics_sent += len(frames)
+        return times, frames
+    events = motion_phase_times(motion_record, start_s, end_s)
+    events += detect_scene_changes(clip_path, start_s, end_s)
+    times = event_frame_times(start_s, end_s, events)
+    pairs = read_raw_frames(clip_path, times)
+    frames = []
+    offset = 0
+    for group in mosaic_groups(times):
+        group_pairs = pairs[offset : offset + len(group)]
+        offset += len(group)
+        frames.append(VisionFrame(t_s=group[0], jpeg_bytes=build_mosaic(group_pairs)))
+    state.frames_sampled += len(times)
+    state.mosaics_sent += len(frames)
+    return times, frames
+
+
+def describe_segments(
+    record,
+    clip_path,
+    model,
+    model_id,
+    base_prompt,
+    frame_width,
+    state,
+    frame_mode="legacy",
+    motion_record=None,
+):
     """Describe or skip every segment of one clip, in time order."""
     warnings = []
     segments = []
@@ -360,9 +607,10 @@ def describe_segments(record, clip_path, model, model_id, base_prompt, frame_wid
             state.stop_reason = "max_calls"
             segments.append(_skipped_segment(segment, "max_calls"))
             continue
-        times = frame_times(segment["start_s"], segment["end_s"])
-        frames = read_frames(clip_path, times, frame_width)
-        prompt = build_prompt(base_prompt, record["file"], segment, times)
+        times, frames = segment_frames(
+            clip_path, segment, frame_width, frame_mode, motion_record, state
+        )
+        prompt = build_prompt(base_prompt, record["file"], segment, times, frame_mode)
         request = VisionRequest(
             prompt=prompt,
             frames=frames,
@@ -396,12 +644,32 @@ def describe_segments(record, clip_path, model, model_id, base_prompt, frame_wid
     return segments, warnings
 
 
-def describe_clip(record, clip_path, model, model_id, base_prompt, frame_width, state):
+def describe_clip(
+    record,
+    clip_path,
+    model,
+    model_id,
+    base_prompt,
+    frame_width,
+    state,
+    frame_mode="legacy",
+    motion_record=None,
+):
     """Describe one clip and return its full describe record."""
     started = time.monotonic()
     segments, warnings = describe_segments(
-        record, clip_path, model, model_id, base_prompt, frame_width, state
+        record,
+        clip_path,
+        model,
+        model_id,
+        base_prompt,
+        frame_width,
+        state,
+        frame_mode=frame_mode,
+        motion_record=motion_record,
     )
+    if frame_mode == "mosaic" and not (motion_record or {}).get("phases"):
+        warnings.append(f"{record['file']}: no motion phases; frame times use scene changes only")
     return {
         "file": record["file"],
         "path": str(clip_path),
@@ -478,11 +746,14 @@ def run(
     config=None,
     backend=None,
     photos_only=False,
+    frame_mode="mosaic",
 ):
     """Describe the selected clips and photos into ``workspace/describe``; return summary and exit code."""
     started = time.monotonic()
     if frame_width <= 0:
         raise DescribeError("--frame-width must be positive")
+    if frame_mode not in FRAME_MODES:
+        raise DescribeError(f"unknown frame mode '{frame_mode}'")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
     if config is None:
@@ -533,8 +804,17 @@ def run(
             continue
         record = _load_quality(quality_file)
         clip_path = _clip_path(record, quality_file)
+        motion_record = _load_motion(workspace_path, quality_file)
         clip_record = describe_clip(
-            record, clip_path, model, model_id, video_prompt, frame_width, state
+            record,
+            clip_path,
+            model,
+            model_id,
+            video_prompt,
+            frame_width,
+            state,
+            frame_mode=frame_mode,
+            motion_record=motion_record,
         )
         validate_or_raise(clip_record, "describe")
         _atomic_write_json(output_path, clip_record)
@@ -576,6 +856,9 @@ def run(
         "beats": beats_found,
         "photos": photos_described,
         "model": model_id,
+        "frame_mode": frame_mode,
+        "frames_sampled": state.frames_sampled,
+        "mosaics_sent": state.mosaics_sent,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(state.cost_usd, 8),
     }
@@ -598,6 +881,7 @@ def main(argv=None):
             config=load_config(args.config),
             backend=args.backend,
             photos_only=args.photos_only,
+            frame_mode=args.frame_mode,
         )
     except (DescribeError, ConfigError, SchemaError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
@@ -614,6 +898,10 @@ def main(argv=None):
             f"{summary['segments_skipped']} skipped, {summary['beats']} beats"
         )
         print(f"photos: {summary['photos']} described")
+        print(
+            f"frames: {summary['frames_sampled']} sampled, "
+            f"{summary['mosaics_sent']} images sent ({summary['frame_mode']})"
+        )
         print(
             f"model {summary['model']}, cost ${summary['llm_cost_usd']:.4f}, "
             f"{summary['wall_time_s']}s"
@@ -894,6 +1182,17 @@ def _load_quality(path):
     if not isinstance(data, dict) or not data.get("segments"):
         raise DescribeError(f"quality file {path} has no segments")
     return data
+
+
+def _load_motion(workspace_path, quality_file):
+    path = workspace_path / "motion" / quality_file.name
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _read_prompt(path):
