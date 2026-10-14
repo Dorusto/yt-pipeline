@@ -211,16 +211,82 @@ def clip_position(moment, first_moment, span_seconds):
     return clamp((moment - first_moment).total_seconds() / span_seconds, 0.0, 1.0)
 
 
-def photo_content_offset(capture_time, first_moment, span_seconds, total_content):
-    """Map a photo's capture time into the content span the clips use."""
+def photo_content_offset(capture_time, clip_timeline, trailing_rank=0):
+    """Map a photo's capture time onto the clip content timeline.
+
+    ``clip_timeline`` is ``(first_moment, [(moment, content_offset, duration)])``
+    in chronological order; the content timeline is the clips' durations laid
+    end to end. Inside a clip's wall-clock span the photo sits at
+    ``content_offset + elapsed``; in a gap it sits just before the next clip;
+    before everything it sorts first and after everything it sorts last
+    (``trailing_rank`` keeps trailing photos in capture order), so photos and
+    clips interleave by capture time.
+    """
+    first_moment, anchors = clip_timeline
     moment = parse_time(capture_time)
+    if not anchors:
+        return 1.0, 0.0
+    total = anchors[-1][1] + anchors[-1][2]
     if moment is None:
-        return 1.0, total_content
-    position = clip_position(moment, first_moment, span_seconds)
-    return position, position * total_content
+        return 1.0, total
+    if moment <= first_moment:
+        return 0.0, 0.0
+    for anchor_moment, content_offset, duration in anchors:
+        elapsed = (moment - anchor_moment).total_seconds()
+        if 0.0 <= elapsed <= duration:
+            offset = content_offset + elapsed
+            return clamp(offset / max(1e-9, total), 0.0, 1.0), offset
+    for index in range(len(anchors) - 1):
+        gap_end = anchors[index + 1][0]
+        gap_start = anchors[index][0] + timedelta(seconds=anchors[index][2])
+        if gap_start < moment < gap_end:
+            offset = anchors[index + 1][1] - 0.001
+            return clamp(offset / max(1e-9, total), 0.0, 1.0), offset
+    offset = total - 0.001 * (trailing_rank + 1)
+    return 1.0, offset
 
 
-def build_photo_candidates(shotlog, photos_by_name, first_moment, span_seconds, total_content):
+def photo_offsets(shotlog, photos_by_name, clip_timeline):
+    """Capture-time content offsets per photo shot key, trailing ones ranked."""
+    if not shotlog:
+        return {}
+    entries = []
+    for shot in shotlog.values():
+        if shot.get("media_type") != "photo":
+            continue
+        name = shot.get("clip") or ""
+        photo = photos_by_name.get(name) or {}
+        capture_time = shot.get("capture_time") or photo.get("creation_time")
+        entries.append((parse_time(capture_time), capture_time, shot.get("key")))
+    _, anchors = clip_timeline
+    span_end = anchors[-1][0] + timedelta(seconds=anchors[-1][2]) if anchors else None
+    ordered = sorted(
+        range(len(entries)),
+        key=lambda i: (entries[i][0] is None, entries[i][0] or datetime.min.replace(tzinfo=timezone.utc), i),
+    )
+    trailing_total = sum(
+        1
+        for moment, _, _ in entries
+        if moment is not None and span_end is not None and moment > span_end
+    )
+    offsets = {}
+    trailing_rank = 0
+    for index in ordered:
+        moment, capture_time, key = entries[index]
+        trailing = moment is not None and span_end is not None and moment > span_end
+        if trailing:
+            offsets[key] = photo_content_offset(
+                capture_time,
+                clip_timeline,
+                trailing_rank=trailing_total - 1 - trailing_rank,
+            )
+            trailing_rank += 1
+        else:
+            offsets[key] = photo_content_offset(capture_time, clip_timeline)
+    return offsets
+
+
+def build_photo_candidates(shotlog, photos_by_name, clip_timeline, offsets_by_time):
     """Photo shots from the shotlog as candidates, with their content position."""
     if not shotlog:
         return [], 0, 0
@@ -240,8 +306,8 @@ def build_photo_candidates(shotlog, photos_by_name, first_moment, span_seconds, 
         name = shot.get("clip") or ""
         photo = photos_by_name.get(name) or {}
         capture_time = shot.get("capture_time") or photo.get("creation_time")
-        position, content_offset = photo_content_offset(
-            capture_time, first_moment, span_seconds, total_content
+        position, content_offset = offsets_by_time.get(
+            shot.get("key"), photo_content_offset(capture_time, clip_timeline)
         )
         segment = {
             "id": shot.get("segment_id") or "p1",
@@ -1265,8 +1331,13 @@ def run(args, started):
         scored = build_phrases(scored, quality)
         candidates.extend(dedupe_candidates(scored))
 
+    clip_timeline = (
+        first_moment,
+        [(moment, offset, clip.get("duration_s") or 0.0) for (clip, moment), offset in zip(clips, content_offsets)],
+    )
+    offsets_by_time = photo_offsets(shotlog, photos_by_name, clip_timeline)
     photo_candidates, photo_ineligible, photo_roles = build_photo_candidates(
-        shotlog, photos_by_name, first_moment, span_seconds, total_content,
+        shotlog, photos_by_name, clip_timeline, offsets_by_time,
     )
     candidates.extend(photo_candidates)
     skipped_ineligible += photo_ineligible
