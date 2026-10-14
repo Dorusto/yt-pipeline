@@ -36,6 +36,9 @@ SKIP_ROLES = {"accidental", "setup", "teardown"}
 FRAME_COUNT = 3
 JPEG_QUALITY = 85
 SEMANTIC_MOTIONS = {"orbit", "tracking", "reveal", "travel", "none"}
+SUMMARY_MAX_WORDS = 12
+TAGS_MAX = 6
+TAG_MAX_CHARS = 32
 ROLES = {
     "move",
     "hold",
@@ -180,6 +183,8 @@ def normalize_answer(data):
     """Coerce a parsed answer into the fields the schema accepts."""
     return {
         "description": _as_string(data.get("description")),
+        "summary": _normalize_summary(data.get("summary")),
+        "tags": _normalize_tags(data.get("tags")),
         "subject": _as_string(data.get("subject")),
         "scenery": _as_string(data.get("scenery")),
         "semantic_motion": data.get("semantic_motion")
@@ -490,6 +495,8 @@ def _described_segment(segment, times, normalized, verdict, cost_usd):
         "uncertain_reasons": list(segment.get("uncertain_reasons") or []),
         "frames": [{"t_s": t_s} for t_s in times],
         "description": normalized["description"],
+        "summary": normalized["summary"],
+        "tags": normalized["tags"],
         "subject": normalized["subject"],
         "scenery": normalized["scenery"],
         "semantic_motion": normalized["semantic_motion"],
@@ -555,6 +562,27 @@ def _clamp_interest(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     return min(100, max(0, value))
+
+
+def _normalize_summary(value):
+    text = _as_string(value).strip()
+    if not text:
+        return None
+    words = text.split()
+    return " ".join(words[:SUMMARY_MAX_WORDS])
+
+
+def _normalize_tags(value):
+    if not isinstance(value, list):
+        return []
+    tags = []
+    for item in value:
+        tag = _as_string(item).strip().lower()[:TAG_MAX_CHARS]
+        if tag and tag not in tags:
+            tags.append(tag)
+        if len(tags) >= TAGS_MAX:
+            break
+    return tags
 
 
 def _select_quality_files(quality_dir, clips):

@@ -45,7 +45,9 @@
       "defects": [
         "obstruction"
       ],
-      "suppressed_by": null
+      "suppressed_by": null,
+      "summary": null,
+      "tags": []
     },
     {
       "key": "0067/s2",
@@ -78,7 +80,9 @@
         "0067/s1"
       ],
       "defects": [],
-      "suppressed_by": null
+      "suppressed_by": null,
+      "summary": null,
+      "tags": []
     },
     {
       "key": "0051/s1",
@@ -109,7 +113,9 @@
       "reason": "no description \u00b7 static by geometry \u00b7 accidental \u00b7 clean \u00b7 not eligible",
       "similar_to": [],
       "defects": [],
-      "suppressed_by": null
+      "suppressed_by": null,
+      "summary": null,
+      "tags": []
     }
   ],
   "wall_time_s": 3.2,

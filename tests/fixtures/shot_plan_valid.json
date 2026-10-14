@@ -1,0 +1,68 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-10-13T20:50:00+00:00",
+  "tool": "scripts/llm_director.py",
+  "brief": {
+    "text": "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only",
+    "target_duration_s": 90.0,
+    "order": "chronological",
+    "pacing": "calm-to-energy",
+    "ambient_only": true
+  },
+  "content_type": "vacation",
+  "logline": "A calm morning on the water builds to the cave and the tunnel.",
+  "structure": [
+    {
+      "id": "b1",
+      "name": "Morning on the water",
+      "intent": "open wide and calm",
+      "target_s": 30.0
+    },
+    {
+      "id": "b2",
+      "name": "The coast",
+      "intent": "build toward the caves",
+      "target_s": 35.0
+    },
+    {
+      "id": "b3",
+      "name": "Cave and tunnel",
+      "intent": "the payoff, more energy",
+      "target_s": 25.0
+    }
+  ],
+  "slot_plan": [
+    {
+      "id": "v1",
+      "beat": "b1",
+      "shot_key": "0056/s1",
+      "target_s": 5.0,
+      "why": "the wake opens the day",
+      "keep_whole": false
+    },
+    {
+      "id": "v2",
+      "beat": "b1",
+      "shot_key": "0057/s1",
+      "target_s": 6.0,
+      "why": "the bay establishes the place",
+      "keep_whole": false
+    },
+    {
+      "id": "v3",
+      "beat": "b3",
+      "shot_key": "0080/s1",
+      "target_s": 8.0,
+      "why": "the cave approach is the payoff",
+      "keep_whole": true
+    }
+  ],
+  "notes": [
+    "the chapel interior is a nice surprise at the end"
+  ],
+  "meta": {
+    "tool": "scripts/llm_director.py",
+    "wall_time_s": 12.5,
+    "llm_cost_usd": 0.01
+  }
+}

@@ -4,7 +4,11 @@
   "title": "shotlog",
   "description": "One shotlog per project workspace, written by scripts/index.py: every quality segment as a scored candidate with hook and reason, the effective labels (the vision verdict wins on uncertain segments) and the similar-segment links the director uses for diversity. Score = weighted fusion of the vision content score and the label score; audio and text components join at D2/D4 with zero weight until then. Overlapping shots keep the higher score, the other is marked suppressed_by.",
   "type": "object",
-  "required": ["generated_at", "weights", "shots"],
+  "required": [
+    "generated_at",
+    "weights",
+    "shots"
+  ],
   "$defs": {
     "segment_ref": {
       "type": "string",
@@ -54,7 +58,10 @@
     },
     "source": {
       "type": "string",
-      "enum": ["geometry", "verdict"],
+      "enum": [
+        "geometry",
+        "verdict"
+      ],
       "description": "geometry = the motion/quality label; verdict = the vision model's adjudication, which wins on uncertain segments"
     }
   },
@@ -69,13 +76,32 @@
     },
     "weights": {
       "type": "object",
-      "required": ["vision", "labels"],
+      "required": [
+        "vision",
+        "labels"
+      ],
       "description": "fusion weights used for the score; audio_energy and text are reserved for D2/D4 and stay 0 until their tools exist",
       "properties": {
-        "vision": {"type": "number", "minimum": 0, "maximum": 1},
-        "labels": {"type": "number", "minimum": 0, "maximum": 1},
-        "audio_energy": {"type": "number", "minimum": 0, "maximum": 1},
-        "text": {"type": "number", "minimum": 0, "maximum": 1}
+        "vision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "labels": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "audio_energy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "text": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       },
       "additionalProperties": true
     },
@@ -102,40 +128,97 @@
           "reason"
         ],
         "properties": {
-          "key": {"$ref": "#/$defs/segment_ref"},
-          "clip": {"type": "string", "minLength": 1},
-          "segment_id": {"type": "string", "minLength": 1},
-          "start_s": {"type": "number", "minimum": 0},
-          "end_s": {"type": "number", "exclusiveMinimum": 0},
+          "key": {
+            "$ref": "#/$defs/segment_ref"
+          },
+          "clip": {
+            "type": "string",
+            "minLength": 1
+          },
+          "segment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end_s": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
           "eligible": {
             "type": "boolean",
             "description": "false for confident accidental/setup/teardown and for suppressed shots; the director only picks eligible shots"
           },
-          "role": {"$ref": "#/$defs/role"},
-          "role_source": {"$ref": "#/$defs/source"},
-          "motion_label": {"$ref": "#/$defs/motion_label"},
-          "label_source": {"$ref": "#/$defs/source"},
+          "role": {
+            "$ref": "#/$defs/role"
+          },
+          "role_source": {
+            "$ref": "#/$defs/source"
+          },
+          "motion_label": {
+            "$ref": "#/$defs/motion_label"
+          },
+          "label_source": {
+            "$ref": "#/$defs/source"
+          },
           "confidence": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 0,
             "maximum": 1,
             "description": "confidence of the effective label (verdict confidence when the verdict won)"
           },
-          "uncertain": {"type": "boolean"},
+          "uncertain": {
+            "type": "boolean"
+          },
           "uncertain_reasons": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
-          "description": {"type": ["string", "null"]},
-          "subject": {"type": ["string", "null"]},
-          "scenery": {"type": ["string", "null"]},
-          "semantic_motion": {"type": ["string", "null"]},
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scenery": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "semantic_motion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "interest": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 0,
             "maximum": 100
           },
-          "hero": {"type": ["boolean", "null"]},
+          "hero": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "score": {
             "type": "number",
             "minimum": 0,
@@ -144,12 +227,42 @@
           },
           "scores": {
             "type": "object",
-            "required": ["labels"],
+            "required": [
+              "labels"
+            ],
             "properties": {
-              "vision": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-              "labels": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-              "audio_energy": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-              "text": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+              "vision": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "labels": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "audio_energy": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "text": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
             },
             "additionalProperties": true
           },
@@ -163,20 +276,46 @@
           },
           "similar_to": {
             "type": "array",
-            "items": {"$ref": "#/$defs/segment_ref"},
+            "items": {
+              "$ref": "#/$defs/segment_ref"
+            },
             "description": "shots the similarity tool found visually close (cosine >= threshold)"
           },
           "defects": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "description": "measured defect names carried from quality"
           },
           "suppressed_by": {
             "oneOf": [
-              {"$ref": "#/$defs/segment_ref"},
-              {"type": "null"}
+              {
+                "$ref": "#/$defs/segment_ref"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "key of the higher-scoring shot that overlaps this one by more than 50%; null when not suppressed"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "one-line summary in at most 12 words from describe; null when the shot has no vision"
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 8,
+            "description": "short tag list from describe; empty when the shot has no vision",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
           }
         },
         "additionalProperties": true
@@ -193,7 +332,9 @@
     },
     "warnings": {
       "type": "array",
-      "items": {"type": "string"}
+      "items": {
+        "type": "string"
+      }
     }
   },
   "additionalProperties": true

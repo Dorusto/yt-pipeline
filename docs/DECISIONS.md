@@ -917,3 +917,95 @@ would throw away geometry-good shots because a model call failed.
 - `eval_labels.py` scores the final shotlog label (verdict when present), not only the geometric one.
 
 **Rationale:** The first two are classic editing grammar (cut on completion of action; avoid same-scene jump cuts) that the rule-based director lacked. The contact sheet turns checkpoints into a phone review instead of reading JSON.
+
+---
+
+## [2026-10-13] D2-01 phrase implementation: the phrase scores as its move, head trim, best-of-take
+
+**Context:** Implementing the D1b recap feedback ("a move and the hold it lands on
+form one phrase: either keep the move through its landing (cut inside the hold),
+or use only the hold; never cut out of a move and into its own landing. Two slots
+from the same take need a different take between them unless they are
+contiguous"). Three implementation choices had to be made, each measured on the
+21-clip Kotor workspace.
+
+**Options for the phrase score (decides whether the phrase or the hold alone
+survives `dedupe_candidates`):**
+- A) `max(move, hold)` — the phrase always wins; a defective move gets dragged in
+  to reach a good landing (0060 s3: move 0.36 + hold 0.691).
+- B) `(move + hold) / 2` — a hero move loses to a slightly better hold from the
+  same take (0080 travel 0.911 diluted to 0.876 vs its own hold 0.884).
+- C) `move_score` — the phrase is the move's shot, the landing is grammar; "use
+  only the hold" wins exactly when the hold is the better shot on its own.
+
+**Decision:** C. Measured on the 33 landing pairs: the phrase wins when the move
+is the better part (0080 s1 0.911, 0072 s7 tunnel 0.895, 0081 s7 0.862) and the
+hold alone wins when the hold is (0060 s5 Doru's pan case, 0080 s6 hero static).
+On an exact tie the phrase wins. Phrase length: the end cut always lands inside
+the hold (`out_s >= H.start_s + 0.75`), the head is trimmed to the pacing target
+but never before the move's handle-in — so a phrase is never longer than its
+target ("shorter shots are better") and the move always completes.
+
+**Same-take rule:** adjacent slots from one take must be source-contiguous (±0.5 s)
+or the candidate is skipped; contiguous neighbours merge into one slot. In a
+chronological edit same-take windows are always neighbours in content time, so a
+take contributes one slot; that slot is its **best** window — a blocked candidate
+with a higher score replaces the conflicting slot (`same-take upgrade` warning).
+Without this the tunnel hero (0.895) lost its take to a weaker dolly_in (0.729).
+
+**Geometry `accidental`/`setup`/`teardown` are never slots**, whatever the
+shotlog says. `0051` (ground truth: "Unusable clip, makes no sense") has a
+quality segment labelled `accidental` whose vision verdict said `move`, so the
+shotlog marked it eligible and it became the opener of the edit. The tools label;
+the director decides (shot-grammar §1). The shotlog keeps the verdict and the
+slot's `role`/`motion_label` follow it — only candidacy is decided here.
+
+**Rationale:** A is what the first implementation did and it puts junk on screen;
+B is what the second round did and it lost the best shot of the film. C is the
+reading of the rule that keeps both Doru's constraints: no jump cut, and the
+motion worth showing is shown through its landing.
+
+---
+
+## [2026-10-13] D2 routing, the LLM director loop and the final render
+
+**Context:** D2 proper after the five D1b feedback tasks. Three design choices
+had to be made and each was measured on the 21-clip Kotor workspace.
+
+**Router.** `scripts/router.py` is deterministic — keyword rules on the brief,
+then workspace signals (a shotlog whose shots mostly travel is a vacation),
+then the vacation default. An LLM would add cost and non-determinism to a step
+that only sorts the brief's own words. `schemas/route.schema.json` is strict
+(like `edit.schema.json`): a route is a decision, not an analysis.
+
+**LLM director.** One tool, `scripts/llm_director.py`, with the three roles from
+VISION §3.4 and a **code validator** between the editor and the reviewer: the
+Llm chooses which shots and roughly how long; the validator enforces the phrase,
+landing, same-take, similar and keep-whole rules. Options considered: (A) let
+the LLM write timecodes and trust it, (B) let the LLM choose shots and compute
+the windows in code, (C) LLM writes timecodes, code validates and normalises the
+length rules. **C.** A failed A puts jump cuts on screen; B throws away the
+editor role VISION asks for. On the real workspace C produced a 92.5 s edit
+with zero grammar violations; the rule-based `director.py` stays the fallback
+and the `--dry-run` baseline (92.6 s on the same brief).
+
+**The screenwriter's menu is the cuttable pool.** The first loop crashed because
+the plan named shots with no usable window (0051 among them). The screenwriter
+now only sees the shots `build_shot_facts` can cut — the same candidacy rule the
+rule-based director uses (geometry `accidental`/`setup`/`teardown` never become
+slots). Measured: 40 cuttable windows out of 88 eligible shotlog rows.
+
+**Final render.** `render.py --originals-dir` resolves clips from the originals
+first (read-only) and, with `--width`/`--height` omitted, renders at their
+native size (1920x1080 here). The 720p preview from `sources[]` (the proxies)
+stays the default. `--out` inside the originals folder is refused.
+
+**Kdenlive export.** `scripts/edit_to_fragments.py` maps `edit.json` to the
+`fragments.yaml` `kdenlive_from_fragments.py` already consumes, with
+frame-inclusive `out` timecodes (`out_s - 1/fps`) so the fragment lengths match
+the edit. The edit list stays `edit.json`.
+
+**Known conflict reported to Doru:** the reviewer wants the closing orbit and
+the chapel walk shorter than the `keep_whole` rule allows (8 s vs 5–5.5 s). The
+rule wins — it is the D1b feedback ("2–2.5 s is too short for a stable,
+important move") — but the reviewer's taste point is in the D2 report.

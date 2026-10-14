@@ -5,15 +5,19 @@ Usage:
     python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS
     python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --json
     python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --out report.json
+    python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --labels shotlog
 
 The ground-truth YAML holds the labels a human wrote from what they filmed.
 Every clip id is matched to ``WS/motion/*.json`` and ``WS/quality/*.json`` by the
 4-digit counter in the file name; move and role components score interval
 overlap between the expected and predicted label, horizon counts false
 positives and level claims, and events score one-to-one precision and recall
-within a tolerance. The
-report is validated against ``schemas/eval.schema.json``. The workspace is read
-only; the only file written is ``--out``.
+within a tolerance. ``--labels`` chooses which labels are scored: ``geometry``
+reads the motion/quality documents, ``shotlog`` reads the effective labels of
+``WS/shotlog.json`` (the vision verdict wins on uncertain segments) and ``auto``
+uses the shotlog when it exists. The report is validated against
+``schemas/eval.schema.json``. The workspace is read only; the only file written
+is ``--out``.
 """
 
 import argparse
@@ -30,6 +34,7 @@ import yaml
 from common.schema import SchemaError, validate_or_raise
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
+GEOMETRY = object()
 EQUIVALENT_LABELS = (("hold", "static"), ("orbit", "orbit_candidate"))
 FAMILY_LABELS = {
     ("travel_forward", "dolly_in"),
@@ -58,12 +63,23 @@ def build_parser():
             "  python scripts/eval_labels.py --ground-truth eval/ground_truth.yaml --workspace /path/to/ws\n"
             "  python scripts/eval_labels.py --ground-truth eval/ground_truth.yaml --workspace /path/to/ws --json\n"
             "  python scripts/eval_labels.py --ground-truth eval/ground_truth.yaml --workspace /path/to/ws --out report.json\n"
+            "  python scripts/eval_labels.py --ground-truth eval/ground_truth.yaml --workspace /path/to/ws --labels shotlog\n"
             "  python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --horizon-tol-deg 3 --event-tol-s 2\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--ground-truth", required=True, help="ground-truth YAML to score against")
     parser.add_argument("--workspace", required=True, help="workspace holding motion/*.json and quality/*.json")
+    parser.add_argument(
+        "--labels",
+        choices=["auto", "shotlog", "geometry"],
+        default="auto",
+        help=(
+            "labels to score: auto uses WORKSPACE/shotlog.json when it exists, "
+            "shotlog always scores the shotlog's effective labels, geometry scores "
+            "the motion/quality labels (default auto)"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="print the full report object instead of the table")
     parser.add_argument("--out", default=None, help="also write the report object to FILE, atomically")
     parser.add_argument(
@@ -129,6 +145,26 @@ def predicted_label_intervals(motion_doc):
     return intervals
 
 
+def shotlog_intervals(shots):
+    """One predicted move interval per shotlog shot, labelled with its effective motion label."""
+    return [
+        (float(shot.get("start_s", 0.0)), float(shot.get("end_s", 0.0)), shot.get("motion_label"), 0)
+        for shot in shots
+    ]
+
+
+def shotlog_role_segments(shots):
+    """One predicted role segment per shotlog shot, carrying its effective role."""
+    return [
+        {
+            "start_s": float(shot.get("start_s", 0.0)),
+            "end_s": float(shot.get("end_s", 0.0)),
+            "role": shot.get("role"),
+        }
+        for shot in shots
+    ]
+
+
 def credit_breakdown(start, end, intervals, expected_label):
     """Split ``[start, end]`` by the winning predicted label and sum exact/family/wrong seconds."""
     boundaries = {start, end}
@@ -160,12 +196,13 @@ def credit_breakdown(start, end, intervals, expected_label):
     return seconds_exact, seconds_family, seconds_wrong
 
 
-def move_component(gt_segments, motion_doc):
+def move_component(gt_segments, motion_doc, intervals=None):
     """Score the ground-truth ``expect_move`` segments against moves and still phases."""
     expected = [segment for segment in gt_segments if segment.get("expect_move")]
     if not expected:
         return None
-    intervals = predicted_label_intervals(motion_doc)
+    if intervals is None:
+        intervals = predicted_label_intervals(motion_doc)
     scored = []
     for segment in expected:
         start = parse_clock(segment["start"])
@@ -191,12 +228,13 @@ def move_component(gt_segments, motion_doc):
     return {"score": sum(item["score"] for item in scored) / len(scored), "segments": scored}
 
 
-def role_component(gt_segments, quality_doc):
+def role_component(gt_segments, quality_doc, predicted=None):
     """Score the ground-truth ``expect_role`` segments against the quality roles."""
     expected = [segment for segment in gt_segments if segment.get("expect_role")]
     if not expected:
         return None
-    predicted = (quality_doc or {}).get("segments") or []
+    if predicted is None:
+        predicted = (quality_doc or {}).get("segments") or []
     scored = []
     for segment in expected:
         start = parse_clock(segment["start"])
@@ -355,11 +393,31 @@ def events_component(gt_events, motion_doc, tolerance):
     }
 
 
-def score_clip(clip_id, gt_clip, motion_doc, quality_doc, notes, horizon_tolerance, event_tolerance):
+def score_clip(
+    clip_id,
+    gt_clip,
+    motion_doc,
+    quality_doc,
+    notes,
+    horizon_tolerance,
+    event_tolerance,
+    move_intervals=GEOMETRY,
+    role_segments=GEOMETRY,
+):
     """Score one ground-truth clip and return its report row."""
     gt_segments = gt_clip.get("segments") or []
-    move = move_component(gt_segments, motion_doc)
-    role = role_component(gt_segments, quality_doc)
+    if move_intervals is GEOMETRY:
+        move = move_component(gt_segments, motion_doc)
+    elif move_intervals is None:
+        move = None
+    else:
+        move = move_component(gt_segments, None, intervals=move_intervals)
+    if role_segments is GEOMETRY:
+        role = role_component(gt_segments, quality_doc)
+    elif role_segments is None:
+        role = None
+    else:
+        role = role_component(gt_segments, None, predicted=role_segments)
     horizon = horizon_component(gt_segments, quality_doc, horizon_tolerance)
     events = events_component(gt_clip.get("events") or [], motion_doc, event_tolerance)
     components = [component["score"] for component in (move, role, horizon, events) if component is not None]
@@ -385,6 +443,16 @@ def score_clip(clip_id, gt_clip, motion_doc, quality_doc, notes, horizon_toleran
 def _clip_counter(name):
     match = CLIP_COUNTER.search(name)
     return match.group(1) if match else None
+
+
+def shotlog_rows(shotlog, clip_id):
+    """Return the shotlog shots whose clip matches ``clip_id`` by counter or exact name."""
+    rows = []
+    for shot in (shotlog or {}).get("shots") or []:
+        clip = str(shot.get("clip", ""))
+        if clip == clip_id or _clip_counter(clip) == clip_id:
+            rows.append(shot)
+    return rows
 
 
 def find_output(output_dir, clip_id):
@@ -434,22 +502,59 @@ def totals_row(clips):
     }
 
 
-def evaluate(gt, workspace, horizon_tolerance=5.0, event_tolerance=3.0, ground_truth_path=None, generated_at=None):
+def evaluate(
+    gt,
+    workspace,
+    horizon_tolerance=5.0,
+    event_tolerance=3.0,
+    ground_truth_path=None,
+    generated_at=None,
+    labels="auto",
+):
     """Score every ground-truth clip against the workspace outputs and build the report."""
     workspace = Path(workspace)
+    shotlog_path = workspace / "shotlog.json"
+    if labels == "geometry":
+        use_shotlog = False
+    elif labels == "shotlog":
+        use_shotlog = True
+    else:
+        use_shotlog = shotlog_path.is_file()
+    shotlog = None
+    if use_shotlog:
+        shotlog = _load_json(shotlog_path)
+        if shotlog is None:
+            raise EvalError(f"shotlog not found or unreadable: {shotlog_path}")
     clips = []
     for clip_id, gt_clip in (gt.get("clips") or {}).items():
         motion_doc, motion_notes = _read_component(workspace, "motion", clip_id)
         quality_doc, quality_notes = _read_component(workspace, "quality", clip_id)
+        notes = motion_notes + quality_notes
+        if use_shotlog:
+            shots = shotlog_rows(shotlog, clip_id)
+            verdict_count = sum(
+                1
+                for shot in shots
+                if shot.get("label_source") == "verdict" or shot.get("role_source") == "verdict"
+            )
+            notes.append(f"labels: shotlog ({verdict_count} of {len(shots)} segments by verdict)")
+            move_intervals = shotlog_intervals(shots) if shots else None
+            role_segments = shotlog_role_segments(shots) if shots else None
+        else:
+            notes.append("labels: geometry")
+            move_intervals = GEOMETRY
+            role_segments = GEOMETRY
         clips.append(
             score_clip(
                 clip_id,
                 gt_clip or {},
                 motion_doc,
                 quality_doc,
-                motion_notes + quality_notes,
+                notes,
                 horizon_tolerance,
                 event_tolerance,
+                move_intervals,
+                role_segments,
             )
         )
     return {
@@ -538,6 +643,7 @@ def main(argv=None):
             horizon_tolerance=args.horizon_tol_deg,
             event_tolerance=args.event_tol_s,
             ground_truth_path=args.ground_truth,
+            labels=args.labels,
         )
         report["meta"] = {
             "tool": "scripts/eval_labels.py",

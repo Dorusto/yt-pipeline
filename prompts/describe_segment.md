@@ -13,6 +13,8 @@ no extra keys:
 
 {
   "description": "one or two sentences: what happens in these frames",
+  "summary": "at most 12 words naming the shot",
+  "tags": ["up to six short tags"],
   "subject": "the main subject of the shot, or the word none",
   "scenery": "where this is: place, light, weather, water, indoors",
   "semantic_motion": "orbit | tracking | reveal | travel | none",
@@ -52,6 +54,17 @@ null or an object:
 - `travel` — the camera moves through space (forward or backward), the scene
   expands from or contracts toward a vanishing point;
 - `none` — no semantic move applies.
+
+## summary and tags
+
+- `summary` is one line of **at most 12 words** that names the shot so a person
+  scanning a contact sheet knows what it is without reading the description.
+  It is not a sentence: no full stop needed. Example: "boat glides toward the
+  dark mouth of a sea cave".
+- `tags` is a short list (at most six) of lowercase single words or two-word
+  phrases that describe what is in the shot: subject, place, mood, time of day,
+  light. Examples: `["boat", "sea cave", "approach"]`, `["selfie", "friends",
+  "canopy"]`. No verbs, no sentences, no duplicates.
 
 ## interest and hero
 

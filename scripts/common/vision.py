@@ -127,6 +127,8 @@ class MockVisionModel(VisionModel):
             "{\n"
             f'  "description": "Mock description of {frames} frames at {times} '
             f'with motion {label}",\n'
+            f'  "summary": "mock shot {context.get("id", "segment")} with motion {label}",\n'
+            '  "tags": ["mock", "segment"],\n'
             f'  "subject": "mock subject of {context.get("id", "segment")}",\n'
             '  "scenery": "mock scenery",\n'
             f'  "semantic_motion": "{semantic}",\n'

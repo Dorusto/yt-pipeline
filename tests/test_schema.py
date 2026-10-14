@@ -165,3 +165,43 @@ def test_shotlog_rejects_score_out_of_range():
     data = load("shotlog_valid.json")
     data["shots"][0]["score"] = 1.5
     assert any("score" in e for e in schema.validate(data, "shotlog"))
+
+def test_describe_described_segment_requires_summary_and_tags():
+    data = load("describe_valid.json")
+    del data["segments"][0]["summary"]
+    assert any("summary" in e for e in schema.validate(data, "describe"))
+    data = load("describe_valid.json")
+    del data["segments"][0]["tags"]
+    assert any("tags" in e for e in schema.validate(data, "describe"))
+
+
+def test_route_fixture_passes():
+    assert schema.validate(load("route_valid.json"), "route") == []
+
+
+def test_route_rejects_unknown_station():
+    data = load("route_valid.json")
+    data["stations"][0]["name"] = "teleport"
+    assert any("teleport" in e for e in schema.validate(data, "route"))
+
+
+def test_route_rejects_unknown_content_type():
+    data = load("route_valid.json")
+    data["content_type"] = "cooking"
+    assert any("cooking" in e for e in schema.validate(data, "route"))
+
+
+def test_shot_plan_fixture_passes():
+    assert schema.validate(load("shot_plan_valid.json"), "shot_plan") == []
+
+
+def test_shot_plan_rejects_empty_structure():
+    data = load("shot_plan_valid.json")
+    data["structure"] = []
+    assert any("structure" in e for e in schema.validate(data, "shot_plan"))
+
+
+def test_shot_plan_requires_why():
+    data = load("shot_plan_valid.json")
+    del data["slot_plan"][0]["why"]
+    assert any("why" in e for e in schema.validate(data, "shot_plan"))

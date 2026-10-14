@@ -15,11 +15,20 @@
       "role": "move",
       "motion_label": "complex_motion",
       "uncertain": true,
-      "uncertain_reasons": ["mixed_motion_signals", "motion_uncertain"],
+      "uncertain_reasons": [
+        "mixed_motion_signals",
+        "motion_uncertain"
+      ],
       "frames": [
-        {"t_s": 5.89},
-        {"t_s": 17.68},
-        {"t_s": 29.47}
+        {
+          "t_s": 5.89
+        },
+        {
+          "t_s": 17.68
+        },
+        {
+          "t_s": 29.47
+        }
       ],
       "description": "Stern-facing view from a moving boat inside a strait; the wake fills the lower third while the shores converge toward the vanishing point.",
       "subject": "the boat's wake and the receding strait",
@@ -34,7 +43,14 @@
         "note": "radial contraction of the shores is travel_backward; the wake is not a valid flow region"
       },
       "skip_reason": null,
-      "cost_usd": 0.0041
+      "cost_usd": 0.0041,
+      "summary": "wake churns toward the vanishing point of the strait",
+      "tags": [
+        "boat",
+        "wake",
+        "strait",
+        "travel backward"
+      ]
     },
     {
       "id": "s2",
@@ -46,7 +62,8 @@
       "uncertain": false,
       "uncertain_reasons": [],
       "skip_reason": "confident setup",
-      "cost_usd": null
+      "cost_usd": null,
+      "tags": []
     }
   ],
   "warnings": []

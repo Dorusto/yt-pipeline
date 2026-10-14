@@ -1,10 +1,12 @@
 import json
 import subprocess
 
+import pytest
+
 import render
 
 
-def make_clip(path, duration=2.0, color="blue", freq=440):
+def make_clip(path, duration=2.0, color="blue", freq=440, size="320x180"):
     subprocess.run(
         [
             "ffmpeg",
@@ -12,7 +14,7 @@ def make_clip(path, duration=2.0, color="blue", freq=440):
             "-f",
             "lavfi",
             "-i",
-            f"color=c={color}:size=320x180:rate=25:duration={duration}",
+            f"color=c={color}:size={size}:rate=25:duration={duration}",
             "-f",
             "lavfi",
             "-i",
@@ -90,6 +92,20 @@ def two_clips(tmp_path):
     make_clip(first, color="blue", freq=440)
     make_clip(second, color="red", freq=660)
     return first, second
+
+
+def make_originals(tmp_path, clips, size="640x360"):
+    originals = tmp_path / "originals"
+    originals.mkdir()
+    for index, clip in enumerate(clips):
+        make_clip(originals / clip.name, color="green", freq=330 + index, size=size)
+    return originals
+
+
+def video_size(path):
+    data = probe(path)
+    video = next(s for s in data["streams"] if s["codec_type"] == "video")
+    return video["width"], video["height"]
 
 
 def test_crossfade_join_duration_and_frame(tmp_path, capsys):
@@ -229,3 +245,178 @@ def test_music_and_captions_warn_and_ignore(tmp_path, capsys):
     summary = json.loads(capsys.readouterr().out)
     assert any("music/sfx" in warning for warning in summary["warnings"])
     assert any("captions" in warning for warning in summary["warnings"])
+
+
+def test_originals_win_over_sources(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    originals = make_originals(tmp_path, [first, second], size="640x360")
+    out = tmp_path / "final.mp4"
+    assert (
+        render.main(
+            ["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals), "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "written"
+    assert video_size(out) == (640, 360)
+    assert summary["source"] == "originals"
+    assert summary["originals_dir"] == str(originals)
+
+
+def test_native_size_used_when_width_and_height_omitted(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    originals = make_originals(tmp_path, [first, second], size="854x480")
+    out = tmp_path / "final.mp4"
+    assert (
+        render.main(["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals)])
+        == 0
+    )
+    capsys.readouterr()
+    assert video_size(out) == (854, 480)
+
+
+def test_default_frame_without_originals(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert video_size(out) == (1280, 720)
+    assert summary["source"] == "sources"
+    assert summary["originals_dir"] is None
+
+
+def test_missing_originals_fall_back_to_sources_with_warning(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    originals = tmp_path / "originals"
+    originals.mkdir()
+    out = tmp_path / "final.mp4"
+    assert (
+        render.main(
+            ["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals), "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "written"
+    assert summary["warnings"]
+    assert any("fell back to sources" in warning for warning in summary["warnings"])
+    assert video_size(out) == (320, 180)
+    assert out.exists()
+
+
+def test_out_inside_originals_is_refused(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    originals = make_originals(tmp_path, [first, second])
+    out = originals / "final.mp4"
+    assert (
+        render.main(["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals)])
+        == 1
+    )
+    assert not out.exists()
+    assert "[error]" in capsys.readouterr().err
+
+
+def test_originals_are_not_modified(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    originals = make_originals(tmp_path, [first, second], size="640x360")
+    targets = sorted(originals.iterdir())
+    before = {path.name: (path.stat().st_mtime_ns, path.stat().st_size) for path in targets}
+    out = tmp_path / "final.mp4"
+    assert (
+        render.main(["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals)])
+        == 0
+    )
+    capsys.readouterr()
+    after = {path.name: (path.stat().st_mtime_ns, path.stat().st_size) for path in targets}
+    assert before == after
+
+
+def test_json_summary_keeps_keys_and_adds_originals_fields(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    expected = {
+        "status",
+        "out",
+        "slots",
+        "duration_s",
+        "width",
+        "height",
+        "warnings",
+        "originals_dir",
+        "source",
+        "wall_time_s",
+        "llm_cost_usd",
+    }
+    assert expected <= set(summary)
+    assert summary["originals_dir"] is None
+    assert summary["source"] == "sources"
+    assert summary["llm_cost_usd"] == 0.0
+
+
+def test_help_lists_originals_flag(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        render.main(["--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "--originals-dir" in out
+    assert "--width" in out
+    assert "--media-dir" in out
