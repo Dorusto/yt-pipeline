@@ -46,6 +46,7 @@ class Context:
         json_mode,
         python,
         repo_root,
+        music=None,
     ):
         self.source = source
         self.workspace = workspace
@@ -56,6 +57,7 @@ class Context:
         self.json_mode = json_mode
         self.python = python
         self.repo_root = repo_root
+        self.music = music
 
 
 def build_parser():
@@ -64,7 +66,7 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--force] [--json]"
+            " [--music MUSIC] [--force] [--json]"
         ),
         description=(
             "Run every pipeline station from a folder of clips and a brief to a recap MP4."
@@ -98,6 +100,11 @@ def build_parser():
         type=float,
         default=None,
         help="LLM budget forwarded to describe and llm_director",
+    )
+    parser.add_argument(
+        "--music",
+        default=None,
+        help="music track: detect beats and mix it under the recap",
     )
     parser.add_argument(
         "--force",
@@ -182,6 +189,8 @@ def is_up_to_date(name, ctx):
         return bool(clips) and all((proxy_dir / clip.name).is_file() for clip in clips)
     if name == "ingest":
         return all_newer(ws / "ingest.json", proxies)
+    if name == "beats":
+        return ctx.music is not None and is_newer(ws / "beats.json", ctx.music)
     if name == "motion":
         return bool(proxies) and all(
             is_newer(ws / "motion" / f"{clip.stem}.json", clip) for clip in proxies
@@ -243,6 +252,25 @@ def station_command(ctx, script, args, force=False, budget=False):
         command += ["--budget-usd", str(ctx.budget_usd)]
     command.append("--json")
     return command
+
+
+def director_args(ctx):
+    args = [
+        "--workspace",
+        str(ctx.workspace),
+        "--brief-file",
+        str(ctx.workspace / "brief.txt"),
+    ]
+    if ctx.music is not None:
+        args += ["--beats", str(ctx.workspace / "beats.json")]
+    return args
+
+
+def render_args(ctx, out_path):
+    args = ["--edit", str(ctx.workspace / "edit.json"), "--out", str(out_path)]
+    if ctx.music is not None:
+        args += ["--music", str(ctx.music)]
+    return args
 
 
 def build_stations(ctx):
@@ -321,7 +349,7 @@ def build_stations(ctx):
                 station_command(
                     ctx,
                     "llm_director.py",
-                    ["--workspace", str(ws), "--brief-file", str(ws / "brief.txt")],
+                    director_args(ctx),
                     force=force,
                     budget=True,
                 )
@@ -333,12 +361,27 @@ def build_stations(ctx):
                 station_command(
                     ctx,
                     "render.py",
-                    ["--edit", str(ws / "edit.json"), "--out", str(ws / "recap_720p.mp4")],
+                    render_args(ctx, ws / "recap_720p.mp4"),
                     force=force,
                 )
             ],
         },
     ]
+    if ctx.music is not None:
+        stations.insert(
+            2,
+            {
+                "name": "beats",
+                "argv": [
+                    station_command(
+                        ctx,
+                        "beats.py",
+                        [str(ctx.music), "--out", str(ws / "beats.json")],
+                        force=force,
+                    )
+                ],
+            },
+        )
     if ctx.final:
         stations.append(
             {
@@ -347,14 +390,8 @@ def build_stations(ctx):
                     station_command(
                         ctx,
                         "render.py",
-                        [
-                            "--edit",
-                            str(ws / "edit.json"),
-                            "--out",
-                            str(ws / "recap_final.mp4"),
-                            "--originals-dir",
-                            str(src),
-                        ],
+                        render_args(ctx, ws / "recap_final.mp4")
+                        + ["--originals-dir", str(src)],
                         force=force,
                     )
                 ],
@@ -649,6 +686,9 @@ def main(argv=None):
         if is_within(workspace, source):
             raise RecapError(f"workspace must not be inside the source: {workspace}")
         workspace.mkdir(parents=True, exist_ok=True)
+        music = Path(args.music).expanduser().resolve() if args.music else None
+        if music is not None and not music.is_file():
+            raise RecapError(f"music file not found: {music}")
     except RecapError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
@@ -662,6 +702,7 @@ def main(argv=None):
         json_mode=args.json,
         python=sys.executable,
         repo_root=REPO_ROOT,
+        music=music,
     )
     summary = run(ctx)
     if args.json:
