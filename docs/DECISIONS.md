@@ -1543,3 +1543,33 @@ fires when `edit.json` is rewritten.
 without a new RPC; the id block is what makes plain words like "0071/s2"
 unambiguous; `feedback.jsonl` is written first and read later (the profile work
 is not in this phase).
+
+---
+
+## [2026-10-15] D2-7 `--music auto`: `music_pick.py` scores the library
+
+**Context:** the web app's music menu offers `auto`; the track must come from
+`~/media/music` by the brief and the shot tags using `beats.py` energy and BPM.
+
+**Decision.** New `scripts/music_pick.py` (standalone + `yt-music-pick` skill):
+every audio file in the library is measured with `beats.py` as a subprocess
+(`bpm`, `energy_mean_dbfs`, `duration_s`) and cached in
+`<library>/.yt-beats/<file>.json` (skipped when the library is read-only). Four
+deterministic signals: BPM against the band the brief's pace words pick
+(calm → 70–100, energetic → 110–150, else 85–135), mean energy against the
+matching target (−24 / −10 / −16 dBFS), file-name tokens against the brief +
+shotlog tag words, and whether the track covers `0.7 × target duration`.
+Weights 0.35 / 0.25 / 0.25 / 0.15, ties by name. The winner goes to
+`music_choice.json` and its grid to `workspace/beats.json`.
+
+`recap.py --music auto` inserts a `music_pick` station right after `index`
+(the tags exist only then) instead of the early `beats` station; the
+`llm_director`/`render` argv carry a `@music@` token that `execute()`
+substitutes once `music_choice.json` has been read. `--music-dir`,
+`--target-duration-s` and `--order` are new recap flags forwarded to the
+stations.
+
+**Rationale:** one pure decision tool keeps the recap chain dumb; the cache
+makes a second run instant; scoring in code (not a model) keeps `music auto`
+deterministic and testable. Verified on the real library: a calm brief picks
+"Travelling Light" (67 BPM), an energetic brief "Gasoline" (140 BPM).

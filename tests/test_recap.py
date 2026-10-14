@@ -562,3 +562,41 @@ def test_all_skipped_run_titles_cached(tmp_path, monkeypatch, capsys):
     assert summary["notified"] is True
     assert len(sent.calls) == 1
     assert sent.calls[0]["title"] == "Recap ready (cached)"
+
+
+def test_music_auto_places_music_pick_after_index(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    ctx.music_dir = tmp_path / "music"
+    stations = recap.build_stations(ctx)
+    names = [station["name"] for station in stations]
+    assert "music_pick" in names
+    assert "beats" not in names
+    assert names.index("music_pick") == names.index("index") + 1
+    pick = next(station for station in stations if station["name"] == "music_pick")
+    argv = pick["argv"][0]
+    assert "music_pick.py" in " ".join(argv)
+    assert "--workspace" in argv
+    for name in ("llm_director", "render"):
+        command = next(station for station in stations if station["name"] == name)["argv"][0]
+        assert recap.MUSIC_TOKEN in command
+
+
+def test_resolve_argv_substitutes_the_music_token(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    assert recap.resolve_argv(["--music", recap.MUSIC_TOKEN], ctx) == ["--music", recap.MUSIC_TOKEN]
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"")
+    ctx.music = track
+    assert recap.resolve_argv(["--music", recap.MUSIC_TOKEN], ctx) == ["--music", str(track)]
+
+
+def test_resolve_auto_music_reads_the_choice(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    assert recap.resolve_auto_music(ctx) is False
+    track = tmp_path / "chosen.mp3"
+    track.write_bytes(b"")
+    (ctx.workspace / "music_choice.json").write_text(
+        json.dumps({"path": str(track)}), encoding="utf-8"
+    )
+    assert recap.resolve_auto_music(ctx) is True
+    assert ctx.music == track.resolve()
