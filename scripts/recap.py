@@ -58,6 +58,7 @@ class Context:
         music_dir=None,
         target_duration_s=None,
         order=None,
+        no_audio_clean=False,
     ):
         self.source = source
         self.workspace = workspace
@@ -76,6 +77,7 @@ class Context:
         self.music_dir = music_dir
         self.target_duration_s = target_duration_s
         self.order = order
+        self.no_audio_clean = no_audio_clean
 
 
 def build_parser():
@@ -147,6 +149,11 @@ def build_parser():
         type=float,
         default=None,
         help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
+    )
+    parser.add_argument(
+        "--no-audio-clean",
+        action="store_true",
+        help="keep the raw ambient mix (no wind high-pass, denoise or loudnorm)",
     )
     parser.add_argument(
         "--feedback",
@@ -387,6 +394,8 @@ def render_args(ctx, out_path):
         args += ["--music", music_arg(ctx)]
     if ctx.ambient_under_music_db is not None:
         args += ["--ambient-under-music-db", str(ctx.ambient_under_music_db)]
+    if ctx.no_audio_clean:
+        args.append("--no-audio-clean")
     return args
 
 
@@ -899,6 +908,7 @@ def main(argv=None):
         music_dir=Path(args.music_dir).expanduser().resolve() if args.music_dir else None,
         target_duration_s=args.target_duration_s,
         order=args.order,
+        no_audio_clean=args.no_audio_clean,
     )
     summary = run(ctx)
     if args.json:
