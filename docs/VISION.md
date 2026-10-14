@@ -86,6 +86,12 @@ P0 = first usable version, P1 = next, P2 = later.
 | Feedback loop: approve / reject trains our own scorer | Opus Clip | A+B | P1 |
 | Label corrections in the editor feed the ground-truth eval | — (our differentiator) | A+B | P0 (D3) |
 | Upload page: drop clips and photos from the phone browser, name the project folder, write the brief; files land in the inbox and `inbox.py` (or Hermes on request) starts the recap — no sync app needed | — (homelab users, Doru 2026-10-14) | A+B | P0 (D3) |
+| Frame mosaic for describe: 6-9 frames of a segment tiled into one image (one or more mosaics per segment when needed), frames taken at OpenCV scene changes instead of fixed 20/50/80 % | — (cost: about one image per mosaic) | A+B | P0 (next, with Shorts tracking) |
+| Shorts subject tracking: replace the Haar-cascade single fixed crop in `shorts_generator.py` with a moving 9:16 crop that follows the subject (OpenCV YuNet face detector + tracker + smoothing; object detector for non-face subjects) | Opus Clip, Vizard auto-reframe | A+B | P0 (next, with the mosaic) |
+| Saliency map (OpenCV) to aim the Ken Burns move and the reframe without a vision call | — | A+B | P1 |
+| Cheap object/person detection (small ONNX detector through OpenCV DNN) as an extra input to the director | — | A+B | P1 |
+| Stabilise a shaky segment instead of rejecting it (OpenCV video stabilisation) | Quik | A | P1 |
+| Bake-off: frames vs mosaic vs native video input (GLM Flash, MiMo Flash) on the same eval clips, scored with `eval_labels.py` | — | A | P1 |
 | Faces and smiles preference | DJI LightCut | A | P2 |
 | Export to Premiere / Resolve via OpenTimelineIO | CutBack, Eddie AI | A+B | P2 |
 
