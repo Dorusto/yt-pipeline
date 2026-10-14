@@ -1,0 +1,198 @@
+{
+  "name": "phrase_hold_strong",
+  "intent": "weak move: only the landing hold is used, the move head never appears",
+  "args": [
+    "--target-duration-s",
+    "10.0",
+    "--pacing",
+    "uniform"
+  ],
+  "workspace": {
+    "ingest.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "source_dir": "/media",
+      "clips": [
+        {
+          "file": "clipA.mp4",
+          "path": "/media/clipA.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:00:00"
+        },
+        {
+          "file": "clipB.mp4",
+          "path": "/media/clipB.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:01:00"
+        }
+      ]
+    },
+    "quality/clipA.json": {
+      "file": "clipA.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 10.0,
+          "role": "move",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "pan_right"
+        },
+        {
+          "id": "s2",
+          "start_s": 10.0,
+          "end_s": 20.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "quality/clipB.json": {
+      "file": "clipB.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "motion/clipA.json": {
+      "file": "clipA.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [
+        {
+          "id": "m1",
+          "start_s": 0.0,
+          "end_s": 10.0,
+          "label": "pan_right",
+          "speed": "regular",
+          "steadiness": "no_shaking",
+          "steady_start_s": 0.0,
+          "steady_end_s": 10.0,
+          "handle_in_s": 0.0,
+          "handle_out_s": 10.0,
+          "confidence": 0.9
+        }
+      ],
+      "scene_activity": [],
+      "events": []
+    },
+    "motion/clipB.json": {
+      "file": "clipB.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "shotlog.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "weights": {
+        "vision": 0.55,
+        "labels": 0.45
+      },
+      "shots": [
+        {
+          "key": "clipA/s1",
+          "clip": "clipA.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 10.0,
+          "eligible": true,
+          "role": "move",
+          "role_source": "geometry",
+          "motion_label": "pan_right",
+          "label_source": "geometry",
+          "score": 0.3,
+          "scores": {
+            "labels": 0.3
+          },
+          "description": "the move",
+          "hook": "the move",
+          "reason": "the move",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        },
+        {
+          "key": "clipA/s2",
+          "clip": "clipA.mp4",
+          "segment_id": "s2",
+          "start_s": 10.0,
+          "end_s": 20.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.9,
+          "scores": {
+            "labels": 0.9
+          },
+          "description": "the hold",
+          "hook": "the hold",
+          "reason": "the hold",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        },
+        {
+          "key": "clipB/s1",
+          "clip": "clipB.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.6,
+          "scores": {
+            "labels": 0.6
+          },
+          "description": "the filler",
+          "hook": "the filler",
+          "reason": "the filler",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        }
+      ]
+    }
+  },
+  "expected_slots": [
+    {
+      "clip": "clipA.mp4",
+      "in_s": 10.0,
+      "out_s": 12.5
+    },
+    {
+      "clip": "clipB.mp4",
+      "in_s": 0.0,
+      "out_s": 2.5
+    }
+  ]
+}

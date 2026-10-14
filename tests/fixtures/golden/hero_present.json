@@ -1,0 +1,217 @@
+{
+  "name": "hero_present",
+  "intent": "an eligible hero is never missed, even below a higher-scoring ordinary shot",
+  "args": [
+    "--target-duration-s",
+    "12.0",
+    "--pacing",
+    "uniform",
+    "--order",
+    "score"
+  ],
+  "workspace": {
+    "ingest.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "source_dir": "/media",
+      "clips": [
+        {
+          "file": "clipH.mp4",
+          "path": "/media/clipH.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:00:00"
+        },
+        {
+          "file": "clipO1.mp4",
+          "path": "/media/clipO1.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:01:00"
+        },
+        {
+          "file": "clipO2.mp4",
+          "path": "/media/clipO2.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:02:00"
+        }
+      ]
+    },
+    "quality/clipH.json": {
+      "file": "clipH.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 30.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "quality/clipO1.json": {
+      "file": "clipO1.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "quality/clipO2.json": {
+      "file": "clipO2.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "motion/clipH.json": {
+      "file": "clipH.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "motion/clipO1.json": {
+      "file": "clipO1.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "motion/clipO2.json": {
+      "file": "clipO2.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "shotlog.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "weights": {
+        "vision": 0.55,
+        "labels": 0.45
+      },
+      "shots": [
+        {
+          "key": "clipH/s1",
+          "clip": "clipH.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 30.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.75,
+          "scores": {
+            "labels": 0.75
+          },
+          "description": "hero hold",
+          "hook": "hero hold",
+          "reason": "interest 75 \u00b7 hero",
+          "similar_to": [],
+          "hero": true,
+          "semantic_motion": null
+        },
+        {
+          "key": "clipO1/s1",
+          "clip": "clipO1.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.95,
+          "scores": {
+            "labels": 0.95
+          },
+          "description": "decoy",
+          "hook": "decoy",
+          "reason": "interest 95 \u00b7 hold",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        },
+        {
+          "key": "clipO2/s1",
+          "clip": "clipO2.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.5,
+          "scores": {
+            "labels": 0.5
+          },
+          "description": "filler",
+          "hook": "filler",
+          "reason": "interest 50 \u00b7 hold",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        }
+      ]
+    }
+  },
+  "expected_slots": [
+    {
+      "clip": "clipO1.mp4",
+      "in_s": 0.0,
+      "out_s": 3.0
+    },
+    {
+      "clip": "clipH.mp4",
+      "in_s": 22.0,
+      "out_s": 30.0
+    },
+    {
+      "clip": "clipO2.mp4",
+      "in_s": 0.0,
+      "out_s": 3.0
+    }
+  ]
+}
