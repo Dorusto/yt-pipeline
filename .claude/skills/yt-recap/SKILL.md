@@ -1,6 +1,6 @@
 ---
 name: yt-recap
-description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
+description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
 compatibility: Run from the repository root with the repo .venv. Needs ffmpeg and ffprobe on the PATH and OPENROUTER_API_KEY in the environment (unless llm_backend is mock). The originals folder is never written to; proxies and every output go under the workspace.
 ---
 
@@ -33,6 +33,19 @@ Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API k
 ## Step 3: review
 
 After a run the workspace holds `recap_720p.mp4` (the recap to watch), `edit.json` (the edit list), `shotlog.html` (contact sheet of the analysed shots), `shotlog.json`, `route.json`, `brief.txt` and `llm_spend.json`. When the cut is not what was wanted, look at `shotlog.html` and `edit.json` first.
+
+## Phone flow: serve.py
+
+Serve the finished workspaces over the tailnet so the recap opens on the phone:
+
+```bash
+.venv/bin/python scripts/serve.py --workspaces ~/media/projects
+```
+
+- `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `edit.json`; the list is newest folder name first).
+- Binds the machine's tailnet IPv4 address by default. `--bind` refuses the wildcard (`0.0.0.0`, `::`, empty) so the server never leaves the tailnet; `127.0.0.1` is local only.
+- `--port N` (default `8091`; `0` picks an ephemeral port). `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup.
+- URL layout: `<base>/` is the index, `<base>/<project>/` is the project page, and the three artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4` and `<base>/<project>/shotlog.html`. Nothing else in a project is served.
 
 ## Go further
 
