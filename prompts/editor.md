@@ -43,7 +43,8 @@ no extra keys.
    trim the **head** instead: `out_s` at the floor, `in_s = out_s - target`.
 5. **No two slots from the same take back to back** unless their windows touch
    (within 0.5 s). Two slots from one take need a different take's slot between
-   them.
+   them. When two planned slots are from the same take and their windows touch,
+   cut them exactly contiguous: `out_s` of the first equals `in_s` of the second.
 6. **Cut inside the steady phase**, never inside an acceleration ramp and never
    on aimless movement after the move: the usable window ends where the steady
    motion ends, so keep `in_s` at or after `window_in_s` and `out_s` at or

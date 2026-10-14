@@ -53,6 +53,12 @@ no extra keys.
   - never plan two slots from the same take back to back unless their windows
     are contiguous;
   - never plan two visually similar shots next to each other.
+- **Long takes are several moments.** When the menu splits one take into content
+  beats (`beat_of` set: `approach`, `inside`, `exit`, `enter`, `leave`, ...),
+  each beat is its own shot. Cover the arc of the take — its approach and its
+  exit are two different moments of the story — instead of two neighbours from
+  one end of it. Two beats of one take need a different take's slot between
+  them, unless their windows are contiguous and you plan them as one stretch.
 - **Do not pad.** If the footage cannot fill the target, say so in `notes` and
   propose fewer slots rather than weak shots.
 

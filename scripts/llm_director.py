@@ -1357,6 +1357,10 @@ def run(
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates), 0
 
     warnings.append("reviewer did not approve and the draft still has violations")
+    for item in violations:
+        note = f"violation {item.get('id')}: {item.get('rule')}: {item.get('message')}"
+        if note not in warnings:
+            warnings.append(note)
     if fallback_rules:
         return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates)
     return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
