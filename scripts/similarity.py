@@ -10,10 +10,12 @@ Reads ``quality/<stem>.json`` and the clips from the workspace, samples three
 frames per segment (the same interior spacing as ``describe``), embeds them with
 MobileNetV2 ONNX through ``cv2.dnn`` (default) or handcrafted histograms
 (``--backend hist``, offline fallback) and writes one ``similarity.json`` per
-workspace, validated against ``schemas/similarity.schema.json``. Pairs cross
-clips, so the output is per workspace, not per clip. Frames live in memory only
-and are never written to disk. Sources are read-only; the output is written
-atomically.
+workspace, validated against ``schemas/similarity.schema.json``. When
+``ingest.json`` lists still photos, each photo is embedded from one frame as
+pseudo-segment ``p1``, so photo/photo and photo/clip pairs are listed as well.
+Pairs cross clips and photos, so the output is per workspace, not per clip.
+Frames live in memory only and are never written to disk. Sources are read-only;
+the output is written atomically.
 """
 
 import argparse
@@ -30,10 +32,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.photos import PhotoError, read_bgr
 from common.schema import SchemaError, validate, validate_or_raise
 
 FRAME_COUNT = 3
 FRAME_WIDTH = 640
+PHOTO_SEGMENT_ID = "p1"
+PHOTO_START_S = 0.0
+PHOTO_END_S = 0.04
 DEFAULT_BACKEND = "mobilenet"
 DEFAULT_THRESHOLD = 0.90
 DEFAULT_MODEL_PATH = "~/.cache/yt-pipeline/models/mobilenetv2-12.onnx"
@@ -57,9 +63,10 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="similarity.py",
         description=(
-            "Embed every quality segment and list the pairs whose cosine similarity "
-            "reaches the threshold. The director uses the pairs to refuse "
-            "near-duplicate shots."
+            "Embed every quality segment and still photo and list the pairs whose "
+            "cosine similarity reaches the threshold. The director uses the pairs to "
+            "refuse near-duplicate shots. Still photos listed in ingest.json are "
+            "embedded from one frame as pseudo-segment p1."
         ),
         epilog=(
             "examples:\n"
@@ -98,6 +105,26 @@ def segment_key(counter, segment_id):
     return f"{counter}/{segment_id}"
 
 
+def photo_keys(photos):
+    """Return ``(photo, key)`` pairs with deterministic ``<counter>/p1`` keys.
+
+    The counter comes from the photo file name the same way ``clip_counter``
+    derives it for clips; a photo without a counter falls back to its stem, and
+    a counter already used by an earlier photo in file-name order falls back to
+    that photo's stem.
+    """
+    used = set()
+    entries = []
+    for photo in photos:
+        name = photo.get("file") or Path(photo["path"]).name
+        counter = clip_counter(name)
+        if counter in used:
+            counter = Path(name).stem
+        used.add(counter)
+        entries.append((photo, segment_key(counter, PHOTO_SEGMENT_ID)))
+    return entries
+
+
 def read_frames(path, times, width=FRAME_WIDTH):
     """Read one BGR frame per timestamp from a clip, resized to ``width``; frames stay in memory."""
     capture = cv2.VideoCapture(str(path))
@@ -128,6 +155,22 @@ def embed_hist(frames):
     return _l2_normalise(np.mean(vectors, axis=0))
 
 
+def embed_frames(frames, backend, net):
+    """Embed one or more BGR frames with the selected backend."""
+    if backend == "mobilenet":
+        return embed_mobilenet(frames, net)
+    return embed_hist(frames)
+
+
+def embed_photo(path, backend, net):
+    """Embed one still photo from a single resized frame; the frame stays in memory."""
+    try:
+        frame = read_bgr(path, FRAME_WIDTH)
+    except PhotoError as exc:
+        raise SimilarityError(f"cannot read photo {path}: {exc}") from exc
+    return embed_frames([frame], backend, net)
+
+
 def load_mobilenet(model_path, model_url):
     """Return the ONNX network, downloading the model once when it is missing."""
     path = Path(model_path).expanduser()
@@ -148,17 +191,22 @@ def run(
     clips=None,
     force=False,
 ):
-    """Embed the selected quality segments into ``workspace/similarity.json``; return summary and exit code."""
+    """Embed the selected quality segments and still photos into ``workspace/similarity.json``; return summary and exit code."""
     started = time.monotonic()
     if not -1.0 <= threshold <= 1.0:
         raise SimilarityError("--threshold must be between -1 and 1")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
-    if not quality_dir.is_dir():
+    photos = _load_photos(workspace_path)
+    if quality_dir.is_dir():
+        selected = _select_quality_files(quality_dir, clips)
+    elif photos:
+        selected = []
+    else:
         raise SimilarityError(f"no quality folder in workspace: {quality_dir}")
-    selected = _select_quality_files(quality_dir, clips)
+    ingest_path = workspace_path / "ingest.json"
     output_path = workspace_path / "similarity.json"
-    if not force and _output_is_up_to_date(output_path, selected):
+    if not force and _output_is_up_to_date(output_path, _input_paths(selected, ingest_path, photos)):
         return _skipped_summary(output_path, started), 0
     net = load_mobilenet(model_path, model_url) if backend == "mobilenet" else None
     model_name = Path(model_path).name if backend == "mobilenet" else "none"
@@ -170,7 +218,7 @@ def run(
         for segment in record["segments"]:
             times = frame_times(segment["start_s"], segment["end_s"])
             frames = read_frames(clip_path, times)
-            embedding = embed_mobilenet(frames, net) if backend == "mobilenet" else embed_hist(frames)
+            embedding = embed_frames(frames, backend, net)
             segments.append(
                 {
                     "key": segment_key(counter, segment["id"]),
@@ -181,6 +229,25 @@ def run(
                     "embedding": [round(float(value), 4) for value in embedding],
                 }
             )
+    photos_embedded = 0
+    for photo, key in photo_keys(photos):
+        photo_path = Path(photo["path"])
+        if not photo_path.exists():
+            raise SimilarityError(f"photo not found: {photo_path}")
+        name = photo.get("file") or photo_path.name
+        embedding = embed_photo(photo_path, backend, net)
+        segments.append(
+            {
+                "key": key,
+                "clip": name,
+                "segment_id": PHOTO_SEGMENT_ID,
+                "start_s": PHOTO_START_S,
+                "end_s": PHOTO_END_S,
+                "embedding": [round(float(value), 4) for value in embedding],
+                "media_type": "photo",
+            }
+        )
+        photos_embedded += 1
     pairs = _similar_pairs(segments, threshold)
     record = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -197,6 +264,7 @@ def run(
     _atomic_write_json(output_path, record)
     summary = {
         "segments": len(segments),
+        "photos": photos_embedded,
         "pairs": len(pairs),
         "backend": backend,
         "model": model_name,
@@ -375,6 +443,21 @@ def _load_quality(path):
     return data
 
 
+def _load_photos(workspace_path):
+    ingest_path = workspace_path / "ingest.json"
+    if not ingest_path.exists():
+        return []
+    try:
+        data = json.loads(ingest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    photos = data.get("photos") if isinstance(data, dict) else None
+    if not isinstance(photos, list):
+        return []
+    valid = [photo for photo in photos if isinstance(photo, dict) and photo.get("path")]
+    return sorted(valid, key=lambda photo: photo.get("file") or "")
+
+
 def _clip_path(record, quality_file):
     raw = record.get("path")
     if not raw:
@@ -385,12 +468,21 @@ def _clip_path(record, quality_file):
     return path
 
 
-def _output_is_up_to_date(output_path, quality_files):
-    if not output_path.exists():
+def _input_paths(quality_files, ingest_path, photos):
+    """Every file ``similarity.json`` is built from: quality files, ingest.json and the photos."""
+    inputs = list(quality_files)
+    if ingest_path is not None and Path(ingest_path).exists():
+        inputs.append(Path(ingest_path))
+    inputs.extend(Path(photo["path"]) for photo in photos)
+    return inputs
+
+
+def _output_is_up_to_date(output_path, input_paths):
+    if not output_path.exists() or not input_paths:
         return False
     try:
         output_mtime = output_path.stat().st_mtime
-        newest_input = max(path.stat().st_mtime for path in quality_files)
+        newest_input = max(path.stat().st_mtime for path in input_paths)
     except OSError:
         return False
     return output_mtime >= newest_input
@@ -401,8 +493,10 @@ def _skipped_summary(output_path, started):
         data = json.loads(output_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         data = {}
+    segments = data.get("segments") or []
     return {
-        "segments": len(data.get("segments") or []),
+        "segments": len(segments),
+        "photos": sum(1 for entry in segments if entry.get("media_type") == "photo"),
         "pairs": len(data.get("pairs") or []),
         "backend": data.get("backend"),
         "model": data.get("model"),

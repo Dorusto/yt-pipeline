@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+from PIL import Image
 
 import similarity
 from common.schema import validate
@@ -57,6 +58,41 @@ def write_quality(workspace, stem, clip_path, segments, duration_s=4.0):
 
 def read_similarity(workspace):
     return json.loads((workspace / "similarity.json").read_text(encoding="utf-8"))
+
+
+def write_photo(path, size=(64, 48), color=(120, 80, 40)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, "JPEG")
+    return path
+
+
+def photo_record(path):
+    return {
+        "file": path.name,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "width": 64,
+        "height": 48,
+        "orientation": None,
+        "creation_time": "2026-10-12T11:42:00+00:00",
+        "creation_time_source": "exif",
+        "format": "JPEG",
+        "warnings": [],
+    }
+
+
+def write_ingest(workspace, photos, clips=None):
+    data = {
+        "generated_at": "2026-10-14T00:00:00+00:00",
+        "source_dir": str(workspace),
+        "clip_count": len(clips or []),
+        "clips": clips or [],
+        "photo_count": len(photos),
+        "photos": photos,
+        "warnings": [],
+    }
+    (workspace / "ingest.json").write_text(json.dumps(data), encoding="utf-8")
+    return data
 
 
 def test_frame_times_match_formula():
@@ -225,3 +261,84 @@ def test_mobilenet_embeddings_are_finite_and_normalised(tmp_path):
         assert embedding.shape == (1000,)
         assert np.all(np.isfinite(embedding))
         assert np.linalg.norm(embedding) == pytest.approx(1.0, abs=0.01)
+
+
+def test_hist_identical_photos_produce_pair(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg")
+    second = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg")
+    write_ingest(tmp_path, [photo_record(first), photo_record(second)])
+    summary, code = similarity.run(tmp_path, backend="hist")
+    assert code == 0
+    assert summary["photos"] == 2
+    data = read_similarity(tmp_path)
+    assert len(data["pairs"]) == 1
+    pair = data["pairs"][0]
+    assert {pair["a"], pair["b"]} == {"0068/p1", "0069/p1"}
+    assert pair["similarity"] >= 0.90
+
+
+def test_photo_row_has_photo_media_type(tmp_path):
+    photo = write_photo(
+        tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(50, 90, 140)
+    )
+    write_ingest(tmp_path, [photo_record(photo)])
+    summary, code = similarity.run(tmp_path, backend="hist")
+    assert code == 0
+    assert summary["photos"] == 1
+    data = read_similarity(tmp_path)
+    assert validate(data, "similarity") == []
+    row = data["segments"][0]
+    assert row["media_type"] == "photo"
+    assert row["start_s"] == 0.0
+    assert row["end_s"] == 0.04
+    assert row["segment_id"] == "p1"
+    assert row["key"] == "0068/p1"
+    assert row["clip"] == photo.name
+
+
+def test_photo_and_different_colour_clip_not_paired(tmp_path):
+    photo = write_photo(
+        tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(220, 30, 30)
+    )
+    clip = write_solid_video(tmp_path / "clip.mp4", (30, 220, 30))
+    write_quality(
+        tmp_path,
+        "dji_20261012_000000_0081_0000000000000_video",
+        clip,
+        [segment("s1", 0.0, 4.0)],
+    )
+    write_ingest(tmp_path, [photo_record(photo)])
+    summary, code = similarity.run(tmp_path, backend="hist")
+    assert code == 0
+    assert summary["segments"] == 2
+    assert summary["photos"] == 1
+    data = read_similarity(tmp_path)
+    assert data["pairs"] == []
+
+
+def test_repeated_photo_counter_falls_back_to_stem(tmp_path):
+    first = write_photo(
+        tmp_path / "dji_mimo_20261012_120102_0068_a_photo.jpg", color=(10, 20, 30)
+    )
+    second = write_photo(
+        tmp_path / "dji_mimo_20261012_120103_0068_b_photo.jpg", color=(200, 180, 160)
+    )
+    write_ingest(tmp_path, [photo_record(first), photo_record(second)])
+    summary, code = similarity.run(tmp_path, backend="hist")
+    assert code == 0
+    data = read_similarity(tmp_path)
+    keys = [row["key"] for row in data["segments"]]
+    assert "0068/p1" in keys
+    assert f"{second.stem}/p1" in keys
+
+
+def test_rerun_skips_when_ingest_is_newer(tmp_path):
+    photo = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    first, code = similarity.run(tmp_path, backend="hist")
+    assert code == 0
+    assert first["skipped"] is False
+    second, code = similarity.run(tmp_path, backend="hist")
+    assert code == 0
+    assert second["skipped"] is True
+    assert second["photos"] == 1
