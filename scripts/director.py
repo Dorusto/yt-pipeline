@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
 TOOL = "scripts/director.py"
@@ -62,10 +63,6 @@ NON_MOVE_MOTION_LABELS = {"static", "minor_motion"}
 PHOTO_MIN_S = 2.0
 PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
-KEN_BURNS_AMOUNT = 0.08
-KEN_BURNS_CENTRE_X = 0.15
-KEN_BURNS_CENTRE_Y = 0.2
-CLOSE_UP_TAGS = {"close-up", "closeup"}
 
 
 class DirectorError(RuntimeError):
@@ -205,38 +202,6 @@ def order_clips(clips):
 
 def clip_position(moment, first_moment, span_seconds):
     return clamp((moment - first_moment).total_seconds() / span_seconds, 0.0, 1.0)
-
-
-def subject_xy(subject_position):
-    """The subject centre as ``(x, y)`` floats, or ``(None, None)`` when unusable."""
-    if not isinstance(subject_position, dict):
-        return None, None
-    x = subject_position.get("x")
-    y = subject_position.get("y")
-    if isinstance(x, bool) or isinstance(y, bool):
-        return None, None
-    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-        return None, None
-    return float(x), float(y)
-
-
-def ken_burns_for(subject_position, tags):
-    """The deterministic Ken Burns move for a photo from its subject and tags."""
-    tag_set = {str(tag).strip().lower() for tag in (tags or [])}
-    x, y = subject_xy(subject_position)
-    if tag_set & CLOSE_UP_TAGS:
-        return {
-            "move": "zoom_out",
-            "amount": KEN_BURNS_AMOUNT,
-            "focus_x": x if x is not None else 0.5,
-            "focus_y": y if y is not None else 0.5,
-        }
-    if x is None or y is None:
-        return {"move": "zoom_in", "amount": KEN_BURNS_AMOUNT, "focus_x": 0.5, "focus_y": 0.5}
-    if abs(x - 0.5) <= KEN_BURNS_CENTRE_X and abs(y - 0.5) <= KEN_BURNS_CENTRE_Y:
-        return {"move": "zoom_in", "amount": KEN_BURNS_AMOUNT, "focus_x": x, "focus_y": y}
-    move = "pan_left" if x < 0.5 else "pan_right"
-    return {"move": move, "amount": KEN_BURNS_AMOUNT, "focus_x": x, "focus_y": y}
 
 
 def photo_content_offset(capture_time, first_moment, span_seconds, total_content):

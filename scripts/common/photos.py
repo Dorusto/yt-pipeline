@@ -21,6 +21,10 @@ EXIF_DATETIME_ORIGINAL = 36867
 EXIF_DATETIME = 306
 EXIF_ORIENTATION = 274
 JPEG_QUALITY = 92
+KEN_BURNS_AMOUNT = 0.08
+KEN_BURNS_CENTRE_X = 0.15
+KEN_BURNS_CENTRE_Y = 0.2
+CLOSE_UP_TAGS = {"close-up", "closeup"}
 
 _registered = False
 
@@ -164,3 +168,39 @@ def ensure_jpeg(path, out_dir):
         if temporary.exists():
             temporary.unlink()
     return target
+
+
+def subject_xy(subject_position):
+    """The subject centre as ``(x, y)`` floats, or ``(None, None)`` when unusable."""
+    if not isinstance(subject_position, dict):
+        return None, None
+    x = subject_position.get("x")
+    y = subject_position.get("y")
+    if isinstance(x, bool) or isinstance(y, bool):
+        return None, None
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None, None
+    return float(x), float(y)
+
+
+def ken_burns_for(subject_position, tags):
+    """The deterministic Ken Burns move for a photo from its subject and tags.
+
+    Missing subject -> slow zoom on the centre; a subject in the centre box ->
+    zoom in on it; otherwise pan toward the subject; close-up tags -> zoom out.
+    """
+    tag_set = {str(tag).strip().lower() for tag in (tags or [])}
+    x, y = subject_xy(subject_position)
+    if tag_set & CLOSE_UP_TAGS:
+        return {
+            "move": "zoom_out",
+            "amount": KEN_BURNS_AMOUNT,
+            "focus_x": x if x is not None else 0.5,
+            "focus_y": y if y is not None else 0.5,
+        }
+    if x is None or y is None:
+        return {"move": "zoom_in", "amount": KEN_BURNS_AMOUNT, "focus_x": 0.5, "focus_y": 0.5}
+    if abs(x - 0.5) <= KEN_BURNS_CENTRE_X and abs(y - 0.5) <= KEN_BURNS_CENTRE_Y:
+        return {"move": "zoom_in", "amount": KEN_BURNS_AMOUNT, "focus_x": x, "focus_y": y}
+    move = "pan_left" if x < 0.5 else "pan_right"
+    return {"move": move, "amount": KEN_BURNS_AMOUNT, "focus_x": x, "focus_y": y}
