@@ -25,7 +25,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from common import notify
+from common import notify, versions
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -370,6 +370,7 @@ def station_command(ctx, script, args, force=False, budget=False):
     return command
 
 
+INDEPENDENT_RENDERS = ("render", "render_vertical", "render_final", "render_final_vertical")
 VERTICAL_PREVIEW_NAME = "recap_720p_9x16.mp4"
 VERTICAL_FINAL_NAME = "recap_final_9x16.mp4"
 MUSIC_TOKEN = "@music@"
@@ -811,6 +812,8 @@ def run(ctx):
     """Run the station chain and return the flat summary object."""
     started = time.monotonic()
     write_brief(ctx.workspace, ctx.brief_text)
+    if not versions.version_dirs(ctx.workspace):
+        versions.snapshot(ctx.workspace, {"note": "kept before this run"}, keep_renders=True)
     stations = build_stations(ctx)
     total = len(stations)
     entries = []
@@ -863,9 +866,11 @@ def run(ctx):
             result["detail"],
         )
         if result["status"] == "FAIL":
-            failed_name = name
+            failed_name = failed_name or name
             print_failure(name, result)
-            break
+            if name not in INDEPENDENT_RENDERS:
+                break
+    version = keep_version(ctx, entries, failed_name)
     wall_time_s = round(time.monotonic() - started, 3)
     llm_cost_usd = round(sum(entry["llm_cost_usd"] for entry in entries), 8)
     outputs = {
@@ -895,8 +900,34 @@ def run(ctx):
         "llm_spend_usd": read_ledger(ctx.workspace),
         "preview_url": build_preview_url(ctx.preview_base, ctx.workspace),
         "notified": False,
+        "version": version,
     }
     return notify_summary(ctx, summary)
+
+
+EDIT_STATIONS = ("llm_director", *INDEPENDENT_RENDERS)
+
+
+def keep_version(ctx, entries, failed_name):
+    """Snapshot the edit and its renders when this run made a new one; return the version name."""
+    made = [entry["name"] for entry in entries if entry["name"] in EDIT_STATIONS and entry["status"] != "skip"]
+    if not made:
+        return None
+    meta = {
+        "brief": ctx.brief_text,
+        "feedback": list(ctx.feedback),
+        "target_duration_s": ctx.target_duration_s,
+        "format": ctx.frame_format,
+        "speed_ramp": ctx.speed_ramp,
+        "status": "failed" if failed_name else "done",
+        "failed_at": failed_name,
+    }
+    try:
+        directory = versions.snapshot(ctx.workspace, meta)
+    except OSError as exc:
+        print(f"[warn] could not keep this version: {exc}", file=sys.stderr)
+        return None
+    return directory.name if directory else None
 
 
 def notify_summary(ctx, summary):

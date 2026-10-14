@@ -13,10 +13,11 @@ running/failed/done status badge. Each project page has the Recap / Why? / Shots
 tabs (recap player, ``explain.html``, ``shotlog.html``) and a Re-edit form;
 ``/upload`` takes clips and photos from a phone browser into the inbox and
 starts ``recap.py`` in the background. Only the finished artifacts (both recap formats, final, explain, shots) are ever
-served; proxies, ``edit.json``, ``.run.json``, ``source/`` symlinks and every
-other file stay private. The address is a single host, never the wildcard, so
+served, also from ``versions/vNNN/``; proxies, ``edit.json``, ``.run.json``,
+``source/`` symlinks and every other file stay private. The address is a single host, never the wildcard, so
 the server is reachable over the tailnet only. The tool writes inside a
-workspace only ``.run.json`` and ``run.log``; the inbox receives uploads and is
+workspace only ``.run.json`` and ``run.log`` (with a start marker per run);
+the inbox receives uploads and is
 never cleaned.
 """
 
@@ -28,12 +29,14 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from pathlib import Path
 
 from common.moves import slot_screen_length
 from common.pacing import estimate_all_good
+from common.versions import list_versions
 
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +96,13 @@ ARTIFACT_LABELS = (
 TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
+DEFAULT_XFADE_S = 0.3
+VERSION_RE = re.compile(r"^v\d{1,4}$")
+RUN_MARKER = "=== recap run started"
+PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
+LENGTH_MIN_S = 5
+LENGTH_MAX_S = 3600
+LOG_TAIL_BYTES = 262144
 
 
 class ServeError(RuntimeError):
@@ -221,17 +231,88 @@ def read_run_pid(directory):
     return pid
 
 
+def pid_alive(pid):
+    """True when ``pid`` is a live process; a finished child waiting to be reaped is not."""
+    import psutil
+
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.Error:
+        return False
+
+
+def last_run_lines(directory):
+    """The run.log lines of the latest run (after the last start marker)."""
+    path = Path(directory) / "run.log"
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - LOG_TAIL_BYTES))
+            text = handle.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    lines = text.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith(RUN_MARKER):
+            return lines[index + 1:]
+    return lines
+
+
+def run_report(directory):
+    """What the latest run did: its outcome, progress and the error, read from run.log."""
+    lines = last_run_lines(directory)
+    report = {"outcome": None, "done": 0, "total": 0, "last": None, "failed_at": None, "error": None}
+    for line in lines:
+        match = PROGRESS_RE.match(line)
+        if match:
+            report["done"], report["total"] = int(match.group(1)), int(match.group(2))
+            report["last"] = match.group(3)
+            if match.group(4) == "FAIL" and report["failed_at"] is None:
+                report["failed_at"] = match.group(3)
+            continue
+        stripped = line.strip()
+        if stripped.startswith("{") and '"scripts/recap.py"' in stripped:
+            try:
+                data = json.loads(stripped)
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                report["outcome"] = data.get("status")
+    report["error"] = failure_text(lines)
+    return report
+
+
+def failure_text(lines):
+    """The most telling line of the first failure in the log, or None."""
+    for index, line in enumerate(lines):
+        if not (line.startswith("[error]") and " failed" in line):
+            continue
+        detail = None
+        for follow in lines[index + 1:]:
+            if PROGRESS_RE.match(follow) or follow.startswith("[error]") or follow.lstrip().startswith("{"):
+                break
+            if follow.strip():
+                detail = follow.strip()
+        return detail or line[len("[error]"):].strip()
+    return None
+
+
 def project_status(directory):
     """Return running, failed or done for one project workspace."""
     directory = Path(directory)
     pid = read_run_pid(directory)
-    if pid is not None:
-        import psutil
-
-        if psutil.pid_exists(pid):
-            return "running"
-        if not (directory / "recap_720p.mp4").is_file() and not (directory / VERTICAL_PREVIEW).is_file():
-            return "failed"
+    if pid is None:
+        return "done"
+    if pid_alive(pid):
+        return "running"
+    report = run_report(directory)
+    if report["outcome"] == "done":
+        return "done"
+    if report["outcome"] == "failed" or report["failed_at"]:
+        return "failed"
+    if not (directory / "recap_720p.mp4").is_file() and not (directory / VERTICAL_PREVIEW).is_file():
+        return "failed"
     return "done"
 
 
@@ -308,9 +389,9 @@ video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:v
 video.vertical{aspect-ratio:9/16;max-width:360px;margin-top:14px}
 .strip{margin:14px 0 4px}
 .strip-track{display:flex;gap:3px;height:56px}
-.strip-track button{flex:var(--w) 1 0;min-width:10px;border:0;border-radius:var(--radius-s);
-padding:0 6px;font:inherit;font-size:.75rem;color:var(--water);cursor:pointer;
-background:var(--sea);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+.strip-track button{flex:var(--w) 1 0;min-width:16px;border:0;border-radius:var(--radius-s);
+padding:0;font:inherit;font-size:.72rem;letter-spacing:-.02em;color:var(--water);cursor:pointer;
+background:var(--sea);overflow:hidden;white-space:nowrap;text-overflow:clip;
 text-align:center;opacity:.72;transition:opacity .15s}
 .strip-track button.photo{background:repeating-linear-gradient(135deg,var(--stone) 0 6px,#d9d0bd 6px 12px)}
 .strip-track button.now{opacity:1;box-shadow:inset 0 -4px 0 var(--water)}
@@ -334,34 +415,63 @@ input,select,textarea{width:100%;min-height:var(--tap);background:var(--deck);co
 border:1px solid var(--rope);border-radius:10px;padding:8px 12px;font:inherit}
 input[type=file]{padding:10px}
 textarea{resize:vertical}
+.notice{border-radius:var(--radius-l);padding:12px 14px;margin:0 0 14px;background:var(--deck);
+border-left:4px solid var(--busy)}
+.notice.failed{border-left-color:var(--left)}
+.notice code{overflow-wrap:anywhere;font-size:.85rem;color:var(--haze)}
+.versions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px;color:var(--haze);font-size:.9rem}
+.versions a{min-height:36px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;
+padding:0 12px;border-radius:999px;background:var(--deck);color:var(--stone);text-decoration:none}
+.versions a.on{background:var(--stone);color:var(--water)}
+.versions a.failed{color:var(--left)}
+.versions a.on.failed{background:var(--left);color:var(--water)}
+.player{margin-bottom:22px}
+.player h2{font-family:ui-serif,Georgia,serif;font-weight:500;font-size:1.15rem;margin:0 0 8px}
+.vmeta{color:var(--haze);font-size:.88rem;margin:6px 0 0;overflow-wrap:anywhere}
 button.go{min-height:48px;border:0;border-radius:12px;background:var(--sea);color:var(--water);
 font:inherit;font-weight:600;padding:0 26px;cursor:pointer;justify-self:start}
 """
 
 STRIP_SCRIPT = """
-(function(){var v=document.querySelector('video');var b=[].slice.call(document.querySelectorAll('.strip-track button'));
+[].forEach.call(document.querySelectorAll('.player'),function(p){var v=p.querySelector('video');var b=[].slice.call(p.querySelectorAll('.strip-track button'));
 if(!v||!b.length)return;b.forEach(function(x){x.addEventListener('click',function(){v.currentTime=parseFloat(x.dataset.t);v.play();});});
-v.addEventListener('timeupdate',function(){var t=v.currentTime;b.forEach(function(x){var s=parseFloat(x.dataset.t),e=parseFloat(x.dataset.e);x.classList.toggle('now',t>=s&&t<e);});});})();
+v.addEventListener('timeupdate',function(){var t=v.currentTime;b.forEach(function(x){var s=parseFloat(x.dataset.t),e=parseFloat(x.dataset.e);x.classList.toggle('now',t>=s&&t<e);});});});
 """
 
 
-def render_page(title, body, active=None, script=""):
+def render_page(title, body, active=None, script="", refresh=None):
     """Return one full HTML page with the top bar and the shared theme."""
     nav = []
     for key, href, label in (("projects", "/", "Projects"), ("upload", "/upload", "New recap")):
         on = " on" if key == active else ""
         nav.append(f'<a class="nav{on}" href="{href}">{label}</a>')
     tail = f"<script>{script}</script>" if script else ""
+    reload_tag = f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ""
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"{reload_tag}"
         f"<title>{html_escape(title)}</title>"
         f'<style>{THEME_CSS}</style></head><body><div class="wrap">'
         f'<header class="bar"><a class="mark" href="/">AI Director</a>{"".join(nav)}</header>'
         f"{body}</div>{tail}"
         "</body></html>\n"
     )
+
+
+def crossfade_overlap(slot, previous_length, length):
+    """How much this slot overlaps the previous one: the render's crossfade rule."""
+    transition = slot.get("transition") or {}
+    if transition.get("type") != "crossfade":
+        return 0.0
+    try:
+        requested = float(transition.get("duration_s") or 0.0)
+    except (TypeError, ValueError):
+        requested = 0.0
+    if requested <= 0:
+        requested = DEFAULT_XFADE_S
+    return max(0.0, min(requested, previous_length / 2, length / 2))
 
 
 def edit_summary(directory):
@@ -393,6 +503,9 @@ def edit_summary(directory):
         if length <= 0:
             continue
         label = slot.get("shot_key") or slot.get("photo") or slot.get("clip") or slot.get("id") or ""
+        if blocks:
+            start -= crossfade_overlap(slot, blocks[-1]["end"] - blocks[-1]["start"], length)
+            blocks[-1]["end"] = start
         blocks.append({"start": start, "end": start + length, "kind": kind, "label": str(label)})
         start += length
     if not blocks:
@@ -477,23 +590,178 @@ def render_strip(summary):
     )
 
 
-def render_recap_panel(directory):
-    """Return the Recap tab panel: the player with the edit strip, or a placeholder line."""
-    parts = []
-    has_wide = (Path(directory) / "recap_720p.mp4").is_file()
-    has_vertical = (Path(directory) / VERTICAL_PREVIEW).is_file()
+def edit_matches_renders(directory):
+    """True when the renders in ``directory`` were made from its current edit.json."""
+    directory = Path(directory)
+    edit = directory / "edit.json"
+    renders = [directory / name for name in ("recap_720p.mp4", VERTICAL_PREVIEW) if (directory / name).is_file()]
+    if not edit.is_file() or not renders:
+        return False
+    return edit.stat().st_mtime <= max(path.stat().st_mtime for path in renders)
+
+
+def render_player(directory, prefix="", heading=None, meta_line=None, trust_edit=False):
+    """One player block: the video(s) of a folder, its strip and an optional note."""
+    directory = Path(directory)
+    parts = [f"<h2>{html_escape(heading)}</h2>"] if heading else []
+    has_wide = (directory / "recap_720p.mp4").is_file()
+    has_vertical = (directory / VERTICAL_PREVIEW).is_file()
     if has_wide:
-        parts.append('<video controls preload="metadata" src="recap_720p.mp4"></video>')
+        parts.append(f'<video controls preload="metadata" src="{prefix}recap_720p.mp4"></video>')
     if has_vertical:
-        parts.append(f'<video class="vertical" controls preload="metadata" src="{VERTICAL_PREVIEW}"></video>')
+        parts.append(
+            f'<video class="vertical" controls preload="metadata" src="{prefix}{VERTICAL_PREVIEW}"></video>'
+        )
     if has_wide or has_vertical:
-        parts.append(render_strip(edit_summary(directory)))
+        if trust_edit or edit_matches_renders(directory):
+            parts.append(render_strip(edit_summary(directory)))
     else:
-        parts.append('<p class="empty">No recap yet. It appears here when the render finishes.</p>')
+        parts.append('<p class="empty">This version has no video: its render did not finish.</p>')
+    if meta_line:
+        parts.append(f'<p class="vmeta">{meta_line}</p>')
     for final_name in ("recap_final.mp4", VERTICAL_FINAL):
-        if (Path(directory) / final_name).is_file():
-            parts.append(f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>')
-    return "\n".join(parts)
+        if (directory / final_name).is_file():
+            parts.append(
+                f'<a class="download" href="{prefix}{final_name}">Download the full-quality {final_name}</a>'
+            )
+    return f'<div class="player">{"".join(parts)}</div>'
+
+
+def version_meta_line(version):
+    """When a version was made, how long it is and the feedback that asked for it."""
+    meta = version["meta"]
+    bits = []
+    created = str(meta.get("created_at") or "")
+    if created:
+        bits.append(html_escape(created[:16].replace("T", " ")))
+    summary = edit_summary(version["path"])
+    if summary:
+        bits.append(html_escape(describe_summary(summary)))
+    if meta.get("status") == "failed":
+        bits.append(f"failed at {html_escape(meta.get('failed_at') or '?')}")
+    feedback = " / ".join(str(item) for item in meta.get("feedback") or [])
+    if feedback:
+        bits.append(f"asked: \u201c{html_escape(feedback)}\u201d")
+    elif meta.get("note"):
+        bits.append(html_escape(meta["note"]))
+    return " \u00b7 ".join(bits)
+
+
+def has_video(version):
+    return any(name.endswith(".mp4") for name in version["files"])
+
+
+def pick_version(versions, wanted):
+    """The version to show: the one asked for, else the newest with a video, else the newest."""
+    by_number = {version["number"]: version for version in versions}
+    if wanted in by_number:
+        return by_number[wanted]
+    with_video = [version for version in versions if has_video(version)]
+    if with_video:
+        return with_video[-1]
+    return versions[-1] if versions else None
+
+
+def render_run_notice(status, report):
+    """The banner about the run in progress or the run that failed; empty otherwise."""
+    if status == "running":
+        if report["total"]:
+            step = (
+                f"{report['done']} of {report['total']} steps done"
+                f" (last: {html_escape(report['last'])})"
+            )
+        else:
+            step = "starting"
+        return (
+            f'<div class="notice"><strong>Making a new edit</strong> \u2014 {step}. '
+            "The previous version stays below until the new one is ready; this page refreshes by itself.</div>"
+        )
+    if status == "failed":
+        where = html_escape(report["failed_at"] or "an unknown step")
+        error = f"<br><code>{html_escape(report['error'])}</code>" if report["error"] else ""
+        return (
+            f'<div class="notice failed"><strong>The last run failed at {where}.</strong>'
+            f" The video below is the last one that finished.{error}</div>"
+        )
+    return ""
+
+
+def render_version_links(name, versions, shown, compare=None):
+    """The row of version chips, plus compare links for the other versions."""
+    if len(versions) < 2:
+        return ""
+    base = f"/{html_escape(name)}/?tab=recap"
+    chips = []
+    for version in versions:
+        classes = []
+        if version["number"] == shown["number"]:
+            classes.append("on")
+        if version["meta"].get("status") == "failed" or not has_video(version):
+            classes.append("failed")
+        label = version["name"].lstrip("v").lstrip("0") or "0"
+        chips.append(
+            f'<a class="{" ".join(classes)}" href="{base}&amp;v={version["number"]}" '
+            f'title="{html_escape(version_meta_line(version))}">v{label}</a>'
+        )
+    others = [
+        f'<a class="{"on" if compare and compare["number"] == version["number"] else ""}" '
+        f'href="{base}&amp;v={shown["number"]}&amp;with={version["number"]}">'
+        f'v{version["name"].lstrip("v").lstrip("0") or "0"}</a>'
+        for version in versions
+        if version["number"] != shown["number"] and has_video(version)
+    ]
+    row = f'<div class="versions"><span>Version</span>{"".join(chips)}</div>'
+    if others:
+        row += f'<div class="versions"><span>Compare with</span>{"".join(others)}</div>'
+    return row
+
+
+def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None):
+    """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
+    directory = Path(directory)
+    status = status or project_status(directory)
+    report = report or run_report(directory)
+    parts = [render_run_notice(status, report)]
+    versions = list_versions(directory)
+    shown = pick_version(versions, wanted)
+    if shown is None:
+        has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
+        if has_any:
+            parts.append(render_player(directory, trust_edit=status != "running" and edit_matches_renders(directory)))
+        else:
+            parts.append('<p class="empty">No recap yet. It appears here when the render finishes.</p>')
+            for final_name in ("recap_final.mp4", VERTICAL_FINAL):
+                if (directory / final_name).is_file():
+                    parts.append(
+                        f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
+                    )
+        return "\n".join(part for part in parts if part)
+    compare = pick_version(versions, compare_with) if compare_with is not None else None
+    if compare is not None and compare["number"] == shown["number"]:
+        compare = None
+    parts.append(render_version_links(name or directory.name, versions, shown, compare))
+    heading = shown["name"].lstrip("v").lstrip("0") or "0"
+    parts.append(
+        render_player(
+            shown["path"],
+            prefix=f"versions/{shown['name']}/",
+            heading=f"Version {heading}" + (" (latest)" if shown is versions[-1] else ""),
+            meta_line=version_meta_line(shown),
+            trust_edit=True,
+        )
+    )
+    if compare is not None:
+        other = compare["name"].lstrip("v").lstrip("0") or "0"
+        parts.append(
+            render_player(
+                compare["path"],
+                prefix=f"versions/{compare['name']}/",
+                heading=f"Version {other}",
+                meta_line=version_meta_line(compare),
+                trust_edit=True,
+            )
+        )
+    return "\n".join(part for part in parts if part)
 
 
 def render_iframe_panel(directory, artifact, empty_text):
@@ -503,9 +771,11 @@ def render_iframe_panel(directory, artifact, empty_text):
     return f'<p class="empty">{html_escape(empty_text)}</p>'
 
 
-def render_project(name, directory, tab, music_tracks=()):
+def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
+    status = project_status(directory)
+    report = run_report(directory)
     tab_links = []
     for key, label in TABS:
         active = ' class="active"' if key == tab else ""
@@ -513,7 +783,7 @@ def render_project(name, directory, tab, music_tracks=()):
             f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(label)}</a>'
         )
     panels = {
-        "recap": render_recap_panel(directory),
+        "recap": render_recap_panel(directory, name, wanted, compare_with, status, report),
         "why": render_iframe_panel(
             directory,
             "explain.html",
@@ -525,7 +795,6 @@ def render_project(name, directory, tab, music_tracks=()):
             "No shot list yet. It appears when the analysis finishes.",
         ),
     }
-    status = project_status(directory)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
     if estimate and estimate["shots"]:
@@ -541,7 +810,8 @@ def render_project(name, directory, tab, music_tracks=()):
         f"{render_reedit(name, music_tracks)}"
     )
     script = STRIP_SCRIPT if tab == "recap" else ""
-    return render_page(name, body, active="projects", script=script)
+    refresh = 20 if status == "running" else None
+    return render_page(name, body, active="projects", script=script, refresh=refresh)
 
 
 def render_select(name, options, default=None):
@@ -566,6 +836,11 @@ def option_fields(music_tracks):
                 [("auto", "Auto"), ("30s", "30s"), ("60s", "60s"), ("90s", "90s"), ("3min", "3 min"), ("all", "All good shots")],
                 default="auto",
             ),
+        ),
+        (
+            "Or exact seconds",
+            f'<input type="number" name="length_s" min="{LENGTH_MIN_S}" max="{LENGTH_MAX_S}" step="1" '
+            'inputmode="numeric" placeholder="e.g. 45">',
         ),
         (
             "Order",
@@ -607,12 +882,17 @@ def option_fields(music_tracks):
     ]
 
 
+def is_short_control(control):
+    """Selects and number boxes sit two to a row."""
+    return control.startswith("<select") or control.startswith('<input type="number"')
+
+
 def render_form_rows(fields):
     rows = [f"<label>{html_escape(label)}{control}</label>" for label, control in fields]
     paired = []
     index = 0
     while index < len(rows):
-        if index + 1 < len(rows) and fields[index][1].startswith("<select") and fields[index + 1][1].startswith("<select"):
+        if index + 1 < len(rows) and is_short_control(fields[index][1]) and is_short_control(fields[index + 1][1]):
             paired.append(f'<div class="pair">{rows[index]}{rows[index + 1]}</div>')
             index += 2
         else:
@@ -679,6 +959,14 @@ def parse_tab(raw_path):
     values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get("tab", [])
     tab = values[0] if values else "recap"
     return tab if tab in TAB_KEYS else "recap"
+
+
+def parse_number(raw_path, key):
+    """An integer query parameter, or None."""
+    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get(key, [])
+    if values and values[0].isdigit() and len(values[0]) <= 4:
+        return int(values[0])
+    return None
 
 
 def parse_range(value, size):
@@ -941,6 +1229,17 @@ def read_brief_file(source):
         return ""
 
 
+def exact_length(value):
+    """A typed length in whole seconds, or None when the box is empty or out of range."""
+    try:
+        seconds = int(round(float((value or "").strip().replace(",", "."))))
+    except ValueError:
+        return None
+    if LENGTH_MIN_S <= seconds <= LENGTH_MAX_S:
+        return seconds
+    return None
+
+
 def build_recap_command(python, source, workspace, brief, fields, music_dir):
     """The recap.py argv for one upload or re-edit."""
     command = [
@@ -954,8 +1253,10 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
         brief,
         "--json",
     ]
-    length = LENGTH_CHOICES.get(fields.get("length") or "auto")
-    if length:
+    length = exact_length(fields.get("length_s"))
+    if length is None:
+        length = LENGTH_CHOICES.get(fields.get("length") or "auto")
+    if length is not None and (length or fields.get("length") == "all"):
         command += ["--target-duration-s", str(length)]
     order = ORDER_CHOICES.get(fields.get("order") or "auto")
     if order:
@@ -985,6 +1286,8 @@ def start_recap(command, workspace, source, options):
     """Spawn the recap in the background, record ``.run.json`` and return the pid."""
     workspace.mkdir(parents=True, exist_ok=True)
     with (workspace / "run.log").open("ab") as log:
+        log.write(f"\n{RUN_MARKER} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode("utf-8"))
+        log.flush()
         handle = subprocess.Popen(
             command,
             stdout=log,
@@ -1001,6 +1304,7 @@ def start_recap(command, workspace, source, options):
         "command": command,
     }
     (workspace / ".run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    threading.Thread(target=handle.wait, daemon=True).start()
     return handle.pid
 
 
@@ -1187,7 +1491,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.send_html(
                 render_project(
-                    segments[0], directory, parse_tab(self.path), list_music_tracks(self.server.music_dir)
+                    segments[0],
+                    directory,
+                    parse_tab(self.path),
+                    list_music_tracks(self.server.music_dir),
+                    wanted=parse_number(self.path, "v"),
+                    compare_with=parse_number(self.path, "with"),
                 ),
                 send_body,
             )
@@ -1200,6 +1509,15 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             directory = root / segments[0]
             target = directory / artifact
             if not directory.is_dir() or not target.is_file():
+                self.send_not_found()
+                return
+            self.send_file(target, send_body)
+            return
+        if len(segments) == 4 and segments[1] == "versions" and VERSION_RE.match(segments[2]):
+            artifact = segments[3]
+            directory = root / segments[0]
+            target = directory / "versions" / segments[2] / artifact
+            if artifact not in SERVED_FILES or not is_project(directory) or not target.is_file():
                 self.send_not_found()
                 return
             self.send_file(target, send_body)

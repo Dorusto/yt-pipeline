@@ -2,6 +2,7 @@ import http.client
 import json
 import os
 import threading
+import time
 
 import pytest
 
@@ -410,6 +411,9 @@ def stub_recap(monkeypatch, tmp_path):
     class FakeProcess:
         def __init__(self, pid):
             self.pid = pid
+
+        def wait(self):
+            return 0
 
     def fake_popen(command, **kwargs):
         calls.append(command)
@@ -869,3 +873,133 @@ def test_speed_ramp_field_becomes_the_recap_argv(tmp_path, value, expected):
     fields = {} if value is None else {"speed_ramp": value}
     command = serve.build_recap_command("python", tmp_path / "in", tmp_path / "ws", "brief", fields, tmp_path / "music")
     assert ("--speed-ramp" in command) is expected
+
+
+def write_version(project, number, text, stamp, feedback=None, video=True):
+    directory = project / "versions" / f"v{number:03d}"
+    directory.mkdir(parents=True)
+    edit = {"video": [{"clip": "a.mp4", "in_s": 0.0, "out_s": 4.0}]}
+    (directory / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    if video:
+        (directory / "recap_720p.mp4").write_bytes(text.encode())
+    meta = {"created_at": stamp, "feedback": feedback or [], "status": "done" if video else "failed"}
+    if not video:
+        meta["failed_at"] = "render"
+    (directory / "version.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_project_page_lists_versions_and_compares_two(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00", feedback=["tunnel longer"])
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/2026-10-14/")
+        page = body.decode()
+        assert 'src="versions/v002/recap_720p.mp4"' in page
+        assert "tunnel longer" in page
+        assert "Compare with" in page
+        _, _, body = request(server, "GET", "/2026-10-14/?tab=recap&v=2&with=1")
+        page = body.decode()
+        assert 'src="versions/v002/recap_720p.mp4"' in page
+        assert 'src="versions/v001/recap_720p.mp4"' in page
+        status, _, data = request(server, "GET", "/2026-10-14/versions/v001/recap_720p.mp4")
+        assert status == 200 and data == b"first"
+        status, _, _ = request(server, "GET", "/2026-10-14/versions/v001/edit.json")
+        assert status == 404
+        status, _, _ = request(server, "GET", "/2026-10-14/versions/..%2F/recap_720p.mp4")
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_latest_version_without_video_falls_back_to_the_last_one_that_played(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "", "2026-10-15T11:00:00", video=False)
+    page = serve.render_recap_panel(project, "2026-10-14", status="done",
+                                    report={"done": 0, "total": 0, "last": None, "failed_at": None, "error": None, "outcome": None})
+    assert 'src="versions/v001/recap_720p.mp4"' in page
+    assert 'class="on failed"' not in page
+
+
+def test_failed_run_is_reported_with_its_error(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 999999}), encoding="utf-8")
+    (project / "run.log").write_text(
+        "old run noise\n"
+        f"{serve.RUN_MARKER} 2026-10-15 11:00:00 ===\n"
+        "[ 9/11] llm_director    done    397.0s  written\n"
+        "[10/11] render_vertical FAIL      0.2s  exit 1\n"
+        "[error] render_vertical failed (exit 1)\n"
+        "Traceback (most recent call last):\n"
+        "common.photos.PhotoError: cannot read photo /tmp/x/proxy/a.jpg\n"
+        '{"tool": "scripts/recap.py", "status": "failed"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: False)
+    assert serve.project_status(project) == "failed"
+    report = serve.run_report(project)
+    assert report["failed_at"] == "render_vertical"
+    assert report["error"].endswith("cannot read photo /tmp/x/proxy/a.jpg")
+    page = serve.render_project("2026-10-14", project, "recap")
+    assert "failed at render_vertical" in page
+    assert "cannot read photo" in page
+
+
+def test_running_project_shows_progress_and_refreshes(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    (project / "run.log").write_text(
+        f"{serve.RUN_MARKER} 2026-10-15 11:00:00 ===\n[ 8/11] router          done      1.0s  written\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    page = serve.render_project("2026-10-14", project, "recap")
+    assert "8 of 11 steps done" in page
+    assert 'http-equiv="refresh"' in page
+
+
+def test_a_finished_child_that_was_not_reaped_is_not_running():
+    import subprocess
+    import sys
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except ChildProcessError:
+            break
+        if not serve.pid_alive(child.pid):
+            break
+        time.sleep(0.05)
+    assert not serve.pid_alive(child.pid)
+    child.wait()
+
+
+def test_exact_seconds_win_over_the_length_menu(tmp_path):
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"length": "60s", "length_s": "45"}, tmp_path)
+    assert command[command.index("--target-duration-s") + 1] == "45"
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"length": "all", "length_s": ""}, tmp_path)
+    assert command[command.index("--target-duration-s") + 1] == "0"
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"length": "auto", "length_s": "2"}, tmp_path)
+    assert "--target-duration-s" not in command
+    assert 'name="length_s"' in serve.render_upload([])
+
+
+def test_strip_overlaps_crossfaded_shots_like_the_render(tmp_path):
+    edit = {"video": [
+        {"clip": "a.mp4", "in_s": 0.0, "out_s": 2.0},
+        {"clip": "b.mp4", "in_s": 0.0, "out_s": 2.0, "transition": {"type": "crossfade", "duration_s": 0.3}},
+        {"kind": "photo", "photo": "p.jpg", "duration_s": 2.0, "transition": {"type": "cut"}},
+    ]}
+    (tmp_path / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    summary = serve.edit_summary(tmp_path)
+    assert [round(block["start"], 2) for block in summary["blocks"]] == [0.0, 1.7, 3.7]
+    assert round(summary["total"], 2) == 5.7
