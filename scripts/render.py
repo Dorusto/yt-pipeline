@@ -9,8 +9,11 @@ The tool cuts each video slot from the clip named in ``sources[]`` (the proxy)
 or, when ``--originals-dir`` is given, from the full-resolution original of the
 same name, scales and pads it to the requested frame, joins the slots in
 timeline order with crossfades or hard cuts and keeps each slot's own ambient
-audio. Captions, graphics, music and SFX are warned about and ignored. Sources
-are read-only; the MP4 is written atomically to ``--out``.
+audio. The ambient bus is cleaned like ``audio_clean.py`` cleans a clip — wind
+high-pass, RNNoise/afftdn noise reduction and loudnorm — unless
+``--no-audio-clean`` is given. Captions, graphics, music and SFX are warned
+about and ignored. Sources are read-only; the MP4 is written atomically to
+``--out``.
 """
 
 import argparse
@@ -21,6 +24,14 @@ import sys
 import time
 from pathlib import Path
 
+from common.ambience import (
+    DEFAULT_MODEL,
+    DEFAULT_TARGET_LUFS,
+    DEFAULT_WIND_HZ,
+    AmbienceError,
+    build_filters,
+    resolve_denoiser,
+)
 from common.ffmpeg_tools import ffmpeg_path
 from common.schema import SchemaError, validate_or_raise
 
@@ -72,6 +83,34 @@ def build_parser():
         type=float,
         default=0.3,
         help="crossfade duration when the slot does not set one (default 0.3)",
+    )
+    parser.add_argument(
+        "--no-audio-clean",
+        action="store_true",
+        help="keep the raw ambient mix (no wind high-pass, denoise or loudnorm)",
+    )
+    parser.add_argument(
+        "--denoiser",
+        choices=["arnndn", "afftdn", "none"],
+        default=None,
+        help="noise reduction backend for the ambient bus (default: arnndn with a model, else afftdn)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=f"RNNoise model for arnndn (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument(
+        "--target-lufs",
+        type=float,
+        default=DEFAULT_TARGET_LUFS,
+        help=f"loudnorm integrated loudness target (default: {DEFAULT_TARGET_LUFS:g})",
+    )
+    parser.add_argument(
+        "--wind-hz",
+        type=float,
+        default=DEFAULT_WIND_HZ,
+        help=f"high-pass corner for wind rumble, 0 disables it (default: {DEFAULT_WIND_HZ:g})",
     )
     parser.add_argument(
         "--force",
@@ -211,8 +250,12 @@ def fade_for_join(slot, dur_prev, dur_next, xfade_s):
     return min(requested, dur_prev / 2, dur_next / 2)
 
 
-def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings):
-    """Build the ``filter_complex`` graph and return it with the final labels."""
+def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings, clean_chain=None):
+    """Build the ``filter_complex`` graph and return it with the final labels.
+
+    ``clean_chain`` is the ambient cleanup filter list (wind high-pass, RNNoise
+    or afftdn, loudnorm); it runs on the mixed ambient bus before the output.
+    """
     parts = []
     for index, slot in enumerate(slots):
         start = fmt(slot["in_s"])
@@ -262,6 +305,9 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
             current_v = f"cvt{join}"
             current_a = f"ca{join}"
             accumulated = accumulated + durations[nxt]
+    if clean_chain:
+        parts.append(f"[{current_a}]{','.join(clean_chain)}[aclean]")
+        current_a = "aclean"
     return ";".join(parts), current_v, current_a
 
 
@@ -279,7 +325,21 @@ def collect_warnings(document, ambience):
     return warnings
 
 
-def render(edit_path, out_path, media_dir, originals_dir, width, height, xfade_s, force):
+def render(
+    edit_path,
+    out_path,
+    media_dir,
+    originals_dir,
+    width,
+    height,
+    xfade_s,
+    force,
+    audio_clean=True,
+    denoiser=None,
+    model=None,
+    target_lufs=DEFAULT_TARGET_LUFS,
+    wind_hz=DEFAULT_WIND_HZ,
+):
     """Render ``edit_path`` to ``out_path`` and return the run summary."""
     started = time.monotonic()
     edit_path = Path(edit_path).expanduser()
@@ -300,6 +360,29 @@ def render(edit_path, out_path, media_dir, originals_dir, width, height, xfade_s
     ambience = audio.get("ambience") or {}
     ambience_enabled = bool(ambience.get("enabled", False))
     warnings = collect_warnings(document, ambience)
+    clean_chain = []
+    clean_applied = []
+    clean_denoiser = None
+    if audio_clean and ambience_enabled:
+        model_path = Path(model).expanduser() if model is not None else DEFAULT_MODEL
+        try:
+            clean_denoiser, clean_warnings = resolve_denoiser(denoiser, model_path)
+        except AmbienceError as exc:
+            raise RenderError(str(exc)) from exc
+        warnings.extend(clean_warnings)
+        clean_chain, clean_applied = build_filters(
+            clean_denoiser,
+            model_path,
+            wind_hz,
+            apply_highpass=wind_hz > 0,
+            apply_loudnorm=True,
+            target_lufs=target_lufs,
+        )
+    audio_clean_info = {
+        "enabled": bool(clean_chain),
+        "denoiser": clean_denoiser,
+        "filters": list(clean_applied),
+    }
     source = "originals" if originals_dir is not None else "sources"
     originals_label = (
         str(Path(originals_dir).expanduser()) if originals_dir is not None else None
@@ -317,6 +400,7 @@ def render(edit_path, out_path, media_dir, originals_dir, width, height, xfade_s
             "warnings": warnings,
             "originals_dir": originals_label,
             "source": source,
+            "audio_clean": audio_clean_info,
             "wall_time_s": round(time.monotonic() - started, 3),
             "llm_cost_usd": 0.0,
         }
@@ -349,7 +433,8 @@ def render(edit_path, out_path, media_dir, originals_dir, width, height, xfade_s
         has_audio = [False] * len(slots)
 
     filter_complex, final_v, final_a = build_filter_graph(
-        slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings
+        slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings,
+        clean_chain=clean_chain,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -408,6 +493,7 @@ def render(edit_path, out_path, media_dir, originals_dir, width, height, xfade_s
         "warnings": warnings,
         "originals_dir": originals_label,
         "source": source,
+        "audio_clean": audio_clean_info,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -425,8 +511,13 @@ def main(argv=None):
             args.height,
             args.xfade_s,
             args.force,
+            audio_clean=not args.no_audio_clean,
+            denoiser=args.denoiser,
+            model=args.model,
+            target_lufs=args.target_lufs,
+            wind_hz=args.wind_hz,
         )
-    except (RenderError, SchemaError) as exc:
+    except (RenderError, SchemaError, AmbienceError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
     if args.json:
@@ -440,6 +531,9 @@ def main(argv=None):
                 f"{summary['duration_s']}s, {summary['slots']} slots,"
                 f" {summary['width']}x{summary['height']}"
             )
+        clean = summary.get("audio_clean") or {}
+        if clean.get("enabled"):
+            print("ambient cleaned: " + ", ".join(clean.get("filters") or []))
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
     return 0

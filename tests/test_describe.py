@@ -722,3 +722,164 @@ def test_described_segment_carries_summary_and_tags(tmp_path):
     assert seg["summary"] and len(seg["summary"].split()) <= 12
     assert isinstance(seg["tags"], list) and seg["tags"]
     assert validate(data, "describe") == []
+
+
+class BeatsModel:
+    """Returns a full answer with content beats for long segments."""
+
+    def __init__(self, beats):
+        self.beats = beats
+        self.calls = []
+
+    def describe(self, request):
+        self.calls.append(request)
+        context = request.context or {}
+        beats = self.beats if context.get("id") == "s7" else []
+        beats_json = json.dumps(beats)
+        text = (
+            "{\n"
+            '  "description": "Mock long take",\n'
+            '  "summary": "mock long take through the tunnel",\n'
+            '  "tags": ["mock", "tunnel"],\n'
+            '  "subject": "tunnel",\n'
+            '  "scenery": "mock scenery",\n'
+            '  "semantic_motion": "travel",\n'
+            '  "interest": 70,\n'
+            '  "hero": true,\n'
+            '  "verdict": null,\n'
+            f'  "beats": {beats_json}\n'
+            "}"
+        )
+        return VisionResponse(
+            text=text,
+            model="mock/vision",
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=0.0,
+        )
+
+    def spend_usd(self):
+        return 0.0
+
+
+def test_frame_times_sample_every_five_seconds_on_long_segment():
+    short = describe.frame_times(0.0, 12.0)
+    assert len(short) == 3
+    long = describe.frame_times(0.0, 134.0)
+    assert len(long) == describe.BEATS_MAX_FRAMES
+    mid = describe.frame_times(0.0, 25.0)
+    assert len(mid) == 5
+    assert mid == sorted(mid)
+    assert all(0.0 < t < 25.0 for t in mid)
+
+
+def test_normalize_beats_tiles_and_renumbers():
+    beats = describe.normalize_beats(
+        [
+            {"start_s": 20.0, "end_s": 55.0, "label": "approach", "summary": "boat enters the tunnel", "interest": 80, "hero": True},
+            {"start_s": 60.0, "end_s": 130.0, "label": "inside", "summary": "inside the tunnel", "interest": 55, "hero": False},
+            {"start_s": 130.0, "end_s": 162.7, "label": "exit", "summary": "tunnel exit into the light", "interest": 90, "hero": True},
+        ]
+    )
+    assert [b["id"] for b in beats] == ["b1", "b2", "b3"]
+    assert beats[0]["start_s"] == 20.0
+    assert beats[0]["end_s"] == beats[1]["start_s"] == 55.0 or beats[0]["end_s"] == 60.0
+    assert beats[1]["end_s"] == beats[2]["start_s"]
+    assert beats[2]["end_s"] == 162.7
+    assert beats[0]["label"] == "approach"
+    assert beats[0]["hero"] is True
+    assert beats[1]["hero"] is False
+    assert beats[2]["interest"] == 90
+    assert all(b["end_s"] > b["start_s"] for b in beats)
+
+
+def test_normalize_beats_fills_the_gaps_between_beats():
+    beats = describe.normalize_beats(
+        [
+            {"start_s": 0.0, "end_s": 10.0, "label": "a"},
+            {"start_s": 30.0, "end_s": 40.0, "label": "b"},
+            {"start_s": 90.0, "end_s": 100.0, "label": "c"},
+        ]
+    )
+    assert [b["id"] for b in beats] == ["b1", "b2", "b3"]
+    assert beats[0]["end_s"] == 30.0
+    assert beats[1]["start_s"] == 30.0
+    assert beats[1]["end_s"] == 90.0
+    assert beats[2]["start_s"] == 90.0
+    assert beats[2]["end_s"] == 100.0
+
+
+def test_normalize_beats_rejects_single_and_invalid():
+    assert describe.normalize_beats([]) == []
+    assert describe.normalize_beats(None) == []
+    assert describe.normalize_beats([{"start_s": 0.0, "end_s": 10.0, "label": "a"}]) == []
+    assert describe.normalize_beats([{"start_s": 10.0, "end_s": 10.0, "label": "a"}, {"start_s": 10.0, "end_s": 10.0, "label": "b"}]) == []
+    assert describe.normalize_beats([{"start_s": "x", "end_s": 10.0}, {"start_s": 0.0, "end_s": 5.0, "label": "b"}]) == []
+
+
+def test_long_segment_carries_beats_and_short_does_not(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4", seconds=28, fps=5)
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [
+            segment("s7", 0.0, 25.0, "move", motion_label="travel_forward", uncertain=False),
+            segment("s8", 25.0, 28.0, "hold", motion_label="static", uncertain=False),
+        ],
+    )
+    model = BeatsModel(
+        [
+            {"start_s": 0.0, "end_s": 10.0, "label": "approach", "summary": "approach to the tunnel", "interest": 80, "hero": True},
+            {"start_s": 10.0, "end_s": 18.0, "label": "inside", "summary": "inside the tunnel", "interest": 55, "hero": False},
+            {"start_s": 18.0, "end_s": 25.0, "label": "exit", "summary": "exit into the light", "interest": 90, "hero": True},
+        ]
+    )
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    assert validate(data, "describe") == []
+    long_segment = data["segments"][0]
+    short_segment = data["segments"][1]
+    assert long_segment["id"] == "s7"
+    assert [b["id"] for b in long_segment["beats"]] == ["b1", "b2", "b3"]
+    assert long_segment["beats"][0]["label"] == "approach"
+    assert short_segment.get("beats") == []
+
+
+def test_beats_dropped_when_segment_is_short(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4", seconds=12, fps=5)
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 10.0, "move", motion_label="travel_forward", uncertain=False)],
+    )
+    model = BeatsModel(
+        [
+            {"start_s": 0.0, "end_s": 5.0, "label": "a", "summary": "one", "interest": 50, "hero": False},
+            {"start_s": 5.0, "end_s": 10.0, "label": "b", "summary": "two", "interest": 50, "hero": False},
+        ]
+    )
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    assert validate(data, "describe") == []
+    assert data["segments"][0].get("beats") == []
+
+
+def test_json_summary_counts_beats(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4", seconds=26, fps=5)
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s7", 0.0, 25.0, "move", motion_label="travel_forward", uncertain=False)],
+    )
+    model = BeatsModel(
+        [
+            {"start_s": 0.0, "end_s": 12.0, "label": "approach", "summary": "approach", "interest": 80, "hero": True},
+            {"start_s": 12.0, "end_s": 25.0, "label": "exit", "summary": "exit", "interest": 90, "hero": True},
+        ]
+    )
+    summary, exit_code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    assert exit_code == 0
+    assert summary["beats"] == 2

@@ -49,7 +49,7 @@ One ffmpeg audio pass is built in this order:
 - `--model PATH` is the RNNoise `.rnnn`/`.rnnu` model. The default is `~/.cache/yt-pipeline/models/arnndn.rnnn` when it exists.
 - Asking for `--denoiser arnndn` with no model is an error: one `[error] ...` line naming `--model`, exit 1. No crash.
 - `--denoiser none` applies only the high-pass and loudnorm.
-- The tool never downloads a model. To get one, fetch an `.rnnn` file from the BSD-licensed Xiph `rnnoise` / community `rnnoise-models` (e.g. the `arnndn-models` set), save it at the default path or pass `--model`. Without it the tool still works, using `afftdn`.
+- The tool never downloads a model. The default model cache is `~/.cache/yt-pipeline/models/arnndn.rnnn`; D2-2 fetched `marathon-prescription` from `GregorR/rnnoise-models` (rnnoise-nu format, models not subject to copyright per that repo's README) there. Without a model the tool still works, using `afftdn`. The same cleanup chain is shared with `render.py` (`scripts/common/ambience.py`), which runs it on the render's ambient bus.
 
 ## What the fields mean
 

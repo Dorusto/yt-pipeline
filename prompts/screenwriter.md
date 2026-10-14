@@ -39,13 +39,13 @@ no extra keys.
 - **Slots serve beats.** Every slot says which beat it serves and why. The
   `target_s` of the slots must sum to the target duration and follow the pacing:
   calm opening, shorter and more energetic toward the end when the brief asks
-  for it. **Count every `keep_whole` slot as 8 seconds** — those keep their whole
+  for it. **Count every `keep_whole` slot as 6 seconds** — those keep their whole
   window and cannot be trimmed to the pacing target — so plan fewer slots when
   several of the best shots are keep_whole. A plan whose slots do not add up to
   the target duration will be sent back.
 - **`keep_whole: true`** for hero shots (`hero: true`) and for complete semantic
   moves (an `orbit`, a `reveal`, a travel through a cave or a tunnel). Those keep
-  their whole window up to 8 seconds instead of being trimmed to the pacing
+  their whole window up to 6 seconds instead of being trimmed to the pacing
   target. Everything else follows the pacing.
 - **Editing grammar** (the editor enforces this, but do not plan against it):
   - a move and the hold it lands on are one phrase — never plan a move and then
@@ -53,6 +53,12 @@ no extra keys.
   - never plan two slots from the same take back to back unless their windows
     are contiguous;
   - never plan two visually similar shots next to each other.
+- **Long takes are several moments.** When the menu splits one take into content
+  beats (`beat_of` set: `approach`, `inside`, `exit`, `enter`, `leave`, ...),
+  each beat is its own shot. Cover the arc of the take — its approach and its
+  exit are two different moments of the story — instead of two neighbours from
+  one end of it. Two beats of one take need a different take's slot between
+  them, unless their windows are contiguous and you plan them as one stretch.
 - **Do not pad.** If the footage cannot fill the target, say so in `notes` and
   propose fewer slots rather than weak shots.
 

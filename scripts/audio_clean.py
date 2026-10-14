@@ -28,6 +28,14 @@ from pathlib import Path
 
 import numpy as np
 
+from common.ambience import (
+    DEFAULT_MODEL,
+    DEFAULT_TARGET_LUFS,
+    DEFAULT_WIND_HZ,
+    AmbienceError,
+    build_filters,
+    resolve_denoiser,
+)
 from common.ffmpeg_tools import ffmpeg_path
 
 ANALYSIS_RATE = 48000
@@ -38,9 +46,6 @@ WIND_RATIO_THRESHOLD = 0.55
 NOISE_SNR_THRESHOLD_DB = 12.0
 QUIET_DBFS = -45.0
 SILENCE_FLOOR_DBFS = -120.0
-DEFAULT_WIND_HZ = 150.0
-DEFAULT_TARGET_LUFS = -16.0
-DEFAULT_MODEL = Path.home() / ".cache" / "yt-pipeline" / "models" / "arnndn.rnnn"
 
 CODECS = {
     ".wav": ["-c:a", "pcm_s16le"],
@@ -104,19 +109,10 @@ def build_parser():
     return parser
 
 
-def _fmt(value):
-    text = f"{float(value):.6f}".rstrip("0").rstrip(".")
-    return text or "0"
-
-
 def _dbfs(rms):
     if rms <= 0:
         return SILENCE_FLOOR_DBFS
     return max(SILENCE_FLOOR_DBFS, 20.0 * math.log10(rms))
-
-
-def _escape_filter_value(value):
-    return value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace(",", "\\,")
 
 
 def _ffprobe_path():
@@ -266,45 +262,6 @@ def measure(samples, wind_hz):
     }
 
 
-def resolve_denoiser(requested, model_path):
-    """Return ``(denoiser, warnings)`` for the requested backend and model."""
-    if requested == "none":
-        return "none", []
-    if requested == "afftdn":
-        return "afftdn", []
-    if requested == "arnndn":
-        if model_path.is_file():
-            return "arnndn", []
-        raise AudioCleanError(
-            f"arnndn needs an RNNoise model file; pass --model PATH (a .rnnn file),"
-            f" no model at {model_path}"
-        )
-    if model_path.is_file():
-        return "arnndn", []
-    return "afftdn", [
-        f"no RNNoise model found at {model_path}, using afftdn (pass --model or --denoiser arnndn)"
-    ]
-
-
-def build_filters(denoiser, model_path, wind_hz, apply_highpass, apply_loudnorm, target_lufs):
-    """Return ``(filter strings, applied filter names)`` for the cleanup pass."""
-    filters = []
-    applied = []
-    if apply_highpass:
-        filters.append(f"highpass=f={_fmt(wind_hz)}")
-        applied.append("highpass")
-    if denoiser == "arnndn":
-        filters.append(f"arnndn=m={_escape_filter_value(str(model_path))}")
-        applied.append("arnndn")
-    elif denoiser == "afftdn":
-        filters.append("afftdn=nr=12")
-        applied.append("afftdn")
-    if apply_loudnorm:
-        filters.append(f"loudnorm=I={_fmt(target_lufs)}:TP=-1.5:LRA=11")
-        applied.append("loudnorm")
-    return filters, applied
-
-
 def encode_clean(input_path, out_path, info, filters):
     """Run the audio-only cleanup pass and replace ``out_path`` atomically."""
     extension = out_path.suffix.lower()
@@ -409,7 +366,10 @@ def run(
     if not force and _outputs_current(input_path, targets):
         return _summary("skipped", input_path, out_path, report_path, requested, None, None, [], [], started)
 
-    resolved_denoiser, warnings = resolve_denoiser(requested, model_path)
+    try:
+        resolved_denoiser, warnings = resolve_denoiser(requested, model_path)
+    except AmbienceError as exc:
+        raise AudioCleanError(str(exc)) from exc
     if analyse_only:
         warnings = []
     info = probe_audio_info(input_path)

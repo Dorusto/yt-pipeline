@@ -12,10 +12,13 @@ Reads ``quality/<stem>.json`` (required) plus ``motion/<stem>.json``,
 ``describe/<stem>.json`` and ``similarity.json`` (all optional) from the
 workspace and writes one ``shotlog.json`` validated against
 ``schemas/shotlog.schema.json``. Every quality segment becomes a scored
-candidate with a hook and a reason; the vision verdict supplies the effective
-role and motion label on uncertain segments. A self-contained ``shotlog.html``
-contact sheet is written next to it, with one base64 thumbnail per shot. No
-model is called. Sources are read-only; the outputs are written atomically.
+candidate with a hook and a reason — one candidate per content beat when
+describe split a long segment into beats — and the vision verdict supplies the
+effective role and motion label on uncertain segments, except a geometry
+``accidental`` whose role is final. A self-contained
+``shotlog.html`` contact sheet is written next to it, with one base64 thumbnail
+per shot. No model is called. Sources are read-only; the outputs are written
+atomically.
 """
 
 import argparse
@@ -142,18 +145,36 @@ def run(
         motion = _load_json(workspace_path / "motion" / f"{quality_file.stem}.json")
         describe_segments = _segments_by_id(_load_json(workspace_path / "describe" / f"{quality_file.stem}.json"))
         for segment in record["segments"]:
-            shots.append(
-                _build_shot(
-                    counter,
-                    record,
-                    segment,
-                    motion,
-                    describe_segments.get(segment.get("id")),
-                    similarity_map,
-                    weight_vision,
-                    weight_labels,
+            describe_segment = describe_segments.get(segment.get("id"))
+            beats = _split_beats(describe_segment)
+            if beats:
+                for beat in beats:
+                    shots.append(
+                        _build_shot(
+                            counter,
+                            record,
+                            segment,
+                            motion,
+                            describe_segment,
+                            similarity_map,
+                            weight_vision,
+                            weight_labels,
+                            beat=beat,
+                        )
+                    )
+            else:
+                shots.append(
+                    _build_shot(
+                        counter,
+                        record,
+                        segment,
+                        motion,
+                        describe_segment,
+                        similarity_map,
+                        weight_vision,
+                        weight_labels,
+                    )
                 )
-            )
     _apply_suppression(shots)
     weights = {
         "vision": weight_vision,
@@ -212,10 +233,28 @@ def main(argv=None):
     return exit_code
 
 
-def _build_shot(counter, record, segment, motion, describe_segment, similarity_map, weight_vision, weight_labels):
+def _split_beats(describe_segment):
+    """The content beats of a described segment, or [] when it is unsplit."""
+    if not _is_described(describe_segment):
+        return []
+    beats = describe_segment.get("beats") or []
+    return beats if len(beats) >= 2 else []
+
+
+def _build_shot(
+    counter,
+    record,
+    segment,
+    motion,
+    describe_segment,
+    similarity_map,
+    weight_vision,
+    weight_labels,
+    beat=None,
+):
     role, role_source, motion_label, label_source, confidence = _effective_labels(segment, describe_segment)
     uncertainty = bool(segment.get("uncertain"))
-    vision = _vision_fields(describe_segment)
+    vision = _vision_fields(describe_segment, beat)
     steadiness = _steadiness(segment, motion, role)
     defects = list(segment.get("defects") or [])
     eligible = _is_eligible(role, uncertainty)
@@ -228,13 +267,29 @@ def _build_shot(counter, record, segment, motion, describe_segment, similarity_m
         score = 0.0
         labels = 0.0
         vision_score = None
-    key = segment_key(counter, segment.get("id"))
+    segment_id = segment.get("id")
+    start_s = segment["start_s"]
+    end_s = segment["end_s"]
+    beat_of = None
+    beat_id = None
+    beat_label = None
+    if beat is not None:
+        beat_of = segment_id
+        beat_id = beat.get("id")
+        beat_label = beat.get("label")
+        segment_id = f"{segment_id}{beat_id}"
+        start_s = beat["start_s"]
+        end_s = beat["end_s"]
+    key = segment_key(counter, segment_id)
     return {
         "key": key,
         "clip": record.get("file", ""),
-        "segment_id": segment.get("id"),
-        "start_s": segment["start_s"],
-        "end_s": segment["end_s"],
+        "segment_id": segment_id,
+        "beat_of": beat_of,
+        "beat_id": beat_id,
+        "beat_label": beat_label,
+        "start_s": start_s,
+        "end_s": end_s,
         "eligible": eligible,
         "role": role,
         "role_source": role_source,
@@ -254,7 +309,7 @@ def _build_shot(counter, record, segment, motion, describe_segment, similarity_m
         "score": score,
         "scores": {"vision": vision_score, "labels": labels},
         "hook": _hook(vision, role, motion_label),
-        "reason": _reason(vision, motion_label, label_source, role, defects, eligible),
+        "reason": _reason(vision, motion_label, label_source, role, defects, eligible, beat_label),
         "similar_to": list(similarity_map.get(key, [])),
         "defects": [defect.get("name") for defect in defects],
         "suppressed_by": None,
@@ -262,29 +317,35 @@ def _build_shot(counter, record, segment, motion, describe_segment, similarity_m
 
 
 def _effective_labels(segment, describe_segment):
-    if _is_described(describe_segment) and describe_segment.get("verdict"):
-        verdict = describe_segment["verdict"]
-        return (
-            verdict.get("role"),
-            "verdict",
-            verdict.get("motion_label"),
-            "verdict",
-            verdict.get("confidence"),
-        )
-    motion_label = segment.get("motion_label")
-    if motion_label is None:
-        motion_label = "static"
-    return segment.get("role"), "geometry", motion_label, "geometry", segment.get("confidence")
+    geometry_role = segment.get("role")
+    geometry_motion = segment.get("motion_label")
+    if geometry_motion is None:
+        geometry_motion = "static"
+    verdict = describe_segment.get("verdict") if _is_described(describe_segment) else None
+    if verdict is None:
+        return geometry_role, "geometry", geometry_motion, "geometry", segment.get("confidence")
+    if geometry_role == "accidental":
+        motion_label = verdict.get("motion_label")
+        if motion_label is None:
+            return geometry_role, "geometry", geometry_motion, "geometry", segment.get("confidence")
+        return geometry_role, "geometry", motion_label, "verdict", verdict.get("confidence")
+    return (
+        verdict.get("role"),
+        "verdict",
+        verdict.get("motion_label"),
+        "verdict",
+        verdict.get("confidence"),
+    )
 
 
 def _is_described(describe_segment):
     return isinstance(describe_segment, dict) and describe_segment.get("status") == "described"
 
 
-def _vision_fields(describe_segment):
+def _vision_fields(describe_segment, beat=None):
     if not _is_described(describe_segment):
         return None
-    return {
+    fields = {
         "description": describe_segment.get("description"),
         "summary": describe_segment.get("summary"),
         "tags": list(describe_segment.get("tags") or []),
@@ -294,6 +355,14 @@ def _vision_fields(describe_segment):
         "interest": describe_segment.get("interest"),
         "hero": describe_segment.get("hero"),
     }
+    if beat is not None:
+        if beat.get("summary") is not None:
+            fields["summary"] = beat.get("summary")
+        if beat.get("interest") is not None:
+            fields["interest"] = beat.get("interest")
+        if beat.get("hero") is not None:
+            fields["hero"] = beat.get("hero")
+    return fields
 
 
 def _vision_score(vision):
@@ -349,6 +418,8 @@ def _fused_score(vision, labels, weight_vision, weight_labels):
 
 
 def _is_eligible(role, uncertain):
+    if role == "accidental":
+        return False
     return not (role in INELIGIBLE_ROLES and not uncertain)
 
 
@@ -363,8 +434,10 @@ def _hook(vision, role, motion_label):
     return f"{role} · {motion_label}"
 
 
-def _reason(vision, motion_label, label_source, role, defects, eligible):
+def _reason(vision, motion_label, label_source, role, defects, eligible, beat_label=None):
     parts = []
+    if beat_label:
+        parts.append(str(beat_label))
     interest = vision.get("interest") if vision is not None else None
     parts.append(f"interest {interest}" if interest is not None else "no description")
     if vision is not None and vision.get("hero"):

@@ -293,7 +293,7 @@ def test_confident_ineligible_role_is_zeroed(tmp_path, role):
     assert shot["reason"].endswith("not eligible")
 
 
-@pytest.mark.parametrize("role", ["accidental", "setup", "teardown"])
+@pytest.mark.parametrize("role", ["setup", "teardown"])
 def test_uncertain_ineligible_role_stays_eligible(tmp_path, role):
     segment = quality_segment("s1", 0.0, 10.0, role=role, confidence=0.6, uncertain=True)
     data, _ = build(tmp_path, segments=[segment])
@@ -303,7 +303,17 @@ def test_uncertain_ineligible_role_stays_eligible(tmp_path, role):
     assert not shot["reason"].endswith("not eligible")
 
 
-def test_verdict_can_make_uncertain_accidental_eligible(tmp_path):
+def test_uncertain_accidental_is_ineligible(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0, role="accidental", confidence=0.6, uncertain=True)
+    data, _ = build(tmp_path, segments=[segment])
+    shot = data["shots"][0]
+    assert shot["role"] == "accidental"
+    assert shot["role_source"] == "geometry"
+    assert shot["eligible"] is False
+    assert shot["score"] == 0.0
+
+
+def test_geometry_accidental_role_is_final(tmp_path):
     segment = quality_segment(
         "s1", 0.0, 10.0, role="accidental", confidence=0.65, motion_label="complex_motion", uncertain=True
     )
@@ -315,12 +325,33 @@ def test_verdict_can_make_uncertain_accidental_eligible(tmp_path):
         uncertain=True,
         role="accidental",
         motion_label="complex_motion",
-        verdict={"role": "accidental", "motion_label": "complex_motion", "confidence": 0.5, "note": "x"},
+        verdict={"role": "move", "motion_label": "pan_left", "confidence": 0.6, "note": "x"},
     )
     data, _ = build(tmp_path, segments=[segment], describe_segments=[describe])
     shot = data["shots"][0]
-    assert shot["eligible"] is True
-    assert shot["role_source"] == "verdict"
+    assert shot["role"] == "accidental"
+    assert shot["role_source"] == "geometry"
+    assert shot["eligible"] is False
+    assert shot["score"] == 0.0
+
+
+def test_geometry_accidental_keeps_verdict_motion_label(tmp_path):
+    segment = quality_segment(
+        "s1", 0.0, 10.0, role="accidental", confidence=0.65, motion_label="complex_motion", uncertain=True
+    )
+    describe = described_segment(
+        "s1",
+        0.0,
+        10.0,
+        interest=68,
+        uncertain=True,
+        role="accidental",
+        motion_label="complex_motion",
+        verdict={"role": "move", "motion_label": "pan_left", "confidence": 0.6, "note": "x"},
+    )
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe])
+    shot = data["shots"][0]
+    assert shot["motion_label"] == "pan_left"
     assert shot["label_source"] == "verdict"
 
 
@@ -639,3 +670,89 @@ def test_shotlog_still_validates_with_html(tmp_path):
     data, _ = build(tmp_path, clip_path=clip)
     assert validate(data, "shotlog") == []
     assert (tmp_path / "shotlog.html").exists()
+
+
+def test_split_segment_yields_one_shot_per_beat(tmp_path):
+    segment = quality_segment("s7", 20.0, 160.0, role="move", confidence=0.8, motion_label="travel_forward")
+    described = described_segment(
+        "s7",
+        20.0,
+        160.0,
+        interest=70,
+        hero=True,
+        subject="tunnel",
+        description="boat rides through the tunnel",
+        summary="boat rides through the graffiti tunnel",
+        tags=["boat", "tunnel"],
+    )
+    described["beats"] = [
+        {"id": "b1", "start_s": 20.0, "end_s": 60.0, "label": "approach", "summary": "boat approaches the tunnel mouth", "interest": 82, "hero": True},
+        {"id": "b2", "start_s": 60.0, "end_s": 120.0, "label": "inside", "summary": "inside the graffiti tunnel", "interest": 55, "hero": False},
+        {"id": "b3", "start_s": 120.0, "end_s": 160.0, "label": "exit", "summary": "tunnel exit into the light", "interest": 90, "hero": True},
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    keys = [shot["key"] for shot in data["shots"]]
+    assert keys == ["0081/s7b1", "0081/s7b2", "0081/s7b3"]
+    first = data["shots"][0]
+    assert first["segment_id"] == "s7b1"
+    assert first["beat_of"] == "s7"
+    assert first["beat_id"] == "b1"
+    assert first["beat_label"] == "approach"
+    assert first["start_s"] == 20.0
+    assert first["end_s"] == 60.0
+    assert first["summary"] == "boat approaches the tunnel mouth"
+    assert first["interest"] == 82
+    assert first["hero"] is True
+    second = data["shots"][1]
+    assert second["summary"] == "inside the graffiti tunnel"
+    assert second["hero"] is False
+    assert second["role"] == "move"
+    assert second["motion_label"] == "travel_forward"
+    assert all(shot["eligible"] for shot in data["shots"])
+    assert validate(data, "shotlog") == []
+
+
+def test_beat_vision_falls_back_to_parent(tmp_path):
+    segment = quality_segment("s7", 20.0, 60.0, role="move", confidence=0.8, motion_label="travel_forward")
+    described = described_segment(
+        "s7",
+        20.0,
+        60.0,
+        interest=70,
+        hero=True,
+        description="boat rides through the tunnel",
+        summary="boat rides through the tunnel",
+    )
+    described["beats"] = [
+        {"id": "b1", "start_s": 20.0, "end_s": 40.0, "label": "approach", "summary": None, "interest": None, "hero": None},
+        {"id": "b2", "start_s": 40.0, "end_s": 60.0, "label": "exit", "summary": None, "interest": None, "hero": None},
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    first = data["shots"][0]
+    assert first["summary"] == "boat rides through the tunnel"
+    assert first["interest"] == 70
+    assert first["hero"] is True
+    assert first["description"] == "boat rides through the tunnel"
+
+
+def test_unsplit_segment_stays_one_shot(tmp_path):
+    segment = quality_segment("s7", 20.0, 60.0, role="move", confidence=0.8, motion_label="travel_forward")
+    described = described_segment("s7", 20.0, 60.0, interest=70, hero=True)
+    described["beats"] = [
+        {"id": "b1", "start_s": 20.0, "end_s": 60.0, "label": "transit", "summary": "one moment", "interest": 70, "hero": True},
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    assert [shot["key"] for shot in data["shots"]] == ["0081/s7"]
+    assert data["shots"][0]["beat_of"] is None
+
+
+def test_beat_reason_carries_the_beat_label(tmp_path):
+    segment = quality_segment("s7", 20.0, 60.0, role="move", confidence=0.8, motion_label="travel_forward")
+    described = described_segment("s7", 20.0, 60.0, interest=70)
+    described["beats"] = [
+        {"id": "b1", "start_s": 20.0, "end_s": 40.0, "label": "approach", "summary": "approach", "interest": 70, "hero": False},
+        {"id": "b2", "start_s": 40.0, "end_s": 60.0, "label": "exit", "summary": "exit", "interest": 70, "hero": False},
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    assert data["shots"][0]["reason"].startswith("approach · ")
+    assert data["shots"][1]["reason"].startswith("exit · ")
