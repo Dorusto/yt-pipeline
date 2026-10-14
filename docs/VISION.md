@@ -85,6 +85,7 @@ P0 = first usable version, P1 = next, P2 = later.
 | Overnight edit on the homelab, draft ready by morning | Insta360 AI Director, Eddie AI | A+B | P1 |
 | Feedback loop: approve / reject trains our own scorer | Opus Clip | A+B | P1 |
 | Label corrections in the editor feed the ground-truth eval | — (our differentiator) | A+B | P0 (D3) |
+| Upload page: drop clips and photos from the phone browser, name the project folder, write the brief; files land in the inbox and `inbox.py` (or Hermes on request) starts the recap — no sync app needed | — (homelab users, Doru 2026-10-14) | A+B | P0 (D3) |
 | Faces and smiles preference | DJI LightCut | A | P2 |
 | Export to Premiere / Resolve via OpenTimelineIO | CutBack, Eddie AI | A+B | P2 |
 
