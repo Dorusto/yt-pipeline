@@ -6,6 +6,7 @@ Usage:
     python scripts/llm_director.py --workspace DIR --brief-file brief.txt --json
     python scripts/llm_director.py --workspace DIR --brief "..." --dry-run
     python scripts/llm_director.py --workspace DIR --brief "..." --rounds 2 --out my_edit.json
+    python scripts/llm_director.py --workspace DIR --brief "..." --feedback "drop 0071/s2, tunnel longer"
 
 Reads ``shotlog.json``, ``ingest.json``, ``motion/<stem>.json`` and
 ``quality/<stem>.json`` from the workspace and runs a three-role LLM loop: the
@@ -137,6 +138,7 @@ def build_parser():
             "  python scripts/llm_director.py --workspace ~/Videos/ws --brief-file brief.txt --json\n"
             "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --dry-run\n"
             "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --rounds 2 --out my_edit.json\n"
+            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -178,6 +180,16 @@ def build_parser():
         type=float,
         default=None,
         help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
+    )
+    parser.add_argument(
+        "--feedback",
+        action="append",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "feedback in plain words against the current edit's short ids, "
+            'e.g. "drop 0071/s2, tunnel longer"; repeatable'
+        ),
     )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -789,7 +801,65 @@ def complete_plan(answer, brief_text, hints, content_type):
     return plan
 
 
-def build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s):
+def append_feedback_lines(workspace, feedback):
+    """Append one JSON line per feedback text to WORKSPACE/feedback.jsonl (append-only)."""
+    path = Path(workspace) / "feedback.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for text in feedback:
+            row = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "action": "feedback",
+                "text": text,
+                "tool": TOOL,
+            }
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def previous_edit_context(workspace):
+    """The previous edit's used slots and rejected candidates, for the feedback block."""
+    data = load_json(Path(workspace) / "edit.json")
+    if not isinstance(data, dict):
+        return None
+    used = []
+    for slot in data.get("video") or []:
+        row = {"id": slot.get("id"), "shot_key": slot.get("shot_key")}
+        if slot.get("kind") == "photo":
+            row["photo"] = slot.get("photo")
+            row["duration_s"] = slot.get("duration_s")
+        else:
+            row["clip"] = slot.get("clip")
+            row["in_s"] = slot.get("in_s")
+            row["out_s"] = slot.get("out_s")
+        row["reason"] = slot.get("reason")
+        used.append(row)
+    rejected = [
+        {"id": row.get("id"), "reason": row.get("reason")}
+        for row in data.get("decisions") or []
+        if isinstance(row, dict) and row.get("status") == "rejected"
+    ]
+    return {"used": used, "rejected": rejected}
+
+
+def build_feedback_block(feedback, workspace):
+    """The user-message block that carries the feedback and the short ids it may name."""
+    lines = ["Feedback to apply (plain words, refers to the short ids below):"]
+    lines.extend(f"- {text}" for text in feedback)
+    lines.append("")
+    previous = previous_edit_context(workspace)
+    if previous is None:
+        lines.append("Previous edit: none (no previous edit.json; the feedback refers to no existing ids)")
+        return "\n".join(lines)
+    lines.append("Previous edit (the feedback refers to these ids):")
+    lines.append(json.dumps(previous["used"], indent=2, ensure_ascii=False))
+    lines.append(
+        "Rejected candidates the feedback may name: "
+        + json.dumps(previous["rejected"], ensure_ascii=False)
+    )
+    return "\n".join(lines)
+
+
+def build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s, feedback_block=None):
     lines = [
         f"Brief: {brief_text}",
         f"Content type: {content_type}",
@@ -797,6 +867,10 @@ def build_screenwriter_user(brief_text, content_type, hints, rows, important_max
         f"Order: {hints.get('order')}",
         f"Pacing: {hints.get('pacing')}",
         f"Hero cap (important_max_s): {important_max_s} s",
+    ]
+    if feedback_block:
+        lines += ["", feedback_block]
+    lines += [
         "",
         "Eligible shotlog rows:",
         json.dumps(rows, indent=2),
@@ -817,7 +891,7 @@ def editor_facts(plan, facts):
     return result
 
 
-def build_editor_user(plan, facts, review, pacing=None):
+def build_editor_user(plan, facts, review, pacing=None, feedback_block=None):
     lines = []
     if pacing:
         lines.append(
@@ -826,6 +900,8 @@ def build_editor_user(plan, facts, review, pacing=None):
             f"{pacing.get('slot_min')}-{pacing.get('slot_max')} s."
         )
         lines.append("")
+    if feedback_block:
+        lines += [feedback_block, ""]
     lines += [
         "Plan:",
         json.dumps(
@@ -845,7 +921,7 @@ def build_editor_user(plan, facts, review, pacing=None):
     return "\n".join(lines)
 
 
-def build_reviewer_user(brief_text, plan, record, violations, pacing=None):
+def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedback_block=None):
     lines = []
     if pacing:
         lines.append(
@@ -854,6 +930,8 @@ def build_reviewer_user(brief_text, plan, record, violations, pacing=None):
             f"{pacing.get('slot_min')}-{pacing.get('slot_max')} s."
         )
         lines.append("")
+    if feedback_block:
+        lines += [feedback_block, ""]
     lines += [
         f"Brief: {brief_text}",
         "",
@@ -876,12 +954,12 @@ def build_reviewer_user(brief_text, plan, record, violations, pacing=None):
     return "\n".join(lines)
 
 
-def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, important_max_s):
+def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, important_max_s, feedback_block=None):
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
-            "content": build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s),
+            "content": build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s, feedback_block),
         },
     ]
     for _ in range(2):
@@ -895,10 +973,10 @@ def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, i
     return None
 
 
-def editor_round(client, prompt, plan, facts, review, state, build_record_fn):
+def editor_round(client, prompt, plan, facts, review, state, build_record_fn, feedback_block=None):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": build_editor_user(plan, facts, review, plan_pacing(plan))},
+        {"role": "user", "content": build_editor_user(plan, facts, review, plan_pacing(plan), feedback_block)},
     ]
     for _ in range(2):
         response = call_client(client, messages, state)
@@ -914,10 +992,15 @@ def editor_round(client, prompt, plan, facts, review, state, build_record_fn):
     return None
 
 
-def reviewer(client, prompt, brief_text, plan, record, violations, state):
+def reviewer(client, prompt, brief_text, plan, record, violations, state, feedback_block=None):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": build_reviewer_user(brief_text, plan, record, violations, plan_pacing(plan))},
+        {
+            "role": "user",
+            "content": build_reviewer_user(
+                brief_text, plan, record, violations, plan_pacing(plan), feedback_block
+            ),
+        },
     ]
     for _ in range(2):
         response = call_client(client, messages, state)
@@ -1735,8 +1818,60 @@ def run(
     beats=None,
     music=None,
     ambient_under_music_db=None,
+    feedback=None,
 ):
     """Run the three-role loop and return ``(summary, exit_code)``."""
+    summary, code = _run_loop(
+        workspace,
+        brief=brief,
+        brief_file=brief_file,
+        out=out,
+        plan_out=plan_out,
+        rounds=rounds,
+        dry_run=dry_run,
+        fallback_rules=fallback_rules,
+        model=model,
+        budget_usd=budget_usd,
+        force=force,
+        config=config,
+        client=client,
+        important_max_s=important_max_s,
+        target_duration_s=target_duration_s,
+        order=order,
+        pacing=pacing,
+        beats=beats,
+        music=music,
+        ambient_under_music_db=ambient_under_music_db,
+        feedback=feedback,
+    )
+    summary["feedback"] = list(feedback or [])
+    return summary, code
+
+
+def _run_loop(
+    workspace,
+    brief=None,
+    brief_file=None,
+    out=None,
+    plan_out=None,
+    rounds=MAX_ROUNDS,
+    dry_run=False,
+    fallback_rules=True,
+    model=None,
+    budget_usd=None,
+    force=False,
+    config=None,
+    client=None,
+    important_max_s=None,
+    target_duration_s=None,
+    order=None,
+    pacing=None,
+    beats=None,
+    music=None,
+    ambient_under_music_db=None,
+    feedback=None,
+):
+    """Run the three-role loop body; ``run`` adds the ``feedback`` summary key."""
     started = time.monotonic()
     workspace_path = Path(workspace).expanduser().resolve()
     if not workspace_path.is_dir():
@@ -1756,6 +1891,10 @@ def run(
     if rounds < 1:
         raise LLMDirectorError("--rounds must be at least 1")
     rounds = min(rounds, MAX_ROUNDS)
+    feedback = list(feedback or [])
+    if feedback:
+        append_feedback_lines(workspace_path, feedback)
+    feedback_block = build_feedback_block(feedback, workspace_path) if feedback else None
 
     out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
     plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
@@ -1770,7 +1909,7 @@ def run(
     if pacing is not None:
         hints["pacing"] = pacing
 
-    if not force and not dry_run and is_up_to_date(out_path, workspace_path, brief_path, plan_path, beats_path):
+    if not force and not dry_run and not feedback and is_up_to_date(out_path, workspace_path, brief_path, plan_path, beats_path):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
         total = sum(slot_duration(slot) for slot in slots)
@@ -1834,7 +1973,7 @@ def run(
     record = None
     plan = None
     try:
-        plan = screenwriter(client, screenwriter_prompt, brief_text, content_type, hints, shotlog_rows, state, effective_important_max_s)
+        plan = screenwriter(client, screenwriter_prompt, brief_text, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block)
         if plan is None:
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
@@ -1854,11 +1993,11 @@ def run(
         review = None
         for round_index in range(rounds):
             rounds_used = round_index + 1
-            record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn)
+            record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block)
             if record is None:
                 raise LoopFailure("editor produced no valid edit")
             violations = validate_edit(record, plan, facts, effective_important_max_s)
-            verdict = reviewer(client, reviewer_prompt, brief_text, plan, record, violations, state)
+            verdict = reviewer(client, reviewer_prompt, brief_text, plan, record, violations, state, feedback_block)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
             if verdict.get("approved") is True and not violations:
@@ -1958,6 +2097,7 @@ def main(argv=None):
             beats=args.beats,
             music=args.music,
             ambient_under_music_db=args.ambient_under_music_db,
+            feedback=args.feedback,
         )
     except (LLMDirectorError, ConfigError, SchemaError, LLMError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

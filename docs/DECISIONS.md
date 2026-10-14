@@ -1512,3 +1512,34 @@ each other and makes "short recap = more, shorter shots" a testable number
 instead of a prompt wish. Interpolation between the three anchors the spec
 gives is the smallest thing that covers the web app's 30 s/60 s/90 s/3 min
 length options.
+
+---
+
+## [2026-10-15] D2-7 feedback loop: `--feedback` re-runs only the edit
+
+**Context:** Doru must be able to talk to the agent about its own analysis
+("drop 0071/s2, tunnel longer"). The short ids exist since the decisions work;
+now the director has to accept them back.
+
+**Decision.** `llm_director --feedback TEXT` (repeatable):
+- appends one JSON line per flag to `WORKSPACE/feedback.jsonl`
+  (`{"ts", "action": "feedback", "text", "tool"}`, append-only, ~200 bytes) —
+  this is the first writer of the learning store, which the D2 rules already
+  reserved;
+- forces the re-run for that invocation only (the up-to-date check is skipped);
+- puts a "Feedback to apply / Previous edit / Rejected candidates" block into
+  the screenwriter, editor **and reviewer** user messages, built from the
+  existing `edit.json` `video[]` + `decisions[]`, so every short id in the
+  feedback resolves;
+- adds `"feedback": [...]` to the `--json` summary.
+
+`recap.py --feedback` forwards the flags and, when any is present, runs
+`llm_director` and `render` even if up to date — the analysis stations keep the
+normal skip rule, so a re-edit costs only the edit + the render.
+`render_final`/`export_kdenlive` need no special case: their mtime rule already
+fires when `edit.json` is rewritten.
+
+**Rationale:** feedback as a flag keeps the loop scriptable from Hermes/OpenCode
+without a new RPC; the id block is what makes plain words like "0071/s2"
+unambiguous; `feedback.jsonl` is written first and read later (the profile work
+is not in this phase).

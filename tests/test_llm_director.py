@@ -1548,3 +1548,142 @@ def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
     assert 2.0 <= record["video"][1]["duration_s"] <= 4.0
     assert not [warning for warning in warnings if "not snapped" in warning]
     assert stats["unsnapped"] == 0
+
+
+def write_previous_edit(workspace):
+    write_json(
+        workspace / "edit.json",
+        {
+            "schema_version": "0.1",
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "tool": "test",
+            "brief": {"text": BRIEF},
+            "sources": [],
+            "video": [
+                {
+                    "id": "v1",
+                    "shot_key": "0071/s2",
+                    "clip": "clip_0071_x.mp4",
+                    "in_s": 4.0,
+                    "out_s": 9.5,
+                    "reason": "the tunnel",
+                },
+                {
+                    "id": "v2",
+                    "shot_key": "0057/s1",
+                    "clip": "clip_0057_x.mp4",
+                    "in_s": 2.0,
+                    "out_s": 8.0,
+                    "reason": "the bay",
+                },
+            ],
+            "decisions": [
+                {"id": "0071/s2", "status": "used", "reason": "the tunnel", "slot": "v1"},
+                {"id": "0072/s3", "status": "rejected", "reason": "low score"},
+            ],
+        },
+    )
+
+
+def feedback_jsonl_rows(workspace):
+    path = workspace / "feedback.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_feedback_block_reaches_screenwriter_and_editor(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    write_previous_edit(workspace)
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(
+        workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2, tunnel longer"]
+    )
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["feedback"] == ["drop 0071/s2, tunnel longer"]
+    screenwriter_user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
+    assert "Feedback to apply" in screenwriter_user
+    assert "drop 0071/s2, tunnel longer" in screenwriter_user
+    assert "Previous edit (the feedback refers to these ids):" in screenwriter_user
+    assert '"shot_key": "0071/s2"' in screenwriter_user
+    assert '"id": "0072/s3"' in screenwriter_user
+    assert "low score" in screenwriter_user
+    editor_user = calls_for(client, "# Editor")[0]["messages"][1]["content"]
+    assert "Feedback to apply" in editor_user
+    assert "drop 0071/s2, tunnel longer" in editor_user
+    assert "0071/s2" in editor_user
+
+
+def test_feedback_appends_one_line_per_flag(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=first, feedback=["drop 0071/s2", "tunnel longer"])
+    rows = feedback_jsonl_rows(workspace)
+    assert [row["text"] for row in rows] == ["drop 0071/s2", "tunnel longer"]
+    for row in rows:
+        assert row["action"] == "feedback"
+        assert row["tool"] == "scripts/llm_director.py"
+        assert row["ts"]
+    second = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=second, feedback=["drop 0071/s2"])
+    rows = feedback_jsonl_rows(workspace)
+    assert len(rows) == 3
+    assert rows[0]["text"] == "drop 0071/s2"
+    assert rows[2]["text"] == "drop 0071/s2"
+
+
+def test_feedback_forces_rerun_of_up_to_date_edit(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=first)
+    second = StubClient([])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=second)
+    assert code == 0
+    assert summary["status"] == "skipped"
+    assert second.calls == []
+    third = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=third, feedback=["keep it as it is"])
+    assert code == 0
+    assert summary["status"] == "written"
+    assert len(third.calls) == 3
+    assert summary["feedback"] == ["keep it as it is"]
+
+
+def test_feedback_without_previous_edit_still_reaches_the_screenwriter(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
+    assert code == 0
+    assert summary["status"] == "written"
+    screenwriter_user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
+    assert "Feedback to apply" in screenwriter_user
+    assert "drop 0071/s2" in screenwriter_user
+    assert "no previous edit.json" in screenwriter_user
+
+
+def test_feedback_recorded_even_when_the_loop_falls_back(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(["not json at all", "still not json"])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
+    assert code == 0
+    assert summary["status"] == "fallback"
+    rows = feedback_jsonl_rows(workspace)
+    assert [row["text"] for row in rows] == ["drop 0071/s2"]
+
+
+def test_no_feedback_keeps_summary_shape(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["feedback"] == []
+
+
+def test_help_lists_feedback():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--feedback" in result.stdout
+    assert "drop 0071/s2" in result.stdout

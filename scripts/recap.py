@@ -4,6 +4,7 @@
 Usage:
     python scripts/recap.py --source ~/media/raw --brief "about 90 seconds, calm start"
     python scripts/recap.py --source ~/media/raw --brief-file brief.txt --final --json
+    python scripts/recap.py --source ~/media/raw --brief "..." --feedback "drop 0071/s2" --json
 
 ``recap.py`` is the single entry point: it chains the existing station CLIs as
 subprocesses in order (proxy, ingest, motion, quality, describe, similarity,
@@ -53,6 +54,7 @@ class Context:
         ambient_under_music_db=None,
         notify=False,
         preview_base=None,
+        feedback=None,
     ):
         self.source = source
         self.workspace = workspace
@@ -67,6 +69,7 @@ class Context:
         self.ambient_under_music_db = ambient_under_music_db
         self.notify = notify
         self.preview_base = preview_base
+        self.feedback = list(feedback or [])
 
 
 def build_parser():
@@ -75,7 +78,8 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--music MUSIC] [--force] [--notify] [--preview-base PREVIEW_BASE] [--json]"
+            " [--music MUSIC] [--feedback TEXT] [--force] [--notify]"
+            " [--preview-base PREVIEW_BASE] [--json]"
         ),
         description=(
             "Run every pipeline station from a folder of clips and a brief to a recap MP4."
@@ -120,6 +124,17 @@ def build_parser():
         type=float,
         default=None,
         help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
+    )
+    parser.add_argument(
+        "--feedback",
+        action="append",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "feedback in plain words against the current edit's short ids, "
+            'e.g. "drop 0071/s2, tunnel longer"; repeatable; re-runs only '
+            "llm_director and render"
+        ),
     )
     parser.add_argument(
         "--force",
@@ -286,6 +301,8 @@ def director_args(ctx):
         "--brief-file",
         str(ctx.workspace / "brief.txt"),
     ]
+    for text in ctx.feedback:
+        args += ["--feedback", text]
     if ctx.music is not None:
         args += ["--beats", str(ctx.workspace / "beats.json"), "--music", str(ctx.music)]
     if ctx.ambient_under_music_db is not None:
@@ -621,7 +638,8 @@ def run(ctx):
     failed_name = None
     for index, station in enumerate(stations, start=1):
         name = station["name"]
-        if not ctx.force and is_up_to_date(name, ctx):
+        rerun = name in ("llm_director", "render") and ctx.feedback
+        if not ctx.force and not rerun and is_up_to_date(name, ctx):
             entries.append(
                 {
                     "name": name,
@@ -769,6 +787,7 @@ def main(argv=None):
         ambient_under_music_db=args.ambient_under_music_db,
         notify=args.notify,
         preview_base=args.preview_base,
+        feedback=args.feedback,
     )
     summary = run(ctx)
     if args.json:

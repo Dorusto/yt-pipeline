@@ -326,7 +326,7 @@ def test_force_and_budget_forwarded(tmp_path, monkeypatch, capsys):
     assert "--force" not in commands["ingest"][0]
 
 
-def make_context(tmp_path, music=None, final=False):
+def make_context(tmp_path, music=None, final=False, feedback=None):
     source = tmp_path / "raw"
     source.mkdir(exist_ok=True)
     workspace = tmp_path / "workspace"
@@ -342,6 +342,7 @@ def make_context(tmp_path, music=None, final=False):
         python=sys.executable,
         repo_root=recap.REPO_ROOT,
         music=music,
+        feedback=feedback,
     )
 
 
@@ -374,6 +375,43 @@ def test_without_music_no_beats_or_flags(tmp_path):
         argv = station["argv"][0]
         assert "--beats" not in argv
         assert "--music" not in argv
+
+
+def test_feedback_forwarded_to_director_station(tmp_path):
+    ctx = make_context(tmp_path, feedback=["drop 0071/s2", "tunnel longer"])
+    stations = recap.build_stations(ctx)
+    command = next(s for s in stations if s["name"] == "llm_director")["argv"][0]
+    assert command.count("--feedback") == 2
+    assert "drop 0071/s2" in command
+    assert "tunnel longer" in command
+    for name in ("proxy", "render"):
+        argv = next(s for s in stations if s["name"] == name)["argv"][0]
+        assert "--feedback" not in argv
+
+
+def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    capsys.readouterr()
+    recorder.calls.clear()
+    assert (
+        run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
+        == 0
+    )
+    assert recorder.calls == ["llm_director", "render"]
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    statuses = {entry["name"]: entry["status"] for entry in summary["stations"]}
+    assert statuses["llm_director"] == "done"
+    assert statuses["render"] == "done"
+    for name in ("proxy", "ingest", "motion", "quality", "describe", "similarity", "index", "router"):
+        assert statuses[name] == "skip"
+    commands = dict(recorder.argvs)
+    assert "--feedback" in commands["llm_director"][0]
+    assert "drop 0071/s2" in commands["llm_director"][0]
 
 
 class NotifyRecorder:
