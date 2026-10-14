@@ -79,7 +79,7 @@ P0 = first usable version, P1 = next, P2 = later.
 | Audience signal for Shorts (YouTube "Most replayed") | Opus Clip workflow | B | P2 |
 | Frame grab, event grouping by day/place | Quik | A | P2 |
 | Project log: summary, topics, B-roll catalogue | Eddie AI | A+B | P0 (D1b) |
-| Automatic B-roll over talking-head | Eddie AI, Descript | B | P1 (D4) |
+| Automatic B-roll **from the user's own footage and photos**, matched to what is said: WhisperX word times → each sentence searched against shotlog descriptions/tags/embeddings, capture date narrows the search (the day being told), the voice continues while the matched shot plays 3-5 s. Market check 2026-10-15: Opus Clip, Submagic, Kapwing, Jupitrr, VEED and Descript use stock or generated B-roll, none clearly matches the user's own library — our differentiator | Eddie AI, Descript (stock/generated only) | B | P0 (D4, the Mode B wow moment) |
 | Speaker detection, take/topic chunking, retakes | CutBack Selects | B | P1 (D4) |
 | Multicam and audio sync without markers | CutBack Selects | A+B | P1 |
 | Overnight edit on the homelab, draft ready by morning | Insta360 AI Director, Eddie AI | A+B | P1 |
