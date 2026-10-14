@@ -7,6 +7,23 @@ date: 2026-10-14
 
 You give it a folder of raw clips and a brief in plain words. It analyses the footage once, picks and cuts the shots, and renders a video you can watch on the phone, open in Kdenlive or render at full quality. Every step is a separate command, so a human or an agent can run, inspect or re-run any one of them.
 
+## Quickstart
+
+```bash
+git clone https://github.com/Dorusto/yt-pipeline && cd yt-pipeline
+uv venv && uv pip install -r requirements.txt
+export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.ai/keys
+.venv/bin/python scripts/doctor.py --source ~/media/trip/raw
+.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace \
+    --brief "90 s, chronological, calm start, ambient sound only"
+# -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json and shotlog.html)
+# full quality from the originals + a Kdenlive project:
+.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
+# re-running skips finished stations; a new brief only redoes the edit
+```
+
+The long station-by-station section below is what `recap.py` chains for you.
+
 ## The picture
 
 ```mermaid
