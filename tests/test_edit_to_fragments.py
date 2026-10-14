@@ -148,7 +148,7 @@ def test_default_source_dir_and_kdenlive_out(tmp_path, capsys):
     rc, _, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
     assert rc == 0
     config = load_fragments(out)
-    assert config["source_dir"] == "/src/raw"
+    assert Path(config["source_dir"]) == Path("/src/raw")
     assert config["output"] == str(out.with_suffix(".kdenlive"))
 
 
