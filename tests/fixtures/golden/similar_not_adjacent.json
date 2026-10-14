@@ -206,17 +206,17 @@
     {
       "clip": "clip_0001_x.mp4",
       "in_s": 0.0,
-      "out_s": 6.0
+      "out_s": 2.09
     },
     {
       "clip": "clip_0002_x.mp4",
       "in_s": 0.0,
-      "out_s": 6.0
+      "out_s": 2.09
     },
     {
       "clip": "clip_0003_x.mp4",
       "in_s": 0.0,
-      "out_s": 6.0
+      "out_s": 2.09
     }
   ]
 }

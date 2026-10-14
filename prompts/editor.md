@@ -38,12 +38,14 @@ no extra keys.
    after `landing_at_s`. Keep the move through its landing — never end the slot
    before the move completes, and never plan the landing hold again as another
    slot.
-3. **Hero and semantic moves keep their whole window**, capped at 6.0 s: use
-   `in_s = window_in_s` and `out_s = window_out_s` when the window is 6 s or
-   shorter; when it is longer, keep the **tail** (the move must complete), so
-   `out_s = window_out_s` and `in_s = window_out_s - 6.0`.
+3. **Hero and semantic moves keep their whole window**, capped at the hero cap
+   for this edit (stated in the user message — 6 s on a long edit, less on a
+   short one): use `in_s = window_in_s` and `out_s = window_out_s` when the
+   window is within the cap; when it is longer, keep the **tail** (the move
+   must complete), so `out_s = window_out_s` and `in_s = window_out_s - cap`.
 4. **Ordinary shots follow the pacing** target of the slot, but never shorter
-   than 2.0 s and never longer than 12.0 s. When the shot is a landing phrase
+   than the slot minimum and never longer than the slot maximum stated in the
+   user message. When the shot is a landing phrase
    (rule 2) and the pacing target is shorter than the floor, keep the floor and
    trim the **head** instead: `out_s` at the floor, `in_s = out_s - target`.
 5. **No two slots from the same take back to back** unless their windows touch

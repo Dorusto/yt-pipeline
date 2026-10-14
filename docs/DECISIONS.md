@@ -1475,3 +1475,40 @@ explain.html and the web app all read the same reasons; a sidecar decisions
 file would have drifted. The shot key on the slot is what makes feedback
 ("drop 0071/s2") and the timeline's "source in/out versus the segment range"
 possible without re-deriving ids.
+
+---
+
+## [2026-10-15] D2-7 pacing table: shot length scales with the target length
+
+**Context:** the 20 s inbox recap had 4 shots of ~5 s; Doru wants a short recap
+to carry more, shorter shots. The old rule sized the slot count as
+`clamp(round(T/6), 4, 24)` and fixed the slot band at 2–12 s, which cannot
+reach 8–10 shots in 20 s.
+
+**Rule (implemented as `pacing_table(T)` in both directors, duplicated like the
+other small helpers).** Linearly interpolated between the anchors 20 s / 90 s /
+180 s, clamped outside: `slot_min` 1.5/2.0/2.5, `slot_target` 2.0/3.6/5.0,
+`slot_max` 2.5/5.0/6.0, `hero_max` 3.5/6.0/6.0. `hero_max = min(6,
+slot_target × 1.75)` — heroes stay the longest but shrink with the rest. Slot
+count `round(T / slot_target)` clamped to 4–32 (T=20 → 10 slots, T=90 → 25,
+T=180 → 32). `uniform` gives every slot `slot_target`; `calm-to-energy`
+interpolates from `slot_max` down to `slot_min`. Photo slots keep 2–4 s.
+
+**Flags become overrides.** `--min-slot-s`, `--max-slot-s`, `--calm-slot-s`,
+`--energy-slot-s`, `--important-max-s` default to `None` = "from the table"; an
+explicit value wins. `MIN_SLOT_S` in `llm_director` drops to 1.0 so a 1.5 s
+slot survives; `MAX_SLOT_S` 12.0 and `DEFAULT_IMPORTANT_MAX_S` 6.0 stay the
+outer bounds. The screenwriter/editor/reviewer prompts no longer hardcode 6 s
+or 2–12 s: the effective hero cap and slot band are stated in the user message.
+
+**Golden fixtures regenerated** (`tests/fixtures/golden/*.json`): the frozen
+`expected_slots` windows shrink with the new targets; the picks, order and
+grammar outcomes are unchanged (`grammar_violations == []` checked per file).
+A dense synthetic workspace (1 hero + 24 holds) proves 8–10 slots at 20 s and
+20–25 at 90 s.
+
+**Rationale:** one table keeps the rule-based and the LLM director honest with
+each other and makes "short recap = more, shorter shots" a testable number
+instead of a prompt wish. Interpolation between the three anchors the spec
+gives is the smallest thing that covers the web app's 30 s/60 s/90 s/3 min
+length options.

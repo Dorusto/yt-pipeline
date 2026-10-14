@@ -201,17 +201,17 @@
     {
       "clip": "clipO1.mp4",
       "in_s": 0.0,
-      "out_s": 3.0
+      "out_s": 2.0
     },
     {
       "clip": "clipH.mp4",
-      "in_s": 24.0,
+      "in_s": 26.5,
       "out_s": 30.0
     },
     {
       "clip": "clipO2.mp4",
       "in_s": 0.0,
-      "out_s": 3.0
+      "out_s": 2.0
     }
   ]
 }

@@ -818,7 +818,7 @@ def test_validator_catches_keep_whole_and_length():
 
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0)}
     plan = {"slot_plan": [{"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": False}]}
-    record = {"video": [{"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 1.0}]}
+    record = {"video": [{"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 0.5}]}
     violations = llm_director.validate_edit(record, plan, facts)
     assert any(item["rule"] == "length" for item in violations)
 
@@ -1094,6 +1094,100 @@ def test_window_ends_at_the_steady_motion_end(tmp_path):
 
 def test_important_cap_defaults_to_six():
     assert llm_director.DEFAULT_IMPORTANT_MAX_S == 6.0
+
+
+def test_pacing_table_at_the_anchors():
+    assert llm_director.pacing_table(20) == {
+        "slot_min": 1.5,
+        "slot_target": 2.0,
+        "slot_max": 2.5,
+        "hero_max": 3.5,
+        "n_slots": 10,
+    }
+    assert llm_director.pacing_table(90) == {
+        "slot_min": 2.0,
+        "slot_target": 3.6,
+        "slot_max": 5.0,
+        "hero_max": 6.0,
+        "n_slots": 25,
+    }
+    assert llm_director.pacing_table(180) == {
+        "slot_min": 2.5,
+        "slot_target": 5.0,
+        "slot_max": 6.0,
+        "hero_max": 6.0,
+        "n_slots": 32,
+    }
+
+
+def test_pacing_table_clamps_outside_the_anchors():
+    assert llm_director.pacing_table(10) == llm_director.pacing_table(20)
+    assert llm_director.pacing_table(240) == llm_director.pacing_table(180)
+
+
+def test_pacing_table_interpolates_between_the_anchors():
+    pacing = llm_director.pacing_table(60)
+    assert 1.5 < pacing["slot_min"] < 2.0
+    assert 2.0 < pacing["slot_target"] < 3.6
+    assert 2.5 < pacing["slot_max"] < 5.0
+    assert 3.5 < pacing["hero_max"] < 6.0
+    assert 10 < pacing["n_slots"] < 25
+
+
+def test_shot_facts_respect_pacing_clamps_for_a_short_brief(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    shotlog = llm_director.load_shotlog(workspace)
+    pacing = llm_director.pacing_table(20)
+    facts, _, _ = llm_director.build_shot_facts(
+        workspace, shotlog, pacing["hero_max"], None, pacing["slot_min"], pacing["slot_max"],
+    )
+    assert facts["0056/s1"]["target_s"] == 2.5
+    assert facts["0057/s1"]["target_s"] == 2.5
+    assert facts["0080/s1"]["target_s"] == 3.5
+    assert facts["0080/s1"]["keep_whole"] is True
+
+
+def short_plan_answer():
+    return json.dumps(
+        {
+            "logline": "a quick recap",
+            "structure": [{"id": "b1", "name": "All", "intent": "the day in brief", "target_s": 20.0}],
+            "slot_plan": [
+                {"id": "v1", "beat": "b1", "shot_key": "0056/s1", "target_s": 1.5, "why": "the wake", "keep_whole": False},
+                {"id": "v2", "beat": "b1", "shot_key": "0057/s1", "target_s": 2.0, "why": "the bay", "keep_whole": False},
+                {"id": "v3", "beat": "b1", "shot_key": "0080/s1", "target_s": 3.5, "why": "the cave", "keep_whole": True},
+            ],
+        }
+    )
+
+
+def short_editor_answer():
+    return json.dumps(
+        {
+            "slots": [
+                {"id": "v1", "shot_key": "0056/s1", "in_s": 0.0, "out_s": 1.5, "transition": "cut"},
+                {"id": "v2", "shot_key": "0057/s1", "in_s": 0.0, "out_s": 2.0, "transition": "crossfade"},
+                {"id": "v3", "shot_key": "0080/s1", "in_s": 16.5, "out_s": 20.0, "transition": "crossfade"},
+            ]
+        }
+    )
+
+
+def test_short_edit_allows_one_and_a_half_second_slots(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([short_plan_answer(), short_editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(
+        workspace, brief="about 20 seconds, chronological, ambient sound only", client=client
+    )
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["approved"] is True
+    assert summary["validator_violations"] == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    lengths = {slot["id"]: round(slot["out_s"] - slot["in_s"], 2) for slot in edit["video"]}
+    assert lengths["v1"] == 1.5
+    assert lengths["v2"] == 2.0
+    assert lengths["v3"] == 3.5
 
 
 def test_photo_fact_shape(tmp_path):

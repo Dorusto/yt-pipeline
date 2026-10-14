@@ -16,6 +16,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - An edit must not miss an eligible hero when one exists (golden invariant, tested on fixtures). — 2026-10-13 / 2026-10-14
 - Important-shot cap: default 6 s (was 8 s); the window ends where the steady motion ends, never on aimless movement after it. — 2026-10-14
 - Ordinary slot length comes from the brief's pacing (calm vs energetic) with a min/max; cut inside the steady range. — 2026-10-13
+- Pacing table (D2-7): shot length scales with the target length — 20 s → 8–10 shots of 1.5–2.5 s, 90 s → 20–25 shots of 2–5 s, 3 min → up to 6 s; hero and semantic-move slots stay the longest but shrink in proportion (hero cap `min(6, slot_target × 1.75)`); `--min-slot-s`/`--max-slot-s`/`--important-max-s` are overrides of the table. — 2026-10-15
 - Time-overlapping shots (>50% of the shorter) keep the higher score; the loser is suppressed. — 2026-10-13
 - Long segments (>20 s) split into content beats: `describe` samples a frame every ~5 s, marks scene changes; each beat becomes its own candidate. — 2026-10-14
 - The screenwriter's menu is the cuttable pool: only windows the candidacy rule above allows. — 2026-10-13

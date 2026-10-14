@@ -66,6 +66,7 @@ PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
 BEAT_SNAP_FRACTION = 0.5
 SNAP_MIN_SLOT_S = 0.5
+DEFAULT_IMPORTANT_MAX_S = 6.0
 
 
 class DirectorError(RuntimeError):
@@ -95,16 +96,39 @@ def build_parser():
     parser.add_argument("--target-duration-s", type=float, default=90.0, help="target edit length in seconds")
     parser.add_argument("--order", choices=["chronological", "score"], default="chronological")
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default="calm-to-energy")
-    parser.add_argument("--min-slot-s", type=float, default=2.0, help="drop windows shorter than this")
-    parser.add_argument("--max-slot-s", type=float, default=12.0, help="cap a slot at this many seconds")
+    parser.add_argument(
+        "--min-slot-s",
+        type=float,
+        default=None,
+        help="drop windows shorter than this (default: from the pacing table)",
+    )
+    parser.add_argument(
+        "--max-slot-s",
+        type=float,
+        default=None,
+        help="cap a slot at this many seconds (default: from the pacing table)",
+    )
     parser.add_argument(
         "--important-max-s",
         type=float,
-        default=6.0,
-        help="longest a hero or semantic-move slot may be (default 6.0)",
+        default=None,
+        help=(
+            "longest a hero or semantic-move slot may be "
+            "(default: from the pacing table, 6.0 s ceiling)"
+        ),
     )
-    parser.add_argument("--calm-slot-s", type=float, default=6.0, help="target length of the opening slots in calm-to-energy")
-    parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
+    parser.add_argument(
+        "--calm-slot-s",
+        type=float,
+        default=None,
+        help="target length of the opening slots in calm-to-energy (default: from the pacing table)",
+    )
+    parser.add_argument(
+        "--energy-slot-s",
+        type=float,
+        default=None,
+        help="target length of the closing slots in calm-to-energy (default: from the pacing table)",
+    )
     parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
     parser.add_argument(
@@ -661,6 +685,41 @@ def merge_contiguous(slots):
     return merged
 
 
+PACING_ANCHORS = (
+    (20.0, 1.5, 2.0, 2.5),
+    (90.0, 2.0, 3.6, 5.0),
+    (180.0, 2.5, 5.0, 6.0),
+)
+
+
+def pacing_table(target_duration_s):
+    """Slot pacing for a brief's target duration: per-shot min/target/max, hero cap, slot count.
+
+    Linear interpolation between the anchors, clamped outside them. ``hero_max``
+    keeps hero and semantic-move slots the longest while shrinking with the
+    target, under the ``DEFAULT_IMPORTANT_MAX_S`` ceiling.
+    """
+    t = clamp(float(target_duration_s), PACING_ANCHORS[0][0], PACING_ANCHORS[-1][0])
+    low, high = (
+        (PACING_ANCHORS[0], PACING_ANCHORS[1])
+        if t <= PACING_ANCHORS[1][0]
+        else (PACING_ANCHORS[1], PACING_ANCHORS[2])
+    )
+    fraction = (t - low[0]) / (high[0] - low[0])
+    slot_min = round(low[1] + (high[1] - low[1]) * fraction, 2)
+    slot_target = round(low[2] + (high[2] - low[2]) * fraction, 2)
+    slot_max = round(low[3] + (high[3] - low[3]) * fraction, 2)
+    hero_max = round(min(DEFAULT_IMPORTANT_MAX_S, slot_target * 1.75), 2)
+    n_slots = int(clamp(round(t / slot_target), 4, 32))
+    return {
+        "slot_min": slot_min,
+        "slot_target": slot_target,
+        "slot_max": slot_max,
+        "hero_max": hero_max,
+        "n_slots": n_slots,
+    }
+
+
 def slot_targets(n_slots, pacing, target_duration_s, calm_slot_s, energy_slot_s, min_slot_s, max_slot_s):
     """Per-slot target lengths from the pacing, clamped to the min/max."""
     if pacing == "calm-to-energy":
@@ -672,7 +731,7 @@ def slot_targets(n_slots, pacing, target_duration_s, calm_slot_s, energy_slot_s,
                 for index in range(n_slots)
             ]
     else:
-        raw = [target_duration_s / n_slots] * n_slots
+        raw = [pacing_table(target_duration_s)["slot_target"]] * n_slots
     return [clamp(target, min_slot_s, max_slot_s) for target in raw]
 
 
@@ -1385,6 +1444,10 @@ def run(args, started):
     skipped_roles = 0
     skipped_ineligible = 0
     drop_reasons = {}
+    pacing = pacing_table(args.target_duration_s)
+    min_slot_s = first_not_none(args.min_slot_s, pacing["slot_min"])
+    max_slot_s = first_not_none(args.max_slot_s, pacing["slot_max"])
+    important_max_s = first_not_none(args.important_max_s, pacing["hero_max"])
     shotlog = load_shotlog(workspace)
     photos_by_name = {
         photo.get("file") or Path(photo["path"]).name: photo
@@ -1408,7 +1471,7 @@ def run(args, started):
             warnings.append(f"missing motion document for {clip['file']}")
         position = clip_position(moment, first_moment, span_seconds)
         clip_candidates, clip_skipped = build_candidates(
-            clip, moment, position, content_offset, quality, motion, args.min_slot_s,
+            clip, moment, position, content_offset, quality, motion, min_slot_s,
             beats_by_segment=beats_by_segment,
         )
         skipped_roles += clip_skipped
@@ -1463,26 +1526,27 @@ def run(args, started):
     if not candidates:
         raise DirectorError("no usable candidates")
 
-    n_slots = int(clamp(round(args.target_duration_s / 6.0), 4, 24))
     targets = slot_targets(
-        n_slots, args.pacing, args.target_duration_s, args.calm_slot_s, args.energy_slot_s,
-        args.min_slot_s, args.max_slot_s,
+        pacing["n_slots"], args.pacing, args.target_duration_s,
+        first_not_none(args.calm_slot_s, pacing["slot_max"]),
+        first_not_none(args.energy_slot_s, pacing["slot_min"]),
+        min_slot_s, max_slot_s,
     )
 
     if args.order == "chronological":
         slots, used = pick_chronological(
-            candidates, n_slots, targets, total_content, args.max_slot_s, args.min_slot_s, warnings,
-            args.allow_similar, args.important_max_s,
+            candidates, pacing["n_slots"], targets, total_content, max_slot_s, min_slot_s, warnings,
+            args.allow_similar, important_max_s,
         )
     else:
         slots, used = pick_by_score(
-            candidates, n_slots, targets, args.max_slot_s, args.min_slot_s, warnings, args.allow_similar,
-            args.important_max_s,
+            candidates, pacing["n_slots"], targets, max_slot_s, min_slot_s, warnings, args.allow_similar,
+            important_max_s,
         )
 
     slots = fill_to_target(
-        candidates, slots, used, args.target_duration_s, args.max_slot_s, args.min_slot_s, args.order,
-        warnings, targets[-1], args.allow_similar, args.important_max_s,
+        candidates, slots, used, args.target_duration_s, max_slot_s, min_slot_s, args.order,
+        warnings, targets[-1], args.allow_similar, important_max_s,
     )
     slots = merge_contiguous(slots)
 

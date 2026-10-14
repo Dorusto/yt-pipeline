@@ -40,9 +40,10 @@ PROMPTS_DIR = REPO_ROOT / "prompts"
 DIRECTOR_SCRIPT = REPO_ROOT / "scripts" / "director.py"
 
 MAX_ROUNDS = 3
-MIN_SLOT_S = 2.0
+MIN_SLOT_S = 1.0
 MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
+DEFAULT_TARGET_S = 90.0
 XFADE_S = 0.3
 TOLERANCE_S = 0.05
 PHOTO_MIN_S = 2.0
@@ -150,7 +151,15 @@ def build_parser():
     parser.add_argument("--no-fallback-rules", dest="fallback_rules", action="store_false", help="error instead of falling back to the rule-based director")
     parser.add_argument("--model", default=None, help="director model id override (default models.director from config)")
     parser.add_argument("--budget-usd", type=float, default=None, help="refuse calls past this spend (default llm_budget_usd)")
-    parser.add_argument("--important-max-s", type=float, default=DEFAULT_IMPORTANT_MAX_S, help="longest a hero or semantic-move slot may be (default 6.0)")
+    parser.add_argument(
+        "--important-max-s",
+        type=float,
+        default=None,
+        help=(
+            "longest a hero or semantic-move slot may be "
+            "(default: from the pacing table, 6.0 s ceiling)"
+        ),
+    )
     parser.add_argument("--target-duration-s", type=float, default=None, help="override the target duration parsed from the brief")
     parser.add_argument("--order", choices=["chronological", "score"], default=None, help="override the order parsed from the brief")
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default=None, help="override the pacing parsed from the brief")
@@ -435,14 +444,61 @@ def is_important(candidate):
     return motion_label in IMPORTANT_MOTION_LABELS
 
 
-def default_target_s(candidate, important_max_s):
+PACING_ANCHORS = (
+    (20.0, 1.5, 2.0, 2.5),
+    (90.0, 2.0, 3.6, 5.0),
+    (180.0, 2.5, 5.0, 6.0),
+)
+
+
+def pacing_table(target_duration_s):
+    """Slot pacing for a brief's target duration: per-shot min/target/max, hero cap, slot count.
+
+    Linear interpolation between the anchors, clamped outside them. ``hero_max``
+    keeps hero and semantic-move slots the longest while shrinking with the
+    target, under the ``DEFAULT_IMPORTANT_MAX_S`` ceiling.
+    """
+    t = clamp(float(target_duration_s), PACING_ANCHORS[0][0], PACING_ANCHORS[-1][0])
+    low, high = (
+        (PACING_ANCHORS[0], PACING_ANCHORS[1])
+        if t <= PACING_ANCHORS[1][0]
+        else (PACING_ANCHORS[1], PACING_ANCHORS[2])
+    )
+    fraction = (t - low[0]) / (high[0] - low[0])
+    slot_min = round(low[1] + (high[1] - low[1]) * fraction, 2)
+    slot_target = round(low[2] + (high[2] - low[2]) * fraction, 2)
+    slot_max = round(low[3] + (high[3] - low[3]) * fraction, 2)
+    hero_max = round(min(DEFAULT_IMPORTANT_MAX_S, slot_target * 1.75), 2)
+    n_slots = int(clamp(round(t / slot_target), 4, 32))
+    return {
+        "slot_min": slot_min,
+        "slot_target": slot_target,
+        "slot_max": slot_max,
+        "hero_max": hero_max,
+        "n_slots": n_slots,
+    }
+
+
+def run_pacing(target_duration_s):
+    """The pacing row for a run: the brief's target, or the 90 s row when it has none."""
+    return pacing_table(target_duration_s if target_duration_s is not None else DEFAULT_TARGET_S)
+
+
+def plan_pacing(plan):
+    """The pacing row the plan's brief implies; the 90 s row when the plan has no target."""
+    brief = plan.get("brief") if isinstance(plan, dict) else None
+    target = brief.get("target_duration_s") if isinstance(brief, dict) else None
+    return run_pacing(target)
+
+
+def default_target_s(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
     window = candidate["out_s"] - candidate["in_s"]
     if is_important(candidate):
         return round(min(window, important_max_s), 3)
-    return round(clamp(window, MIN_SLOT_S, MAX_SLOT_S), 3)
+    return round(clamp(window, slot_min_s, slot_max_s), 3)
 
 
-def make_fact(candidate, important_max_s):
+def make_fact(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
     return {
         "shot_key": candidate.get("shot_key"),
         "clip": candidate["clip"],
@@ -451,7 +507,7 @@ def make_fact(candidate, important_max_s):
         "landing_at_s": round(float(candidate["landing_start_s"]), 3) if candidate.get("phrase") else None,
         "landing_hold_key": candidate.get("landing_hold_key"),
         "keep_whole": is_important(candidate),
-        "target_s": default_target_s(candidate, important_max_s),
+        "target_s": default_target_s(candidate, important_max_s, slot_min_s, slot_max_s),
         "score": candidate.get("score"),
         "summary": candidate.get("summary"),
         "role": candidate.get("role"),
@@ -487,7 +543,14 @@ def make_photo_fact(shot, photo):
     }
 
 
-def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S, drop_reasons=None):
+def build_shot_facts(
+    workspace,
+    shotlog,
+    important_max_s=DEFAULT_IMPORTANT_MAX_S,
+    drop_reasons=None,
+    slot_min_s=MIN_SLOT_S,
+    slot_max_s=MAX_SLOT_S,
+):
     clips = order_clips(load_ingest(workspace))
     first_moment = clips[0][1]
     last_clip, last_moment = clips[-1]
@@ -534,7 +597,7 @@ def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S
         for candidate in dedupe_candidates(scored, drop_reasons):
             key = candidate.get("shot_key")
             if key:
-                facts[key] = make_fact(candidate, important_max_s)
+                facts[key] = make_fact(candidate, important_max_s, slot_min_s, slot_max_s)
     photos_by_name = {
         photo.get("file") or Path(photo["path"]).name: photo
         for photo in load_ingest_photos(workspace)
@@ -726,13 +789,14 @@ def complete_plan(answer, brief_text, hints, content_type):
     return plan
 
 
-def build_screenwriter_user(brief_text, content_type, hints, rows):
+def build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s):
     lines = [
         f"Brief: {brief_text}",
         f"Content type: {content_type}",
         f"Target duration: {hints.get('target_duration_s')} s",
         f"Order: {hints.get('order')}",
         f"Pacing: {hints.get('pacing')}",
+        f"Hero cap (important_max_s): {important_max_s} s",
         "",
         "Eligible shotlog rows:",
         json.dumps(rows, indent=2),
@@ -753,8 +817,16 @@ def editor_facts(plan, facts):
     return result
 
 
-def build_editor_user(plan, facts, review):
-    lines = [
+def build_editor_user(plan, facts, review, pacing=None):
+    lines = []
+    if pacing:
+        lines.append(
+            "Pacing for this edit: "
+            f"hero cap {pacing.get('hero_max')} s, ordinary slots "
+            f"{pacing.get('slot_min')}-{pacing.get('slot_max')} s."
+        )
+        lines.append("")
+    lines += [
         "Plan:",
         json.dumps(
             {
@@ -773,8 +845,16 @@ def build_editor_user(plan, facts, review):
     return "\n".join(lines)
 
 
-def build_reviewer_user(brief_text, plan, record, violations):
-    lines = [
+def build_reviewer_user(brief_text, plan, record, violations, pacing=None):
+    lines = []
+    if pacing:
+        lines.append(
+            "Pacing for this edit: "
+            f"hero cap {pacing.get('hero_max')} s, ordinary slots "
+            f"{pacing.get('slot_min')}-{pacing.get('slot_max')} s."
+        )
+        lines.append("")
+    lines += [
         f"Brief: {brief_text}",
         "",
         "Plan:",
@@ -796,10 +876,13 @@ def build_reviewer_user(brief_text, plan, record, violations):
     return "\n".join(lines)
 
 
-def screenwriter(client, prompt, brief_text, content_type, hints, rows, state):
+def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, important_max_s):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": build_screenwriter_user(brief_text, content_type, hints, rows)},
+        {
+            "role": "user",
+            "content": build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s),
+        },
     ]
     for _ in range(2):
         response = call_client(client, messages, state)
@@ -815,7 +898,7 @@ def screenwriter(client, prompt, brief_text, content_type, hints, rows, state):
 def editor_round(client, prompt, plan, facts, review, state, build_record_fn):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": build_editor_user(plan, facts, review)},
+        {"role": "user", "content": build_editor_user(plan, facts, review, plan_pacing(plan))},
     ]
     for _ in range(2):
         response = call_client(client, messages, state)
@@ -834,7 +917,7 @@ def editor_round(client, prompt, plan, facts, review, state, build_record_fn):
 def reviewer(client, prompt, brief_text, plan, record, violations, state):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": build_reviewer_user(brief_text, plan, record, violations)},
+        {"role": "user", "content": build_reviewer_user(brief_text, plan, record, violations, plan_pacing(plan))},
     ]
     for _ in range(2):
         response = call_client(client, messages, state)
@@ -871,6 +954,9 @@ def slot_fact(slot, plan_by_id, facts_by_key):
 
 
 def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_MAX_S):
+    pacing = plan_pacing(plan)
+    slot_min_s = pacing["slot_min"]
+    slot_max_s = pacing["slot_max"]
     violations = []
     plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
     slots = record.get("video") or []
@@ -954,12 +1040,12 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
                 )
         else:
             duration = out_s - in_s
-            if duration < MIN_SLOT_S - TOLERANCE_S or duration > MAX_SLOT_S + TOLERANCE_S:
+            if duration < slot_min_s - TOLERANCE_S or duration > slot_max_s + TOLERANCE_S:
                 violations.append(
                     violation(
                         slot["id"],
                         "length",
-                        f"{duration:.2f}s is outside {MIN_SLOT_S:.1f}-{MAX_SLOT_S:.1f}s",
+                        f"{duration:.2f}s is outside {slot_min_s:.1f}-{slot_max_s:.1f}s",
                     )
                 )
     for first, second in zip(slots, slots[1:]):
@@ -1259,7 +1345,7 @@ def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings):
     return snap_slots(slots, bounds, beat_grid, downbeat_at, warnings)
 
 
-def default_window(fact, plan_slot, important_max_s):
+def default_window(fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
     """The cut window the editor spec asks for when the model gave none."""
     window_in = fact["window_in_s"]
     window_out = fact["window_out_s"]
@@ -1270,11 +1356,11 @@ def default_window(fact, plan_slot, important_max_s):
         target = fact.get("target_s")
     if target is None:
         target = window_out - window_in
-    target = clamp(float(target), MIN_SLOT_S, MAX_SLOT_S)
+    target = clamp(float(target), slot_min_s, slot_max_s)
     return max(window_in, window_out - target), window_out
 
 
-def normalise_window(in_s, out_s, fact, plan_slot, important_max_s):
+def normalise_window(in_s, out_s, fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
     """Apply the editor spec's length rules when the answer is out of policy."""
     notes = []
     if fact.get("keep_whole"):
@@ -1292,9 +1378,9 @@ def normalise_window(in_s, out_s, fact, plan_slot, important_max_s):
         target = fact.get("target_s")
     if target is None:
         target = out_s - in_s
-    target = clamp(float(target), MIN_SLOT_S, MAX_SLOT_S)
+    target = clamp(float(target), slot_min_s, slot_max_s)
     duration = out_s - in_s
-    if MIN_SLOT_S - TOLERANCE_S <= duration <= MAX_SLOT_S + TOLERANCE_S:
+    if slot_min_s - TOLERANCE_S <= duration <= slot_max_s + TOLERANCE_S:
         return in_s, out_s, notes
     new_out = out_s
     new_in = out_s - target
@@ -1306,6 +1392,7 @@ def normalise_window(in_s, out_s, fact, plan_slot, important_max_s):
 
 
 def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief_obj, wall_time_s, cost_usd, warnings=None, important_max_s=DEFAULT_IMPORTANT_MAX_S, beats=None, music=None, ambient_under_db=None):
+    pacing = plan_pacing(plan)
     answer_by_id = {}
     for slot in answer.get("slots") or []:
         if isinstance(slot, dict) and slot.get("id"):
@@ -1336,7 +1423,9 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
             out_s = float(ans["out_s"])
         except (KeyError, TypeError, ValueError):
             continue
-        in_s, out_s, notes = normalise_window(in_s, out_s, fact, plan_slot, important_max_s)
+        in_s, out_s, notes = normalise_window(
+            in_s, out_s, fact, plan_slot, important_max_s, pacing["slot_min"], pacing["slot_max"],
+        )
         for note in notes:
             fixed.append(f"fixed {sid}: {note}")
         video.append(
@@ -1389,6 +1478,7 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
 
 def ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s=DEFAULT_IMPORTANT_MAX_S):
     """Put every plan slot back in plan order, synthesising any the editor dropped."""
+    pacing = plan_pacing(plan)
     existing = {slot["id"]: slot for slot in record.get("video") or [] if slot.get("id")}
     video = []
     added = []
@@ -1408,7 +1498,9 @@ def ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, importa
                 )
                 added_photo_rows.append(photo_source_row(fact))
             else:
-                in_s, out_s = default_window(fact, plan_slot, important_max_s)
+                in_s, out_s = default_window(
+                    fact, plan_slot, important_max_s, pacing["slot_min"], pacing["slot_max"],
+                )
                 slot = {
                     "id": sid,
                     "clip": fact["clip"],
@@ -1636,7 +1728,7 @@ def run(
     force=False,
     config=None,
     client=None,
-    important_max_s=DEFAULT_IMPORTANT_MAX_S,
+    important_max_s=None,
     target_duration_s=None,
     order=None,
     pacing=None,
@@ -1694,7 +1786,11 @@ def run(
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
 
     drop_reasons = {}
-    facts, clips, fact_warnings = build_shot_facts(workspace_path, shotlog, important_max_s, drop_reasons)
+    pacing = run_pacing(hints.get("target_duration_s"))
+    effective_important_max_s = important_max_s if important_max_s is not None else pacing["hero_max"]
+    facts, clips, fact_warnings = build_shot_facts(
+        workspace_path, shotlog, effective_important_max_s, drop_reasons, pacing["slot_min"], pacing["slot_max"],
+    )
     warnings.extend(fact_warnings)
     if not facts:
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
@@ -1738,7 +1834,7 @@ def run(
     record = None
     plan = None
     try:
-        plan = screenwriter(client, screenwriter_prompt, brief_text, content_type, hints, shotlog_rows, state)
+        plan = screenwriter(client, screenwriter_prompt, brief_text, content_type, hints, shotlog_rows, state, effective_important_max_s)
         if plan is None:
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
@@ -1751,7 +1847,7 @@ def run(
 
         def build_record_fn(answer):
             return build_edit_record(
-                plan, answer, facts, shotlog, sources, brief_obj, time.monotonic() - started, state.cost_usd, warnings, important_max_s, beats=beat_grid,
+                plan, answer, facts, shotlog, sources, brief_obj, time.monotonic() - started, state.cost_usd, warnings, effective_important_max_s, beats=beat_grid,
                 music=music, ambient_under_db=ambient_under_music_db,
             )
 
@@ -1761,7 +1857,7 @@ def run(
             record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn)
             if record is None:
                 raise LoopFailure("editor produced no valid edit")
-            violations = validate_edit(record, plan, facts, important_max_s)
+            violations = validate_edit(record, plan, facts, effective_important_max_s)
             verdict = reviewer(client, reviewer_prompt, brief_text, plan, record, violations, state)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
@@ -1790,13 +1886,13 @@ def run(
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
 
     if violations:
-        added = ensure_all_planned_slots(record, plan, facts, shotlog, important_max_s)
+        added = ensure_all_planned_slots(record, plan, facts, shotlog, effective_important_max_s)
         for sid in added:
             note = f"fixed {sid}: slot synthesised from the shot fact"
             if note not in warnings:
                 warnings.append(note)
         if added:
-            violations = validate_edit(record, plan, facts, important_max_s)
+            violations = validate_edit(record, plan, facts, effective_important_max_s)
 
     if not violations:
         warnings.append("reviewer did not approve; keeping the last valid draft")
