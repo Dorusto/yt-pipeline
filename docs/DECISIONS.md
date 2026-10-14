@@ -1208,3 +1208,72 @@ i.e. re-encode noise).
 - **D2-4 phone flow, repo side.** `scripts/inbox.py`: watches an inbox folder (filled by a sync tool from the phone), groups new clips into a project per day, waits until the folder is quiet for N minutes, then runs `recap.py` with a default or per-folder brief (`brief.txt`). `scripts/serve.py`: read-only HTTP server for workspaces, bound to the tailnet address only, with an index page per project (recap, final, shotlog.html). `recap.py --notify` posts the preview link to ntfy. The `yt-recap` skill gains the phrases an assistant like Hermes receives from Telegram ("fă-mi un recap din clipurile de azi"). Installing the sync tool and wiring Hermes are system changes on Doru's machines: the repo ships instructions in `docs/guides/phone-flow.md`, Doru runs them.
 - **D2-5 cross-platform.** Replace the Unix-only pieces: `fcntl` ledger lock → a portable lock (choose by comparing at least two options), `pgrep` → `psutil` or a portable fallback, shell hook → Python hook. Paths through `pathlib` everywhere. CI matrix on ubuntu, macos and windows. Hardware encoders by platform: `h264_nvenc` (NVIDIA), `h264_videotoolbox` (macOS), else `libx264`. Install notes per OS in the quickstart.
 - Order: D2-5 can run in parallel with D2-3 (separate worktree, disjoint files); D2-4 starts after D2-3 is merged, because it builds on `recap.py`.
+
+---
+
+## [2026-10-14] D2-4 phone flow: inbox grouping, tailnet serve, notify link shape
+
+**Context:** Building the four D2-4 items on `d2-4-phone-flow` (serve.py,
+recap.py --notify, inbox.py, phone-flow docs). Six points needed a choice; all
+are reversible and were made by the architect (one inbox behaviour was sent
+back for a fix round and is folded in below).
+
+**serve.py: allowlist routes, wildcard refused, Range required.** The server
+binds a single address (auto-detected default-route IPv4, `--bind` to override)
+and refuses `0.0.0.0` / `::` / empty — "tailnet-only" is enforced in code, not
+just documented. Routing is an allowlist: `/`, `/<project>/`, and only
+`recap_720p.mp4`, `recap_final.mp4`, `shotlog.html` inside a project. Proxies,
+`edit.json`, `source/` symlink farms and every analysis folder stay private.
+A folder counts as a project when it holds at least one of those three plus
+`edit.json`; projects list newest-folder-name first. Single-range HTTP (`Range:
+bytes=…`) returns 206 because mobile browsers refuse to play video without it.
+`--check` binds the requested port, reads the real bound port and closes — so a
+port conflict is caught before a service starts. URL contract with `--notify`:
+`<base>/<workspace folder name>/recap_720p.mp4` (name URL-quoted).
+
+**recap.py --notify: notify on success only, never fail on notify.** Message
+title `Recap ready (720p)`, `Recap ready (cached)` when every station skipped;
+a failed run posts nothing (stderr + exit code already report it). A notify
+send error is a `[warn]` and `"notified": false`, exit code stays 0 — the recap
+itself succeeded and the phone message is not worth failing a render for. Two
+keys added to the existing `--json` summary (`preview_url`, `notified`); no
+existing key changed.
+
+**inbox.py: day grouping and the source folder.** A clip's project day is, in
+priority: a `YYYY-MM-DD` parent folder inside the inbox (wins — the acceptance
+layout `inbox/2026-10-14/clip...20261012...` groups under `2026-10-14`), then a
+date in the filename (`YYYY-MM-DD`/`YYYYMMDD`/`YYYY_MM_DD`), then the file's
+mtime date. One workspace per day under `--projects/<day>/`; `--projects`
+inside `--inbox` is refused (its proxies would be rescanned as new clips).
+Source: when the day's clips all live in one folder that holds no other video,
+that folder is passed to `recap.py --source` directly; otherwise a symlink farm
+`<workspace>/source/` is rebuilt per run (no copies, no moves — the inbox is
+read-only). The brief is the day folder's `brief.txt` (the clips' folder, or
+their single `YYYY-MM-DD` parent when scattered — the fix round extended this
+to farm groups), else the inbox `brief.txt`, else `--default-brief`; the
+resolved brief is copied to `<workspace>/inbox_brief.txt`. Quiet wait: a group
+runs only when no file under the inbox changed for `--quiet-minutes` (default
+5, `0` disables). State (`<projects>/inbox_state.json`, internal) records
+per-file size+mtime and the brief sha per day: a new clip, a changed brief or
+`--force` re-invokes `recap.py`, whose own skip rule then decides the stations;
+clips are marked processed only after a successful run. Watch mode prints a
+group line only on a run or a status change (the fix round stopped per-poll
+log spam); `--once` prints one line per group always.
+
+**Sync tool: Syncthing** (this closes the "sync tool chosen by its own entry"
+placeholder from the D3 plan). Phone = send-only camera folder, LXC =
+receive-only into `~/media/inbox`: nothing the pipeline does can delete clips
+from the phone. `docs/guides/phone-flow.md` carries the steps; installing it
+and wiring Hermes remain Doru's machine steps — the repo ships instructions
+only.
+
+**Acceptance (2026-10-14, budget 1 USD):** 5 clips copied (never moved) from
+`~/media/yt-test/raw` into `~/media/inbox-test/2026-10-14/` with a folder
+`brief.txt`; `inbox.py --once --quiet-minutes 0 --notify --preview-base
+http://10.10.1.61:8091` picked them up as project `2026-10-14` (brief_source
+`folder`) and rendered `recap_720p.mp4` (1280x720, 19.5 s, 4 slots) for
+**$0.043** in 540 s. `serve.py --bind 10.10.1.61 --port 8091` lists the
+project; index, project page, preview and shotlog all return 200 over the
+tailnet address, and the ntfy message (`Recap ready (720p)` + preview link)
+arrived with that exact URL. Second `--once` run: `skipped (nothing new)` at
+$0. All 21 originals verified unchanged by md5.
