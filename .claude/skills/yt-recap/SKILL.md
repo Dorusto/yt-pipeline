@@ -1,7 +1,7 @@
 ---
 name: yt-recap
-description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
-compatibility: Run from the repository root with the repo .venv. Needs ffmpeg and ffprobe on the PATH and OPENROUTER_API_KEY in the environment (unless llm_backend is mock). The originals folder is never written to; proxies and every output go under the workspace.
+description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone", "fă-mi un recap din clipurile de azi", "recap din clipurile noi", "trimite-mi linkul la recap". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
+compatibility: Run from the repository root with the repo .venv. Needs ffmpeg and ffprobe on the PATH and OPENROUTER_API_KEY in the environment (unless llm_backend is mock). The originals folder is never written to; proxies and every output go under the workspace. Works from Telegram via an assistant (Hermes): the assistant runs the same commands and replies with the preview link built from `--preview-base`.
 ---
 
 # yt-recap
@@ -90,6 +90,20 @@ command per clip:
 - `--preview-base URL` is the base of the `serve.py` server (e.g. `http://10.10.1.61:8091`); the link is `<base>/<workspace folder name>/recap_720p.mp4`. Without it the message carries the workspace path and the summary's `preview_url` is `null`.
 - `--json` prints one flat summary with `wall_time_s`, `llm_cost_usd` (this run) and `llm_spend_usd` (the workspace ledger).
 - `--brief-file PATH` reads the brief from a file instead of `--brief`.
+
+## Phone / Telegram phrases
+
+The phrases an assistant (Hermes) receives on Telegram and what each one runs.
+Setup is Doru's step; see [docs/guides/phone-flow.md](../../../docs/guides/phone-flow.md).
+
+| You say (RO) | What happens |
+|:---|:---|
+| "fă-mi un recap din clipurile de azi" / "recap la clipurile noi" | `scripts/inbox.py --once ... --notify` on the inbox (today's group) |
+| "reel din clipurile astea" / "montaj scurt, energic" | same, with a short energetic brief ("about 60 seconds, energetic, fast cuts") |
+| "recap din folderul X, 3 minute, epic" | `scripts/recap.py --source X --brief "about 3 minutes, epic"` |
+| "fă-l mai scurt / mai lent / mai epic" | new brief → `recap.py --brief "..."` on the same workspace (only router → llm_director → render re-run) |
+| "unde e recap-ul?" / "trimite-mi linkul" | the `serve.py` URL of the latest project, from `--preview-base` + the workspace folder name |
+| "reia de la capăt" | `recap.py --force` |
 
 ## Re-run rules
 
