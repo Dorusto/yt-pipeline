@@ -1001,3 +1001,15 @@ def test_strip_overlaps_crossfaded_shots_like_the_render(tmp_path):
     summary = serve.edit_summary(tmp_path)
     assert [round(block["start"], 2) for block in summary["blocks"]] == [0.0, 1.7, 3.7]
     assert round(summary["total"], 2) == 5.7
+
+
+def test_exact_seconds_live_inside_the_length_menu(tmp_path):
+    page = serve.render_upload([])
+    assert 'value="custom"' in page
+    label = page[page.index("<label>Length"):]
+    label = label[: label.index("</label>")]
+    assert 'name="length_s"' in label
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"length": "custom", "length_s": "75"}, tmp_path)
+    assert command[command.index("--target-duration-s") + 1] == "75"
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"length": "custom", "length_s": ""}, tmp_path)
+    assert "--target-duration-s" not in command

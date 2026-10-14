@@ -53,7 +53,7 @@ UPLOAD_EXTENSIONS = {
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
     ".jpg", ".jpeg", ".heic", ".heif", ".png",
 }
-LENGTH_CHOICES = {"auto": None, "30s": 30, "60s": 60, "90s": 90, "3min": 180, "all": 0}
+LENGTH_CHOICES = {"auto": None, "30s": 30, "60s": 60, "90s": 90, "3min": 180, "all": 0, "custom": None}
 ORDER_CHOICES = {"auto": None, "chronological": "chronological", "best": "score"}
 AMBIENT_CHOICES = {"auto", "6", "8", "12", "16", "20"}
 DETECTED_ARTIFACTS = (
@@ -428,8 +428,16 @@ padding:0 12px;border-radius:999px;background:var(--deck);color:var(--stone);tex
 .player{margin-bottom:22px}
 .player h2{font-family:ui-serif,Georgia,serif;font-weight:500;font-size:1.15rem;margin:0 0 8px}
 .vmeta{color:var(--haze);font-size:.88rem;margin:6px 0 0;overflow-wrap:anywhere}
+input.length-s{margin-top:8px}
+input.length-s[hidden]{display:none}
 button.go{min-height:48px;border:0;border-radius:12px;background:var(--sea);color:var(--water);
 font:inherit;font-weight:600;padding:0 26px;cursor:pointer;justify-self:start}
+"""
+
+LENGTH_SCRIPT = """
+[].forEach.call(document.querySelectorAll('select[name=length]'),function(s){var i=s.parentNode.querySelector('.length-s');if(!i)return;
+function sync(){var on=s.value==='custom';i.hidden=!on;if(!on)i.value='';}
+s.addEventListener('change',function(){sync();if(s.value==='custom')i.focus();});sync();});
 """
 
 STRIP_SCRIPT = """
@@ -809,7 +817,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f'<section class="panel">{panels[tab]}</section>'
         f"{render_reedit(name, music_tracks)}"
     )
-    script = STRIP_SCRIPT if tab == "recap" else ""
+    script = (STRIP_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
     refresh = 20 if status == "running" else None
     return render_page(name, body, active="projects", script=script, refresh=refresh)
 
@@ -833,14 +841,15 @@ def option_fields(music_tracks):
             "Length",
             render_select(
                 "length",
-                [("auto", "Auto"), ("30s", "30s"), ("60s", "60s"), ("90s", "90s"), ("3min", "3 min"), ("all", "All good shots")],
+                [
+                    ("auto", "Auto"), ("30s", "30s"), ("60s", "60s"), ("90s", "90s"),
+                    ("3min", "3 min"), ("all", "All good shots"), ("custom", "Exact seconds\u2026"),
+                ],
                 default="auto",
-            ),
-        ),
-        (
-            "Or exact seconds",
-            f'<input type="number" name="length_s" min="{LENGTH_MIN_S}" max="{LENGTH_MAX_S}" step="1" '
-            'inputmode="numeric" placeholder="e.g. 45">',
+            )
+            + f'<input class="length-s" type="number" name="length_s" min="{LENGTH_MIN_S}" '
+            f'max="{LENGTH_MAX_S}" step="1" inputmode="numeric" placeholder="seconds, e.g. 45" '
+            'aria-label="Length in seconds">',
         ),
         (
             "Order",
@@ -923,7 +932,7 @@ def render_upload(music_tracks):
         '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
         "</form>"
     )
-    return render_page("New recap", body, active="upload")
+    return render_page("New recap", body, active="upload", script=LENGTH_SCRIPT)
 
 
 def render_reedit(name, music_tracks):

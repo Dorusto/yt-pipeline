@@ -126,7 +126,7 @@ finished recap, the explanation and the contact sheet.
   each with its own strip and the feedback that asked for it. While a run is
   going the page shows the last finished version, the step it is on, and
   refreshes by itself; a failed run says where it failed and why.
-- **Length** takes a preset or an exact number of seconds (the box wins).
+- **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 
 `--music auto` picks the track from `~/media/music` by the brief's pace and
 the shot tags, using the BPM and energy `beats.py` measures for every track
