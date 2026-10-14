@@ -8,17 +8,20 @@ Usage:
     python scripts/index.py --workspace DIR --html /path/to/out.html
     python scripts/index.py --workspace DIR --no-html
 
-Reads ``quality/<stem>.json`` (required) plus ``motion/<stem>.json``,
-``describe/<stem>.json`` and ``similarity.json`` (all optional) from the
-workspace and writes one ``shotlog.json`` validated against
+Reads ``quality/<stem>.json`` (required unless photos exist) plus
+``motion/<stem>.json``, ``describe/<stem>.json`` and ``similarity.json`` (all
+optional) from the workspace and writes one ``shotlog.json`` validated against
 ``schemas/shotlog.schema.json``. Every quality segment becomes a scored
 candidate with a hook and a reason — one candidate per content beat when
 describe split a long segment into beats — and the vision verdict supplies the
 effective role and motion label on uncertain segments, except a geometry
-``accidental`` whose role is final. A self-contained
-``shotlog.html`` contact sheet is written next to it, with one base64 thumbnail
-per shot. No model is called. Sources are read-only; the outputs are written
-atomically.
+``accidental`` whose role is final. Every described still photo becomes one
+candidate (``media_type: "photo"``, pseudo-segment ``p1``) with the fixed
+clean-still label prior, and photos linked by similarity and captured within
+30 s of each other form a burst whose best member stays eligible. A
+self-contained ``shotlog.html`` contact sheet is written next to it, with one
+base64 thumbnail per shot. No model is called. Sources are read-only; the
+outputs are written atomically.
 """
 
 import argparse
@@ -52,6 +55,12 @@ DEFAULT_DEFECT_WEIGHT = 1.0
 INELIGIBLE_ROLES = {"accidental", "setup", "teardown"}
 NO_VISION_PRIOR = 0.5
 SUPPRESS_OVERLAP_RATIO = 0.5
+PHOTO_SEGMENT_ID = "p1"
+PHOTO_START_S = 0.0
+PHOTO_END_S = 0.04
+PHOTO_LABEL_SCORE = 0.7
+PHOTO_CONFIDENCE = 0.7
+BURST_WINDOW_S = 30.0
 HOOK_WORDS = 8
 THUMBNAIL_WIDTH = 320
 THUMBNAIL_QUALITY = 70
@@ -128,12 +137,17 @@ def run(
         raise ShotlogError("weight vision + weight labels must be positive")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
-    if not quality_dir.is_dir():
+    ingest_photos = _load_ingest_photos(workspace_path)
+    photo_describes = _load_photo_describes(workspace_path)
+    if quality_dir.is_dir():
+        selected = _select_quality_files(quality_dir, clips, required=not photo_describes)
+    else:
+        selected = []
+    if not selected and not photo_describes:
         raise ShotlogError(f"no quality folder in workspace: {quality_dir}")
     html_path = _html_path(workspace_path, html, no_html)
-    selected = _select_quality_files(quality_dir, clips)
     output_path = workspace_path / "shotlog.json"
-    inputs = _input_files(workspace_path, selected)
+    inputs = _input_files(workspace_path, selected, photo_describes)
     if not force and _output_is_up_to_date(output_path, inputs):
         return _skipped_summary(output_path, started, html_path), 0
     clip_paths = _clip_path_map(workspace_path, selected)
@@ -175,7 +189,27 @@ def run(
                         weight_labels,
                     )
                 )
+    photo_lookup = _photo_key_lookup(ingest_photos)
+    photo_by_name = _ingest_photos_by_name(ingest_photos)
+    for describe_path, describe_record in photo_describes:
+        segment = _segments_by_id(describe_record).get(PHOTO_SEGMENT_ID)
+        if segment is None:
+            continue
+        key = _photo_shot_key(describe_record, describe_path, photo_lookup)
+        photo = photo_by_name.get(describe_record.get("file") or "")
+        shots.append(
+            _build_photo_shot(
+                key,
+                describe_record,
+                segment,
+                photo,
+                similarity_map,
+                weight_vision,
+                weight_labels,
+            )
+        )
     _apply_suppression(shots)
+    _apply_burst_suppression(shots)
     weights = {
         "vision": weight_vision,
         "labels": weight_labels,
@@ -314,6 +348,74 @@ def _build_shot(
         "defects": [defect.get("name") for defect in defects],
         "suppressed_by": None,
     }
+
+
+def _build_photo_shot(
+    key,
+    describe_record,
+    describe_segment,
+    photo,
+    similarity_map,
+    weight_vision,
+    weight_labels,
+):
+    vision = _vision_fields(describe_segment)
+    vision_score = _vision_score(vision)
+    labels = PHOTO_LABEL_SCORE
+    fusion_vision = vision_score if vision_score is not None else NO_VISION_PRIOR
+    score = _fused_score(fusion_vision, labels, weight_vision, weight_labels)
+    semantic_motion = (vision.get("semantic_motion") if vision else None) or "none"
+    return {
+        "key": key,
+        "clip": describe_record.get("file", ""),
+        "segment_id": PHOTO_SEGMENT_ID,
+        "beat_of": None,
+        "beat_id": None,
+        "beat_label": None,
+        "start_s": PHOTO_START_S,
+        "end_s": PHOTO_END_S,
+        "media_type": "photo",
+        "capture_time": photo.get("creation_time") if photo else None,
+        "subject_position": _subject_position(describe_segment),
+        "eligible": True,
+        "role": "hold",
+        "role_source": "geometry",
+        "motion_label": "static",
+        "label_source": "geometry",
+        "confidence": PHOTO_CONFIDENCE,
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "description": vision.get("description") if vision else None,
+        "summary": vision.get("summary") if vision else None,
+        "tags": list(vision.get("tags") or []) if vision else [],
+        "subject": vision.get("subject") if vision else None,
+        "scenery": vision.get("scenery") if vision else None,
+        "semantic_motion": semantic_motion,
+        "interest": vision.get("interest") if vision else None,
+        "hero": vision.get("hero") if vision else None,
+        "score": score,
+        "scores": {"vision": vision_score, "labels": labels},
+        "hook": _hook(vision, "hold", "static"),
+        "reason": _reason(vision, "static", "geometry", "hold", [], True),
+        "similar_to": list(similarity_map.get(key, [])),
+        "defects": [],
+        "suppressed_by": None,
+    }
+
+
+def _subject_position(describe_segment):
+    if not _is_described(describe_segment):
+        return None
+    position = describe_segment.get("subject_position")
+    if not isinstance(position, dict):
+        return None
+    x = position.get("x")
+    y = position.get("y")
+    if isinstance(x, bool) or isinstance(y, bool):
+        return None
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None
+    return {"x": float(x), "y": float(y)}
 
 
 def _effective_labels(segment, describe_segment):
@@ -485,6 +587,73 @@ def _suppressing_overlap(first, second):
     return shorter > 0 and overlap > SUPPRESS_OVERLAP_RATIO * shorter
 
 
+def _apply_burst_suppression(shots):
+    photos = [shot for shot in shots if shot.get("media_type") == "photo"]
+    if len(photos) < 2:
+        return
+    by_key = {shot["key"]: shot for shot in photos}
+    similar = {key: set(shot.get("similar_to") or []) for key, shot in by_key.items()}
+    moments = {key: _parse_capture_time(shot.get("capture_time")) for key, shot in by_key.items()}
+    neighbours = {key: set() for key in by_key}
+    keys = list(by_key)
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            first, second = keys[i], keys[j]
+            if second not in similar[first] or first not in similar[second]:
+                continue
+            if moments[first] is None or moments[second] is None:
+                continue
+            if abs((moments[first] - moments[second]).total_seconds()) > BURST_WINDOW_S:
+                continue
+            neighbours[first].add(second)
+            neighbours[second].add(first)
+    for component in _connected_components(neighbours):
+        if len(component) < 2:
+            continue
+        winner_key = min(component, key=lambda key: (-by_key[key]["score"], key))
+        for key in component:
+            if key == winner_key:
+                continue
+            shot = by_key[key]
+            shot["suppressed_by"] = winner_key
+            shot["eligible"] = False
+            shot["score"] = 0.0
+            shot["scores"]["labels"] = 0.0
+            shot["scores"]["vision"] = None
+
+
+def _connected_components(neighbours):
+    components = []
+    seen = set()
+    for node in neighbours:
+        if node in seen:
+            continue
+        seen.add(node)
+        stack = [node]
+        component = set()
+        while stack:
+            current = stack.pop()
+            component.add(current)
+            for neighbour in neighbours[current]:
+                if neighbour not in seen:
+                    seen.add(neighbour)
+                    stack.append(neighbour)
+        components.append(component)
+    return components
+
+
+def _parse_capture_time(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
 def _similarity_map(similarity):
     result = {}
     if not isinstance(similarity, dict):
@@ -505,7 +674,71 @@ def _segments_by_id(describe):
     return {segment.get("id"): segment for segment in describe.get("segments") or []}
 
 
-def _input_files(workspace_path, quality_files):
+def _load_ingest_photos(workspace_path):
+    ingest = _load_json(workspace_path / "ingest.json")
+    if not isinstance(ingest, dict):
+        return []
+    photos = ingest.get("photos")
+    if not isinstance(photos, list):
+        return []
+    valid = [
+        photo
+        for photo in photos
+        if isinstance(photo, dict) and (photo.get("file") or photo.get("path"))
+    ]
+    return sorted(valid, key=lambda photo: photo.get("file") or Path(photo["path"]).name)
+
+
+def _ingest_photos_by_name(photos):
+    by_name = {}
+    for photo in photos:
+        name = photo.get("file") or Path(photo["path"]).name
+        by_name[name] = photo
+    return by_name
+
+
+def _photo_key_lookup(photos):
+    """Map every ingest photo (by file name and path) to its deterministic ``<counter>/p1`` key."""
+    lookup = {}
+    used = set()
+    for photo in photos:
+        name = photo.get("file") or Path(photo["path"]).name
+        counter = clip_counter(name)
+        if counter in used:
+            counter = Path(name).stem
+        used.add(counter)
+        key = segment_key(counter, PHOTO_SEGMENT_ID)
+        lookup[name] = key
+        if photo.get("path"):
+            lookup[str(photo["path"])] = key
+    return lookup
+
+
+def _photo_shot_key(describe_record, describe_path, lookup):
+    name = describe_record.get("file")
+    if name and name in lookup:
+        return lookup[name]
+    raw_path = describe_record.get("path")
+    if raw_path and str(raw_path) in lookup:
+        return lookup[str(raw_path)]
+    if not name:
+        name = describe_path.stem
+    return segment_key(clip_counter(name), PHOTO_SEGMENT_ID)
+
+
+def _load_photo_describes(workspace_path):
+    describe_dir = workspace_path / "describe"
+    if not describe_dir.is_dir():
+        return []
+    records = []
+    for path in sorted(describe_dir.glob("*.json")):
+        data = _load_json(path)
+        if isinstance(data, dict) and data.get("media_type") == "photo":
+            records.append((path, data))
+    return records
+
+
+def _input_files(workspace_path, quality_files, photo_describes=None):
     files = list(quality_files)
     similarity = workspace_path / "similarity.json"
     if similarity.exists():
@@ -515,14 +748,16 @@ def _input_files(workspace_path, quality_files):
             path = workspace_path / folder / f"{quality_file.stem}.json"
             if path.exists():
                 files.append(path)
+    for path, _ in photo_describes or []:
+        files.append(path)
     return files
 
 
-def _select_quality_files(quality_dir, clips):
+def _select_quality_files(quality_dir, clips, required=True):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
     selected = [path for path in files if _matches(path.stem, tokens)]
-    if not selected:
+    if not selected and required:
         raise ShotlogError(f"no quality files matched in {quality_dir}")
     return selected
 
@@ -620,6 +855,11 @@ def _clip_path_map(workspace_path, quality_files):
             path = clip.get("path")
             if name and path:
                 paths.setdefault(name, path)
+        for photo in ingest.get("photos") or []:
+            name = photo.get("file")
+            path = photo.get("path")
+            if name and path:
+                paths.setdefault(name, path)
     for quality_file in quality_files:
         record = _load_json(quality_file)
         if not isinstance(record, dict):
@@ -666,6 +906,8 @@ def _shot_card(shot, clip_paths):
         badges.append('<span class="badge eligible">eligible</span>')
     else:
         badges.append('<span class="badge ineligible">not eligible</span>')
+    if str(shot.get("media_type") or "video") == "photo":
+        badges.append('<span class="badge media">photo</span>')
     role = escape(str(shot.get("role") or ""))
     motion = escape(str(shot.get("motion_label") or ""))
     hook = escape(str(shot.get("hook") or ""))
@@ -687,9 +929,13 @@ def _shot_card(shot, clip_paths):
 def _thumbnail_html(shot, clip_paths):
     clip = str(shot.get("clip") or "")
     path = clip_paths.get(clip)
-    start = float(shot.get("start_s") or 0.0)
-    end = float(shot.get("end_s") or 0.0)
-    data_uri = _thumbnail_data_uri(path, start + (end - start) / 2)
+    if str(shot.get("media_type") or "video") == "photo":
+        t_s = 0.0
+    else:
+        start = float(shot.get("start_s") or 0.0)
+        end = float(shot.get("end_s") or 0.0)
+        t_s = start + (end - start) / 2
+    data_uri = _thumbnail_data_uri(path, t_s)
     if data_uri is None:
         return f'<div class="thumb placeholder">{escape(clip)}</div>'
     return f'<img class="thumb" src="{data_uri}" alt="{escape(clip)}">'
@@ -777,6 +1023,7 @@ def _html_document(workspace_name, shot_count, eligible_count, generated_at, car
         ".badge.hero { background: #f5c518; color: #111; }\n"
         ".badge.eligible { background: #1f6f43; color: #d7ffe7; }\n"
         ".badge.ineligible { background: #5a1f1f; color: #ffd7d7; }\n"
+        ".badge.media { background: #24384f; color: #cfe4ff; }\n"
         ".meta { font-size: 0.78rem; color: #99a; }\n"
         "</style>\n"
         "</head>\n"

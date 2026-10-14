@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+from PIL import Image
 
 import index
 from common.schema import validate
@@ -134,6 +135,103 @@ def write_describe(workspace, counter, segments):
 
 def write_similarity(workspace, pairs):
     (workspace / "similarity.json").write_text(json.dumps({"pairs": pairs}), encoding="utf-8")
+
+
+def write_photo(path, size=(64, 48), color=(120, 80, 40)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, "JPEG")
+    return path
+
+
+def photo_record(path, creation_time="2026-10-12T11:42:00+00:00"):
+    return {
+        "file": path.name,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "width": 64,
+        "height": 48,
+        "orientation": None,
+        "creation_time": creation_time,
+        "creation_time_source": "exif",
+        "format": "JPEG",
+        "warnings": [],
+    }
+
+
+def write_photo_ingest(workspace, photos):
+    data = {
+        "generated_at": "2026-10-14T00:00:00+00:00",
+        "source_dir": str(workspace),
+        "clip_count": 0,
+        "clips": [],
+        "photo_count": len(photos),
+        "photos": photos,
+        "warnings": [],
+    }
+    (workspace / "ingest.json").write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+def described_photo_segment(
+    interest=60,
+    summary="a described still",
+    subject="lighthouse",
+    subject_position=None,
+    status="described",
+):
+    if status == "skipped":
+        return {
+            "id": "p1",
+            "start_s": 0.0,
+            "end_s": 0.04,
+            "status": "skipped",
+            "role": "hold",
+            "motion_label": "static",
+            "uncertain": False,
+            "uncertain_reasons": [],
+            "skip_reason": "skipped in test",
+            "cost_usd": 0.0,
+        }
+    return {
+        "id": "p1",
+        "start_s": 0.0,
+        "end_s": 0.04,
+        "status": "described",
+        "role": "hold",
+        "motion_label": "static",
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "frames": [{"t_s": 0.0}],
+        "description": "a still frame",
+        "summary": summary,
+        "tags": ["still"],
+        "subject": subject,
+        "scenery": "coast",
+        "semantic_motion": "none",
+        "interest": interest,
+        "hero": False,
+        "verdict": None,
+        "skip_reason": None,
+        "cost_usd": 0.0,
+        "subject_position": subject_position or {"x": 0.5, "y": 0.5},
+    }
+
+
+def write_photo_describe(workspace, path, segment):
+    directory = workspace / "describe"
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {
+        "media_type": "photo",
+        "file": path.name,
+        "path": str(path),
+        "duration_s": 0.0,
+        "model": "mock/vision",
+        "llm_cost_usd": 0.0,
+        "segments": [segment],
+        "warnings": [],
+    }
+    (directory / f"{path.stem}.json").write_text(json.dumps(record), encoding="utf-8")
+    return record
 
 
 def read_shotlog(workspace):
@@ -756,3 +854,157 @@ def test_beat_reason_carries_the_beat_label(tmp_path):
     data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
     assert data["shots"][0]["reason"].startswith("approach · ")
     assert data["shots"][1]["reason"].startswith("exit · ")
+
+
+def test_described_photo_becomes_one_shot(tmp_path):
+    photo = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg")
+    write_photo_ingest(tmp_path, [photo_record(photo, "2026-10-12T11:42:00+00:00")])
+    write_photo_describe(tmp_path, photo, described_photo_segment(interest=57))
+    summary, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    assert summary["shots"] == 1
+    data = read_shotlog(tmp_path)
+    shot = data["shots"][0]
+    assert shot["key"] == "0068/p1"
+    assert shot["media_type"] == "photo"
+    assert shot["clip"] == photo.name
+    assert shot["segment_id"] == "p1"
+    assert shot["start_s"] == 0.0
+    assert shot["end_s"] == 0.04
+    assert shot["role"] == "hold"
+    assert shot["role_source"] == "geometry"
+    assert shot["motion_label"] == "static"
+    assert shot["scores"]["labels"] == pytest.approx(0.7)
+    assert shot["scores"]["vision"] == pytest.approx(0.57)
+    assert shot["score"] == pytest.approx(0.55 * 0.57 + 0.45 * 0.7)
+    assert shot["capture_time"] == "2026-10-12T11:42:00+00:00"
+    assert shot["subject_position"] == {"x": 0.5, "y": 0.5}
+    assert shot["eligible"] is True
+    assert validate(data, "shotlog") == []
+
+
+def test_photo_key_matches_similarity_counter_convention(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_a_photo.jpg")
+    second = write_photo(tmp_path / "dji_mimo_20261012_120103_0068_b_photo.jpg")
+    write_photo_ingest(tmp_path, [photo_record(first), photo_record(second)])
+    write_photo_describe(tmp_path, first, described_photo_segment())
+    write_photo_describe(tmp_path, second, described_photo_segment())
+    _, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    keys = {shot["key"] for shot in read_shotlog(tmp_path)["shots"]}
+    assert keys == {"0068/p1", f"{second.stem}/p1"}
+
+
+def test_photo_burst_keeps_only_the_best_eligible(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(10, 20, 30))
+    second = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg", color=(200, 180, 160))
+    write_photo_ingest(
+        tmp_path,
+        [
+            photo_record(first, "2026-10-12T11:42:00+00:00"),
+            photo_record(second, "2026-10-12T11:42:03+00:00"),
+        ],
+    )
+    write_photo_describe(tmp_path, first, described_photo_segment(interest=80))
+    write_photo_describe(tmp_path, second, described_photo_segment(interest=40))
+    write_similarity(tmp_path, [{"a": "0068/p1", "b": "0069/p1", "similarity": 0.95}])
+    summary, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    data = read_shotlog(tmp_path)
+    winner = find(data, "0068/p1")
+    loser = find(data, "0069/p1")
+    assert winner["eligible"] is True
+    assert winner["suppressed_by"] is None
+    assert loser["eligible"] is False
+    assert loser["suppressed_by"] == "0068/p1"
+    assert loser["score"] == 0.0
+    assert summary["suppressed"] == 1
+
+
+def test_photos_120s_apart_are_not_a_burst(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(10, 20, 30))
+    second = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg", color=(200, 180, 160))
+    write_photo_ingest(
+        tmp_path,
+        [
+            photo_record(first, "2026-10-12T11:42:00+00:00"),
+            photo_record(second, "2026-10-12T11:44:00+00:00"),
+        ],
+    )
+    write_photo_describe(tmp_path, first, described_photo_segment(interest=80))
+    write_photo_describe(tmp_path, second, described_photo_segment(interest=40))
+    write_similarity(tmp_path, [{"a": "0068/p1", "b": "0069/p1", "similarity": 0.95}])
+    summary, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    data = read_shotlog(tmp_path)
+    assert find(data, "0068/p1")["eligible"] is True
+    assert find(data, "0069/p1")["eligible"] is True
+    assert find(data, "0068/p1")["suppressed_by"] is None
+    assert find(data, "0069/p1")["suppressed_by"] is None
+    assert summary["suppressed"] == 0
+
+
+def test_photo_burst_chain_resolves_to_global_best(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(10, 20, 30))
+    middle = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg", color=(60, 90, 120))
+    last = write_photo(tmp_path / "dji_mimo_20261012_120104_0070_x_photo.jpg", color=(200, 180, 160))
+    write_photo_ingest(
+        tmp_path,
+        [
+            photo_record(first, "2026-10-12T11:42:00+00:00"),
+            photo_record(middle, "2026-10-12T11:42:05+00:00"),
+            photo_record(last, "2026-10-12T11:42:10+00:00"),
+        ],
+    )
+    write_photo_describe(tmp_path, first, described_photo_segment(interest=50))
+    write_photo_describe(tmp_path, middle, described_photo_segment(interest=60))
+    write_photo_describe(tmp_path, last, described_photo_segment(interest=90))
+    write_similarity(
+        tmp_path,
+        [
+            {"a": "0068/p1", "b": "0069/p1", "similarity": 0.95},
+            {"a": "0069/p1", "b": "0070/p1", "similarity": 0.95},
+        ],
+    )
+    summary, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    data = read_shotlog(tmp_path)
+    assert find(data, "0070/p1")["eligible"] is True
+    assert find(data, "0070/p1")["suppressed_by"] is None
+    assert find(data, "0068/p1")["suppressed_by"] == "0070/p1"
+    assert find(data, "0069/p1")["suppressed_by"] == "0070/p1"
+
+
+def test_skipped_photo_still_yields_a_shot(tmp_path):
+    photo = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg")
+    write_photo_ingest(tmp_path, [photo_record(photo)])
+    write_photo_describe(tmp_path, photo, described_photo_segment(status="skipped"))
+    summary, exit_code = index.run(str(tmp_path), no_html=True)
+    assert exit_code == 0
+    data = read_shotlog(tmp_path)
+    shot = data["shots"][0]
+    assert shot["key"] == "0068/p1"
+    assert shot["description"] is None
+    assert shot["subject_position"] is None
+    assert shot["capture_time"] is not None
+    assert shot["scores"]["vision"] is None
+    assert shot["scores"]["labels"] == pytest.approx(0.7)
+    assert shot["score"] == pytest.approx(0.55 * 0.5 + 0.45 * 0.7)
+    assert validate(data, "shotlog") == []
+
+
+def test_html_contact_sheet_shows_photo_card(tmp_path):
+    photo = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg")
+    write_photo_ingest(tmp_path, [photo_record(photo)])
+    write_photo_describe(
+        tmp_path,
+        photo,
+        described_photo_segment(interest=57, summary="a lighthouse at dusk"),
+    )
+    summary, exit_code = index.run(str(tmp_path))
+    assert exit_code == 0
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    assert 'class="badge media">photo</span>' in text
+    assert "data:image/jpeg;base64," in text
+    assert "a lighthouse at dusk" in text
+    assert validate(read_shotlog(tmp_path), "shotlog") == []

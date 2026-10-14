@@ -1,5 +1,7 @@
 opencv-python-headless
 openai
+pillow
+pillow-heif
 pysubs2
 pyyaml
 jsonschema

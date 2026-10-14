@@ -326,6 +326,56 @@ def test_force_and_budget_forwarded(tmp_path, monkeypatch, capsys):
     assert "--force" not in commands["ingest"][0]
 
 
+def make_context(tmp_path, music=None, final=False):
+    source = tmp_path / "raw"
+    source.mkdir(exist_ok=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    return recap.Context(
+        source=source,
+        workspace=workspace,
+        brief_text="brief",
+        final=final,
+        budget_usd=None,
+        force=False,
+        json_mode=True,
+        python=sys.executable,
+        repo_root=recap.REPO_ROOT,
+        music=music,
+    )
+
+
+def test_music_threads_beats_and_music(tmp_path):
+    music = tmp_path / "track.wav"
+    music.write_bytes(b"")
+    ctx = make_context(tmp_path, music=music, final=True)
+    stations = recap.build_stations(ctx)
+    names = [station["name"] for station in stations]
+    assert names.index("beats") == names.index("ingest") + 1
+    commands = {station["name"]: station["argv"][0] for station in stations}
+    beats = commands["beats"]
+    assert str(music) in beats
+    assert "--out" in beats
+    assert str(ctx.workspace / "beats.json") in beats
+    director = commands["llm_director"]
+    assert "--beats" in director
+    assert str(ctx.workspace / "beats.json") in director
+    for name in ("render", "render_final"):
+        assert "--music" in commands[name]
+        assert str(music) in commands[name]
+
+
+def test_without_music_no_beats_or_flags(tmp_path):
+    ctx = make_context(tmp_path)
+    stations = recap.build_stations(ctx)
+    names = [station["name"] for station in stations]
+    assert "beats" not in names
+    for station in stations:
+        argv = station["argv"][0]
+        assert "--beats" not in argv
+        assert "--music" not in argv
+
+
 class NotifyRecorder:
     def __init__(self, error=None):
         self.error = error

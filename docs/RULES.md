@@ -72,6 +72,17 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Proxies keep the source filename and live in `workspace/proxy/`; `proxy.py` refuses an `--out` that would write onto an original. — 2026-10-14
 - Preview services are tailnet-only: `serve.py` binds one address, never the wildcard, and serves only `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html` per project (allowlist routes, Range supported). — 2026-10-14
 - `recap.py --notify` posts the preview link (`<preview-base>/<workspace name>/recap_720p.mp4`) on success only; a failed run never notifies and a notify error never fails the recap. — 2026-10-14
+- Proxies keep the source's global metadata (`-map_metadata 0`) so `creation_time` survives for clips whose names carry no date. — 2026-10-14
 - Inbox grouping: a `YYYY-MM-DD` folder in the inbox wins over the filename date, then mtime; one workspace per day under `--projects`; a day whose clips share one folder is passed to `recap.py` directly, otherwise a rebuilt symlink farm (the inbox is read-only). — 2026-10-14
 - `inbox.py` waits for the inbox to be quiet (`--quiet-minutes`, default 5) and re-invokes `recap.py` on a new clip, a changed brief or `--force`; the station skip rule stays the only caching. — 2026-10-14
 - Phone sync is Syncthing: phone send-only camera folder → LXC receive-only `~/media/inbox`; setup steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14
+
+## Photos and music (D2-6)
+
+- Photos are first-class candidates: ingest scans stills next to the videos (JPEG/HEIC, EXIF capture time via Pillow + pillow-heif), describe covers each photo with one frame, similarity dedups bursts, index writes them to the shotlog with `media_type: "photo"`. — 2026-10-14
+- A photo describes as pseudo-segment `p1` (`0..0.04 s`) with `subject_position`; its labels score is a fixed clean-still prior 0.7 fused with vision as usual. — 2026-10-14
+- Burst rule: photo shots linked by similarity and captured within 30 s of each other form a burst; only the best stays eligible (`suppressed_by` the winner). — 2026-10-14
+- Photo slots (`kind: "photo"`) last 2–4 s and carry a Ken Burns move chosen deterministically from `subject_position`: centre box → `zoom_in` on the subject; else `pan_left`/`pan_right` toward the subject; `zoom_out` only for close-ups. — 2026-10-14
+- Ken Burns renders with ffmpeg `zoompan`; portrait photos sit on a blurred background (cover-scaled copy + boxblur), never black bars. — 2026-10-14
+- Music: `render.py`/`recap.py` take `--music FILE`; the track is the bed, normalised to the loudness target, and the cleaned ambient bus stays audible `--ambient-under-music-db` (default 12) below it — never removed; a loud ambient event dips the music gently (sidechain, ratio 3); fade-out at the end; no music generation before D6. — 2026-10-14
+- With a music track, the directors snap every timeline cut to the nearest beat (max shift half a beat period — the nearest beat is always within reach); a cut that starts a new structure beat snaps to the nearest downbeat; slots join with hard cuts when a beat grid is present (crossfades stay for ambient-only). — 2026-10-14

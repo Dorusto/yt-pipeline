@@ -50,6 +50,49 @@
       "tags": []
     },
     {
+      "key": "0068/p1",
+      "clip": "dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
+      "segment_id": "p1",
+      "media_type": "photo",
+      "capture_time": "2026-10-12T12:01:02+00:00",
+      "subject_position": {
+        "x": 0.5,
+        "y": 0.42
+      },
+      "start_s": 0.0,
+      "end_s": 0.04,
+      "eligible": true,
+      "role": "hold",
+      "role_source": "geometry",
+      "motion_label": "static",
+      "label_source": "geometry",
+      "confidence": 0.7,
+      "uncertain": false,
+      "uncertain_reasons": [],
+      "description": "The chapel above the bay at golden hour.",
+      "summary": "chapel above the bay, golden hour",
+      "tags": [
+        "chapel",
+        "golden-hour",
+        "bay"
+      ],
+      "subject": "the chapel",
+      "scenery": "the bay and the hills behind",
+      "semantic_motion": "none",
+      "interest": 88,
+      "hero": true,
+      "score": 0.81,
+      "scores": {
+        "vision": 0.91,
+        "labels": 0.7
+      },
+      "hook": "the chapel",
+      "reason": "interest 88 \u00b7 hero \u00b7 photo \u00b7 clean",
+      "similar_to": [],
+      "defects": [],
+      "suppressed_by": null
+    },
+    {
       "key": "0067/s2",
       "clip": "dji_mimo_20261012_115636_0067_1791817289009_video.mp4",
       "segment_id": "s2",

@@ -4,7 +4,13 @@
   "title": "edit",
   "description": "The edit list: the single source of truth for one edit. Written by the director and read by every output adapter (ffmpeg render, browser preview, graphics engine, optional Kdenlive export). Video slots carry source, in/out, score and reason; audio carries music, SFX, ambience and levels; captions and graphics overlays carry a template and its props.",
   "type": "object",
-  "required": ["schema_version", "generated_at", "brief", "sources", "video"],
+  "required": [
+    "schema_version",
+    "generated_at",
+    "brief",
+    "sources",
+    "video"
+  ],
   "additionalProperties": false,
   "$defs": {
     "slot_id": {
@@ -23,12 +29,18 @@
     },
     "transition": {
       "type": "object",
-      "required": ["type", "duration_s"],
+      "required": [
+        "type",
+        "duration_s"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["cut", "crossfade"]
+          "enum": [
+            "cut",
+            "crossfade"
+          ]
         },
         "duration_s": {
           "type": "number",
@@ -39,22 +51,35 @@
     },
     "video_slot": {
       "type": "object",
-      "required": ["id", "clip", "in_s", "out_s", "score", "reason"],
+      "required": [
+        "id",
+        "clip",
+        "in_s",
+        "out_s",
+        "score",
+        "reason"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": {"$ref": "#/$defs/slot_id"},
+        "id": {
+          "$ref": "#/$defs/slot_id"
+        },
         "clip": {
           "type": "string",
           "minLength": 1,
           "description": "file name of the source clip, matched against sources[].file"
         },
-        "in_s": {"$ref": "#/$defs/seconds"},
+        "in_s": {
+          "$ref": "#/$defs/seconds"
+        },
         "out_s": {
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "must be greater than in_s; the writer asserts it"
         },
-        "score": {"$ref": "#/$defs/score"},
+        "score": {
+          "$ref": "#/$defs/score"
+        },
         "reason": {
           "type": "string",
           "minLength": 1,
@@ -71,29 +96,67 @@
           "description": "playback rate of the slot; 1.0 is real time"
         },
         "role": {
-          "type": ["string", "null"],
-          "enum": ["move", "hold", "transition_in", "transition_out", "setup", "teardown", "accidental", null],
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "move",
+            "hold",
+            "transition_in",
+            "transition_out",
+            "setup",
+            "teardown",
+            "accidental",
+            null
+          ],
           "description": "quality role the window came from, context only"
         },
         "motion_label": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "camera motion label of the window, context only"
         },
         "description": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "vision-model description of the window; null when no model was used"
+        },
+        "kind": {
+          "type": "string",
+          "const": "video",
+          "default": "video",
+          "description": "slot kind discriminator; omitted on legacy video slots"
         }
       }
     },
     "audio_source": {
       "type": "object",
-      "required": ["path"],
+      "required": [
+        "path"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": {"type": "string", "minLength": 1},
-        "gain_db": {"type": "number", "default": 0},
-        "fade_in_s": {"type": "number", "minimum": 0},
-        "fade_out_s": {"type": "number", "minimum": 0},
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gain_db": {
+          "type": "number",
+          "default": 0
+        },
+        "fade_in_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fade_out_s": {
+          "type": "number",
+          "minimum": 0
+        },
         "start_s": {
           "type": "number",
           "minimum": 0,
@@ -103,10 +166,15 @@
     },
     "overlay": {
       "type": "object",
-      "required": ["template", "props"],
+      "required": [
+        "template",
+        "props"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": {"$ref": "#/$defs/slot_id"},
+        "id": {
+          "$ref": "#/$defs/slot_id"
+        },
         "template": {
           "type": "string",
           "minLength": 1,
@@ -116,11 +184,123 @@
           "type": "object",
           "description": "template properties; the template defines what it reads"
         },
-        "start_s": {"$ref": "#/$defs/seconds"},
-        "end_s": {"type": "number", "exclusiveMinimum": 0},
+        "start_s": {
+          "$ref": "#/$defs/seconds"
+        },
+        "end_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
         "slot": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "video slot id this overlay is bound to; null when it uses start_s/end_s"
+        }
+      }
+    },
+    "ken_burns": {
+      "type": "object",
+      "required": [
+        "move",
+        "amount",
+        "focus_x",
+        "focus_y"
+      ],
+      "additionalProperties": false,
+      "description": "slow move over a still photo during its slot",
+      "properties": {
+        "move": {
+          "type": "string",
+          "enum": [
+            "zoom_in",
+            "zoom_out",
+            "pan_left",
+            "pan_right"
+          ],
+          "description": "chosen deterministically from subject_position: centre box -> zoom_in on the subject; else pan toward the subject; zoom_out only for close-ups"
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 0.5,
+          "description": "zoom ratio delta or pan travel as a fraction of the frame (default 0.08)"
+        },
+        "focus_x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Ken Burns focus, usually the subject centre x"
+        },
+        "focus_y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Ken Burns focus, usually the subject centre y"
+        }
+      }
+    },
+    "photo_slot": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "photo",
+        "duration_s",
+        "ken_burns",
+        "score",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "description": "a still photo on the timeline: held 2-4 s with a Ken Burns move",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slot_id"
+        },
+        "kind": {
+          "type": "string",
+          "const": "photo"
+        },
+        "photo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "file name of the source photo, matched against sources[].file"
+        },
+        "duration_s": {
+          "type": "number",
+          "minimum": 2,
+          "maximum": 4,
+          "description": "how long the photo is on screen (2..4 s)"
+        },
+        "ken_burns": {
+          "$ref": "#/$defs/ken_burns"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "why the director picked this photo, in plain words"
+        },
+        "transition": {
+          "$ref": "#/$defs/transition",
+          "description": "transition INTO this slot; ignored on the first slot"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "vision-model description of the photo; null when no model was used"
+        },
+        "capture_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "ISO 8601 EXIF capture time of the photo"
         }
       }
     }
@@ -140,21 +320,43 @@
     },
     "brief": {
       "type": "object",
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "additionalProperties": false,
       "properties": {
         "text": {
           "type": "string",
           "description": "the brief in plain language"
         },
-        "target_duration_s": {"type": ["number", "null"], "minimum": 0},
+        "target_duration_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
         "order": {
-          "type": ["string", "null"],
-          "enum": ["chronological", "score", null]
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "chronological",
+            "score",
+            null
+          ]
         },
         "pacing": {
-          "type": ["string", "null"],
-          "enum": ["calm-to-energy", "uniform", null]
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "calm-to-energy",
+            "uniform",
+            null
+          ]
         }
       }
     },
@@ -164,24 +366,55 @@
       "description": "clips the video slots cut from; original files are read-only",
       "items": {
         "type": "object",
-        "required": ["file", "path"],
+        "required": [
+          "file",
+          "path"
+        ],
         "additionalProperties": false,
         "properties": {
-          "file": {"type": "string", "minLength": 1},
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
           "path": {
             "type": "string",
             "minLength": 1,
             "description": "absolute path of the clip, proxy or original"
           },
-          "duration_s": {"type": ["number", "null"], "minimum": 0}
-        }
+          "duration_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "video",
+              "photo"
+            ],
+            "default": "video"
+          }
+        },
+        "description": "clips and photos the slots cut from; original files are read-only"
       }
     },
     "video": {
       "type": "array",
       "minItems": 1,
-      "description": "video slots in timeline order",
-      "items": {"$ref": "#/$defs/video_slot"}
+      "description": "video and photo slots in timeline order; photo slots hold a still 2-4 s with a Ken Burns move",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/video_slot"
+          },
+          {
+            "$ref": "#/$defs/photo_slot"
+          }
+        ],
+        "description": "video and photo slots in timeline order"
+      }
     },
     "audio": {
       "type": "object",
@@ -190,32 +423,66 @@
       "properties": {
         "ambience": {
           "type": "object",
-          "required": ["enabled"],
+          "required": [
+            "enabled"
+          ],
           "additionalProperties": false,
           "properties": {
-            "enabled": {"type": "boolean"},
-            "gain_db": {"type": "number", "default": 0},
+            "enabled": {
+              "type": "boolean"
+            },
+            "gain_db": {
+              "type": "number",
+              "default": 0
+            },
             "source": {
               "type": "string",
-              "enum": ["slot", "file"],
+              "enum": [
+                "slot",
+                "file"
+              ],
               "description": "slot: each slot's own ambient audio; file: one ambience file for the whole edit"
             },
-            "file": {"type": ["string", "null"]}
+            "file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         },
         "music": {
-          "anyOf": [{"$ref": "#/$defs/audio_source"}, {"type": "null"}]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/audio_source"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "sfx": {
           "type": "array",
-          "items": {"$ref": "#/$defs/audio_source"}
+          "items": {
+            "$ref": "#/$defs/audio_source"
+          }
         },
         "levels": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "target_lufs": {"type": ["number", "null"]},
-            "true_peak_db": {"type": ["number", "null"]}
+            "target_lufs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "true_peak_db": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
           }
         }
       }
@@ -223,21 +490,33 @@
     "captions": {
       "type": "array",
       "description": "caption overlays; empty when the edit has none",
-      "items": {"$ref": "#/$defs/overlay"}
+      "items": {
+        "$ref": "#/$defs/overlay"
+      }
     },
     "graphics": {
       "type": "array",
       "description": "graphics overlays (titles, maps, counters); empty when the edit has none",
-      "items": {"$ref": "#/$defs/overlay"}
+      "items": {
+        "$ref": "#/$defs/overlay"
+      }
     },
     "meta": {
       "type": "object",
       "description": "run metadata; every tool reports wall time and LLM cost",
       "additionalProperties": false,
       "properties": {
-        "tool": {"type": "string"},
-        "wall_time_s": {"type": "number", "minimum": 0},
-        "llm_cost_usd": {"type": "number", "minimum": 0}
+        "tool": {
+          "type": "string"
+        },
+        "wall_time_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "llm_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     }
   }

@@ -337,6 +337,46 @@
               "minLength": 1,
               "maxLength": 32
             }
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "video",
+              "photo"
+            ],
+            "default": "video",
+            "description": "photo shots come from stills (JPEG/HEIC) ingested next to the clips"
+          },
+          "capture_time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 capture time of the photo from EXIF; null for video shots"
+          },
+          "subject_position": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "main subject centre in normalised image coordinates (photos only)",
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": true

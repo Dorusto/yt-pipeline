@@ -35,7 +35,9 @@ no extra keys.
    has its landing planned again; hero and complete semantic moves keep their whole
    window up to 6 s; no two slots from the same take back to back unless their
    windows touch; no two similar shots next to each other; ordinary slots follow
-   the pacing (2-12 s).
+   the pacing (2-12 s); **photo slots last 2-4 s and carry a Ken Burns move** —
+   a photo has no window, no landing and no same-take rule, and a planned hero
+   photo must not be dropped.
 2. **The brief.** Length (within about 10%), order (chronological means the
    slots follow the day), pacing (calm opening, energy toward the end when
    asked), and what the brief says the edit is about.

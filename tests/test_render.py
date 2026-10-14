@@ -1,7 +1,11 @@
 import json
+import os
 import subprocess
+import time
 
+import numpy as np
 import pytest
+from PIL import Image
 
 import render
 
@@ -226,7 +230,7 @@ def test_media_dir_resolves_clip_not_in_sources(tmp_path, capsys):
     assert summary["status"] == "written"
 
 
-def test_music_and_captions_warn_and_ignore(tmp_path, capsys):
+def test_captions_warn_and_ignore(tmp_path, capsys):
     first, second = two_clips(tmp_path)
     edit = make_edit(
         tmp_path,
@@ -237,14 +241,13 @@ def test_music_and_captions_warn_and_ignore(tmp_path, capsys):
         ],
     )
     data = json.loads(edit.read_text(encoding="utf-8"))
-    data["audio"]["music"] = {"path": "/does/not/exist.mp3"}
     data["captions"] = [{"template": "karaoke", "props": {}}]
     edit.write_text(json.dumps(data), encoding="utf-8")
     out = tmp_path / "out.mp4"
     assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
     summary = json.loads(capsys.readouterr().out)
-    assert any("music/sfx" in warning for warning in summary["warnings"])
     assert any("captions" in warning for warning in summary["warnings"])
+    assert summary["music"] is None
 
 
 def test_originals_win_over_sources(tmp_path, capsys):
@@ -490,3 +493,469 @@ def test_filter_graph_appends_the_clean_chain():
     )
     assert final_a == "a0"
     assert "[aclean]" not in graph
+
+
+def make_photo(path, size=(640, 360), color=(200, 60, 60)):
+    Image.new("RGB", size, color).save(path)
+    return path
+
+
+def make_gradient_photo(path, size=(300, 600)):
+    width, height = size
+    x = np.arange(width)[None, :]
+    y = np.arange(height)[:, None]
+    red = np.broadcast_to(x % 256, (height, width))
+    green = np.broadcast_to(y % 256, (height, width))
+    blue = (x + y) % 256
+    array = np.stack([red, green, blue], axis=-1).astype("uint8")
+    Image.fromarray(array, "RGB").save(path)
+    return path
+
+
+def photo_source(path):
+    return {"file": path.name, "path": str(path), "duration_s": None, "media_type": "photo"}
+
+
+def photo_slot(slot_id, photo_name, duration_s=3.0, move="zoom_in", transition=None):
+    slot = {
+        "id": slot_id,
+        "kind": "photo",
+        "photo": photo_name,
+        "duration_s": duration_s,
+        "ken_burns": {"move": move, "amount": 0.08, "focus_x": 0.5, "focus_y": 0.5},
+        "score": 0.5,
+        "reason": "test",
+    }
+    if transition is not None:
+        slot["transition"] = transition
+    return slot
+
+
+def make_photo_edit(tmp_path, slots, sources, name="photo_edit.json"):
+    edit = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-14T19:43:17+00:00",
+        "brief": {"text": "test"},
+        "sources": sources,
+        "video": slots,
+        "audio": {"ambience": {"enabled": True, "source": "slot"}},
+        "captions": [],
+        "graphics": [],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(edit), encoding="utf-8")
+    return path
+
+
+def extract_frame(video, t, out):
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(video), "-ss", str(t), "-frames:v", "1", str(out)],
+        check=True,
+        capture_output=True,
+    )
+    return out
+
+
+def frame_array(path):
+    return np.asarray(Image.open(path).convert("RGB"), dtype=float)
+
+
+def test_photo_slot_renders_duration_and_frame(tmp_path, capsys):
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "written"
+    assert summary["slots"] == 1
+    data = probe(out)
+    assert abs(float(data["format"]["duration"]) - 3.0) <= 0.1
+    assert video_size(out) == (1280, 720)
+    assert any(s["codec_type"] == "audio" for s in data["streams"])
+
+
+def test_portrait_photo_renders_on_blurred_background(tmp_path, capsys):
+    photo = make_gradient_photo(tmp_path / "port.jpg", size=(300, 600))
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    array = frame_array(extract_frame(out, 1.5, tmp_path / "frame.png"))
+    left = array[300:420, 0:4, :]
+    right = array[300:420, -4:, :]
+    assert left.std() > 0
+    assert right.std() > 0
+    assert left.mean() > 0
+    assert right.mean() > 0
+
+
+def test_zoom_in_produces_visible_motion(tmp_path, capsys):
+    photo = make_gradient_photo(tmp_path / "land.jpg", size=(640, 360))
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0, move="zoom_in")],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    first = frame_array(extract_frame(out, 0.05, tmp_path / "first.png"))
+    last = frame_array(extract_frame(out, 2.9, tmp_path / "last.png"))
+    assert np.abs(first - last).mean() > 0
+
+
+def test_mixed_video_and_photo_slots(tmp_path, capsys):
+    clip = tmp_path / "clip.mp4"
+    make_clip(clip, color="blue", freq=440)
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [
+            {
+                "id": "v0",
+                "clip": clip.name,
+                "in_s": 0.0,
+                "out_s": 2.0,
+                "score": 0.5,
+                "reason": "test",
+                "transition": {"type": "cut", "duration_s": 0},
+            },
+            photo_slot("p1", photo.name, duration_s=3.0, transition={"type": "cut", "duration_s": 0}),
+        ],
+        [
+            {"file": clip.name, "path": str(clip), "duration_s": 2.0, "media_type": "video"},
+            photo_source(photo),
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["slots"] == 2
+    data = probe(out)
+    assert abs(float(data["format"]["duration"]) - 5.0) <= 0.1
+    assert video_size(out) == (1280, 720)
+
+
+def test_photo_first_slot_uses_photo_size_from_originals(tmp_path, capsys):
+    photo = make_photo(tmp_path / "land.jpg", size=(640, 360))
+    originals = tmp_path / "originals"
+    originals.mkdir()
+    make_photo(originals / "land.jpg", size=(640, 360))
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "final.mp4"
+    assert (
+        render.main(
+            ["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals), "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["source"] == "originals"
+    assert video_size(out) == (640, 360)
+
+
+def test_unresolvable_photo_exits_1_without_output(tmp_path, capsys):
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", "missing.jpg", duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert not out.exists()
+    assert "[error]" in capsys.readouterr().err
+
+
+def test_heic_photo_is_converted_to_jpeg(tmp_path, capsys):
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    photo = tmp_path / "still.heic"
+    Image.new("RGB", (300, 600), (120, 180, 90)).save(photo, quality=90)
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    assert out.exists()
+    assert list((tmp_path / "photos").glob("*.jpg"))
+
+
+def make_music(path, duration=2.0, freq=1000):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency={freq}:duration={duration}:sample_rate=48000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
+def audio_rms(path, start, duration):
+    raw = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            str(start),
+            "-t",
+            str(duration),
+            "-i",
+            str(path),
+            "-f",
+            "f32le",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    samples = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(samples**2)))
+
+
+def make_music_edit(tmp_path, music, name="music_edit.json", ambience=True):
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [
+            photo_slot("p0", photo.name, duration_s=3.0, transition={"type": "cut", "duration_s": 0}),
+            photo_slot("p1", photo.name, duration_s=3.0, transition={"type": "cut", "duration_s": 0}),
+        ],
+        [photo_source(photo)],
+        name=name,
+    )
+    data = json.loads(edit.read_text(encoding="utf-8"))
+    data["audio"]["ambience"]["enabled"] = ambience
+    data["audio"]["music"] = {"path": str(music)}
+    edit.write_text(json.dumps(data), encoding="utf-8")
+    return edit
+
+
+def test_music_loops_to_edit_length(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music"]["looped"] is True
+    data = probe(out)
+    assert abs(float(data["format"]["duration"]) - 6.0) <= 0.15
+    assert audio_rms(out, 3.0, 0.5) > 0.001
+    assert audio_rms(out, 5.0, 0.5) > 0.001
+
+
+def test_music_fade_out_is_measurable(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    middle = audio_rms(out, 2.5, 1.0)
+    tail = audio_rms(out, 5.8, 0.2)
+    assert middle > 0.001
+    assert tail < 0.3 * middle
+
+
+def test_music_flag_overrides_edit_path(tmp_path, capsys):
+    edit_music = make_music(tmp_path / "edit_music.wav", duration=2.0, freq=1000)
+    flag_music = make_music(tmp_path / "flag_music.wav", duration=2.0, freq=800)
+    edit = make_music_edit(tmp_path, edit_music)
+    out = tmp_path / "out.mp4"
+    assert (
+        render.main(
+            ["--edit", str(edit), "--out", str(out), "--music", str(flag_music), "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music"]["path"] == str(flag_music)
+
+
+def test_music_gain_flag_overrides_edit_gain(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    data = json.loads(edit.read_text(encoding="utf-8"))
+    data["audio"]["music"]["gain_db"] = -6.0
+    edit.write_text(json.dumps(data), encoding="utf-8")
+    out = tmp_path / "out.mp4"
+    assert (
+        render.main(
+            ["--edit", str(edit), "--out", str(out), "--music-gain-db", "-20", "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music"]["gain_db"] == -20.0
+
+
+def test_music_summary_fields(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music"] == {
+        "path": str(music),
+        "gain_db": 0.0,
+        "ambient_under_db": 12.0,
+        "ducking": True,
+        "looped": True,
+    }
+
+
+def test_music_without_ambience_has_no_ducking(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music, ambience=False)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music"]["ducking"] is False
+    assert audio_rms(out, 3.0, 0.5) > 0.001
+
+
+def test_music_rerun_skipped_when_newer_than_both(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "skipped"
+    assert summary["music"]["path"] == str(music)
+
+
+def test_music_newer_than_output_rerenders(tmp_path, capsys):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    future = time.time() + 10
+    os.utime(music, (future, future))
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "written"
+
+
+def test_missing_music_file_exits_1_without_output(tmp_path, capsys):
+    edit = make_music_edit(tmp_path, tmp_path / "missing.wav")
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert not out.exists()
+    assert "[error]" in capsys.readouterr().err
+
+
+def test_music_without_audio_stream_exits_1(tmp_path, capsys):
+    silent = tmp_path / "silent.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=160x90:d=2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(silent),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    edit = make_music_edit(tmp_path, silent)
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert not out.exists()
+    assert "[error]" in capsys.readouterr().err
+
+
+def test_help_lists_music_flags(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        render.main(["--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "--music" in out
+    assert "--music-gain-db" in out
+
+
+
+
+
+def band_rms(path, start, duration, freq, width=60.0):
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", str(start), "-t", str(duration), "-i", str(path),
+         "-f", "f32le", "-ac", "1", "-ar", "48000", "-"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    samples = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
+    spectrum = np.abs(np.fft.rfft(samples * np.hanning(samples.size)))
+    freqs = np.fft.rfftfreq(samples.size, 1.0 / 48000)
+    band = (freqs > freq - width) & (freqs < freq + width)
+    return float(np.sqrt(np.sum(spectrum[band] ** 2)))
+
+
+def test_music_is_the_bed_and_the_ambient_stays_audible_under_it(tmp_path, capsys):
+    clip = tmp_path / "amb.mp4"
+    make_clip(clip, duration=4.0, freq=440)
+    edit = make_edit(tmp_path, [clip], [{"type": "cut", "duration_s": 0}])
+    data = json.loads(edit.read_text(encoding="utf-8"))
+    data["video"][0]["out_s"] = 4.0
+    edit.write_text(json.dumps(data), encoding="utf-8")
+    music = make_music(tmp_path / "music.wav", duration=4.0, freq=1000)
+    out = tmp_path / "out.mp4"
+    assert render.main(
+        ["--edit", str(edit), "--out", str(out), "--music", str(music),
+         "--denoiser", "none", "--json"]
+    ) == 0
+    capsys.readouterr()
+    ambient = band_rms(out, 1.0, 1.0, 440)
+    bed = band_rms(out, 1.0, 1.0, 1000)
+    assert ambient > 0.0
+    gap_db = 20 * np.log10(bed / ambient)
+    assert 8.0 <= gap_db <= 16.0, gap_db

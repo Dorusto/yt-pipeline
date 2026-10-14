@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 import director
 from common.schema import validate
 
@@ -1160,3 +1162,393 @@ def test_prompts_state_the_six_second_cap():
     reviewer = (ROOT / "prompts" / "reviewer.md").read_text(encoding="utf-8")
     assert "up to 6 s" in reviewer
     assert "ends where the steady motion ends" in reviewer
+
+
+def write_photo(path, size=(64, 48), color=(120, 80, 40)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, "JPEG")
+    return path
+
+
+def photo_ingest_record(path, creation_time="2026-10-12T11:42:00+00:00"):
+    return {
+        "file": path.name,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "width": 64,
+        "height": 48,
+        "orientation": None,
+        "creation_time": creation_time,
+        "creation_time_source": "exif",
+        "format": "JPEG",
+        "warnings": [],
+    }
+
+
+def photo_shot(
+    key,
+    name,
+    capture_time,
+    score,
+    subject_position=None,
+    tags=None,
+    hero=None,
+    eligible=True,
+    description="a still",
+    hook="lighthouse",
+    reason="interest 70 · static by geometry · hold · clean",
+):
+    return {
+        "key": key,
+        "clip": name,
+        "segment_id": "p1",
+        "start_s": 0.0,
+        "end_s": 0.04,
+        "media_type": "photo",
+        "capture_time": capture_time,
+        "subject_position": subject_position,
+        "eligible": eligible,
+        "role": "hold",
+        "role_source": "geometry",
+        "motion_label": "static",
+        "label_source": "geometry",
+        "confidence": 0.7,
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "description": description,
+        "summary": hook,
+        "tags": tags or [],
+        "subject": hook,
+        "scenery": "coast",
+        "semantic_motion": "none",
+        "interest": 70,
+        "hero": hero,
+        "score": score,
+        "scores": {"vision": score, "labels": 0.7},
+        "hook": hook,
+        "reason": reason,
+        "similar_to": [],
+        "suppressed_by": None,
+    }
+
+
+def build_photo_workspace(root, clips, photos, video_shots, photo_shots):
+    write_json(
+        root / "ingest.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "source_dir": str(root),
+            "clip_count": len(clips),
+            "clips": clips,
+            "photo_count": len(photos),
+            "photos": photos,
+            "warnings": [],
+        },
+    )
+    for clip in clips:
+        stem = Path(clip["file"]).stem
+        write_json(
+            root / "quality" / f"{stem}.json",
+            quality_doc(
+                clip["file"],
+                clip["duration_s"],
+                [segment("s1", 0.0, clip["duration_s"], "hold", motion_label="static")],
+            ),
+        )
+        write_json(root / "motion" / f"{stem}.json", motion_doc(clip["file"], clip["duration_s"], []))
+    write_shotlog(root, video_shots + photo_shots)
+    return root
+
+
+def test_photo_shot_becomes_photo_slot(tmp_path):
+    photo = write_photo(tmp_path / "media" / "photo_01.jpg")
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    photos = [photo_ingest_record(photo, "2026-01-01T10:01:00+00:00")]
+    video_shots = [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 60.0, True, 0.5, "a hold", "interest 50 · static by geometry · hold · clean"),
+    ]
+    photo_shots = [photo_shot("photo_01/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.8)]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    _, record = run_edit(workspace, tmp_path / "edit.json", "--target-duration-s", "30")
+    photo_slots = [slot for slot in record["video"] if slot.get("kind") == "photo"]
+    assert photo_slots
+    slot = photo_slots[0]
+    assert slot["photo"] == photo.name
+    assert 2.0 <= slot["duration_s"] <= 4.0
+    assert slot["ken_burns"]["move"] in {"zoom_in", "zoom_out", "pan_left", "pan_right"}
+    assert 0.01 <= slot["ken_burns"]["amount"] <= 0.5
+    assert 0.0 <= slot["ken_burns"]["focus_x"] <= 1.0
+    assert 0.0 <= slot["ken_burns"]["focus_y"] <= 1.0
+    assert validate(record, "edit") == []
+    photo_sources = [source for source in record["sources"] if source.get("media_type") == "photo"]
+    assert photo_sources == [
+        {"file": photo.name, "path": str(photo), "duration_s": None, "media_type": "photo"}
+    ]
+
+
+def test_photo_ken_burns_from_subject_position(tmp_path):
+    specs = [
+        ("photo_a.jpg", {"x": 0.2, "y": 0.5}, [], "pan_left"),
+        ("photo_b.jpg", {"x": 0.8, "y": 0.5}, [], "pan_right"),
+        ("photo_c.jpg", {"x": 0.5, "y": 0.5}, [], "zoom_in"),
+        ("photo_d.jpg", {"x": 0.5, "y": 0.5}, ["close-up"], "zoom_out"),
+    ]
+    photos = []
+    photo_shots = []
+    for index, (name, position, tags, _) in enumerate(specs):
+        path = write_photo(tmp_path / "media" / name, color=(10 + index * 30, 20, 30))
+        capture = f"2026-01-01T10:0{index + 1}:00+00:00"
+        photos.append(photo_ingest_record(path, capture))
+        photo_shots.append(
+            photo_shot(f"{Path(name).stem}/p1", name, capture, 0.9, subject_position=position, tags=tags)
+        )
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    video_shots = [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 60.0, True, 0.3, "a hold", "interest 30 · static by geometry · hold · clean"),
+    ]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    _, record = run_edit(workspace, tmp_path / "edit.json", "--target-duration-s", "30", "--order", "score")
+    by_photo = {slot["photo"]: slot for slot in record["video"] if slot.get("kind") == "photo"}
+    assert by_photo["photo_a.jpg"]["ken_burns"]["move"] == "pan_left"
+    assert by_photo["photo_b.jpg"]["ken_burns"]["move"] == "pan_right"
+    assert by_photo["photo_c.jpg"]["ken_burns"]["move"] == "zoom_in"
+    assert by_photo["photo_c.jpg"]["ken_burns"]["focus_x"] == 0.5
+    assert by_photo["photo_c.jpg"]["ken_burns"]["focus_y"] == 0.5
+    assert by_photo["photo_d.jpg"]["ken_burns"]["move"] == "zoom_out"
+    assert all(slot["ken_burns"]["amount"] == 0.08 for slot in by_photo.values())
+
+
+def test_ken_burns_missing_subject_defaults_to_centre_zoom():
+    burns = director.ken_burns_for(None, [])
+    assert burns == {"move": "zoom_in", "amount": 0.08, "focus_x": 0.5, "focus_y": 0.5}
+
+
+def test_hero_photo_never_missed(tmp_path):
+    photo = write_photo(tmp_path / "media" / "hero_photo.jpg")
+    clips = [
+        {"file": "clipO.mp4", "path": "/media/clipO.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    photos = [photo_ingest_record(photo, "2026-01-01T10:01:00+00:00")]
+    video_shots = [
+        shotlog_shot("clipO/s1", "clipO.mp4", "s1", 0.0, 60.0, True, 0.95, "decoy", "interest 95 · static by geometry · hold · clean"),
+    ]
+    photo_shots = [photo_shot("hero_photo/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.75, hero=True)]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    _, record = run_edit(
+        workspace, tmp_path / "edit.json",
+        "--target-duration-s", "12", "--order", "score", "--pacing", "uniform",
+    )
+    assert any(slot.get("kind") == "photo" and slot["photo"] == photo.name for slot in record["video"])
+
+
+def test_chronological_interleaves_photo_and_video(tmp_path):
+    photo = write_photo(tmp_path / "media" / "mid_photo.jpg")
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T11:40:00"},
+        {"file": "clipB.mp4", "path": "/media/clipB.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T11:50:00"},
+    ]
+    photos = [photo_ingest_record(photo, "2026-01-01T11:45:00+00:00")]
+    video_shots = [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 60.0, True, 0.5, "a", "interest 50 · static by geometry · hold · clean"),
+        shotlog_shot("clipB/s1", "clipB.mp4", "s1", 0.0, 60.0, True, 0.5, "b", "interest 50 · static by geometry · hold · clean"),
+    ]
+    photo_shots = [photo_shot("mid_photo/p1", photo.name, "2026-01-01T11:45:00+00:00", 0.9)]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    _, record = run_edit(workspace, tmp_path / "edit.json", "--target-duration-s", "30", "--order", "chronological")
+    kinds = [(slot.get("kind") or "video", slot.get("clip") or slot.get("photo")) for slot in record["video"]]
+    photo_index = next(index for index, (kind, _) in enumerate(kinds) if kind == "photo")
+    assert kinds[photo_index - 1][1] == "clipA.mp4"
+    assert kinds[photo_index + 1][1] == "clipB.mp4"
+
+
+def test_burst_suppressed_photo_is_not_a_candidate(tmp_path):
+    photo = write_photo(tmp_path / "media" / "burst_photo.jpg")
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    photos = [photo_ingest_record(photo, "2026-01-01T10:01:00+00:00")]
+    video_shots = [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 60.0, True, 0.5, "a", "interest 50 · static by geometry · hold · clean"),
+    ]
+    photo_shots = [photo_shot("burst_photo/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.9, eligible=False)]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    _, record = run_edit(workspace, tmp_path / "edit.json", "--target-duration-s", "30")
+    assert not any(slot.get("kind") == "photo" for slot in record["video"])
+
+
+def write_beats_file(path, phase=0.0, period=0.5, count=200, downbeat_every=4, nested=True):
+    beats = [round(phase + period * index, 6) for index in range(count)]
+    downbeats = beats[::downbeat_every]
+    payload = {
+        "beat_s": beats,
+        "downbeat_s": downbeats,
+        "beat_period_s": period,
+        "duration_s": round(beats[-1] + period, 3),
+        "bpm": round(60.0 / period, 3),
+    }
+    write_json(path, {"measurement": payload} if nested else payload)
+    return beats
+
+
+def edit_cuts(record):
+    cuts = []
+    position = 0.0
+    for slot in record["video"]:
+        position += slot["duration_s"] if slot.get("kind") == "photo" else slot["out_s"] - slot["in_s"]
+        cuts.append(round(position, 4))
+    return cuts
+
+
+def test_beats_snap_every_cut_to_a_beat(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    beats_path = tmp_path / "beats.json"
+    beats = write_beats_file(beats_path, phase=0.1)
+    out = tmp_path / "edit.json"
+    result = run_director(
+        "--workspace", workspace, "--out", out, "--target-duration-s", "24",
+        "--pacing", "uniform", "--beats", beats_path, "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["beat_snap"]["unsnapped"] == 0
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert len(record["video"]) == 4
+    for cut in edit_cuts(record):
+        assert min(abs(cut - beat) for beat in beats) <= 0.02
+    assert all(slot["transition"]["type"] == "cut" for slot in record["video"][1:])
+
+
+def test_beat_snap_cut_that_cannot_move_warns_and_stays():
+    beat_s = [round(0.1 + 0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.0,
+        "out_s": 2.5,
+        "window_in_s": 0.0,
+        "window_out_s": 2.5,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.0, "duration_s": 3.0}
+    warnings = []
+    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    assert video["out_s"] == 2.5
+    assert any("cut 1: not snapped" in warning for warning in warnings)
+    assert stats["unsnapped"] >= 1
+
+
+def test_beat_snap_photo_duration_lands_on_a_whole_beat():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.9, "duration_s": 2.9}
+    warnings = []
+    director.snap_slots([photo], grid, [False], warnings)
+    assert abs(photo["duration_s"] - round(photo["duration_s"] / 0.5) * 0.5) <= 0.02
+    assert 2.0 <= photo["duration_s"] <= 4.0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+
+
+def test_beat_snap_photo_slots_stay_on_beats_in_an_edit(tmp_path):
+    photo = write_photo(tmp_path / "media" / "photo_01.jpg")
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    photos = [photo_ingest_record(photo, "2026-01-01T10:01:00+00:00")]
+    video_shots = [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 60.0, True, 0.5, "a hold", "interest 50 · static by geometry · hold · clean"),
+    ]
+    photo_shots = [photo_shot("photo_01/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.8)]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    beats_path = tmp_path / "beats.json"
+    beats = write_beats_file(beats_path, phase=0.1)
+    _, record = run_edit(
+        workspace, tmp_path / "edit.json", "--target-duration-s", "30", "--beats", beats_path,
+    )
+    photo_slots = [slot for slot in record["video"] if slot.get("kind") == "photo"]
+    assert photo_slots
+    for slot in photo_slots:
+        assert 2.0 <= slot["duration_s"] <= 4.0
+        assert abs(slot["duration_s"] - round(slot["duration_s"] / 0.5) * 0.5) <= 0.02
+    for cut in edit_cuts(record):
+        assert min(abs(cut - beat) for beat in beats) <= 0.02
+
+
+def test_without_beats_transitions_stay_crossfades(tmp_path):
+    _, _, summary, record = write_edit(tmp_path)
+    assert summary["beat_snap"] is None
+    assert record["video"][1]["transition"] == {"type": "crossfade", "duration_s": 0.3}
+
+
+def test_help_lists_beats():
+    result = run_director("--help")
+    assert result.returncode == 0
+    assert "--beats" in result.stdout
+
+
+def test_beats_joins_the_input_mtimes(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    beats_path = tmp_path / "beats.json"
+    write_beats_file(beats_path, phase=0.1)
+    out = tmp_path / "edit.json"
+    args = (
+        "--workspace", workspace, "--out", out, "--target-duration-s", "24",
+        "--pacing", "uniform", "--beats", beats_path, "--json",
+    )
+    first = run_director(*args)
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["status"] == "written"
+    second = run_director(*args)
+    assert second.returncode == 0, second.stderr
+    assert json.loads(second.stdout)["status"] == "skipped"
+    beats_path.write_text(beats_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    third = run_director(*args)
+    assert third.returncode == 0, third.stderr
+    assert json.loads(third.stdout)["status"] == "written"
+
+
+def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.5,
+        "out_s": 2.9,
+        "window_in_s": 0.0,
+        "window_out_s": 2.9,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.5, "duration_s": 3.5}
+    warnings = []
+    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    assert video["out_s"] == 2.9
+    assert abs(video["in_s"] - 0.4) <= 0.02
+    assert 2.0 <= photo["duration_s"] <= 4.0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+    assert stats["unsnapped"] == 0
+
+
+def test_beat_snap_pair_absorb_stays_when_both_slots_are_pinned():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.0,
+        "out_s": 2.9,
+        "window_in_s": 0.0,
+        "window_out_s": 2.9,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.0, "duration_s": 2.0}
+    warnings = []
+    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    assert video["out_s"] == 2.9
+    assert video["in_s"] == 0.0
+    assert any("cut 1: not snapped" in warning for warning in warnings)
+    assert stats["unsnapped"] >= 1

@@ -1350,3 +1350,81 @@ $0. All 21 originals verified unchanged by md5.
 **Options:** (a) OS-based `skipif` inside the tests — hides the reason from the run summary and can silently skip on a dev machine that does have melt; (b) pytest markers `needs_melt` / `needs_footage` plus a `-m "not needs_melt and not needs_footage"` expression on the macOS/Windows CI jobs, keeping the existing `skipif(which("melt") is None)` as a second belt for local runs without melt. Chosen: (b). Ubuntu CI installs `melt` (apt package `melt`) so the melt end-to-end test runs there; macOS/Windows install only ffmpeg (`brew` / `choco`) and fail loudly on `ffmpeg -version` if the install did not stick. A grep of the suite found no test that reads real footage (fixtures and tmp paths only — the `/media/clip*.mp4` strings in the director tests are JSON metadata, never opened), so `needs_footage` is registered and used in the expression but nothing carries it yet. The workflow's pip line gained `filelock` and `psutil` (ledger lock and watchdog) and still avoids `requirements.txt`, so CI stays free of torch/whisperx. Numbers 2026-10-14: `742 passed` full, `741 passed, 1 deselected` with the expression.
 
 **Rationale:** Markers keep the skip decision in the runner, where the OS is known, and the summary honest ("1 deselected" beats a vague skip reason); `fail-fast: false` so one OS failure still shows the other two.
+
+---
+
+## [2026-10-14] D2-6 photos + music: EXIF stack, photo data model, Ken Burns, beat snap
+
+**Context:** D2-6 goal is to beat DJI Mimo on a day with more photos than clips:
+photos become first-class shotlog candidates and edit slots (2–4 s, Ken Burns),
+the render mixes a music track under the ambient bus with beat-aligned cuts.
+Four interface choices were needed; all are reversible and were made by the
+architect.
+
+**Photo EXIF / HEIC stack.** Options: (a) **exiftool** (Perl, `libimage-exiftool-perl`
+12.76) — richest tag coverage but a new system dependency and a subprocess per
+file; it does not decode pixels, so HEIC decode would still need another library.
+(b) **Pillow alone** (MIT-CMU, 12.3.0) — JPEG EXIF fine, but no HEIC at all.
+(c) **Pillow + pillow-heif** (BSD-3-Clause, 1.8.1) — one register call gives
+JPEG+HEIC decode *and* EXIF (`DateTimeOriginal` tag 36867, orientation 274)
+through the same `Image.getexif()` API, and pixels come out as numpy for
+describe/similarity/render. **Chosen: (c).** exiftool stays the manual fallback
+for exotic tags; it is not installed and nothing here needs it. Both go to
+`requirements.txt`; HEIC decode lives behind `scripts/common/photos.py` (no
+tool imports another tool). Verified on 2026-10-14: JPEG and HEIC EXIF
+round-trips on the LXC venv.
+
+**Photo data model (ingest → describe → shotlog → edit).**
+- `ingest.json` keeps `clips[]` for video and adds `photos[]` with the same
+  timestamp keys (`creation_time`, `creation_time_source: "exif"`) plus
+  `width`/`height`/`orientation`, so one chronological order covers both.
+  Videos never change shape (motion/quality/describe stay untouched).
+- `describe/<stem>.json` for a photo is one pseudo-segment `p1` covering
+  `0..0.04 s` (one frame at 25 fps): same answer fields as a video segment,
+  plus `subject_position` (`x`/`y` in 0..1, main subject centre) which drives
+  the Ken Burns move. `media_type: "photo"` marks the record.
+- Shotlog photo shots: key `<counter>/p1`, `media_type: "photo"`, role `hold`,
+  motion `static`, the same window convention. **Photo labels score is a fixed
+  clean-still prior of 0.7** (a still is a perfect hold; defect measurement for
+  photos is future work) fused with vision as usual, so photos rank by content
+  without being capped by missing geometry. Burst rule: photo shots linked by
+  similarity *and* captured within 30 s of each other form a burst; only the
+  best of the burst stays eligible (`suppressed_by` the winner).
+- `edit.json` gains a **photo slot** (`kind: "photo"`): `photo` file name,
+  `duration_s` 2–4, `ken_burns` `{move: zoom_in|zoom_out|pan_left|pan_right,
+  amount, focus_x, focus_y}` and `capture_time`. Move choice is deterministic
+  from `subject_position`: centre box (|x−0.5|≤0.15, |y−0.5|≤0.2) → `zoom_in`
+  on the subject; otherwise pan toward the subject (`pan_left` if x<0.5 else
+  `pan_right`); `zoom_out` only when the subject fills the frame (vision says
+  close-up). `video[]` items become `oneOf` video_slot | photo_slot; video
+  slots keep their exact shape.
+
+**Ken Burns render.** ffmpeg `zoompan` on a still, framed to the target aspect
+by `scale`+`pad`; **portrait photos land on a blurred background** (cover-scaled
+copy + `boxblur`, photo overlaid fit-to-height) — never black bars. The move is
+a slow zoom/pan over the slot (amount default 0.08).
+
+**Music and beat snap.** `render.py --music FILE` and `recap.py --music FILE`
+(also `edit.json` `audio.music` as today). With music, `beats.py` writes
+`beats.json` (already has the grid) and **the directors snap every timeline cut
+point to the nearest beat** (max shift half a beat period — the nearest beat is always within reach, so only a slot that cannot absorb the shift warns); in
+`llm_director` a cut that starts a new `shot_plan` structure beat snaps to the
+nearest **downbeat** instead; `director.py` (rule-based) has no sections and
+snaps to beats only. With a beat grid the slots join with **hard cuts** (music
+edits cut on beats; crossfades smear the beat), the 0.3 s crossfade default
+stays for ambient-only edits. The render mixes the track **under the cleaned
+ambient bus** with `sidechaincompress` ducking and a fade-out at the end;
+music shorter than the edit loops. No music generation in this phase (YuE2 is
+D6).
+
+**Fixtures.** Test photos are generated at test runtime with Pillow (tiny
+synthetic, EXIF written by the test) — never committed. The acceptance run
+builds its photos from frames of `~/media/yt-test/proxy` clips with EXIF times
+into the test workspace (outside the repo) and uses a synthetic 120 BPM click
+track made with ffmpeg. `tests/fixtures/` stays free of binaries.
+
+**Rationale:** one decode path (Pillow) for EXIF and pixels keeps the tools
+independent and the LXC happy; the pseudo-segment convention reuses the whole
+shotlog/index/director machinery for photos instead of a parallel code path;
+hard cuts on beats are what Quik/Mimo do and make the 80 ms acceptance check
+unambiguous.

@@ -55,5 +55,20 @@
       "warnings": []
     }
   ],
-  "warnings": []
+  "warnings": [],
+  "photo_count": 1,
+  "photos": [
+    {
+      "file": "dji_mimo_20261012_114500_0059_1791817312345_photo.jpg",
+      "path": "/media/yt-test/proxy/dji_mimo_20261012_114500_0059_1791817312345_photo.jpg",
+      "size_bytes": 2451232,
+      "width": 4032,
+      "height": 3024,
+      "orientation": 1,
+      "creation_time": "2026-10-12T11:45:00+00:00",
+      "creation_time_source": "exif",
+      "format": "JPEG",
+      "warnings": []
+    }
+  ]
 }

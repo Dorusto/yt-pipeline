@@ -1,0 +1,189 @@
+{
+  "name": "photo_similar",
+  "intent": "two visually similar photos are never both in the edit, never back to back",
+  "args": [
+    "--target-duration-s",
+    "12.0",
+    "--pacing",
+    "uniform",
+    "--order",
+    "score"
+  ],
+  "workspace": {
+    "ingest.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "source_dir": "/media",
+      "clip_count": 1,
+      "photo_count": 2,
+      "clips": [
+        {
+          "file": "clipB.mp4",
+          "path": "/media/clipB.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:00:00"
+        }
+      ],
+      "photos": [
+        {
+          "file": "still_0004_c.jpg",
+          "path": "/media/still_0004_c.jpg",
+          "width": 4032,
+          "height": 3024,
+          "creation_time": "2026-01-01T10:00:10+00:00",
+          "creation_time_source": "exif",
+          "format": "JPEG"
+        },
+        {
+          "file": "still_0005_d.jpg",
+          "path": "/media/still_0005_d.jpg",
+          "width": 4032,
+          "height": 3024,
+          "creation_time": "2026-01-01T10:00:12+00:00",
+          "creation_time_source": "exif",
+          "format": "JPEG"
+        }
+      ]
+    },
+    "quality/clipB.json": {
+      "file": "clipB.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "motion/clipB.json": {
+      "file": "clipB.mp4",
+      "duration_s": 60.0,
+      "moves": [],
+      "phases": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "shotlog.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "weights": {
+        "vision": 0.55,
+        "labels": 0.45,
+        "audio_energy": 0.0,
+        "text": 0.0
+      },
+      "shots": [
+        {
+          "key": "clipB/s1",
+          "clip": "clipB.mp4",
+          "segment_id": "s1",
+          "media_type": "video",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.55,
+          "scores": {
+            "labels": 0.7,
+            "vision": 0.4
+          },
+          "description": "ordinary hold",
+          "hook": "ordinary hold",
+          "reason": "interest 40",
+          "similar_to": [],
+          "hero": false,
+          "semantic_motion": null
+        },
+        {
+          "key": "0004/p1",
+          "clip": "still_0004_c.jpg",
+          "segment_id": "p1",
+          "media_type": "photo",
+          "capture_time": "2026-01-01T10:00:10+00:00",
+          "subject_position": {
+            "x": 0.5,
+            "y": 0.5
+          },
+          "start_s": 0.0,
+          "end_s": 0.04,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.88,
+          "scores": {
+            "labels": 0.7,
+            "vision": 0.98
+          },
+          "description": "the pier",
+          "summary": "the pier",
+          "tags": [
+            "pier"
+          ],
+          "hook": "the pier",
+          "reason": "interest 98 \u00b7 photo",
+          "similar_to": [
+            "0005/p1"
+          ],
+          "hero": false,
+          "semantic_motion": "none"
+        },
+        {
+          "key": "0005/p1",
+          "clip": "still_0005_d.jpg",
+          "segment_id": "p1",
+          "media_type": "photo",
+          "capture_time": "2026-01-01T10:00:12+00:00",
+          "subject_position": {
+            "x": 0.5,
+            "y": 0.5
+          },
+          "start_s": 0.0,
+          "end_s": 0.04,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.84,
+          "scores": {
+            "labels": 0.7,
+            "vision": 0.93
+          },
+          "description": "the pier again",
+          "summary": "the pier again",
+          "tags": [
+            "pier"
+          ],
+          "hook": "the pier",
+          "reason": "interest 93 \u00b7 photo",
+          "similar_to": [
+            "0004/p1"
+          ],
+          "hero": false,
+          "semantic_motion": "none"
+        }
+      ]
+    }
+  },
+  "expected_slots": [
+    {
+      "kind": "photo",
+      "photo": "still_0004_c.jpg",
+      "duration_s": 3.0
+    },
+    {
+      "kind": "video",
+      "clip": "clipB.mp4",
+      "in_s": 0.0,
+      "out_s": 3.0
+    }
+  ]
+}

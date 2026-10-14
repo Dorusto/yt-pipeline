@@ -4,9 +4,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import llm_director
 from common.llm import BudgetExceeded
+from common.photos import ken_burns_for
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +187,160 @@ def build_phrase_workspace(root):
         },
     )
     return root
+
+
+def write_photo(path, size=(64, 48), color=(120, 80, 40)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, "JPEG")
+    return path
+
+
+def photo_ingest_record(path, creation_time="2026-01-01T10:01:00+00:00"):
+    return {
+        "file": path.name,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "width": 64,
+        "height": 48,
+        "orientation": None,
+        "creation_time": creation_time,
+        "creation_time_source": "exif",
+        "format": "JPEG",
+        "warnings": [],
+    }
+
+
+def photo_shot(
+    key,
+    name,
+    capture_time,
+    score,
+    subject_position=None,
+    tags=None,
+    hero=None,
+    eligible=True,
+    similar_to=None,
+):
+    return {
+        "key": key,
+        "clip": name,
+        "segment_id": "p1",
+        "start_s": 0.0,
+        "end_s": 0.04,
+        "media_type": "photo",
+        "capture_time": capture_time,
+        "subject_position": subject_position,
+        "eligible": eligible,
+        "role": "hold",
+        "role_source": "geometry",
+        "motion_label": "static",
+        "label_source": "geometry",
+        "confidence": 0.7,
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "description": "a still",
+        "summary": "lighthouse",
+        "tags": tags or [],
+        "subject": "lighthouse",
+        "scenery": "coast",
+        "semantic_motion": "none",
+        "interest": 70,
+        "hero": hero,
+        "score": score,
+        "scores": {"vision": score, "labels": 0.7},
+        "hook": "lighthouse",
+        "reason": "interest 70 · static by geometry · hold · clean",
+        "similar_to": similar_to or [],
+        "suppressed_by": None,
+    }
+
+
+def build_photo_workspace(root, photo_path, photo_shot_record, video_shots=None):
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "source_dir": "/media",
+            "clips": clips,
+            "photos": [photo_ingest_record(photo_path)],
+        },
+    )
+    write_json(root / "quality" / "clipA.json", quality_doc("clipA.mp4", 60.0, [segment("s1", 0.0, 20.0, "hold")]))
+    write_json(root / "motion" / "clipA.json", motion_doc("clipA.mp4", 60.0))
+    shots = video_shots or [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 20.0, True, 0.5, "a hold", "interest 50 · static by geometry · hold · clean"),
+    ]
+    write_json(
+        root / "shotlog.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "weights": {"vision": 0.55, "labels": 0.45},
+            "shots": shots + [photo_shot_record],
+        },
+    )
+    return root
+
+
+def photo_plan_answer(shot_key="photo_01/p1"):
+    return json.dumps(
+        {
+            "logline": "a still and a clip",
+            "structure": [{"id": "b1", "name": "Open", "intent": "open calm", "target_s": 8.0}],
+            "slot_plan": [
+                {"id": "v1", "beat": "b1", "shot_key": "clipA/s1", "target_s": 5.0, "why": "the hold", "keep_whole": False},
+                {"id": "p1", "beat": "b1", "shot_key": shot_key, "target_s": 3.0, "why": "the still", "keep_whole": False},
+            ],
+        }
+    )
+
+
+def photo_editor_answer(shot_key="photo_01/p1", duration_s=3.0):
+    return json.dumps(
+        {
+            "slots": [
+                {"id": "v1", "shot_key": "clipA/s1", "in_s": 2.0, "out_s": 7.0, "transition": "cut"},
+                {"id": "p1", "shot_key": shot_key, "duration_s": duration_s, "transition": "crossfade"},
+            ]
+        }
+    )
+
+
+def photo_editor_answer_missing_photo():
+    return json.dumps(
+        {
+            "slots": [
+                {"id": "v1", "shot_key": "clipA/s1", "in_s": 2.0, "out_s": 7.0, "transition": "cut"},
+            ]
+        }
+    )
+
+
+def photo_fact(key, name, subject_position=None, tags=None, hero=None, similar_to=None):
+    return {
+        "shot_key": key,
+        "media_type": "photo",
+        "photo": name,
+        "photo_path": f"/media/{name}",
+        "capture_time": "2026-01-01T10:01:00+00:00",
+        "subject_position": subject_position,
+        "tags": tags or [],
+        "score": 0.8,
+        "summary": "lighthouse",
+        "hero": hero,
+        "similar_to": similar_to or [],
+        "window_in_s": 0.0,
+        "window_out_s": 0.04,
+        "landing_at_s": None,
+        "landing_hold_key": None,
+        "keep_whole": False,
+        "target_s": 3.0,
+        "role": "hold",
+        "motion_label": "static",
+        "description": "a still",
+    }
 
 
 class StubResponse:
@@ -938,3 +1094,363 @@ def test_window_ends_at_the_steady_motion_end(tmp_path):
 
 def test_important_cap_defaults_to_six():
     assert llm_director.DEFAULT_IMPORTANT_MAX_S == 6.0
+
+
+def test_photo_fact_shape(tmp_path):
+    photo = write_photo(tmp_path / "media" / "photo_01.jpg")
+    shot = photo_shot(
+        "photo_01/p1",
+        photo.name,
+        "2026-01-01T10:01:00+00:00",
+        0.8,
+        subject_position={"x": 0.2, "y": 0.5},
+        tags=["coast"],
+    )
+    workspace = build_photo_workspace(tmp_path / "ws", photo, shot)
+    shotlog = llm_director.load_shotlog(workspace)
+    facts, _, _ = llm_director.build_shot_facts(workspace, shotlog)
+    fact = facts["photo_01/p1"]
+    assert fact["media_type"] == "photo"
+    assert fact["photo"] == photo.name
+    assert fact["photo_path"] == str(photo)
+    assert fact["capture_time"] == "2026-01-01T10:01:00+00:00"
+    assert fact["subject_position"] == {"x": 0.2, "y": 0.5}
+    assert fact["tags"] == ["coast"]
+    assert fact["window_in_s"] == 0.0
+    assert fact["window_out_s"] == 0.04
+    assert fact["landing_at_s"] is None
+    assert fact["keep_whole"] is False
+    assert fact["target_s"] == 3.0
+
+
+def test_burst_suppressed_photo_not_in_facts(tmp_path):
+    photo = write_photo(tmp_path / "media" / "burst.jpg")
+    shot = photo_shot("burst/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.9, eligible=False)
+    workspace = build_photo_workspace(tmp_path / "ws", photo, shot)
+    shotlog = llm_director.load_shotlog(workspace)
+    facts, _, _ = llm_director.build_shot_facts(workspace, shotlog)
+    assert "burst/p1" not in facts
+
+
+def test_photo_shot_becomes_photo_slot(tmp_path):
+    photo = write_photo(tmp_path / "media" / "photo_01.jpg")
+    shot = photo_shot(
+        "photo_01/p1",
+        photo.name,
+        "2026-01-01T10:01:00+00:00",
+        0.8,
+        subject_position={"x": 0.2, "y": 0.5},
+    )
+    workspace = build_photo_workspace(tmp_path / "ws", photo, shot)
+    client = StubClient([photo_plan_answer(), photo_editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["approved"] is True
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert validate(edit, "edit") == []
+    photo_slots = [slot for slot in edit["video"] if slot.get("kind") == "photo"]
+    assert len(photo_slots) == 1
+    slot = photo_slots[0]
+    assert slot["id"] == "p1"
+    assert slot["photo"] == photo.name
+    assert 2.0 <= slot["duration_s"] <= 4.0
+    assert slot["ken_burns"] == ken_burns_for({"x": 0.2, "y": 0.5}, [])
+    photo_sources = [source for source in edit["sources"] if source.get("media_type") == "photo"]
+    assert photo_sources == [
+        {"file": photo.name, "path": str(photo), "duration_s": None, "media_type": "photo"}
+    ]
+
+
+def test_photo_ken_burns_matches_common_rule():
+    specs = [
+        ({"x": 0.2, "y": 0.5}, [], "pan_left"),
+        ({"x": 0.8, "y": 0.5}, [], "pan_right"),
+        ({"x": 0.5, "y": 0.5}, [], "zoom_in"),
+        ({"x": 0.5, "y": 0.5}, ["close-up"], "zoom_out"),
+        (None, [], "zoom_in"),
+    ]
+    for position, tags, move in specs:
+        fact = photo_fact("photo/p1", "photo.jpg", subject_position=position, tags=tags)
+        slot = llm_director.make_photo_slot_record(
+            "p1", fact, {"score": 0.8}, {"why": "still"}, 3.0, {"type": "cut", "duration_s": 0}
+        )
+        assert slot["ken_burns"] == ken_burns_for(position, tags)
+        assert slot["ken_burns"]["move"] == move
+
+
+def test_photo_duration_from_answer():
+    fact = photo_fact("photo/p1", "photo.jpg")
+    assert llm_director.photo_duration_from_answer({"duration_s": 3.0}, fact) == 3.0
+    assert llm_director.photo_duration_from_answer({"in_s": 1.0, "out_s": 4.0}, fact) == 3.0
+    assert llm_director.photo_duration_from_answer({"duration_s": 8.0}, fact) == 4.0
+    assert llm_director.photo_duration_from_answer({"duration_s": 0.5}, fact) == 2.0
+    assert llm_director.photo_duration_from_answer({}, fact) == 3.0
+
+
+def test_validator_flags_photo_duration():
+    facts = {"photo_01/p1": photo_fact("photo_01/p1", "photo_01.jpg", subject_position={"x": 0.5, "y": 0.5})}
+    plan = {
+        "slot_plan": [
+            {"id": "p1", "shot_key": "photo_01/p1", "target_s": 3.0, "why": "still", "keep_whole": False}
+        ]
+    }
+    record = {
+        "video": [
+            {
+                "id": "p1",
+                "kind": "photo",
+                "photo": "photo_01.jpg",
+                "duration_s": 8.0,
+                "ken_burns": ken_burns_for({"x": 0.5, "y": 0.5}, []),
+                "score": 0.8,
+                "reason": "still",
+            }
+        ]
+    }
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "photo_length" for item in violations)
+
+
+def test_validator_flags_missing_hero_photo():
+    facts = {"hero_photo/p1": photo_fact("hero_photo/p1", "hero_photo.jpg", hero=True)}
+    plan = {
+        "slot_plan": [
+            {"id": "p1", "shot_key": "hero_photo/p1", "target_s": 3.0, "why": "hero", "keep_whole": False}
+        ]
+    }
+    record = {"video": []}
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "missing" and item["slot"] == "p1" for item in violations)
+
+
+def test_validator_flags_unplanned_hero_photo():
+    facts = {"hero_photo/p1": photo_fact("hero_photo/p1", "hero_photo.jpg", hero=True)}
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "clipA/s1", "target_s": 5.0, "why": "clip", "keep_whole": False}
+        ]
+    }
+    record = {"video": []}
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "hero" and item["slot"] == "hero_photo/p1" for item in violations)
+
+
+def test_dropped_hero_photo_is_synthesised(tmp_path):
+    photo = write_photo(tmp_path / "media" / "hero_photo.jpg")
+    shot = photo_shot("hero_photo/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.75, hero=True)
+    workspace = build_photo_workspace(tmp_path / "ws", photo, shot)
+    client = StubClient(
+        [
+            photo_plan_answer(shot_key="hero_photo/p1"),
+            photo_editor_answer_missing_photo(),
+            reviewer_not_approved(),
+            photo_editor_answer_missing_photo(),
+            reviewer_not_approved(),
+        ]
+    )
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    assert code == 0
+    assert summary["status"] == "written"
+    assert any("fixed p1" in warning for warning in summary["warnings"])
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert validate(edit, "edit") == []
+    assert any(slot.get("kind") == "photo" and slot["photo"] == photo.name for slot in edit["video"])
+    photo_sources = [source for source in edit["sources"] if source.get("media_type") == "photo"]
+    assert photo_sources == [
+        {"file": photo.name, "path": str(photo), "duration_s": None, "media_type": "photo"}
+    ]
+
+
+def test_photo_slot_from_in_out_answer(tmp_path):
+    photo = write_photo(tmp_path / "media" / "photo_01.jpg")
+    shot = photo_shot("photo_01/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.8)
+    workspace = build_photo_workspace(tmp_path / "ws", photo, shot)
+    answer = json.dumps(
+        {
+            "slots": [
+                {"id": "v1", "shot_key": "clipA/s1", "in_s": 2.0, "out_s": 7.0, "transition": "cut"},
+                {"id": "p1", "shot_key": "photo_01/p1", "in_s": 1.0, "out_s": 4.0, "transition": "crossfade"},
+            ]
+        }
+    )
+    client = StubClient([photo_plan_answer(), answer, reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    slot = next(item for item in edit["video"] if item.get("kind") == "photo")
+    assert slot["duration_s"] == 3.0
+
+
+def beat_grid(period=0.5, count=60, downbeats=None, top_level=False):
+    beats = [round(period * index, 4) for index in range(count)]
+    down = downbeats if downbeats is not None else beats[::4]
+    payload = {
+        "beat_s": beats,
+        "downbeat_s": down,
+        "beat_period_s": period,
+        "duration_s": round(beats[-1] + period, 3),
+        "bpm": round(60.0 / period, 3),
+    }
+    return payload if top_level else {"measurement": payload}
+
+
+def video_bound_fact(key, clip, window_in, window_out, keep_whole=False):
+    return {
+        "shot_key": key,
+        "clip": clip,
+        "window_in_s": window_in,
+        "window_out_s": window_out,
+        "landing_at_s": None,
+        "landing_hold_key": None,
+        "keep_whole": keep_whole,
+        "target_s": 5.0,
+        "score": 0.5,
+        "summary": None,
+        "role": "hold",
+        "motion_label": "static",
+        "hero": False,
+        "similar_to": [],
+    }
+
+
+def record_cuts(record):
+    cuts = []
+    position = 0.0
+    for slot in record["video"]:
+        position += slot["duration_s"] if slot.get("kind") == "photo" else slot["out_s"] - slot["in_s"]
+        cuts.append(round(position, 4))
+    return cuts
+
+
+def test_load_beats_accepts_both_shapes(tmp_path):
+    for index, data in enumerate([beat_grid(top_level=False), beat_grid(top_level=True)]):
+        path = tmp_path / f"beats{index}.json"
+        write_json(path, data)
+        grid = llm_director.load_beats(path)
+        assert grid["beat_s"][0] == 0.0
+        assert grid["beat_period_s"] == 0.5
+        assert grid["downbeat_s"]
+
+
+def test_beat_snap_uses_downbeats_at_structure_boundaries():
+    beat_s = [round(0.5 * index, 4) for index in range(60)]
+    grid = {"beat_s": beat_s, "downbeat_s": [0.0, 4.75, 9.5, 14.25], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "crossfade", "duration_s": 0.3}},
+            {"id": "v2", "clip": "b.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "crossfade", "duration_s": 0.3}},
+            {"id": "v3", "clip": "c.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "crossfade", "duration_s": 0.3}},
+        ]
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "beat": "b1", "shot_key": "a/s1"},
+            {"id": "v2", "beat": "b1", "shot_key": "b/s1"},
+            {"id": "v3", "beat": "b2", "shot_key": "c/s1"},
+        ]
+    }
+    facts = {
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 5.0),
+        "b/s1": video_bound_fact("b/s1", "b.mp4", 0.0, 5.0),
+        "c/s1": video_bound_fact("c/s1", "c.mp4", 0.0, 5.0),
+    }
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert stats == {"beats": 60, "snapped": 3, "unsnapped": 0}
+    assert record_cuts(record) == [2.5, 4.75, 7.0]
+    assert all(slot["transition"] == {"type": "cut", "duration_s": 0} for slot in record["video"][1:])
+
+
+def test_beat_snap_video_window_exhausted_warns():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "cut", "duration_s": 0}},
+        ]
+    }
+    plan = {"slot_plan": [{"id": "v1", "beat": "b1", "shot_key": "a/s1"}]}
+    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4)}
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert record["video"][0]["out_s"] == 2.4
+    assert stats["unsnapped"] == 1
+    assert any("not snapped" in warning for warning in warnings)
+
+
+def test_run_with_beats_writes_cut_transitions(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    beats_path = tmp_path / "beats.json"
+    write_json(beats_path, beat_grid(top_level=True, count=80))
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, beats=str(beats_path))
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["beat_snap"]["beats"] == 80
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert edit["video"][0]["transition"] == {"type": "cut", "duration_s": 0}
+    assert all(slot["transition"]["type"] == "cut" for slot in edit["video"][1:])
+
+
+def test_run_without_beats_reports_no_beat_snap(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["beat_snap"] is None
+
+
+def test_help_lists_beats():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--beats" in result.stdout
+
+
+def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.5, "out_s": 2.9, "transition": {"type": "cut", "duration_s": 0}},
+            {"id": "p1", "kind": "photo", "photo": "p.jpg", "duration_s": 3.5, "transition": {"type": "cut", "duration_s": 0}},
+        ]
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "beat": "b1", "shot_key": "a/s1"},
+            {"id": "p1", "beat": "b1", "shot_key": "p/p1"},
+        ]
+    }
+    photo_fact = {
+        "shot_key": "p/p1",
+        "media_type": "photo",
+        "photo": "p.jpg",
+        "window_in_s": 0.0,
+        "window_out_s": 0.04,
+        "landing_at_s": None,
+        "landing_hold_key": None,
+        "keep_whole": False,
+        "target_s": 3.0,
+        "score": 0.5,
+        "summary": None,
+        "role": "hold",
+        "motion_label": "static",
+        "hero": False,
+        "similar_to": [],
+    }
+    facts = {
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.9),
+        "p/p1": photo_fact,
+    }
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert record["video"][0]["out_s"] == 2.9
+    assert abs(record["video"][0]["in_s"] - 0.4) <= 0.02
+    assert 2.0 <= record["video"][1]["duration_s"] <= 4.0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+    assert stats["unsnapped"] == 0

@@ -66,6 +66,28 @@ def test_writes_proxy_with_audio(tmp_path, capsys):
     assert any(s["codec_type"] == "audio" for s in probe(target)["streams"])
 
 
+def test_proxy_keeps_the_clip_creation_time(tmp_path, capsys):
+    source = tmp_path / "C0001.MP4"
+    raw = tmp_path / "raw.mp4"
+    make_clip(raw)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(raw), "-c", "copy", "-metadata",
+         "creation_time=2026-10-12T11:38:00.000000Z", str(source)],
+        check=True,
+        capture_output=True,
+    )
+    out = tmp_path / "proxy"
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    tags = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time",
+         "-of", "csv=p=0", str(out / "C0001.MP4")],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert tags.startswith("2026-10-12T11:38:00")
+
+
 def test_skips_existing_and_force_rewrites(tmp_path, capsys):
     source = tmp_path / "clip.mp4"
     make_clip(source)
@@ -157,3 +179,97 @@ def test_video_without_audio(tmp_path, capsys):
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "written"
     assert (out / "silent.mp4").exists()
+
+
+def make_photo(path, size=(32, 24), exif_datetime=None):
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", size, (120, 60, 30))
+    kwargs = {}
+    if path.suffix.lower() == ".heic":
+        kwargs["format"] = "HEIF"
+    if exif_datetime is not None:
+        exif = Image.Exif()
+        exif[36867] = exif_datetime
+        kwargs["exif"] = exif
+    image.save(path, **kwargs)
+    return path
+
+
+def test_photo_jpeg_copied_byte_identical(tmp_path):
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    photo = make_photo(source_dir / "still.jpg", exif_datetime="2026:10:12 11:40:00")
+    out = tmp_path / "proxy"
+
+    summary = proxy.build_proxies(source_dir, out, height=720, crf=23, force=False)
+
+    target = out / "still.jpg"
+    assert target.exists()
+    assert sha256(target) == sha256(photo)
+    assert summary["counts"]["photos"] == 1
+
+
+def test_photo_only_folder_is_valid(tmp_path):
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    make_photo(source_dir / "a.jpg")
+    out = tmp_path / "proxy"
+
+    summary = proxy.build_proxies(source_dir, out, height=720, crf=23, force=False)
+
+    assert summary["status"] in {"written", "skipped"}
+    assert (out / "a.jpg").exists()
+
+
+def test_heic_photo_becomes_jpeg_with_exif(tmp_path):
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        import pytest
+
+        pytest.skip("pillow-heif not installed")
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    make_photo(source_dir / "still.heic", exif_datetime="2026:10:12 11:41:00")
+    out = tmp_path / "proxy"
+
+    summary = proxy.build_proxies(source_dir, out, height=720, crf=23, force=False)
+
+    target = out / "still.jpg"
+    assert target.exists()
+    assert summary["counts"]["photos"] == 1
+    from common.photos import capture_time
+
+    iso, source = capture_time(target)
+    assert source == "exif"
+    assert iso == "2026-10-12T11:41:00+00:00"
+
+
+def test_photo_rerun_skips_existing_copy(tmp_path):
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    make_photo(source_dir / "still.jpg", exif_datetime="2026:10:12 11:40:00")
+    out = tmp_path / "proxy"
+
+    proxy.build_proxies(source_dir, out, height=720, crf=23, force=False)
+    summary = proxy.build_proxies(source_dir, out, height=720, crf=23, force=False)
+
+    assert summary["status"] == "skipped"
+    assert "still.jpg" in summary["skipped"]
+    assert summary["counts"]["photos"] == 0
+
+
+def test_photo_refuses_out_inside_source(tmp_path):
+    source_dir = tmp_path / "raw"
+    source_dir.mkdir()
+    make_photo(source_dir / "still.jpg")
+    try:
+        proxy.build_proxies(source_dir, source_dir / "proxy", height=720, crf=23, force=False)
+    except proxy.ProxyError as exc:
+        assert "inside the source" in str(exc)
+    else:
+        raise AssertionError("expected ProxyError")

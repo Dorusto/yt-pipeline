@@ -5,6 +5,7 @@ Usage:
     python scripts/describe.py --workspace DIR
     python scripts/describe.py --workspace DIR --json
     python scripts/describe.py --workspace DIR --clips 0067,0081 --backend mock --force
+    python scripts/describe.py --workspace DIR --backend mock --photos-only
 
 Reads ``quality/<stem>.json`` from the workspace, samples frames per kept
 segment (three frames, or one every ~5 s on a segment longer than 20 s), sends
@@ -14,7 +15,9 @@ A long segment also returns its content beats — a contiguous tiling into
 scene-change parts (approach / inside / exit) — and each beat becomes its own
 shotlog candidate. Confident accidental/setup/teardown segments are skipped
 without a model call; every uncertain segment carries a verdict whose label wins
-in the shotlog. Frames live in memory only and are never written to disk.
+in the shotlog. When ``ingest.json`` lists still photos, each photo is described
+with one frame as pseudo-segment ``p1`` and carries the main subject centre for
+the Ken Burns move. Frames live in memory only and are never written to disk.
 Sources are read-only; outputs are written atomically.
 """
 
@@ -28,14 +31,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
+from PIL import Image
 
 from common.config import ConfigError, load_config
 from common.llm import BudgetExceeded, LLMError
+from common.photos import jpeg_bytes, open_photo
 from common.schema import SchemaError, validate, validate_or_raise
 from common.vision import VisionFrame, VisionRequest, make_vision_model
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROMPT = REPO_ROOT / "prompts" / "describe_segment.md"
+DEFAULT_PHOTO_PROMPT = REPO_ROOT / "prompts" / "describe_photo.md"
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 FRAME_COUNT = 3
 BEATS_MIN_DURATION_S = 20.0
@@ -47,6 +53,9 @@ SEMANTIC_MOTIONS = {"orbit", "tracking", "reveal", "travel", "none"}
 SUMMARY_MAX_WORDS = 12
 TAGS_MAX = 6
 TAG_MAX_CHARS = 32
+PHOTO_END_S = 0.04
+PHOTO_FRAME_T_S = 0.0
+PHOTO_CENTER = {"x": 0.5, "y": 0.5}
 ROLES = {
     "move",
     "hold",
@@ -104,7 +113,8 @@ def build_parser():
         description=(
             "Describe every kept quality segment with the vision model: three frames "
             "in time order plus the motion label, one structured answer per segment "
-            "and a verdict for every uncertain segment."
+            "and a verdict for every uncertain segment. Still photos listed in "
+            "ingest.json are described with one frame as pseudo-segment p1."
         ),
         epilog=(
             "examples:\n"
@@ -112,6 +122,8 @@ def build_parser():
             "  python scripts/describe.py --workspace ~/Videos/workspace --json\n"
             "  python scripts/describe.py --workspace ~/Videos/workspace \\\n"
             "      --clips 0067,0081 --backend mock --force --json\n"
+            "  python scripts/describe.py --workspace ~/Videos/workspace \\\n"
+            "      --backend mock --photos-only\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -120,11 +132,12 @@ def build_parser():
     parser.add_argument("--model", default=None, help="vision model id override (default models.vision from config)")
     parser.add_argument("--backend", choices=["mock", "openrouter"], default=None, help="vision backend override")
     parser.add_argument("--config", default=None, help="config file path (default repo config.yaml)")
-    parser.add_argument("--prompt-file", default=None, help="prompt path (default prompts/describe_segment.md)")
+    parser.add_argument("--prompt-file", default=None, help="prompt path (default prompts/describe_segment.md, photos prompts/describe_photo.md)")
     parser.add_argument("--max-calls", type=int, default=None, help="stop after this many model calls")
     parser.add_argument("--budget-usd", type=float, default=None, help="refuse calls past this spend (default llm_budget_usd)")
     parser.add_argument("--spend-ledger", default=None, help="spend ledger path (default WORKSPACE/llm_spend.json)")
     parser.add_argument("--frame-width", type=int, default=640, help="width frames are resized to before sending (default 640)")
+    parser.add_argument("--photos-only", action="store_true", help="describe only still photos from ingest.json, skip video segments")
     parser.add_argument("--force", action="store_true", help="re-describe clips whose output already exists")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -182,6 +195,25 @@ def build_prompt(base_prompt, clip_file, segment, times):
     return base_prompt + "\n\nSegment facts:\n" + "\n".join(lines)
 
 
+def read_photo_frame(path, width):
+    """Read one JPEG frame from a still photo; the frame stays in memory."""
+    image = open_photo(path)
+    if width and image.width != width:
+        height = max(1, round(image.height * width / image.width))
+        image = image.resize((int(width), height), Image.LANCZOS)
+    return VisionFrame(t_s=PHOTO_FRAME_T_S, jpeg_bytes=jpeg_bytes(image))
+
+
+def build_photo_prompt(base_prompt, photo):
+    """Append the photo facts block to the model prompt."""
+    lines = [
+        f"- photo: {photo.get('file')}",
+        f"- captured: {photo.get('creation_time') or 'unknown'}",
+        f"- size: {photo.get('width')}x{photo.get('height')}",
+    ]
+    return base_prompt + "\n\nPhoto facts:\n" + "\n".join(lines)
+
+
 def parse_answer(text):
     """Parse the model text as a JSON object, tolerating markdown fences."""
     if not text:
@@ -211,6 +243,23 @@ def normalize_answer(data):
         "verdict": normalize_verdict(data.get("verdict")),
         "beats": normalize_beats(data.get("beats")),
     }
+
+
+def normalize_photo_answer(data):
+    """Coerce a parsed photo answer into the fields the schema accepts."""
+    normalized = normalize_answer(data)
+    normalized["subject_position"] = normalize_subject_position(data.get("subject_position"))
+    return normalized
+
+
+def normalize_subject_position(value):
+    """Return a schema-valid subject centre, or the image centre when unusable."""
+    if isinstance(value, dict):
+        x = _as_float(value.get("x"))
+        y = _as_float(value.get("y"))
+        if x is not None and y is not None:
+            return {"x": min(1.0, max(0.0, x)), "y": min(1.0, max(0.0, y))}
+    return dict(PHOTO_CENTER)
 
 
 def normalize_beats(value):
@@ -366,6 +415,55 @@ def describe_clip(record, clip_path, model, model_id, base_prompt, frame_width, 
     }
 
 
+def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
+    """Describe one still photo with a single frame and return its describe record."""
+    started = time.monotonic()
+    warnings = []
+    cost_usd = 0.0
+    if state.stop_reason is not None:
+        segment = _skipped_photo_segment(state.stop_reason, None)
+    elif not _calls_available(state):
+        state.stop_reason = "max_calls"
+        segment = _skipped_photo_segment("max_calls", None)
+    else:
+        frames = [read_photo_frame(photo["path"], frame_width)]
+        prompt = build_photo_prompt(base_prompt, photo)
+        request = VisionRequest(
+            prompt=prompt,
+            frames=frames,
+            context=_photo_context(photo),
+            model=model_id,
+        )
+        answer = None
+        try:
+            response = _call_model(model, request, state)
+            cost_usd += response.cost_usd
+            answer = parse_answer(response.text)
+            if answer is None:
+                retry_answer, retry_cost = _retry_parse(model, request, state)
+                cost_usd += retry_cost
+                answer = retry_answer
+        except BudgetExceeded:
+            state.stop_reason = "budget_exceeded"
+        if answer is None:
+            warnings.append(f"{photo['file']} p1: unparseable model output")
+            segment = _skipped_photo_segment("unparseable model output", cost_usd)
+        else:
+            segment = _photo_segment(normalize_photo_answer(answer), cost_usd)
+    return {
+        "media_type": "photo",
+        "file": photo["file"],
+        "path": str(photo["path"]),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "duration_s": 0.0,
+        "model": model_id,
+        "llm_cost_usd": round(cost_usd, 8),
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "segments": [segment],
+        "warnings": warnings,
+    }
+
+
 def run(
     workspace,
     clips=None,
@@ -379,15 +477,14 @@ def run(
     force=False,
     config=None,
     backend=None,
+    photos_only=False,
 ):
-    """Describe the selected clips into ``workspace/describe``; return summary and exit code."""
+    """Describe the selected clips and photos into ``workspace/describe``; return summary and exit code."""
     started = time.monotonic()
     if frame_width <= 0:
         raise DescribeError("--frame-width must be positive")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
-    if not quality_dir.is_dir():
-        raise DescribeError(f"no quality folder in workspace: {quality_dir}")
     if config is None:
         config = load_config()
     effective = dict(config)
@@ -399,17 +496,28 @@ def run(
         model_id = (effective.get("models") or {}).get("vision")
     if not model_id:
         raise DescribeError("no vision model id: set models.vision in the config or pass --model")
-    if prompt_path is None:
-        prompt_path = DEFAULT_PROMPT
-    prompt_path = Path(prompt_path)
-    if not prompt_path.exists():
-        raise DescribeError(f"prompt file not found: {prompt_path}")
-    base_prompt = prompt_path.read_text(encoding="utf-8")
+    if prompt_path is not None:
+        prompt_path = Path(prompt_path)
+        if not prompt_path.exists():
+            raise DescribeError(f"prompt file not found: {prompt_path}")
+        video_prompt = prompt_path.read_text(encoding="utf-8")
+        photo_prompt = video_prompt
+    else:
+        video_prompt = _read_prompt(DEFAULT_PROMPT)
+        photo_prompt = _read_prompt(DEFAULT_PHOTO_PROMPT)
     if spend_ledger is None:
         spend_ledger = workspace_path / "llm_spend.json"
     if model is None:
         model = make_vision_model(effective, ledger_path=spend_ledger)
-    selected = _select_quality_files(quality_dir, clips)
+    photos = _load_photos(workspace_path)
+    if photos_only:
+        selected = []
+    elif quality_dir.is_dir():
+        selected = _select_quality_files(quality_dir, clips)
+    elif photos:
+        selected = []
+    else:
+        raise DescribeError(f"no quality folder in workspace: {quality_dir}")
     output_dir = workspace_path / "describe"
     output_dir.mkdir(parents=True, exist_ok=True)
     state = RunState(max_calls=max_calls)
@@ -426,7 +534,7 @@ def run(
         record = _load_quality(quality_file)
         clip_path = _clip_path(record, quality_file)
         clip_record = describe_clip(
-            record, clip_path, model, model_id, base_prompt, frame_width, state
+            record, clip_path, model, model_id, video_prompt, frame_width, state
         )
         validate_or_raise(clip_record, "describe")
         _atomic_write_json(output_path, clip_record)
@@ -440,6 +548,25 @@ def run(
         beats_found += sum(len(segment.get("beats") or []) for segment in clip_record["segments"])
         if state.stop_reason is not None:
             break
+    photos_described = 0
+    for photo in photos:
+        output_path = output_dir / f"{Path(photo['file']).stem}.json"
+        if not force and _output_is_valid(output_path):
+            continue
+        if state.stop_reason is not None:
+            break
+        photo_record = describe_photo(photo, model, model_id, photo_prompt, frame_width, state)
+        validate_or_raise(photo_record, "describe")
+        _atomic_write_json(output_path, photo_record)
+        photos_described += 1
+        segments_described += sum(
+            1 for segment in photo_record["segments"] if segment["status"] == "described"
+        )
+        segments_skipped += sum(
+            1 for segment in photo_record["segments"] if segment["status"] == "skipped"
+        )
+        if state.stop_reason is not None:
+            break
     summary = {
         "clips": len(selected),
         "described": described,
@@ -447,6 +574,7 @@ def run(
         "segments_described": segments_described,
         "segments_skipped": segments_skipped,
         "beats": beats_found,
+        "photos": photos_described,
         "model": model_id,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(state.cost_usd, 8),
@@ -469,6 +597,7 @@ def main(argv=None):
             force=args.force,
             config=load_config(args.config),
             backend=args.backend,
+            photos_only=args.photos_only,
         )
     except (DescribeError, ConfigError, SchemaError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
@@ -484,6 +613,7 @@ def main(argv=None):
             f"segments: {summary['segments_described']} described, "
             f"{summary['segments_skipped']} skipped, {summary['beats']} beats"
         )
+        print(f"photos: {summary['photos']} described")
         print(
             f"model {summary['model']}, cost ${summary['llm_cost_usd']:.4f}, "
             f"{summary['wall_time_s']}s"
@@ -613,6 +743,60 @@ def _skipped_segment(segment, reason, cost_usd=None):
     }
 
 
+def _photo_context(photo):
+    return {
+        "id": "p1",
+        "media_type": "photo",
+        "file": photo.get("file"),
+        "creation_time": photo.get("creation_time"),
+        "role": "hold",
+        "motion_label": "static",
+        "uncertain": False,
+        "uncertain_reasons": [],
+    }
+
+
+def _photo_segment(normalized, cost_usd):
+    return {
+        "id": "p1",
+        "start_s": 0.0,
+        "end_s": PHOTO_END_S,
+        "status": "described",
+        "role": "hold",
+        "motion_label": "static",
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "frames": [{"t_s": PHOTO_FRAME_T_S}],
+        "description": normalized["description"],
+        "summary": normalized["summary"],
+        "tags": normalized["tags"],
+        "subject": normalized["subject"],
+        "scenery": normalized["scenery"],
+        "semantic_motion": "none",
+        "interest": normalized["interest"],
+        "hero": normalized["hero"],
+        "verdict": None,
+        "skip_reason": None,
+        "cost_usd": cost_usd,
+        "subject_position": normalized["subject_position"],
+    }
+
+
+def _skipped_photo_segment(reason, cost_usd):
+    return {
+        "id": "p1",
+        "start_s": 0.0,
+        "end_s": PHOTO_END_S,
+        "status": "skipped",
+        "role": "hold",
+        "motion_label": "static",
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "skip_reason": reason,
+        "cost_usd": cost_usd,
+    }
+
+
 def _encode_jpeg(frame, width):
     height, frame_width = frame.shape[:2]
     if frame_width != width:
@@ -710,6 +894,27 @@ def _load_quality(path):
     if not isinstance(data, dict) or not data.get("segments"):
         raise DescribeError(f"quality file {path} has no segments")
     return data
+
+
+def _read_prompt(path):
+    path = Path(path)
+    if not path.exists():
+        raise DescribeError(f"prompt file not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _load_photos(workspace_path):
+    ingest_path = workspace_path / "ingest.json"
+    if not ingest_path.exists():
+        return []
+    try:
+        data = json.loads(ingest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    photos = data.get("photos") if isinstance(data, dict) else None
+    if not isinstance(photos, list):
+        return []
+    return [photo for photo in photos if isinstance(photo, dict) and photo.get("path")]
 
 
 def _clip_path(record, quality_file):

@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
 TOOL = "scripts/director.py"
@@ -59,6 +60,11 @@ CONTIGUOUS_TOLERANCE_S = 0.5
 IMPORTANT_SEMANTIC_MOTIONS = {"orbit", "reveal", "tracking", "pov", "travel"}
 IMPORTANT_MOTION_LABELS = {"orbit", "orbit_candidate", "reveal", "tracking", "pov"}
 NON_MOVE_MOTION_LABELS = {"static", "minor_motion"}
+PHOTO_MIN_S = 2.0
+PHOTO_MAX_S = 4.0
+PHOTO_DEFAULT_S = 3.0
+BEAT_SNAP_FRACTION = 0.5
+SNAP_MIN_SLOT_S = 0.5
 
 
 class DirectorError(RuntimeError):
@@ -100,6 +106,11 @@ def build_parser():
     parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
     parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
+    parser.add_argument(
+        "--beats",
+        default=None,
+        help="beat grid JSON from beats.py; snap every cut to the nearest beat and join with hard cuts",
+    )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -175,6 +186,19 @@ def load_ingest(workspace):
     return clips
 
 
+def load_ingest_photos(workspace):
+    """The still photos listed in ``ingest.json``, or [] when there are none."""
+    data = load_json(workspace / "ingest.json")
+    if not isinstance(data, dict):
+        return []
+    photos = data.get("photos") or []
+    return [
+        photo
+        for photo in photos
+        if isinstance(photo, dict) and (photo.get("file") or photo.get("path"))
+    ]
+
+
 def order_clips(clips):
     parsed = [(clip, parse_time(clip.get("creation_time"))) for clip in clips]
     known = [moment for _, moment in parsed if moment is not None]
@@ -185,6 +209,141 @@ def order_clips(clips):
 
 def clip_position(moment, first_moment, span_seconds):
     return clamp((moment - first_moment).total_seconds() / span_seconds, 0.0, 1.0)
+
+
+def photo_region(moment, anchors):
+    """Where a capture moment sits relative to the clips: (kind, index, offset).
+
+    ``kind`` is ``before`` the first clip, ``in`` a clip's wall-clock span,
+    ``gap`` between two clips or ``after`` the last one. ``offset`` is the
+    content-timeline position for ``in``; the other kinds get their position
+    from ``photo_offsets`` ranks.
+    """
+    if moment is None or not anchors:
+        return ("after", len(anchors) - 1 if anchors else -1, 0.0)
+    if moment <= anchors[0][0]:
+        return ("before", -1, 0.0)
+    for index, (anchor_moment, content_offset, duration) in enumerate(anchors):
+        elapsed = (moment - anchor_moment).total_seconds()
+        if 0.0 <= elapsed <= duration:
+            return ("in", index, content_offset + elapsed)
+    for index in range(len(anchors) - 1):
+        gap_end = anchors[index + 1][0]
+        gap_start = anchors[index][0] + timedelta(seconds=anchors[index][2])
+        if gap_start < moment < gap_end:
+            return ("gap", index, 0.0)
+    return ("after", len(anchors) - 1, 0.0)
+
+
+def photo_offsets(shotlog, photos_by_name, clip_timeline):
+    """Capture-time content offsets per photo shot key, in capture order.
+
+    The content timeline is the clips' durations laid end to end, so a photo
+    captured between two clips has no room of its own: gap photos fan out just
+    before the next clip, photos before the first clip lead the timeline and
+    photos after the last one trail it, each group in capture order.
+    """
+    if not shotlog:
+        return {}
+    first_moment, anchors = clip_timeline
+    if not anchors:
+        return {}
+    total = anchors[-1][1] + anchors[-1][2]
+    groups = {}
+    for shot in shotlog.values():
+        if shot.get("media_type") != "photo":
+            continue
+        name = shot.get("clip") or ""
+        photo = photos_by_name.get(name) or {}
+        capture_time = shot.get("capture_time") or photo.get("creation_time")
+        moment = parse_time(capture_time)
+        kind, index, offset = photo_region(moment, anchors)
+        groups.setdefault((kind, index), []).append((moment, capture_time, offset, shot.get("key")))
+    offsets = {}
+    for (kind, index), items in groups.items():
+        items.sort(
+            key=lambda item: (
+                item[0] is None,
+                item[0] or datetime.min.replace(tzinfo=timezone.utc),
+                item[3] or "",
+            )
+        )
+        count = len(items)
+        for rank, (moment, capture_time, offset, key) in enumerate(items):
+            if kind == "in":
+                offsets[key] = (clamp(offset / max(1e-9, total), 0.0, 1.0), offset)
+            elif kind == "before":
+                value = -0.001 * (count - rank)
+                offsets[key] = (0.0, value)
+            elif kind == "gap":
+                value = anchors[index + 1][1] - 0.001 * (count - rank)
+                offsets[key] = (clamp(value / max(1e-9, total), 0.0, 1.0), value)
+            else:
+                value = total + 0.001 * (rank + 1)
+                offsets[key] = (1.0, value)
+    return offsets
+
+
+def build_photo_candidates(shotlog, photos_by_name, clip_timeline, offsets_by_time):
+    """Photo shots from the shotlog as candidates, with their content position."""
+    if not shotlog:
+        return [], 0, 0
+    total = clip_timeline[1][-1][1] + clip_timeline[1][-1][2] if clip_timeline[1] else 0.0
+    candidates = []
+    skipped_ineligible = 0
+    skipped_roles = 0
+    for shot in shotlog.values():
+        if shot.get("media_type") != "photo":
+            continue
+        if not shot.get("eligible", True):
+            skipped_ineligible += 1
+            continue
+        role = shot.get("role") or "hold"
+        if role in SKIP_ROLES:
+            skipped_roles += 1
+            continue
+        name = shot.get("clip") or ""
+        photo = photos_by_name.get(name) or {}
+        capture_time = shot.get("capture_time") or photo.get("creation_time")
+        position, content_offset = offsets_by_time.get(shot.get("key"), (1.0, total))
+        segment = {
+            "id": shot.get("segment_id") or "p1",
+            "start_s": float(shot.get("start_s") or 0.0),
+            "end_s": float(shot.get("end_s") or 0.0),
+            "role": role,
+            "confidence": shot.get("confidence") or 0.0,
+            "defects": [],
+        }
+        candidates.append(
+            {
+                "clip": name,
+                "clip_dt": parse_time(capture_time),
+                "position": position,
+                "content_offset": content_offset,
+                "role": role,
+                "segment": segment,
+                "move": None,
+                "in_s": 0.0,
+                "out_s": float(shot.get("end_s") or 0.0),
+                "motion_label": shot.get("motion_label") or "static",
+                "steadiness": "static",
+                "hero": shot.get("hero"),
+                "semantic_motion": shot.get("semantic_motion"),
+                "shot_key": shot.get("key"),
+                "media_type": "photo",
+                "photo": name,
+                "capture_time": capture_time,
+                "subject_position": shot.get("subject_position"),
+                "tags": list(shot.get("tags") or []),
+                "score": shot.get("score") or 0.0,
+                "description": shot.get("description"),
+                "shot_reason": shot.get("reason"),
+                "hook": shot.get("hook"),
+                "summary": shot.get("summary"),
+                "similar_to": list(shot.get("similar_to") or []),
+            }
+        )
+    return candidates, skipped_ineligible, skipped_roles
 
 
 def best_overlapping_move(segment, moves):
@@ -453,6 +612,16 @@ def merge_contiguous(slots):
             previous = merged[-1]
             previous["in_s"] = min(previous["in_s"], slot["in_s"])
             previous["out_s"] = max(previous["out_s"], slot["out_s"])
+            previous["window_in_s"] = min(
+                previous.get("window_in_s", previous["in_s"]), slot.get("window_in_s", slot["in_s"])
+            )
+            previous["window_out_s"] = max(
+                previous.get("window_out_s", previous["out_s"]), slot.get("window_out_s", slot["out_s"])
+            )
+            if slot.get("landing_floor_s") is not None:
+                previous["landing_floor_s"] = max(
+                    previous.get("landing_floor_s") or 0.0, slot["landing_floor_s"]
+                )
             if slot["score"] > previous["score"]:
                 previous["score"] = slot["score"]
                 previous["shot_reason"] = slot.get("shot_reason")
@@ -572,7 +741,40 @@ def is_important(candidate):
     return motion_label in IMPORTANT_MOTION_LABELS
 
 
+def make_photo_slot(candidate, duration_s):
+    """A photo slot: a still held 2-4 s with its deterministic Ken Burns move."""
+    target = duration_s if duration_s is not None else PHOTO_DEFAULT_S
+    duration = round(clamp(target, PHOTO_MIN_S, PHOTO_MAX_S), 2)
+    return {
+        "clip": candidate["clip"],
+        "in_s": 0.0,
+        "out_s": duration,
+        "score": round(candidate["score"], 4),
+        "role": candidate["role"],
+        "motion_label": candidate["motion_label"],
+        "steadiness": candidate["steadiness"],
+        "position": candidate["position"],
+        "content_offset": candidate["content_offset"],
+        "segment": candidate["segment"],
+        "shot_key": candidate.get("shot_key"),
+        "similar_to": candidate.get("similar_to") or [],
+        "description": candidate.get("description"),
+        "shot_reason": candidate.get("shot_reason"),
+        "media_type": "photo",
+        "photo": candidate["photo"],
+        "capture_time": candidate.get("capture_time"),
+        "subject_position": candidate.get("subject_position"),
+        "tags": candidate.get("tags") or [],
+        "hook": candidate.get("hook"),
+        "summary": candidate.get("summary"),
+        "duration_s": duration,
+        "ken_burns": ken_burns_for(candidate.get("subject_position"), candidate.get("tags")),
+    }
+
+
 def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=None, important_max_s=None):
+    if candidate.get("media_type") == "photo":
+        return make_photo_slot(candidate, duration_s)
     in_s = candidate["in_s"]
     if important_max_s is not None and is_important(candidate):
         out_s = candidate["out_s"]
@@ -617,7 +819,208 @@ def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=No
         "similar_to": candidate.get("similar_to") or [],
         "description": candidate.get("description"),
         "shot_reason": candidate.get("shot_reason"),
+        "window_in_s": float(candidate["in_s"]),
+        "window_out_s": float(candidate["out_s"]),
+        "landing_floor_s": (
+            float(candidate["landing_start_s"]) + LANDING_FLOOR_S if candidate.get("phrase") else None
+        ),
+        "important": important_max_s is not None and is_important(candidate),
     }
+
+
+def load_beats(path):
+    """The beat grid from ``beats.py``: ``measurement`` nested or the keys at the top."""
+    data = load_json(Path(path))
+    if not isinstance(data, dict):
+        raise DirectorError(f"unreadable beats file: {path}")
+    measurement = data.get("measurement")
+    source = measurement if isinstance(measurement, dict) else data
+    beat_s = [float(value) for value in (source.get("beat_s") or [])]
+    downbeat_s = [float(value) for value in (source.get("downbeat_s") or [])]
+    period = source.get("beat_period_s")
+    period = float(period) if period else derive_beat_period(beat_s)
+    if not beat_s or period <= 0:
+        raise DirectorError(f"beats file has no beat grid: {path}")
+    return {"beat_s": beat_s, "downbeat_s": downbeat_s or list(beat_s), "beat_period_s": period}
+
+
+def derive_beat_period(beat_s):
+    """The median spacing of a beat list, for grids written without ``beat_period_s``."""
+    if len(beat_s) < 2:
+        return 0.0
+    spacings = sorted(later - earlier for earlier, later in zip(beat_s, beat_s[1:]))
+    return spacings[len(spacings) // 2]
+
+
+def nearest_beat(value, times):
+    if not times:
+        return None
+    return min(times, key=lambda moment: abs(moment - value))
+
+
+def timeline_length(slot):
+    """The on-screen length of an internal slot, photo or video."""
+    if slot.get("media_type") == "photo":
+        return float(slot["duration_s"])
+    return float(slot["out_s"]) - float(slot["in_s"])
+
+
+def snap_warning(cut_number, end, target):
+    if target is None:
+        return f"cut {cut_number}: not snapped to a beat (no beat grid)"
+    return f"cut {cut_number}: not snapped to a beat (nearest {abs(end - target):.1f} s away)"
+
+
+def absorb_out(slot, delta):
+    """Move a slot's end by ``delta`` within its window; False when it cannot."""
+    if slot.get("media_type") == "photo":
+        target = float(slot["duration_s"]) + delta
+        if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
+            return False
+        slot["duration_s"] = round(target, 3)
+        slot["out_s"] = slot["duration_s"]
+        return True
+    if slot.get("important"):
+        return False
+    low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
+    if slot.get("landing_floor_s") is not None:
+        low = max(low, float(slot["landing_floor_s"]))
+    high = float(slot.get("window_out_s", slot["out_s"]))
+    target = float(slot["out_s"]) + delta
+    if not (low - 1e-9 <= target <= high + 1e-9):
+        return False
+    slot["out_s"] = round(target, 3)
+    return True
+
+
+def absorb_length(slot, delta):
+    """Change a slot's on-screen length by ``delta``, from its end or its head.
+
+    The end first (cheapest and exact); when the end is pinned the head moves
+    instead, never before the window's handle-in. False when neither fits.
+    """
+    if slot.get("media_type") == "photo":
+        return absorb_out(slot, delta)
+    if slot.get("important"):
+        return False
+    low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
+    if slot.get("landing_floor_s") is not None:
+        low = max(low, float(slot["landing_floor_s"]))
+    high = float(slot.get("window_out_s", slot["out_s"]))
+    end_target = float(slot["out_s"]) + delta
+    if low - 1e-9 <= end_target <= high + 1e-9:
+        slot["out_s"] = round(end_target, 3)
+        return True
+    window_in = float(slot.get("window_in_s", slot["in_s"]))
+    head_target = float(slot["in_s"]) - delta
+    if head_target < window_in - 1e-9:
+        return False
+    if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
+        return False
+    slot["in_s"] = round(head_target, 3)
+    return True
+
+
+def absorb_head(slot, delta):
+    """Change a slot's length by ``delta`` from its head only; False when it cannot.
+
+    The head move keeps the slot's end (and every cut after it) in place, which
+    is what the pair absorb needs from the right slot.
+    """
+    if slot.get("media_type") == "photo":
+        return absorb_out(slot, delta)
+    if slot.get("important"):
+        return False
+    window_in = float(slot.get("window_in_s", slot["in_s"]))
+    head_target = float(slot["in_s"]) - delta
+    if head_target < window_in - 1e-9:
+        return False
+    if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
+        return False
+    slot["in_s"] = round(head_target, 3)
+    return True
+
+
+def absorb_pair(left, right, delta):
+    """Move the cut between ``left`` and ``right`` by ``delta`` and nothing else.
+
+    ``left`` grows by ``delta`` (from its end or its head) and ``right`` gives
+    the same length back from its head, so only their shared boundary moves and
+    every later cut stays put. Both must fit; on a partial fit the left change
+    is restored exactly.
+    """
+    snapshot = {key: left.get(key) for key in ("in_s", "out_s", "duration_s")}
+    if not absorb_length(left, delta):
+        return False
+    if not absorb_head(right, -delta):
+        left.update(snapshot)
+        return False
+    return True
+
+
+def snap_photo(slot, start, times):
+    """Put a photo's end on a beat that keeps its length in 2-4 s; False when none fits."""
+    current = float(slot["duration_s"])
+    fitting = [
+        moment
+        for moment in times
+        if PHOTO_MIN_S - 1e-9 <= moment - start <= PHOTO_MAX_S + 1e-9
+    ]
+    if not fitting:
+        return False, start + current
+    target = min(fitting, key=lambda moment: abs(moment - (start + current)))
+    slot["duration_s"] = round(target - start, 3)
+    slot["out_s"] = slot["duration_s"]
+    return True, target
+
+
+def snap_slots(slots, beat_grid, downbeat_at, warnings):
+    """Snap every timeline cut to the nearest beat, in place; return the summary counts."""
+    beat_s = beat_grid["beat_s"]
+    downbeat_s = beat_grid["downbeat_s"] or beat_s
+    tolerance = BEAT_SNAP_FRACTION * beat_grid["beat_period_s"]
+    snapped = 0
+    unsnapped = 0
+    start = 0.0
+    for index, slot in enumerate(slots):
+        length = timeline_length(slot)
+        end = start + length
+        times = downbeat_s if downbeat_at[index] else beat_s
+        target = nearest_beat(end, times)
+        if target is None or abs(end - target) > tolerance:
+            warnings.append(snap_warning(index + 1, end, target))
+            unsnapped += 1
+            start = end
+            continue
+        if slot.get("media_type") == "photo":
+            moved, new_end = snap_photo(slot, start, times)
+            if not moved:
+                warnings.append(snap_warning(index + 1, end, target))
+                unsnapped += 1
+                start = end
+                continue
+            snapped += 1
+            start = start + timeline_length(slot)
+            continue
+        delta = target - end
+        if abs(delta) < 1e-9 or absorb_out(slot, delta):
+            snapped += 1
+            start = start + timeline_length(slot)
+            continue
+        right = slots[index + 1] if index + 1 < len(slots) else None
+        if right is None:
+            if absorb_length(slot, delta):
+                snapped += 1
+                start = start + timeline_length(slot)
+                continue
+        elif absorb_pair(slot, right, delta):
+            snapped += 1
+            start = start + timeline_length(slot)
+            continue
+        warnings.append(snap_warning(index + 1, end, target))
+        unsnapped += 1
+        start = end
+    return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
 
 
 def pacing_part(slot):
@@ -654,6 +1057,31 @@ def build_reason(slot):
     return " · ".join(deduped)
 
 
+def build_photo_reason(slot):
+    """The photo's hook or summary plus the pacing word, like a video reason."""
+    base = slot.get("hook") or slot.get("summary") or slot.get("shot_reason")
+    parts = [base] if base else []
+    parts.append(pacing_part(slot))
+    deduped = []
+    for part in parts:
+        if part not in deduped:
+            deduped.append(part)
+    return " · ".join(deduped)
+
+
+def candidate_overlaps_bucket(candidate, bucket_start, bucket_end):
+    """True when a candidate's content window touches the bucket.
+
+    A photo is a point on the content timeline, so it belongs to the bucket that
+    contains its capture position rather than to a window.
+    """
+    start = candidate["content_offset"] + candidate["in_s"]
+    end = candidate["content_offset"] + candidate["out_s"]
+    if candidate.get("media_type") == "photo":
+        return bucket_start - 0.01 <= start <= bucket_end
+    return overlap_seconds(start, end, bucket_start, bucket_end) > 0
+
+
 def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s, min_slot_s, warnings, allow_similar, important_max_s):
     bucket_width = max(1e-9, total_content) / n_slots
     chosen = []
@@ -666,8 +1094,7 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
             if id(candidate) in used:
                 continue
             candidate_start = candidate["content_offset"] + candidate["in_s"]
-            candidate_end = candidate["content_offset"] + candidate["out_s"]
-            if overlap_seconds(candidate_start, candidate_end, bucket_start, bucket_end) <= 0:
+            if not candidate_overlaps_bucket(candidate, bucket_start, bucket_end):
                 continue
             insert_at = content_insert_index(chosen, candidate_start)
             if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
@@ -759,17 +1186,37 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
     return chosen
 
 
-def build_record(args, sources, slots, wall_time_s):
+def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
     video = []
+    video_index = 0
+    photo_index = 0
     for index, slot in enumerate(slots):
         transition = (
             {"type": "cut", "duration_s": 0}
-            if index == 0
+            if index == 0 or hard_cuts
             else {"type": "crossfade", "duration_s": args.xfade_s}
         )
+        if slot.get("media_type") == "photo":
+            photo_index += 1
+            video.append(
+                {
+                    "id": f"p{photo_index}",
+                    "kind": "photo",
+                    "photo": slot["photo"],
+                    "duration_s": slot["duration_s"],
+                    "ken_burns": slot["ken_burns"],
+                    "score": slot["score"],
+                    "reason": build_photo_reason(slot),
+                    "transition": transition,
+                    "description": slot.get("description"),
+                    "capture_time": slot.get("capture_time"),
+                }
+            )
+            continue
+        video_index += 1
         video.append(
             {
-                "id": f"v{index + 1}",
+                "id": f"v{video_index}",
                 "clip": slot["clip"],
                 "in_s": slot["in_s"],
                 "out_s": slot["out_s"],
@@ -816,24 +1263,44 @@ def atomic_write_json(path, data):
             temporary.unlink()
 
 
-def input_paths(workspace):
+def input_paths(workspace, beats_path=None):
     paths = [workspace / "ingest.json", workspace / "shotlog.json"]
     paths.extend(sorted((workspace / "motion").glob("*.json")))
     paths.extend(sorted((workspace / "quality").glob("*.json")))
+    if beats_path is not None:
+        paths.append(beats_path)
     return paths
 
 
-def is_up_to_date(out_path, workspace):
+def is_up_to_date(out_path, workspace, beats_path=None):
     if not out_path.exists():
         return False
     data = load_json(out_path)
     if data is None or validate(data, "edit"):
         return False
     out_mtime = out_path.stat().st_mtime
-    for path in input_paths(workspace):
+    for path in input_paths(workspace, beats_path):
         if path.exists() and path.stat().st_mtime > out_mtime:
             return False
     return True
+
+
+def slot_duration(slot):
+    """The on-screen length of an edit.json slot, video or photo."""
+    if slot.get("kind") == "photo":
+        return slot.get("duration_s") or 0.0
+    return slot["out_s"] - slot["in_s"]
+
+
+def photo_source(name, photos_by_name):
+    """The ``sources[]`` row for a used photo, resolved from ingest ``photos[]``."""
+    photo = photos_by_name.get(name) or {}
+    return {
+        "file": name,
+        "path": photo.get("path") or name,
+        "duration_s": None,
+        "media_type": "photo",
+    }
 
 
 def run(args, started):
@@ -841,11 +1308,13 @@ def run(args, started):
     if not workspace.is_dir():
         raise DirectorError(f"workspace not found: {workspace}")
     out_path = Path(args.out).expanduser().resolve() if args.out else workspace / "edit.json"
+    beats_path = Path(args.beats).expanduser().resolve() if args.beats else None
+    beat_grid = load_beats(beats_path) if beats_path is not None else None
 
-    if not args.force and is_up_to_date(out_path, workspace):
+    if not args.force and is_up_to_date(out_path, workspace, beats_path):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
-        total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+        total = sum(slot_duration(slot) for slot in slots)
         return (
             {
                 "status": "skipped",
@@ -856,6 +1325,7 @@ def run(args, started):
                 "warnings": [],
                 "wall_time_s": round(time.monotonic() - started, 2),
                 "llm_cost_usd": 0.0,
+                "beat_snap": None,
             },
             None,
         )
@@ -880,6 +1350,10 @@ def run(args, started):
     skipped_roles = 0
     skipped_ineligible = 0
     shotlog = load_shotlog(workspace)
+    photos_by_name = {
+        photo.get("file") or Path(photo["path"]).name: photo
+        for photo in load_ingest_photos(workspace)
+    }
     beats_by_segment = beats_by_segment_from_shotlog(shotlog)
     content_offsets = []
     running_content = 0.0
@@ -929,6 +1403,18 @@ def run(args, started):
         scored = build_phrases(scored, quality)
         candidates.extend(dedupe_candidates(scored))
 
+    clip_timeline = (
+        first_moment,
+        [(moment, offset, clip.get("duration_s") or 0.0) for (clip, moment), offset in zip(clips, content_offsets)],
+    )
+    offsets_by_time = photo_offsets(shotlog, photos_by_name, clip_timeline)
+    photo_candidates, photo_ineligible, photo_roles = build_photo_candidates(
+        shotlog, photos_by_name, clip_timeline, offsets_by_time,
+    )
+    candidates.extend(photo_candidates)
+    skipped_ineligible += photo_ineligible
+    skipped_roles += photo_roles
+
     if skipped_roles:
         warnings.append(f"skipped {skipped_roles} accidental/setup/teardown segments")
     if skipped_ineligible:
@@ -967,8 +1453,15 @@ def run(args, started):
     if not slots:
         raise DirectorError("no usable candidates")
 
+    beat_snap = None
+    if beat_grid is not None:
+        beat_snap = snap_slots(slots, beat_grid, [False] * len(slots), warnings)
+
+    used_photos = [slot["photo"] for slot in slots if slot.get("media_type") == "photo"]
+    photo_sources = [photo_source(name, photos_by_name) for name in used_photos]
+
     wall_time_s = time.monotonic() - started
-    record = build_record(args, sources, slots, wall_time_s)
+    record = build_record(args, sources + photo_sources, slots, wall_time_s, hard_cuts=beat_grid is not None)
     validate_or_raise(record, "edit")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(out_path, record)
@@ -983,6 +1476,7 @@ def run(args, started):
         "warnings": warnings,
         "wall_time_s": round(wall_time_s, 2),
         "llm_cost_usd": 0.0,
+        "beat_snap": beat_snap,
     }
     return summary, record
 
@@ -990,10 +1484,16 @@ def run(args, started):
 def print_human(summary, record):
     if record is not None:
         for slot in record["video"]:
-            print(
-                f"{slot['id']}  {slot['clip']}  {slot['in_s']:.2f}-{slot['out_s']:.2f}  "
-                f"{slot['score']:.2f}  {slot['reason']}"
-            )
+            if slot.get("kind") == "photo":
+                print(
+                    f"{slot['id']}  {slot['photo']}  photo  {slot['duration_s']:.2f}s  "
+                    f"{slot['score']:.2f}  {slot['reason']}"
+                )
+            else:
+                print(
+                    f"{slot['id']}  {slot['clip']}  {slot['in_s']:.2f}-{slot['out_s']:.2f}  "
+                    f"{slot['score']:.2f}  {slot['reason']}"
+                )
     print(f"total {summary['total_duration_s']:.1f}s of target {summary['target_duration_s']:.1f}s")
     for warning in summary["warnings"]:
         print(f"warning: {warning}")

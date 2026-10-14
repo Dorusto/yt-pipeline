@@ -1,0 +1,196 @@
+{
+  "name": "photo_slots",
+  "intent": "photos join the timeline by capture time, photo slots are 2-4 s with Ken Burns, a hero photo is never missed",
+  "args": [
+    "--target-duration-s",
+    "12.0",
+    "--pacing",
+    "uniform",
+    "--order",
+    "chronological"
+  ],
+  "workspace": {
+    "ingest.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "source_dir": "/media",
+      "clip_count": 1,
+      "photo_count": 2,
+      "clips": [
+        {
+          "file": "clipA.mp4",
+          "path": "/media/clipA.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:00:00"
+        }
+      ],
+      "photos": [
+        {
+          "file": "still_0002_a.jpg",
+          "path": "/media/still_0002_a.jpg",
+          "width": 4032,
+          "height": 3024,
+          "orientation": 1,
+          "creation_time": "2026-01-01T10:00:20+00:00",
+          "creation_time_source": "exif",
+          "format": "JPEG",
+          "warnings": []
+        },
+        {
+          "file": "still_0003_b.jpg",
+          "path": "/media/still_0003_b.jpg",
+          "width": 3024,
+          "height": 4032,
+          "orientation": 1,
+          "creation_time": "2026-01-01T10:00:40+00:00",
+          "creation_time_source": "exif",
+          "format": "JPEG",
+          "warnings": []
+        }
+      ]
+    },
+    "quality/clipA.json": {
+      "file": "clipA.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "motion/clipA.json": {
+      "file": "clipA.mp4",
+      "duration_s": 60.0,
+      "moves": [],
+      "phases": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "shotlog.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "weights": {
+        "vision": 0.55,
+        "labels": 0.45,
+        "audio_energy": 0.0,
+        "text": 0.0
+      },
+      "shots": [
+        {
+          "key": "clipA/s1",
+          "clip": "clipA.mp4",
+          "segment_id": "s1",
+          "media_type": "video",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.62,
+          "scores": {
+            "labels": 0.7,
+            "vision": 0.52
+          },
+          "description": "ordinary hold",
+          "hook": "ordinary hold",
+          "reason": "interest 52",
+          "similar_to": [],
+          "hero": false,
+          "semantic_motion": null
+        },
+        {
+          "key": "0002/p1",
+          "clip": "still_0002_a.jpg",
+          "segment_id": "p1",
+          "media_type": "photo",
+          "capture_time": "2026-01-01T10:00:20+00:00",
+          "subject_position": {
+            "x": 0.2,
+            "y": 0.5
+          },
+          "start_s": 0.0,
+          "end_s": 0.04,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.9,
+          "scores": {
+            "labels": 0.7,
+            "vision": 1.0
+          },
+          "description": "the chapel at golden hour",
+          "summary": "chapel at golden hour",
+          "tags": [
+            "chapel",
+            "golden-hour"
+          ],
+          "hook": "the chapel",
+          "reason": "interest 90 \u00b7 hero \u00b7 photo",
+          "similar_to": [],
+          "hero": true,
+          "semantic_motion": "none"
+        },
+        {
+          "key": "0003/p1",
+          "clip": "still_0003_b.jpg",
+          "segment_id": "p1",
+          "media_type": "photo",
+          "capture_time": "2026-01-01T10:00:40+00:00",
+          "subject_position": {
+            "x": 0.8,
+            "y": 0.5
+          },
+          "start_s": 0.0,
+          "end_s": 0.04,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.58,
+          "scores": {
+            "labels": 0.7,
+            "vision": 0.45
+          },
+          "description": "the bay from the path",
+          "summary": "the bay from the path",
+          "tags": [
+            "bay",
+            "path"
+          ],
+          "hook": "the bay",
+          "reason": "interest 45 \u00b7 photo",
+          "similar_to": [],
+          "hero": false,
+          "semantic_motion": "none"
+        }
+      ]
+    }
+  },
+  "expected_slots": [
+    {
+      "kind": "video",
+      "clip": "clipA.mp4",
+      "in_s": 0.0,
+      "out_s": 3.0
+    },
+    {
+      "kind": "photo",
+      "photo": "still_0002_a.jpg",
+      "duration_s": 3.0
+    },
+    {
+      "kind": "photo",
+      "photo": "still_0003_b.jpg",
+      "duration_s": 3.0
+    }
+  ]
+}

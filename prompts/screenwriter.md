@@ -47,6 +47,11 @@ no extra keys.
   moves (an `orbit`, a `reveal`, a travel through a cave or a tunnel). Those keep
   their whole window up to 6 seconds instead of being trimmed to the pacing
   target. Everything else follows the pacing.
+- **Photos are slots too.** A photo shot (`media_type: "photo"`) becomes a
+  **photo slot**: give it an id `p1`, `p2`, ... and a `target_s` of **2–4
+  seconds** (3.0 is the default). Photos have no window, no landing and no
+  `keep_whole`; the tool picks the Ken Burns move from the photo's subject.
+  Use a photo when a still holds the moment better than a clip.
 - **Editing grammar** (the editor enforces this, but do not plan against it):
   - a move and the hold it lands on are one phrase — never plan a move and then
     its own landing hold as two slots;
@@ -67,4 +72,5 @@ no extra keys.
 `key`, `clip`, `start_s`, `end_s`, `score` (0-1, higher is better), `scores`
 (vision and labels), `hook`, `reason`, `summary`, `tags`, `subject`, `scenery`,
 `semantic_motion`, `interest`, `hero`, `role`, `motion_label`, `similar_to`,
-`eligible`, `defects`.
+`eligible`, `defects`. A photo row adds `media_type: "photo"`, `capture_time`
+and `subject_position`; its `start_s`/`end_s` are a placeholder, not a window.
