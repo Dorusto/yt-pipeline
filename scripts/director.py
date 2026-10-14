@@ -211,78 +211,76 @@ def clip_position(moment, first_moment, span_seconds):
     return clamp((moment - first_moment).total_seconds() / span_seconds, 0.0, 1.0)
 
 
-def photo_content_offset(capture_time, clip_timeline, trailing_rank=0):
-    """Map a photo's capture time onto the clip content timeline.
+def photo_region(moment, anchors):
+    """Where a capture moment sits relative to the clips: (kind, index, offset).
 
-    ``clip_timeline`` is ``(first_moment, [(moment, content_offset, duration)])``
-    in chronological order; the content timeline is the clips' durations laid
-    end to end. Inside a clip's wall-clock span the photo sits at
-    ``content_offset + elapsed``; in a gap it sits just before the next clip;
-    before everything it sorts first and after everything it sorts last
-    (``trailing_rank`` keeps trailing photos in capture order), so photos and
-    clips interleave by capture time.
+    ``kind`` is ``before`` the first clip, ``in`` a clip's wall-clock span,
+    ``gap`` between two clips or ``after`` the last one. ``offset`` is the
+    content-timeline position for ``in``; the other kinds get their position
+    from ``photo_offsets`` ranks.
     """
-    first_moment, anchors = clip_timeline
-    moment = parse_time(capture_time)
-    if not anchors:
-        return 1.0, 0.0
-    total = anchors[-1][1] + anchors[-1][2]
-    if moment is None:
-        return 1.0, total
-    if moment <= first_moment:
-        return 0.0, 0.0
-    for anchor_moment, content_offset, duration in anchors:
+    if moment is None or not anchors:
+        return ("after", len(anchors) - 1 if anchors else -1, 0.0)
+    if moment <= anchors[0][0]:
+        return ("before", -1, 0.0)
+    for index, (anchor_moment, content_offset, duration) in enumerate(anchors):
         elapsed = (moment - anchor_moment).total_seconds()
         if 0.0 <= elapsed <= duration:
-            offset = content_offset + elapsed
-            return clamp(offset / max(1e-9, total), 0.0, 1.0), offset
+            return ("in", index, content_offset + elapsed)
     for index in range(len(anchors) - 1):
         gap_end = anchors[index + 1][0]
         gap_start = anchors[index][0] + timedelta(seconds=anchors[index][2])
         if gap_start < moment < gap_end:
-            offset = anchors[index + 1][1] - 0.001
-            return clamp(offset / max(1e-9, total), 0.0, 1.0), offset
-    offset = total - 0.001 * (trailing_rank + 1)
-    return 1.0, offset
+            return ("gap", index, 0.0)
+    return ("after", len(anchors) - 1, 0.0)
 
 
 def photo_offsets(shotlog, photos_by_name, clip_timeline):
-    """Capture-time content offsets per photo shot key, trailing ones ranked."""
+    """Capture-time content offsets per photo shot key, in capture order.
+
+    The content timeline is the clips' durations laid end to end, so a photo
+    captured between two clips has no room of its own: gap photos fan out just
+    before the next clip, photos before the first clip lead the timeline and
+    photos after the last one trail it, each group in capture order.
+    """
     if not shotlog:
         return {}
-    entries = []
+    first_moment, anchors = clip_timeline
+    if not anchors:
+        return {}
+    total = anchors[-1][1] + anchors[-1][2]
+    groups = {}
     for shot in shotlog.values():
         if shot.get("media_type") != "photo":
             continue
         name = shot.get("clip") or ""
         photo = photos_by_name.get(name) or {}
         capture_time = shot.get("capture_time") or photo.get("creation_time")
-        entries.append((parse_time(capture_time), capture_time, shot.get("key")))
-    _, anchors = clip_timeline
-    span_end = anchors[-1][0] + timedelta(seconds=anchors[-1][2]) if anchors else None
-    ordered = sorted(
-        range(len(entries)),
-        key=lambda i: (entries[i][0] is None, entries[i][0] or datetime.min.replace(tzinfo=timezone.utc), i),
-    )
-    trailing_total = sum(
-        1
-        for moment, _, _ in entries
-        if moment is not None and span_end is not None and moment > span_end
-    )
+        moment = parse_time(capture_time)
+        kind, index, offset = photo_region(moment, anchors)
+        groups.setdefault((kind, index), []).append((moment, capture_time, offset, shot.get("key")))
     offsets = {}
-    trailing_rank = 0
-    for index in ordered:
-        moment, capture_time, key = entries[index]
-        trailing = moment is not None and span_end is not None and moment > span_end
-        if trailing:
-            offsets[key] = photo_content_offset(
-                capture_time,
-                clip_timeline,
-                trailing_rank=trailing_total - 1 - trailing_rank,
+    for (kind, index), items in groups.items():
+        items.sort(
+            key=lambda item: (
+                item[0] is None,
+                item[0] or datetime.min.replace(tzinfo=timezone.utc),
+                item[3] or "",
             )
-            trailing_rank += 1
-        else:
-            offsets[key] = photo_content_offset(capture_time, clip_timeline)
+        )
+        count = len(items)
+        for rank, (moment, capture_time, offset, key) in enumerate(items):
+            if kind == "in":
+                offsets[key] = (clamp(offset / max(1e-9, total), 0.0, 1.0), offset)
+            elif kind == "before":
+                value = -0.001 * (count - rank)
+                offsets[key] = (0.0, value)
+            elif kind == "gap":
+                value = anchors[index + 1][1] - 0.001 * (count - rank)
+                offsets[key] = (clamp(value / max(1e-9, total), 0.0, 1.0), value)
+            else:
+                value = total + 0.001 * (rank + 1)
+                offsets[key] = (1.0, value)
     return offsets
 
 
@@ -290,6 +288,7 @@ def build_photo_candidates(shotlog, photos_by_name, clip_timeline, offsets_by_ti
     """Photo shots from the shotlog as candidates, with their content position."""
     if not shotlog:
         return [], 0, 0
+    total = clip_timeline[1][-1][1] + clip_timeline[1][-1][2] if clip_timeline[1] else 0.0
     candidates = []
     skipped_ineligible = 0
     skipped_roles = 0
@@ -306,9 +305,7 @@ def build_photo_candidates(shotlog, photos_by_name, clip_timeline, offsets_by_ti
         name = shot.get("clip") or ""
         photo = photos_by_name.get(name) or {}
         capture_time = shot.get("capture_time") or photo.get("creation_time")
-        position, content_offset = offsets_by_time.get(
-            shot.get("key"), photo_content_offset(capture_time, clip_timeline)
-        )
+        position, content_offset = offsets_by_time.get(shot.get("key"), (1.0, total))
         segment = {
             "id": shot.get("segment_id") or "p1",
             "start_s": float(shot.get("start_s") or 0.0),
@@ -896,6 +893,71 @@ def absorb_out(slot, delta):
     return True
 
 
+def absorb_length(slot, delta):
+    """Change a slot's on-screen length by ``delta``, from its end or its head.
+
+    The end first (cheapest and exact); when the end is pinned the head moves
+    instead, never before the window's handle-in. False when neither fits.
+    """
+    if slot.get("media_type") == "photo":
+        return absorb_out(slot, delta)
+    if slot.get("important"):
+        return False
+    low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
+    if slot.get("landing_floor_s") is not None:
+        low = max(low, float(slot["landing_floor_s"]))
+    high = float(slot.get("window_out_s", slot["out_s"]))
+    end_target = float(slot["out_s"]) + delta
+    if low - 1e-9 <= end_target <= high + 1e-9:
+        slot["out_s"] = round(end_target, 3)
+        return True
+    window_in = float(slot.get("window_in_s", slot["in_s"]))
+    head_target = float(slot["in_s"]) - delta
+    if head_target < window_in - 1e-9:
+        return False
+    if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
+        return False
+    slot["in_s"] = round(head_target, 3)
+    return True
+
+
+def absorb_head(slot, delta):
+    """Change a slot's length by ``delta`` from its head only; False when it cannot.
+
+    The head move keeps the slot's end (and every cut after it) in place, which
+    is what the pair absorb needs from the right slot.
+    """
+    if slot.get("media_type") == "photo":
+        return absorb_out(slot, delta)
+    if slot.get("important"):
+        return False
+    window_in = float(slot.get("window_in_s", slot["in_s"]))
+    head_target = float(slot["in_s"]) - delta
+    if head_target < window_in - 1e-9:
+        return False
+    if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
+        return False
+    slot["in_s"] = round(head_target, 3)
+    return True
+
+
+def absorb_pair(left, right, delta):
+    """Move the cut between ``left`` and ``right`` by ``delta`` and nothing else.
+
+    ``left`` grows by ``delta`` (from its end or its head) and ``right`` gives
+    the same length back from its head, so only their shared boundary moves and
+    every later cut stays put. Both must fit; on a partial fit the left change
+    is restored exactly.
+    """
+    snapshot = {key: left.get(key) for key in ("in_s", "out_s", "duration_s")}
+    if not absorb_length(left, delta):
+        return False
+    if not absorb_head(right, -delta):
+        left.update(snapshot)
+        return False
+    return True
+
+
 def snap_photo(slot, start, times):
     """Put a photo's end on a beat that keeps its length in 2-4 s; False when none fits."""
     current = float(slot["duration_s"])
@@ -942,6 +1004,16 @@ def snap_slots(slots, beat_grid, downbeat_at, warnings):
             continue
         delta = target - end
         if abs(delta) < 1e-9 or absorb_out(slot, delta):
+            snapped += 1
+            start = start + timeline_length(slot)
+            continue
+        right = slots[index + 1] if index + 1 < len(slots) else None
+        if right is None:
+            if absorb_length(slot, delta):
+                snapped += 1
+                start = start + timeline_length(slot)
+                continue
+        elif absorb_pair(slot, right, delta):
             snapped += 1
             start = start + timeline_length(slot)
             continue
@@ -1006,7 +1078,7 @@ def candidate_overlaps_bucket(candidate, bucket_start, bucket_end):
     start = candidate["content_offset"] + candidate["in_s"]
     end = candidate["content_offset"] + candidate["out_s"]
     if candidate.get("media_type") == "photo":
-        return bucket_start <= start <= bucket_end
+        return bucket_start - 0.01 <= start <= bucket_end
     return overlap_seconds(start, end, bucket_start, bucket_end) > 0
 
 

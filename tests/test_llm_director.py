@@ -1409,3 +1409,48 @@ def test_help_lists_beats():
     )
     assert result.returncode == 0
     assert "--beats" in result.stdout
+
+
+def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.5, "out_s": 2.9, "transition": {"type": "cut", "duration_s": 0}},
+            {"id": "p1", "kind": "photo", "photo": "p.jpg", "duration_s": 3.5, "transition": {"type": "cut", "duration_s": 0}},
+        ]
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "beat": "b1", "shot_key": "a/s1"},
+            {"id": "p1", "beat": "b1", "shot_key": "p/p1"},
+        ]
+    }
+    photo_fact = {
+        "shot_key": "p/p1",
+        "media_type": "photo",
+        "photo": "p.jpg",
+        "window_in_s": 0.0,
+        "window_out_s": 0.04,
+        "landing_at_s": None,
+        "landing_hold_key": None,
+        "keep_whole": False,
+        "target_s": 3.0,
+        "score": 0.5,
+        "summary": None,
+        "role": "hold",
+        "motion_label": "static",
+        "hero": False,
+        "similar_to": [],
+    }
+    facts = {
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.9),
+        "p/p1": photo_fact,
+    }
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert record["video"][0]["out_s"] == 2.9
+    assert abs(record["video"][0]["in_s"] - 0.4) <= 0.02
+    assert 2.0 <= record["video"][1]["duration_s"] <= 4.0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+    assert stats["unsnapped"] == 0

@@ -1509,3 +1509,46 @@ def test_beats_joins_the_input_mtimes(tmp_path):
     third = run_director(*args)
     assert third.returncode == 0, third.stderr
     assert json.loads(third.stdout)["status"] == "written"
+
+
+def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.5,
+        "out_s": 2.9,
+        "window_in_s": 0.0,
+        "window_out_s": 2.9,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.5, "duration_s": 3.5}
+    warnings = []
+    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    assert video["out_s"] == 2.9
+    assert abs(video["in_s"] - 0.4) <= 0.02
+    assert 2.0 <= photo["duration_s"] <= 4.0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+    assert stats["unsnapped"] == 0
+
+
+def test_beat_snap_pair_absorb_stays_when_both_slots_are_pinned():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.0,
+        "out_s": 2.9,
+        "window_in_s": 0.0,
+        "window_out_s": 2.9,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.0, "duration_s": 2.0}
+    warnings = []
+    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    assert video["out_s"] == 2.9
+    assert video["in_s"] == 0.0
+    assert any("cut 1: not snapped" in warning for warning in warnings)
+    assert stats["unsnapped"] >= 1

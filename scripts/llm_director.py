@@ -1069,12 +1069,14 @@ def slot_bounds(slot, fact):
     low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
     high = float(slot["out_s"])
     important = False
+    window_in = float(slot["in_s"])
     if fact is not None:
         high = float(fact.get("window_out_s", slot["out_s"]))
         important = bool(fact.get("keep_whole"))
+        window_in = float(fact.get("window_in_s", slot["in_s"]))
         if fact.get("landing_at_s") is not None:
             low = max(low, float(fact["landing_at_s"]) + LANDING_FLOOR_S)
-    return {"photo": False, "important": important, "low": low, "high": high}
+    return {"photo": False, "important": important, "low": low, "high": high, "window_in": window_in}
 
 
 def absorb_out(slot, bounds, delta):
@@ -1091,6 +1093,61 @@ def absorb_out(slot, bounds, delta):
     if not (bounds["low"] - 1e-9 <= target <= bounds["high"] + 1e-9):
         return False
     slot["out_s"] = round(target, 3)
+    return True
+
+
+def absorb_length(slot, bounds, delta):
+    """Change a slot's on-screen length by ``delta``, from its end or its head.
+
+    The end first; when the end is pinned the head moves instead, never before
+    the window's start. False when neither fits.
+    """
+    if absorb_out(slot, bounds, delta):
+        return True
+    if bounds.get("photo") or bounds.get("important"):
+        return False
+    window_in = float(bounds.get("window_in", slot["in_s"]))
+    head_target = float(slot["in_s"]) - delta
+    if head_target < window_in - 1e-9:
+        return False
+    if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
+        return False
+    slot["in_s"] = round(head_target, 3)
+    return True
+
+
+def absorb_head(slot, bounds, delta):
+    """Change a slot's length by ``delta`` from its head only; False when it cannot.
+
+    The head move keeps the slot's end (and every cut after it) in place, which
+    is what the pair absorb needs from the right slot.
+    """
+    if bounds.get("photo"):
+        return absorb_out(slot, bounds, delta)
+    if bounds.get("important"):
+        return False
+    head_target = float(slot["in_s"]) - delta
+    if head_target < float(bounds.get("window_in", slot["in_s"])) - 1e-9:
+        return False
+    if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
+        return False
+    slot["in_s"] = round(head_target, 3)
+    return True
+
+
+def absorb_pair(left, left_bounds, right, right_bounds, delta):
+    """Move the cut between ``left`` and ``right`` by ``delta`` and nothing else.
+
+    ``left`` grows by ``delta`` (from its end or its head) and ``right`` gives
+    the same length back from its head, so only their shared boundary moves.
+    Both must fit; on a partial fit the left change is restored exactly.
+    """
+    snapshot = {key: left.get(key) for key in ("in_s", "out_s", "duration_s")}
+    if not absorb_length(left, left_bounds, delta):
+        return False
+    if not absorb_head(right, right_bounds, -delta):
+        left.update(snapshot)
+        return False
     return True
 
 
@@ -1139,6 +1196,14 @@ def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
             continue
         delta = target - end
         if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta):
+            snapped += 1
+            start += slot_duration(slot)
+            continue
+        if index + 1 < len(slots):
+            moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta)
+        else:
+            moved = absorb_length(slot, bounds[index], delta)
+        if moved:
             snapped += 1
             start += slot_duration(slot)
             continue
