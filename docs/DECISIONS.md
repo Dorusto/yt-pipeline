@@ -1125,3 +1125,16 @@ director run that takes both with another take between (covered by tests).
 - `docs/RISKS.md` rows 1 and 3 updated; per-shoot golden edit sets on real test sets stay at D3.
 
 **Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.
+
+---
+
+## [2026-10-14] D2-3 "agent-ready": a fresh agent can go from folder + brief to MP4
+
+**Context:** Doru wants to demo, in the publish-gate clip, a fresh agent (Claude Code, OpenCode or Hermes) with no project knowledge turning a footage folder and one sentence into a recap. Gaps today: no tool makes the 720p proxies (they were made by hand), no single entry point chains the stations, no setup check, and the quickstart is spread across docs.
+
+**Decision (small round before the clip, no new editing features):**
+- `scripts/proxy.py`: originals → 720p H.264 constant-frame-rate proxies with audio, skip existing, never touch originals.
+- `scripts/recap.py`: one command `--source DIR --brief "..." [--workspace DIR] [--final]` that runs the existing stations as subprocesses in order (proxy, ingest, motion, quality, describe, similarity, index, router, llm_director, render, optional final render and Kdenlive export), skips stations whose outputs exist, prints one progress line per station and a `--json` summary with wall time and total LLM cost. It imports no other tool.
+- `scripts/doctor.py`: checks python deps, ffmpeg/ffprobe, `OPENROUTER_API_KEY`, config models, disk space, write access to the workspace and that the originals folder is not writable by mistake; prints what to fix.
+- Skill `yt-recap` (the front door for any agent) and a 10-line quickstart at the top of `README.md` and `docs/guides/user-guide.md`.
+- Acceptance: on a clean clone in a fresh shell, `doctor.py` then `recap.py --source ~/media/yt-test/raw --brief "<S1 brief>"` produces the MP4 with no other command.

@@ -66,3 +66,4 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Every tool is a standalone script in `scripts/` with `--help`, `--json` and re-run safety; shared code only in `scripts/common/`; files validated against `schemas/` are the interfaces. — 2026-10-12
 - Commit backdating after 18:00 with non-round times; the repo is public. — CLAUDE.md
 - `--skip-alignment` only when the JSON is already correct and only ASS + video re-render is needed. — CLAUDE.md
+- `scripts/recap.py` is the single entry point for agents and humans; it only chains the station CLIs as subprocesses. — 2026-10-14
