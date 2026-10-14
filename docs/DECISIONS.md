@@ -1436,3 +1436,72 @@ unambiguous.
 **Context:** during D2-6 the DeepSeek V4.1 Flash coder returned empty replies twice on three separate tasks (proxy photo pass-through, paired beat snap, one more), so the architect did the work itself and finally stalled. The routing rule allows a coder switch on outage, never mid-task.
 
 **Decision:** D2-7 starts with GLM 5.3 Flash as the coder (`.opencode/agents/coder.md`). DeepSeek stays the fallback. Revisit after D2-7: keep whichever coder needed fewer architect takeovers.
+
+---
+
+## [2026-10-15] D2-8 reframe stack: YuNet + TrackerMIL + saliency fallback (Haar is gone in OpenCV 5)
+
+**Context:** `scripts/reframe.py` (D2-8, Shorts subject tracking) needs a face
+detector, a tracker between detections and a no-face fallback. The build venv
+runs **OpenCV 5.0.0** (`opencv-python`, CPU), which changes the options: the
+classic `cv2.CascadeClassifier` API and the Haar XML files are **removed**
+(`cv2.data.haarcascades` is empty), so the Haar path in `shorts_generator.py`
+(`detect_face_offset`) is already broken on this venv and could not be kept.
+Measured on Kotor proxy frames (1920x1080, LXC CPU), 2026-10-15.
+
+**Face detector options compared:**
+- **YuNet via `cv2.FaceDetectorYN`** — OpenCV Zoo `face_detection_yunet_2026may.onnx`
+  (dynamic input shape, the zoo's default for OpenCV 5.x) and `..._2023mar.onnx`
+  (fixed shape): **MIT** (model directory LICENSE), **224 KB / 227 KB**,
+  ~28–74 ms per 1080p frame on this CPU, 5 landmarks + score, faces ~10x10 to
+  300x300 px. Both models give identical boxes on the test frames; 2026may is
+  the forward-compatible one (symbolic H/W dims for the OpenCV 5 ONNX engine).
+- **Haar cascade** (`cv2.CascadeClassifier`, BSD-3, ~900 KB XML, ships with
+  OpenCV 4.x) — **not available in OpenCV 5.0.0** (API and XML files removed);
+  frontal-only and weaker on profile faces anyway.
+- **SCRFD / RetinaFace / YOLO-face ONNX via `cv2.dnn`** — Apache-2.0/MIT, 2–30 MB,
+  more decode code, no accuracy need for a crop path; rejected.
+
+**Tracker options compared** (between detections every 8 frames = 0.32 s, scored
+by IoU against per-frame YuNet boxes on 0091 orbit, 75 frames):
+- **`cv2.TrackerMIL`** (OpenCV 5 main, no model download, Apache-2.0): **IoU 0.942**.
+- **Linear interpolation between detections** (no tracker): **IoU 0.946**.
+- **`cv2.TrackerVit` + `object_tracking_vittrack_2023sep.onnx`** (OpenCV Zoo,
+  Apache-2.0, **698 KB**): **IoU 0.897**.
+
+**No-face fallback options compared** (0083 locked-off shot, other boat enters
+and approaches; 0081 people + cave):
+- **Saliency map** — spectral residual (numpy FFT) centroid: x 0.20–0.36 / y 0.68–0.96
+  on 0083 (lands on the wake, not the boat); motion-blob centroid jumps
+  0.04 → 0.91 (wake + moving-camera parallax dominate). Free and always runs,
+  but weak on boat footage — usable only behind a stability gate (hold the last
+  good centre instead of chasing the wake).
+- **Object detector** — OpenCV Zoo `object_detection_nanodet_2022nov.onnx`
+  (NanoDet-m-plus-1.5x, **3.6 MB**, Apache-2.0, COCO incl. `boat`/`person`):
+  **does not run on this OpenCV 5.0.0 pip build** (`reshape2_layer` assert in the
+  new DNN graph engine; the wheel is built `WITH_ONNXRUNTIME=OFF`, so
+  `OPENCV_FORCE_DNN_ENGINE=4` cannot fall back either). YOLOX (35.8 MB) is the
+  heavier cousin with the same engine risk. Kept as the P1 upgrade.
+
+**Decision:**
+- **Detector: YuNet** `face_detection_yunet_2026may.onnx` via `cv2.FaceDetectorYN`,
+  downloaded once to `~/.cache/yt-pipeline/models/` (never into git), MIT.
+- **Tracker: `cv2.TrackerMIL`** between detections (zero download, measured at
+  parity with plain interpolation, and it keeps following through short
+  detection gaps where interpolation would freeze). Re-init on every detection;
+  subject choice by continuity (nearest to the previous subject), never "largest
+  face", so the crop never jumps between people. VitTrack is the upgrade path if
+  MIL drifts on fast subjects.
+- **No-face fallback: saliency map** (spectral residual + frame-difference
+  motion, scene band with the bottom wake band down-weighted) with a stability
+  gate: when the saliency is flat or jumps, hold the last good crop centre.
+  The object detector stays the P1 backlog row until OpenCV 5's DNN engine (or
+  an ONNX Runtime build) loads NanoDet.
+- Crop path JSON carries `x`,`y` = crop window top-left in source pixels per
+  timestamp, any aspect (`9:16` default); `x_offset` in `shorts_config.yaml`
+  still overrides with a fixed crop.
+
+**Rationale:** OpenCV-first (the D2-8 backlog principle): the detector, the
+tracker and the fallback are all free CPU measurements, one 224 KB MIT model
+download, no new dependencies; the measured numbers above are the pick, not
+taste. Haar had to go anyway on OpenCV 5.
