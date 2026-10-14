@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import threading
 
 import serve
@@ -12,16 +13,28 @@ def make_root(tmp_path):
     project.mkdir()
     (project / "recap_720p.mp4").write_bytes(bytes(range(100)))
     (project / "shotlog.html").write_text("<html>contact sheet</html>", encoding="utf-8")
+    (project / "explain.html").write_text("<html>why</html>", encoding="utf-8")
     (project / "edit.json").write_text("{}", encoding="utf-8")
     proxy_only = root / "raw"
     (proxy_only / "proxy").mkdir(parents=True)
     (proxy_only / "proxy" / "clip.mp4").write_bytes(b"proxy")
+    (proxy_only / "proxy" / "x.mp4").write_bytes(b"proxy")
     (root / "notes.txt").write_text("ignore", encoding="utf-8")
     return root
 
 
-def start_server(root):
-    server = serve.build_server(root, "127.0.0.1", 0)
+def make_music_dir(tmp_path, names):
+    music = tmp_path / "music"
+    music.mkdir()
+    for name in names:
+        (music / name).write_bytes(b"audio")
+    return music
+
+
+def start_server(root, music_dir=None):
+    if music_dir is None:
+        music_dir = str(root / "no-music-dir")
+    server = serve.build_server(root, "127.0.0.1", 0, music_dir)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
@@ -54,7 +67,46 @@ def test_projects_sorted_descending(tmp_path):
     assert serve.discover_projects(root) == ["2026-10-14", "2026-10-13", "2026-10-12"]
 
 
-def test_index_lists_project(tmp_path):
+def test_run_json_alone_is_a_project(tmp_path):
+    root = tmp_path / "projects"
+    folder = root / "2026-10-15"
+    folder.mkdir(parents=True)
+    (folder / ".run.json").write_text('{"pid": 1, "started_at": "x", "label": "recap"}', encoding="utf-8")
+    assert serve.discover_projects(root) == ["2026-10-15"]
+
+
+def test_project_status_running_for_live_pid(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    assert serve.project_status(folder) == "running"
+
+
+def test_project_status_failed_for_dead_pid_without_recap(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(json.dumps({"pid": 2**31 - 1}), encoding="utf-8")
+    assert serve.project_status(folder) == "failed"
+
+
+def test_project_status_done_for_dead_pid_with_recap(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(json.dumps({"pid": 2**31 - 1}), encoding="utf-8")
+    (folder / "recap_720p.mp4").write_bytes(b"x")
+    assert serve.project_status(folder) == "done"
+
+
+def test_project_status_ignores_malformed_run_json(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text("not json", encoding="utf-8")
+    assert serve.project_status(folder) == "done"
+    (folder / ".run.json").write_text('{"pid": "abc"}', encoding="utf-8")
+    assert serve.project_status(folder) == "done"
+
+
+def test_index_lists_project_with_done_badge(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
@@ -63,21 +115,55 @@ def test_index_lists_project(tmp_path):
         assert headers["Content-Type"].startswith("text/html")
         assert b"2026-10-14" in body
         assert b'href="/2026-10-14/"' in body
+        assert b"badge-done" in body
+        assert b">done<" in body
         assert b"raw" not in body
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_project_page_links_existing_artifacts_only(tmp_path):
+def test_index_shows_running_badge(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        assert status == 200
+        assert b"badge-running" in body
+        assert b">running<" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_index_shows_failed_badge(tmp_path):
+    root = tmp_path / "projects"
+    project = root / "2026-10-14"
+    project.mkdir(parents=True)
+    (project / ".run.json").write_text(json.dumps({"pid": 2**31 - 1}), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        assert status == 200
+        assert b"badge-failed" in body
+        assert b">failed<" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_default_tab_is_recap(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
         assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
-        assert b"recap_720p.mp4" in body
-        assert b"shotlog.html" in body
+        assert b'href="/2026-10-14/?tab=recap"' in body
+        assert b'href="/2026-10-14/?tab=why"' in body
+        assert b'href="/2026-10-14/?tab=shots"' in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -101,6 +187,61 @@ def test_project_page_without_recap_has_no_player(tmp_path):
         server.server_close()
 
 
+def test_tab_why_embeds_explain(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b'<iframe src="explain.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tab_shots_embeds_shotlog(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
+        assert status == 200
+        assert b'<iframe src="shotlog.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tab_without_file_shows_placeholder(tmp_path):
+    root = tmp_path / "projects"
+    folder = root / "2026-10-14"
+    folder.mkdir(parents=True)
+    (folder / "recap_720p.mp4").write_bytes(b"x")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b"explain.html" not in body
+        assert b"scripts/explain.py" in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
+        assert status == 200
+        assert b"shotlog.html" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_unknown_tab_falls_back_to_recap(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=bogus")
+        assert status == 200
+        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_get_artifacts(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
@@ -113,7 +254,12 @@ def test_get_artifacts(tmp_path):
         assert body == bytes(range(100))
         status, headers, body = request(server, "GET", "/2026-10-14/shotlog.html")
         assert status == 200
+        assert headers["Content-Type"] == "text/html; charset=utf-8"
         assert body == (project / "shotlog.html").read_bytes()
+        status, headers, body = request(server, "GET", "/2026-10-14/explain.html")
+        assert status == 200
+        assert headers["Content-Type"] == "text/html; charset=utf-8"
+        assert body == (project / "explain.html").read_bytes()
         status, _, _ = request(server, "GET", "/2026-10-14/recap_final.mp4")
         assert status == 404
     finally:
@@ -141,7 +287,9 @@ def test_traversal_and_unknown_return_404(tmp_path):
         for path in (
             "/2026-10-14/../brief.txt",
             "/2026-10-14/edit.json",
+            "/2026-10-14/.run.json",
             "/2026-10-14/proxy/clip.mp4",
+            "/2026-10-14/proxy/x.mp4",
             "/2026-10-14/motion/",
             "/nope/",
             "/2026-10-14/missing.mp4",
@@ -165,13 +313,88 @@ def test_backslash_path_returns_404(tmp_path):
         server.server_close()
 
 
-def test_post_returns_405(tmp_path):
+def test_post_outside_upload_returns_405(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, headers, _ = request(server, "POST", "/")
         assert status == 405
         assert headers["Allow"] == "GET, HEAD"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_upload_returns_501(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "POST", "/upload")
+        assert status == 501
+        assert headers["Content-Type"].startswith("text/plain")
+        assert b"not wired yet" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_form(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert headers["Content-Type"].startswith("text/html")
+        for fragment in (
+            b' enctype="multipart/form-data"',
+            b' method="post"',
+            b' action="/upload"',
+            b'name="files"',
+            b'name="folder"',
+            b'name="brief"',
+            b'name="length"',
+            b'name="order"',
+            b'name="audio_clean"',
+            b'name="music"',
+            b'name="ambient_under_music_db"',
+            b">Auto<",
+            b"inbox",
+        ):
+            assert fragment in body, fragment
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_music_options_sorted_by_name(tmp_path):
+    root = make_root(tmp_path)
+    music = make_music_dir(tmp_path, ["b.mp3", "a.WAV", "skip.txt", "c.ogg"])
+    server = start_server(root, str(music))
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert b'<option value="a.WAV">a.WAV</option>' in body
+        assert b'<option value="b.mp3">b.mp3</option>' in body
+        assert b'<option value="c.ogg">c.ogg</option>' in body
+        assert b"skip.txt" not in body
+        assert body.index(b"a.WAV") < body.index(b"b.mp3") < body.index(b"c.ogg")
+        assert (
+            b'<option value="auto">Auto</option><option value="none">none</option>' in body
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_missing_music_dir_has_no_tracks(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root, str(tmp_path / "gone"))
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert b'<option value="auto">Auto</option>' in body
+        assert b'<option value="none">none</option>' in body
+        assert b".mp3" not in body
     finally:
         server.shutdown()
         server.server_close()
@@ -237,6 +460,7 @@ def test_missing_root_fails(tmp_path, capsys):
 
 def test_check_json_summary(tmp_path, capsys):
     root = make_root(tmp_path)
+    music = make_music_dir(tmp_path, ["a.mp3", "b.wav"])
     assert (
         serve.main(
             [
@@ -246,6 +470,8 @@ def test_check_json_summary(tmp_path, capsys):
                 "127.0.0.1",
                 "--port",
                 "0",
+                "--music-dir",
+                str(music),
                 "--check",
                 "--json",
             ]
@@ -258,11 +484,14 @@ def test_check_json_summary(tmp_path, capsys):
     assert summary["bind"] == "127.0.0.1"
     assert isinstance(summary["port"], int) and summary["port"] > 0
     assert summary["url"] == f"http://127.0.0.1:{summary['port']}/"
+    assert summary["music_tracks"] == 2
     assert len(summary["projects"]) == 1
     project = summary["projects"][0]
     assert project["name"] == "2026-10-14"
+    assert project["status"] == "done"
     assert project["preview"].endswith("/2026-10-14/recap_720p.mp4")
     assert project["shotlog"].endswith("/2026-10-14/shotlog.html")
+    assert project["why"].endswith("/2026-10-14/explain.html")
     assert project["final"] is None
     assert isinstance(summary["wall_time_s"], (int, float))
     assert summary["llm_cost_usd"] == 0.0
@@ -284,6 +513,14 @@ def test_default_bind_is_not_wildcard():
     assert serve.detect_bind() not in serve.WILDCARD_BINDS
 
 
+def test_help_mentions_music_dir(capsys):
+    try:
+        serve.build_parser().parse_args(["--help"])
+    except SystemExit:
+        pass
+    assert "--music-dir" in capsys.readouterr().out
+
+
 def test_check_human_output(tmp_path, capsys):
     root = make_root(tmp_path)
     assert (
@@ -292,3 +529,4 @@ def test_check_human_output(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.startswith("check: http://127.0.0.1:")
     assert "2026-10-14" in out
+    assert "done" in out

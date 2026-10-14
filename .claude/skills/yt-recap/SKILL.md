@@ -36,16 +36,19 @@ After a run the workspace holds `recap_720p.mp4` (the recap to watch), `edit.jso
 
 ## Phone flow: serve.py
 
-Serve the finished workspaces over the tailnet so the recap opens on the phone:
+Serve the finished workspaces over the tailnet as a small read-only web app:
 
 ```bash
 .venv/bin/python scripts/serve.py --workspaces ~/media/projects
 ```
 
-- `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `edit.json`; the list is newest folder name first).
+- `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `.run.json`, `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `explain.html`, `edit.json`; the list is newest folder name first).
+- The Projects page (`<base>/`) shows one row per project with a status badge — `running` (a live `.run.json` pid), `failed` (dead pid, no recap yet) or `done` — plus small links to the artifacts that exist (recap / final / why / shots). The top menu links Projects and Upload.
+- Each project page (`<base>/<project>/`) has the tabs Recap / Why? / Shots (`?tab=recap|why|shots`, default recap, works without JS): the Recap tab is the `recap_720p.mp4` player plus a link to `recap_final.mp4` when it exists, Why? embeds `explain.html` and Shots embeds `shotlog.html`.
+- The Upload page (`<base>/upload`) shows the form (files, folder, brief, length, order, audio clean, music, ambient-under-music dB); its POST handler is not wired yet and returns 501 until the next task.
 - Binds the machine's tailnet IPv4 address by default. `--bind` refuses the wildcard (`0.0.0.0`, `::`, empty) so the server never leaves the tailnet; `127.0.0.1` is local only.
-- `--port N` (default `8091`; `0` picks an ephemeral port). `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup.
-- URL layout: `<base>/` is the index, `<base>/<project>/` is the project page, and the three artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4` and `<base>/<project>/shotlog.html`. Nothing else in a project is served.
+- `--port N` (default `8091`; `0` picks an ephemeral port). `--music-dir DIR` (default `~/media/music`) is the folder whose audio files (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`) are offered on the Upload page. `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup (including `music_tracks`).
+- URL layout: `<base>/` is the Projects page, `<base>/upload` the upload form, `<base>/<project>/` the project page, and the four artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4`, `<base>/<project>/shotlog.html` and `<base>/<project>/explain.html` (videos support HTTP Range). Nothing else in a project is served — proxies, `edit.json`, `.run.json` and every analysis folder stay private.
 
 ## Phone flow: inbox.py
 
