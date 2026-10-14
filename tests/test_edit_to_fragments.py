@@ -213,6 +213,7 @@ def test_json_summary_keys_and_no_llm_cost(tmp_path, capsys):
     assert summary["llm_cost_usd"] == 0.0
 
 
+@pytest.mark.needs_melt
 @pytest.mark.skipif(shutil.which("melt") is None, reason="melt (Kdenlive's MLT CLI) is not installed")
 def test_end_to_end_with_kdenlive_consumer(tmp_path, capsys):
     raw = tmp_path / "raw"
