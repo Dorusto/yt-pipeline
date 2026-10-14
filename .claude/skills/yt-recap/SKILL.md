@@ -54,4 +54,4 @@ After a run the workspace holds `recap_720p.mp4` (the recap to watch), `edit.jso
 - The originals folder must not be the workspace; `recap.py` refuses a workspace inside the source.
 - The budget stops the chain when it is reached. Raise `--budget-usd` or edit `config.yaml: llm_budget_usd`.
 - `doctor.py` warns when the originals folder is writable; make it read-only with `chmod -R a-w ~/media/trip/raw`.
-- Proxies are 720p copies under `workspace/proxy/`; they can be deleted and rebuilt at any time.
+- Proxies are 720p copies under `workspace/proxy/`; still photos (JPEG/HEIC) are copied through next to them so ingest sees the whole day. Proxies can be deleted and rebuilt at any time.

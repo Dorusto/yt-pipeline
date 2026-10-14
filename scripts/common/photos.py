@@ -137,6 +137,21 @@ def read_bgr(path, width=None):
     return bgr
 
 
+def _jpeg_exif(path):
+    """The capture-time EXIF block of a photo, re-encoded for a JPEG save."""
+    try:
+        with Image.open(path) as image:
+            raw = image.getexif()
+    except Exception:
+        return b""
+    exif = Image.Exif()
+    for tag in (EXIF_DATETIME_ORIGINAL, EXIF_DATETIME):
+        value = raw.get(tag)
+        if value:
+            exif[tag] = value
+    return exif
+
+
 def jpeg_bytes(image, quality=JPEG_QUALITY):
     """Encode an RGB image as JPEG bytes."""
     buffer = io.BytesIO()
@@ -160,9 +175,10 @@ def ensure_jpeg(path, out_dir):
     if target.exists():
         return target
     image = open_photo(path)
+    exif = _jpeg_exif(path)
     temporary = target.with_name(target.name + ".tmp")
     try:
-        image.save(temporary, "JPEG", quality=JPEG_QUALITY)
+        image.save(temporary, "JPEG", quality=JPEG_QUALITY, exif=exif)
         os.replace(temporary, target)
     finally:
         if temporary.exists():

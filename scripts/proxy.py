@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder
+from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 DEFAULT_HEIGHT = 720
@@ -90,6 +91,31 @@ def find_clips(source):
         ),
         key=lambda path: path.name,
     )
+
+
+def find_photos(source):
+    return sorted(
+        (path for path in source.iterdir() if path.is_file() and is_photo(path)),
+        key=lambda path: path.name,
+    )
+
+
+def copy_photo(photo, out_dir):
+    """Copy one still into ``out_dir`` and return its target name.
+
+    JPEGs are copied byte-for-byte under the same name; a HEIC still becomes
+    ``<stem>.jpg`` so everything downstream can decode it.
+    """
+    if photo.suffix.lower() == ".heic":
+        converted = ensure_jpeg(photo, out_dir)
+        target = out_dir / f"{photo.stem}.jpg"
+        if converted != target:
+            os.replace(converted, target)
+        return target.name
+    target = out_dir / photo.name
+    if not target.exists():
+        shutil.copy2(photo, target)
+    return target.name
 
 
 def run_ffprobe(path):
@@ -206,11 +232,14 @@ def build_proxies(source, out, height, crf, force):
     source = Path(source).expanduser().resolve()
     if not source.exists():
         raise ProxyError(f"source not found: {source}")
+    photos = []
     if source.is_dir():
         clips = find_clips(source)
-        if not clips:
+        photos = find_photos(source)
+        if not clips and not photos:
             raise ProxyError(
-                f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) in {source}"
+                f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) or photos "
+                f"({', '.join(sorted(PHOTO_EXTENSIONS))}) in {source}"
             )
     elif source.is_file():
         clips = [source]
@@ -241,6 +270,7 @@ def build_proxies(source, out, height, crf, force):
     written = []
     skipped = []
     failed = []
+    photos_copied = 0
     active_encoder = encoder
     for clip in clips:
         target = out / clip.name
@@ -258,6 +288,25 @@ def build_proxies(source, out, height, crf, force):
             failed.append(clip.name)
             continue
         written.append(clip.name)
+
+    for photo in photos:
+        target = out / photo.name
+        if target.resolve() == photo.resolve():
+            print(f"[error] refusing to overwrite original: {target}", file=sys.stderr)
+            failed.append(photo.name)
+            continue
+        expected = photo.stem + ".jpg" if photo.suffix.lower() == ".heic" else photo.name
+        if (out / expected).exists() and not force:
+            skipped.append(photo.name)
+            continue
+        try:
+            name = copy_photo(photo, out)
+        except Exception as exc:
+            print(f"[error] {exc}", file=sys.stderr)
+            failed.append(photo.name)
+            continue
+        written.append(name)
+        photos_copied += 1
 
     if failed:
         status = "failed"
@@ -281,6 +330,7 @@ def build_proxies(source, out, height, crf, force):
             "written": len(written),
             "skipped": len(skipped),
             "failed": len(failed),
+            "photos": photos_copied,
         },
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
