@@ -15,7 +15,9 @@ no extra keys.
 {
   "slots": [
     {"id": "v1", "shot_key": "0056/s1", "in_s": 12.4, "out_s": 18.1,
-     "transition": "cut", "note": "cuts in on the wake, lands on the shore"}
+     "transition": "cut", "note": "cuts in on the wake, lands on the shore"},
+    {"id": "p1", "shot_key": "photo_01/p1", "duration_s": 3.0,
+     "transition": "crossfade", "note": "hold the still for three seconds"}
   ],
   "notes": ["anything the reviewer should know"]
 }
@@ -23,6 +25,9 @@ no extra keys.
 - `id` is the plan's slot id. `shot_key` is the plan's shot.
 - `in_s` and `out_s` are **seconds inside the source clip**, and must lie inside
   the shot's usable window given in the shot facts (`window_in_s` .. `window_out_s`).
+- **A photo slot uses `duration_s` instead of `in_s`/`out_s`.** A photo has no
+  window: give it a `duration_s` of **2–4 seconds** (3.0 is the default). The
+  tool clamps it and picks the Ken Burns move itself.
 - `transition` is `cut` or `crossfade` for every slot after the first one.
 
 ## The rules you must obey
@@ -51,9 +56,14 @@ no extra keys.
    before `window_out_s`.
 7. **Length.** The sum of `out_s - in_s` should reach the brief's target
    duration within about 10%.
+8. **Photos.** A photo slot has no window and no landing: answer with
+   `duration_s` between 2.0 and 4.0 s (3.0 is the default). Never give a photo
+   `in_s`/`out_s`.
 
 ## The shot facts you get per planned shot
 
 `shot_key`, `clip`, `window_in_s`, `window_out_s`, `landing_at_s` (or null),
 `keep_whole` (the shot's own flag: hero or complete semantic move), `target_s` (from the plan), `score`, `summary`,
-`role`, `motion_label`, `hero`, `similar_to`.
+`role`, `motion_label`, `hero`, `similar_to`. A photo fact adds
+`media_type: "photo"`, `photo`, `capture_time`, `subject_position` and `tags`;
+its `window_in_s`/`window_out_s` are a placeholder, not a window.

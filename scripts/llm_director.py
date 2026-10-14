@@ -29,6 +29,7 @@ from pathlib import Path
 
 from common.config import ConfigError, load_config
 from common.llm import BudgetExceeded, LLMError, make_client
+from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
 TOOL = "scripts/llm_director.py"
@@ -43,6 +44,10 @@ MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
 XFADE_S = 0.3
 TOLERANCE_S = 0.05
+PHOTO_MIN_S = 2.0
+PHOTO_MAX_S = 4.0
+PHOTO_DEFAULT_S = 3.0
+PHOTO_TOLERANCE_S = 0.01
 
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 MOVE_ROLES = {"move", "transition_in", "transition_out"}
@@ -215,6 +220,19 @@ def load_ingest(workspace):
     if not clips:
         raise LLMDirectorError("ingest.json has no clips")
     return clips
+
+
+def load_ingest_photos(workspace):
+    """The still photos listed in ``ingest.json``, or [] when there are none."""
+    data = load_json(workspace / "ingest.json")
+    if not isinstance(data, dict):
+        return []
+    photos = data.get("photos") or []
+    return [
+        photo
+        for photo in photos
+        if isinstance(photo, dict) and (photo.get("file") or photo.get("path"))
+    ]
 
 
 def order_clips(clips):
@@ -410,6 +428,32 @@ def make_fact(candidate, important_max_s):
     }
 
 
+def make_photo_fact(shot, photo):
+    """One photo shot as a shot fact: no window, no landing, a fixed 3 s target."""
+    return {
+        "shot_key": shot.get("key"),
+        "media_type": "photo",
+        "photo": shot.get("clip") or photo.get("file"),
+        "photo_path": photo.get("path") or shot.get("clip"),
+        "capture_time": shot.get("capture_time") or photo.get("creation_time"),
+        "subject_position": shot.get("subject_position"),
+        "tags": list(shot.get("tags") or []),
+        "score": shot.get("score"),
+        "summary": shot.get("summary"),
+        "hero": shot.get("hero"),
+        "similar_to": list(shot.get("similar_to") or []),
+        "window_in_s": 0.0,
+        "window_out_s": 0.04,
+        "landing_at_s": None,
+        "landing_hold_key": None,
+        "keep_whole": False,
+        "target_s": PHOTO_DEFAULT_S,
+        "role": shot.get("role") or "hold",
+        "motion_label": shot.get("motion_label") or "static",
+        "description": shot.get("description"),
+    }
+
+
 def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S):
     clips = order_clips(load_ingest(workspace))
     first_moment = clips[0][1]
@@ -458,6 +502,22 @@ def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S
             key = candidate.get("shot_key")
             if key:
                 facts[key] = make_fact(candidate, important_max_s)
+    photos_by_name = {
+        photo.get("file") or Path(photo["path"]).name: photo
+        for photo in load_ingest_photos(workspace)
+    }
+    for shot in shotlog.values():
+        if shot.get("media_type") != "photo":
+            continue
+        if not shot.get("eligible", True):
+            continue
+        if (shot.get("role") or "hold") in SKIP_ROLES:
+            continue
+        key = shot.get("key")
+        if not key:
+            continue
+        name = shot.get("clip") or ""
+        facts[key] = make_photo_fact(shot, photos_by_name.get(name) or {})
     return facts, clips, warnings
 
 
@@ -792,10 +852,31 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
                     "planned but the editor produced no cut window",
                 )
             )
+    for key, fact in facts_by_key.items():
+        if fact.get("media_type") != "photo" or not fact.get("hero"):
+            continue
+        if key not in used_keys:
+            violations.append(violation(key, "hero", "eligible hero photo is missing from the plan"))
     for slot in slots:
         fact = slot_fact(slot, plan_by_id, facts_by_key)
         if fact is None:
             violations.append(violation(slot["id"], "plan", "slot is not in the plan or names an unknown shot"))
+            continue
+        if fact.get("media_type") == "photo":
+            duration = slot.get("duration_s")
+            if (
+                not isinstance(duration, (int, float))
+                or isinstance(duration, bool)
+                or duration < PHOTO_MIN_S - PHOTO_TOLERANCE_S
+                or duration > PHOTO_MAX_S + PHOTO_TOLERANCE_S
+            ):
+                violations.append(
+                    violation(
+                        slot["id"],
+                        "photo_length",
+                        f"{duration}s is outside {PHOTO_MIN_S:.1f}-{PHOTO_MAX_S:.1f}s",
+                    )
+                )
             continue
         in_s = slot["in_s"]
         out_s = slot["out_s"]
@@ -849,6 +930,8 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
                     )
                 )
     for first, second in zip(slots, slots[1:]):
+        if first.get("clip") is None or second.get("clip") is None:
+            continue
         if first["clip"] == second["clip"] and not source_contiguous(first, second):
             violations.append(
                 violation(
@@ -880,6 +963,57 @@ def build_reason(shot, plan_slot):
         if part and part not in parts:
             parts.append(part)
     return " · ".join(parts) or "llm director"
+
+
+def photo_duration_from_answer(answer, fact):
+    """The photo's on-screen length: ``duration_s``, else ``out_s - in_s``, clamped to 2-4 s."""
+    duration = answer.get("duration_s")
+    if duration is None:
+        try:
+            duration = float(answer["out_s"]) - float(answer["in_s"])
+        except (KeyError, TypeError, ValueError):
+            duration = None
+    if duration is None:
+        duration = fact.get("target_s")
+    if duration is None:
+        duration = PHOTO_DEFAULT_S
+    try:
+        return round(clamp(float(duration), PHOTO_MIN_S, PHOTO_MAX_S), 2)
+    except (TypeError, ValueError):
+        return PHOTO_DEFAULT_S
+
+
+def photo_source_row(fact):
+    """The ``sources[]`` row for a used photo, resolved from the ingest ``photos[]`` join."""
+    return {
+        "file": fact["photo"],
+        "path": fact.get("photo_path") or fact["photo"],
+        "duration_s": None,
+        "media_type": "photo",
+    }
+
+
+def make_photo_slot_record(sid, fact, shot, plan_slot, duration, transition):
+    """A photo slot: a still held 2-4 s with its deterministic Ken Burns move."""
+    return {
+        "id": sid,
+        "kind": "photo",
+        "photo": fact["photo"],
+        "duration_s": duration,
+        "ken_burns": ken_burns_for(fact.get("subject_position"), fact.get("tags")),
+        "score": float(shot.get("score") or fact.get("score") or 0.0),
+        "reason": build_reason(shot, plan_slot),
+        "transition": transition,
+        "description": shot.get("description") or fact.get("description"),
+        "capture_time": fact.get("capture_time"),
+    }
+
+
+def slot_duration(slot):
+    """The on-screen length of an edit.json slot, video or photo."""
+    if slot.get("kind") == "photo":
+        return slot.get("duration_s") or 0.0
+    return slot["out_s"] - slot["in_s"]
 
 
 def default_window(fact, plan_slot, important_max_s):
@@ -935,6 +1069,7 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
             answer_by_id[slot["id"]] = slot
     video = []
     fixed = []
+    photo_rows = []
     for plan_slot in plan.get("slot_plan") or []:
         sid = plan_slot["id"]
         ans = answer_by_id.get(sid)
@@ -942,6 +1077,16 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
             continue
         fact = facts_by_key.get(plan_slot.get("shot_key"))
         if fact is None:
+            continue
+        shot = shotlog_by_key.get(plan_slot.get("shot_key")) or {}
+        if not video or ans.get("transition") == "cut":
+            transition = {"type": "cut", "duration_s": 0}
+        else:
+            transition = {"type": "crossfade", "duration_s": XFADE_S}
+        if fact.get("media_type") == "photo":
+            duration = photo_duration_from_answer(ans, fact)
+            video.append(make_photo_slot_record(sid, fact, shot, plan_slot, duration, transition))
+            photo_rows.append(photo_source_row(fact))
             continue
         try:
             in_s = float(ans["in_s"])
@@ -951,11 +1096,6 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
         in_s, out_s, notes = normalise_window(in_s, out_s, fact, plan_slot, important_max_s)
         for note in notes:
             fixed.append(f"fixed {sid}: {note}")
-        shot = shotlog_by_key.get(plan_slot.get("shot_key")) or {}
-        if not video or ans.get("transition") == "cut":
-            transition = {"type": "cut", "duration_s": 0}
-        else:
-            transition = {"type": "crossfade", "duration_s": XFADE_S}
         video.append(
             {
                 "id": sid,
@@ -977,12 +1117,18 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
                 warnings.append(note)
     if not video:
         return None
+    record_sources = list(sources)
+    seen_files = {source.get("file") for source in record_sources}
+    for row in photo_rows:
+        if row["file"] not in seen_files:
+            record_sources.append(row)
+            seen_files.add(row["file"])
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tool": TOOL,
         "brief": brief_obj,
-        "sources": sources,
+        "sources": record_sources,
         "video": video,
         "audio": {
             "ambience": {"enabled": True, "gain_db": 0, "source": "slot", "file": None},
@@ -1001,6 +1147,7 @@ def ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, importa
     existing = {slot["id"]: slot for slot in record.get("video") or [] if slot.get("id")}
     video = []
     added = []
+    added_photo_rows = []
     for plan_slot in plan.get("slot_plan") or []:
         sid = plan_slot["id"]
         slot = existing.get(sid)
@@ -1008,26 +1155,41 @@ def ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, importa
             fact = facts_by_key.get(plan_slot.get("shot_key"))
             if fact is None:
                 continue
-            in_s, out_s = default_window(fact, plan_slot, important_max_s)
             shot = shotlog_by_key.get(plan_slot.get("shot_key")) or {}
-            slot = {
-                "id": sid,
-                "clip": fact["clip"],
-                "in_s": in_s,
-                "out_s": out_s,
-                "score": float(shot.get("score") or 0.0),
-                "reason": build_reason(shot, plan_slot),
-                "transition": {"type": "crossfade", "duration_s": XFADE_S},
-                "speed": 1.0,
-                "role": shot.get("role") or fact.get("role"),
-                "motion_label": shot.get("motion_label") or fact.get("motion_label"),
-                "description": shot.get("description"),
-            }
+            if fact.get("media_type") == "photo":
+                duration = photo_duration_from_answer({}, fact)
+                slot = make_photo_slot_record(
+                    sid, fact, shot, plan_slot, duration, {"type": "crossfade", "duration_s": XFADE_S}
+                )
+                added_photo_rows.append(photo_source_row(fact))
+            else:
+                in_s, out_s = default_window(fact, plan_slot, important_max_s)
+                slot = {
+                    "id": sid,
+                    "clip": fact["clip"],
+                    "in_s": in_s,
+                    "out_s": out_s,
+                    "score": float(shot.get("score") or 0.0),
+                    "reason": build_reason(shot, plan_slot),
+                    "transition": {"type": "crossfade", "duration_s": XFADE_S},
+                    "speed": 1.0,
+                    "role": shot.get("role") or fact.get("role"),
+                    "motion_label": shot.get("motion_label") or fact.get("motion_label"),
+                    "description": shot.get("description"),
+                }
             added.append(sid)
         video.append(slot)
     if added and video:
         video[0]["transition"] = {"type": "cut", "duration_s": 0}
     record["video"] = video
+    if added_photo_rows:
+        record_sources = list(record.get("sources") or [])
+        seen_files = {source.get("file") for source in record_sources}
+        for row in added_photo_rows:
+            if row["file"] not in seen_files:
+                record_sources.append(row)
+                seen_files.add(row["file"])
+        record["sources"] = record_sources
     return added
 
 
@@ -1119,7 +1281,7 @@ def run_baseline(workspace, brief_text, hints):
     if data is None:
         raise LLMDirectorError("rule-based director wrote no edit")
     slots = data.get("video") or []
-    total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+    total = sum(slot_duration(slot) for slot in slots)
     return {
         "slots": len(slots),
         "total_duration_s": round(total, 2),
@@ -1174,7 +1336,7 @@ def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings,
         warnings.append(str(exc))
         return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates), 1
     slots = data.get("video") or []
-    total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+    total = sum(slot_duration(slot) for slot in slots)
     return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates), 0
 
 
@@ -1236,7 +1398,7 @@ def run(
     if not force and not dry_run and is_up_to_date(out_path, workspace_path, brief_path, plan_path):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
-        total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+        total = sum(slot_duration(slot) for slot in slots)
         return base_summary("skipped", out_path, plan_path, 0, None, None, len(slots), total, 0, [], started, 0.0), 0
 
     warnings = []
@@ -1337,7 +1499,7 @@ def run(
     if approved:
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
-        total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+        total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates), 0
 
     if violations:
@@ -1353,7 +1515,7 @@ def run(
         warnings.append("reviewer did not approve; keeping the last valid draft")
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
-        total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+        total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates), 0
 
     warnings.append("reviewer did not approve and the draft still has violations")
@@ -1369,10 +1531,16 @@ def run(
 def print_human(summary, record):
     if record is not None:
         for slot in record.get("video") or []:
-            print(
-                f"{slot['id']}  {slot['clip']}  {slot['in_s']:.2f}-{slot['out_s']:.2f}  "
-                f"{slot['score']:.2f}  {slot['reason']}"
-            )
+            if slot.get("kind") == "photo":
+                print(
+                    f"{slot['id']}  {slot['photo']}  photo  {slot['duration_s']:.2f}s  "
+                    f"{slot['score']:.2f}  {slot['reason']}"
+                )
+            else:
+                print(
+                    f"{slot['id']}  {slot['clip']}  {slot['in_s']:.2f}-{slot['out_s']:.2f}  "
+                    f"{slot['score']:.2f}  {slot['reason']}"
+                )
     baseline = summary.get("baseline")
     if baseline:
         print(f"baseline (rules): {baseline['slots']} slots, {baseline['total_duration_s']:.1f}s")
