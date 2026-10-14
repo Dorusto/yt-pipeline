@@ -52,6 +52,8 @@ Serve the finished workspaces over the tailnet so the recap opens on the phone:
 - `--final` also renders `recap_final.mp4` from the originals and writes `fragments.yaml` + `recap.kdenlive`.
 - `--budget-usd X` caps the LLM spend for this run (forwarded to describe and llm_director).
 - `--force` re-runs every station.
+- `--notify` posts a short ntfy message with the preview link after a successful run (a fully skipped run says `Recap ready (cached)`); a failed run never notifies.
+- `--preview-base URL` is the base of the `serve.py` server (e.g. `http://10.10.1.61:8091`); the link is `<base>/<workspace folder name>/recap_720p.mp4`. Without it the message carries the workspace path and the summary's `preview_url` is `null`.
 - `--json` prints one flat summary with `wall_time_s`, `llm_cost_usd` (this run) and `llm_spend_usd` (the workspace ledger).
 - `--brief-file PATH` reads the brief from a file instead of `--brief`.
 

@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+import common.notify as notify
 import recap
 
 
@@ -323,3 +324,153 @@ def test_force_and_budget_forwarded(tmp_path, monkeypatch, capsys):
     assert "--budget-usd" in commands["llm_director"][0]
     assert "--force" in commands["proxy"][0]
     assert "--force" not in commands["ingest"][0]
+
+
+class NotifyRecorder:
+    def __init__(self, error=None):
+        self.error = error
+        self.calls = []
+
+    def __call__(self, message, title=None, **kwargs):
+        self.calls.append({"message": message, "title": title})
+        if self.error is not None:
+            raise self.error
+        return 200
+
+
+def test_notify_posts_preview_link(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert (
+        run_recap(
+            source,
+            workspace,
+            extra=["--notify", "--preview-base", "http://x:8091", "--json"],
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["notified"] is True
+    assert summary["preview_url"] == "http://x:8091/workspace/recap_720p.mp4"
+    assert isinstance(summary["wall_time_s"], (int, float))
+    assert isinstance(summary["llm_cost_usd"], (int, float))
+    assert len(sent.calls) == 1
+    assert sent.calls[0]["title"] == "Recap ready (720p)"
+    assert "http://x:8091/workspace/recap_720p.mp4" in sent.calls[0]["message"]
+    assert str(workspace) in sent.calls[0]["message"]
+
+
+def test_preview_base_trailing_slash_stripped(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert (
+        run_recap(
+            source,
+            workspace,
+            extra=["--notify", "--preview-base", "http://x:8091/", "--json"],
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["preview_url"] == "http://x:8091/workspace/recap_720p.mp4"
+
+
+def test_preview_url_quotes_workspace_name(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "my ws"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert (
+        run_recap(
+            source,
+            workspace,
+            extra=["--notify", "--preview-base", "http://x:8091", "--json"],
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["preview_url"] == "http://x:8091/my%20ws/recap_720p.mp4"
+
+
+def test_notify_without_preview_base_uses_workspace_path(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert run_recap(source, workspace, extra=["--notify", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["preview_url"] is None
+    assert summary["notified"] is True
+    assert len(sent.calls) == 1
+    assert str(workspace) in sent.calls[0]["message"]
+    assert "Preview:" not in sent.calls[0]["message"]
+
+
+def test_without_notify_flag_no_message(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["notified"] is False
+    assert sent.calls == []
+
+
+def test_failed_run_does_not_notify(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder(fail_at="quality")
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert run_recap(source, workspace, extra=["--notify", "--json"]) == 1
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "failed"
+    assert summary["notified"] is False
+    assert sent.calls == []
+
+
+def test_notify_failure_does_not_fail_recap(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder(error=notify.NotifyError("boom"))
+    monkeypatch.setattr(notify, "send", sent)
+    assert run_recap(source, workspace, extra=["--notify", "--json"]) == 0
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert summary["notified"] is False
+    assert "[warn] notify failed" in captured.err
+
+
+def test_all_skipped_run_titles_cached(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    sent = NotifyRecorder()
+    monkeypatch.setattr(notify, "send", sent)
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    capsys.readouterr()
+    assert run_recap(source, workspace, extra=["--notify", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert all(entry["status"] == "skip" for entry in summary["stations"])
+    assert summary["notified"] is True
+    assert len(sent.calls) == 1
+    assert sent.calls[0]["title"] == "Recap ready (cached)"
