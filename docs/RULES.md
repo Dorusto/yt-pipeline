@@ -56,6 +56,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Originals are read-only; outputs go to the project workspace; tools refuse to write inside the originals folder. — 2026-10-13
 - Private by default: the web editor and its services are tailnet-only; footage leaves the homelab only as frames to the configured vision model. — 2026-10-13
 - Never commit footage, frames, transcripts, subtitles, model weights or keys: `scripts/check_public.py` runs as pre-commit hook and in CI; `tests/fixtures/` and `examples/` hold synthetic data only. — 2026-10-14
+- CI runs the suite on ubuntu, macos and windows (`fail-fast: false`); `needs_melt` / `needs_footage` tests run on the ubuntu job only, deselected with `-m` on the others. — 2026-10-14
 - Feedback is append-only JSON lines per workspace (`feedback.jsonl`, ~200 bytes/action), never footage or frames; the per-user profile is rebuilt from those files. — 2026-10-14
 - Every `--json` summary reports wall time and LLM cost (USD). — 2026-10-13
 - Watchdog every 30 min: $3/day spend, 2 h stall, no-commit alerts; the architect notifies on the second failed audit of a task or two empty coder replies. — 2026-10-13
