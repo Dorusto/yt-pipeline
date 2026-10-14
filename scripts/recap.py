@@ -21,7 +21,10 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 from pathlib import Path
+
+from common import notify
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +49,8 @@ class Context:
         json_mode,
         python,
         repo_root,
+        notify=False,
+        preview_base=None,
     ):
         self.source = source
         self.workspace = workspace
@@ -56,6 +61,8 @@ class Context:
         self.json_mode = json_mode
         self.python = python
         self.repo_root = repo_root
+        self.notify = notify
+        self.preview_base = preview_base
 
 
 def build_parser():
@@ -64,7 +71,7 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--force] [--json]"
+            " [--force] [--notify] [--preview-base PREVIEW_BASE] [--json]"
         ),
         description=(
             "Run every pipeline station from a folder of clips and a brief to a recap MP4."
@@ -103,6 +110,16 @@ def build_parser():
         "--force",
         action="store_true",
         help="re-run every station",
+    )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="post the preview link to ntfy after the run",
+    )
+    parser.add_argument(
+        "--preview-base",
+        default=None,
+        help="base URL of the serve.py server used to build the preview link",
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -521,6 +538,30 @@ def print_failure(name, result):
         print(line, file=sys.stderr)
 
 
+def build_preview_url(preview_base, workspace):
+    """Return the serve.py preview URL for a workspace, or None without a base."""
+    if not preview_base:
+        return None
+    base = preview_base.rstrip("/")
+    name = urllib.parse.quote(Path(workspace).name)
+    return f"{base}/{name}/recap_720p.mp4"
+
+
+def notify_preview(ctx, summary):
+    """Post the recap preview link to ntfy; return True when it was sent."""
+    lines = [f"Recap ready: {ctx.workspace}"]
+    if summary["preview_url"]:
+        lines.append(f"Preview: {summary['preview_url']}")
+    all_skipped = all(entry["status"] == "skip" for entry in summary["stations"])
+    title = "Recap ready (cached)" if all_skipped else "Recap ready (720p)"
+    try:
+        notify.send("\n".join(lines), title=title)
+    except notify.NotifyError as exc:
+        print(f"[warn] notify failed: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def run(ctx):
     """Run the station chain and return the flat summary object."""
     started = time.monotonic()
@@ -573,7 +614,7 @@ def run(ctx):
         "final": str(ctx.workspace / "recap_final.mp4") if ctx.final else None,
         "kdenlive": str(ctx.workspace / "recap.kdenlive") if ctx.final else None,
     }
-    return {
+    summary = {
         "tool": TOOL,
         "status": "failed" if failed_name else "done",
         "source": str(ctx.source),
@@ -585,7 +626,17 @@ def run(ctx):
         "wall_time_s": wall_time_s,
         "llm_cost_usd": llm_cost_usd,
         "llm_spend_usd": read_ledger(ctx.workspace),
+        "preview_url": build_preview_url(ctx.preview_base, ctx.workspace),
+        "notified": False,
     }
+    return notify_summary(ctx, summary)
+
+
+def notify_summary(ctx, summary):
+    """Notify after a successful run and return the updated summary."""
+    if ctx.notify and summary["status"] != "failed":
+        summary["notified"] = notify_preview(ctx, summary)
+    return summary
 
 
 def print_human(summary):
@@ -662,6 +713,8 @@ def main(argv=None):
         json_mode=args.json,
         python=sys.executable,
         repo_root=REPO_ROOT,
+        notify=args.notify,
+        preview_base=args.preview_base,
     )
     summary = run(ctx)
     if args.json:
