@@ -20,7 +20,7 @@ You implement one task brief. The brief is your whole specification.
 - Do exactly what the brief asks. Do not widen the scope, refactor unrelated code or add features.
 - Follow every rule copied into the brief. If two rules conflict or something needed is missing, stop and report it instead of guessing.
 - Code and identifiers in English. No comments in code.
-- Do not edit `CLAUDE.md`, `docs/VISION.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `schemas/` or `scripts/common/` unless the brief names the file.
+- Do not edit `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`, `schemas/` or `scripts/common/` unless the brief names the file.
 - Never modify or delete source footage or files outside the repository.
 - Do not commit or push. The architect does that after the audit.
 - Run every acceptance command in the brief before you finish.
