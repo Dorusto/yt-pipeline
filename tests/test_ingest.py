@@ -4,12 +4,22 @@ import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import ingest
 from common.schema import validate
 
+try:
+    import pillow_heif
+
+    HAS_PILLOW_HEIF = True
+except ImportError:
+    pillow_heif = None
+    HAS_PILLOW_HEIF = False
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "ingest.py"
+EXIF_DATETIME_ORIGINAL = 36867
 
 
 def make_clip(path, duration=1, size="64x48", rate=10):
@@ -33,6 +43,20 @@ def make_clip(path, duration=1, size="64x48", rate=10):
         check=True,
         capture_output=True,
     )
+    return path
+
+
+def make_photo(path, size=(32, 24), exif_datetime=None):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", size, (120, 60, 30))
+    save_kwargs = {}
+    if path.suffix.lower() == ".heic":
+        save_kwargs["format"] = "HEIF"
+    if exif_datetime is not None:
+        exif = Image.Exif()
+        exif[EXIF_DATETIME_ORIGINAL] = exif_datetime
+        save_kwargs["exif"] = exif
+    image.save(path, **save_kwargs)
     return path
 
 
@@ -170,7 +194,88 @@ def test_json_success_is_parseable(tmp_path):
     make_clip(source / "one.mp4")
     result = run_cli(source, "--workspace", tmp_path / "ws", "--json")
     assert result.returncode == 0
-    assert set(json.loads(result.stdout)) == {"clips", "output", "gyro_clips", "total_duration_s"}
+    assert set(json.loads(result.stdout)) == {
+        "clips",
+        "photos",
+        "output",
+        "gyro_clips",
+        "total_duration_s",
+    }
+
+
+def test_help_mentions_photo_extensions():
+    result = run_cli("--help")
+    assert result.returncode == 0
+    for extension in (".jpg", ".jpeg", ".heic"):
+        assert extension in result.stdout
+
+
+def test_photo_with_exif_capture_time(tmp_path):
+    source = tmp_path / "media"
+    source.mkdir()
+    make_photo(source / "shot.jpg", exif_datetime="2026:10:12 11:40:00")
+    workspace = tmp_path / "ws"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["photos"] == 1
+    data = read_ingest(workspace)
+    assert validate(data, "ingest") == []
+    assert data["photo_count"] == 1
+    photo = data["photos"][0]
+    assert photo["file"] == "shot.jpg"
+    assert photo["width"] == 32
+    assert photo["height"] == 24
+    assert photo["creation_time"] == "2026-10-12T11:40:00+00:00"
+    assert photo["creation_time_source"] == "exif"
+    assert photo["warnings"] == []
+
+
+def test_photo_without_exif_has_no_creation_time(tmp_path):
+    source = tmp_path / "media"
+    source.mkdir()
+    make_photo(source / "plain.jpg")
+    workspace = tmp_path / "ws"
+
+    assert run_cli(source, "--workspace", workspace).returncode == 0
+    photo = read_ingest(workspace)["photos"][0]
+    assert photo["creation_time"] is None
+    assert photo["creation_time_source"] is None
+
+
+@pytest.mark.skipif(not HAS_PILLOW_HEIF, reason="pillow-heif not installed")
+def test_heic_photo_decodes_width_and_height(tmp_path):
+    pillow_heif.register_heif_opener()
+    source = tmp_path / "media"
+    source.mkdir()
+    make_photo(source / "still.heic", size=(48, 36))
+    workspace = tmp_path / "ws"
+
+    assert run_cli(source, "--workspace", workspace).returncode == 0
+    photo = read_ingest(workspace)["photos"][0]
+    assert photo["width"] == 48
+    assert photo["height"] == 36
+
+
+def test_only_photos_scans_without_error(tmp_path):
+    source = tmp_path / "media"
+    source.mkdir()
+    make_photo(source / "a.jpg")
+    make_photo(source / "b.jpg", exif_datetime="2026:10:12 11:41:00")
+    workspace = tmp_path / "ws"
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["clips"] == 0
+    assert summary["photos"] == 2
+    data = read_ingest(workspace)
+    assert validate(data, "ingest") == []
+    assert data["clip_count"] == 0
+    assert data["clips"] == []
+    assert data["photo_count"] == 2
 
 
 def test_extension_matching_is_case_insensitive(tmp_path):

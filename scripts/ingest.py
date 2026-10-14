@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Scan a folder of video clips and write ``ingest.json`` with their metadata.
+"""Scan a folder of video clips and still photos and write ``ingest.json``.
 
 Usage:
     python scripts/ingest.py SOURCE_DIR --workspace DIR
     python scripts/ingest.py SOURCE_DIR --workspace DIR --json
 
-The scan is non-recursive and covers ``.mp4``, ``.mov`` and ``.m4v`` files.
-Every clip is probed once with ``ffprobe``; the result records duration, fps,
-resolution, all streams, creation time and whether a DJI gyro/IMU stream is
-present. The output is validated against ``schemas/ingest.schema.json`` and
-written only after the whole scan finished. Source files are never touched.
+The scan is non-recursive and covers ``.mp4``, ``.mov`` and ``.m4v`` clips plus
+``.jpg``, ``.jpeg`` and ``.heic`` stills. Every clip is probed once with
+``ffprobe``; the result records duration, fps, resolution, all streams, creation
+time and whether a DJI gyro/IMU stream is present. Every photo is read once with
+Pillow; the result records size, orientation, format and the EXIF capture time.
+The output is validated against ``schemas/ingest.schema.json`` and written only
+after the whole scan finished. Source files are never touched.
 """
 
 import argparse
@@ -21,6 +23,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.photos import PHOTO_EXTENSIONS, PhotoError, is_photo, photo_metadata
 from common.schema import SchemaError, validate_or_raise
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
@@ -36,17 +39,23 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="ingest.py",
         description=(
-            "Scan a folder of video clips and write ingest.json with duration, "
-            "fps, resolution, streams, creation time and gyro presence."
+            "Scan a folder of video clips and still photos and write ingest.json "
+            "with duration, fps, resolution, streams, creation time, gyro presence "
+            "and EXIF capture time."
         ),
         epilog=(
+            "video extensions: .mp4, .mov, .m4v\n"
+            "photo extensions: .jpg, .jpeg, .heic\n"
             "examples:\n"
             "  python scripts/ingest.py ~/Videos/clip --workspace ~/Videos/workspace\n"
             "  python scripts/ingest.py ~/Videos/clip --workspace ~/Videos/workspace --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("source_dir", help="folder of video clips to scan (non-recursive)")
+    parser.add_argument(
+        "source_dir",
+        help="folder of video clips (.mp4, .mov, .m4v) and photos (.jpg, .jpeg, .heic) (non-recursive)",
+    )
     parser.add_argument("--workspace", required=True, help="output root; ingest.json is written here")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -265,6 +274,23 @@ def find_clips(source):
     )
 
 
+def find_photos(source):
+    return sorted(
+        (path for path in source.iterdir() if path.is_file() and is_photo(path)),
+        key=lambda path: path.name,
+    )
+
+
+def probe_photo(path):
+    """Probe one still photo and build its ingest record."""
+    try:
+        metadata = photo_metadata(path)
+    except PhotoError as exc:
+        raise IngestError(str(exc)) from exc
+    metadata["warnings"] = []
+    return metadata
+
+
 def atomic_write_json(path, data):
     temporary = path.with_name(path.name + ".tmp")
     try:
@@ -283,13 +309,19 @@ def scan(source_dir, workspace):
     if not source.is_dir():
         raise IngestError(f"not a directory: {source}")
     clips = find_clips(source)
-    if not clips:
-        raise IngestError(f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) in {source}")
+    photos = find_photos(source)
+    if not clips and not photos:
+        raise IngestError(
+            f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) or photos "
+            f"({', '.join(sorted(PHOTO_EXTENSIONS))}) in {source}"
+        )
     data = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_dir": str(source),
         "clip_count": len(clips),
         "clips": [probe_clip(path) for path in clips],
+        "photo_count": len(photos),
+        "photos": [probe_photo(path) for path in photos],
         "warnings": [],
     }
     validate_or_raise(data, "ingest")
@@ -310,6 +342,7 @@ def main(argv=None):
     clips = data["clips"]
     summary = {
         "clips": len(clips),
+        "photos": data["photo_count"],
         "output": str(output_path),
         "gyro_clips": sum(1 for clip in clips if clip["gyro"]["present"]),
         "total_duration_s": round(sum(clip["duration_s"] for clip in clips), 3),
@@ -318,7 +351,7 @@ def main(argv=None):
         print(json.dumps(summary))
     else:
         print(
-            f"scanned {summary['clips']} clips "
+            f"scanned {summary['clips']} clips and {summary['photos']} photos "
             f"({summary['total_duration_s']} s total, {summary['gyro_clips']} with gyro)"
         )
         print(f"wrote {summary['output']}")
