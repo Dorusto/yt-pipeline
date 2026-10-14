@@ -1026,3 +1026,61 @@ important move") — but the reviewer's taste point is in the D2 report.
 - Beat-aligned cuts in the director stay for the first brief with a music file.
 
 **Rationale:** Both faults come from granularity, not taste: a long take holds several moments. Fine trims are D3's job (Doru trims in the web editor), so the defaults only need to be sensible.
+
+---
+
+## [2026-10-14] D2-2 implementation decisions: beats format, window rule, RNNoise model
+
+**Context:** Building the four D2-2 tasks on `d2-2-fixes`. Three points needed a
+choice; all are reversible and were made by the architect.
+
+**Content beats format.** `describe` keeps one record per quality segment and
+adds an optional `beats` array: a contiguous tiling of a > 20 s segment with
+`id` (`b1`..), `start_s`/`end_s`, a content-phase `label` (approach, inside,
+exit, enter, leave, ...), and per-beat `summary`/`interest`/`hero` (null =
+inherit the segment's). The segment's own call is the only model call — long
+segments are sampled one frame every ~5 s (capped at 24) and the same answer
+carries the beats. `index` emits one shotlog candidate per beat with key
+`<counter>/<segment id><beat id>` (`0072/s7b1`), `beat_of`/`beat_id`/`beat_label`
+and the parent's role/motion/defects. The directors build one window per beat,
+the beat range intersected with the best overlapping motion move. Beats of one
+segment are handled by the same-take rule (never adjacent unless contiguous),
+not by similarity — approach and exit of one take may both be used when another
+take sits between them. Rejected: one model call per beat (more spend for the
+same answer) and expanding beats into fake quality segments (geometry stays
+geometry).
+
+**Window end rule.** "A window ends where the steady motion ends" is applied at
+window construction: a move candidate's `out_s` is `steady_end_s` (never
+`move.end_s`, never the +0.25 s trailing handle; the in handle stays). A phrase
+still ends inside its landing hold — the hold is the landing, not aimless
+movement. The same-take adjacency check now runs on the finished slot's window
+after trimming (it used to run on the candidate window, so a trim could create a
+jump cut). The `--important-max-s` default is 6.0 in both directors and the
+editor/screenwriter/reviewer prompts state the same numbers.
+
+**RNNoise `.rnnn` model.** Compared: (a) `GregorR/rnnoise-models` (rnnoise-nu) —
+the exact format ffmpeg's `arnndn` reads (`rnnoise-nu model file version 1`),
+models explicitly not subject to copyright per the repo README ("none of this
+work is creative"), dormant since 2018 but the format is frozen; (b)
+`dbklim/RNNoise_Wrapper` (Apache-2.0, active 2024) — trained models behind its
+own Python wrapper, not the rnnoise-nu files `arnndn` loads; (c)
+`werman/noise-suppression-rnnoise` — gone (404), so unmaintained. Chosen:
+**`conjoined-burgers` vs `marathon-prescription` from (a)** — the table maps
+signal (columns) to noise (rows); the ambient bus is general sound on recorded
+footage, so `marathon-prescription` (General × General) is the right default and
+`conjoined-burgers` (Recording × General) is the alternative for recordings.
+Fetched to `~/.cache/yt-pipeline/models/arnndn.rnnn` (sha256
+`4e84a448a4baf937992aaf4d10c8258007ec5d24219b6647dfd5fb4b563ad231`), never in
+the repo. The cleanup chain moved to `scripts/common/ambience.py` so
+`audio_clean.py` and `render.py` share one implementation (no tool imports
+another tool).
+
+**Interpretation of "director may use both with another take between":** the
+same-take rule is unchanged (no two non-contiguous same-take slots back to back;
+a better same-take slot replaces a weaker adjacent one). In a strictly
+chronological edit two beats of one clip cannot get another take between them
+(no other clip was filmed during the take), so the better beat wins there; in
+score order or an LLM plan another take can sit between and both are allowed.
+The validation on 0072 is: approach and exit both eligible in the shotlog, and a
+director run that takes both with another take between (covered by tests).

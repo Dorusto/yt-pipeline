@@ -420,3 +420,73 @@ def test_help_lists_originals_flag(capsys):
     assert "--originals-dir" in out
     assert "--width" in out
     assert "--media-dir" in out
+
+
+def test_ambient_clean_chain_applied_by_default(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--denoiser", "afftdn", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    clean = summary["audio_clean"]
+    assert clean["enabled"] is True
+    assert clean["denoiser"] == "afftdn"
+    assert clean["filters"] == ["highpass", "afftdn", "loudnorm"]
+    assert probe(out)
+
+
+def test_no_audio_clean_keeps_the_raw_mix(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--no-audio-clean", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["audio_clean"] == {"enabled": False, "denoiser": None, "filters": []}
+    assert probe(out)
+
+
+def test_arnndn_without_model_is_an_error(tmp_path, capsys):
+    first, second = two_clips(tmp_path)
+    edit = make_edit(
+        tmp_path,
+        [first, second],
+        [
+            {"type": "cut", "duration_s": 0},
+            {"type": "cut", "duration_s": 0},
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    code = render.main(
+        ["--edit", str(edit), "--out", str(out), "--denoiser", "arnndn", "--model", str(tmp_path / "missing.rnnn"), "--json"]
+    )
+    assert code == 1
+    assert "arnndn" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_filter_graph_appends_the_clean_chain():
+    slots = [{"in_s": 0.0, "out_s": 2.0, "transition": {"type": "cut", "duration_s": 0}}]
+    graph, _, final_a = render.build_filter_graph(
+        slots, [2.0], [True], True, 1280, 720, 0.3, [], clean_chain=["highpass=f=150", "afftdn=nr=12"]
+    )
+    assert final_a == "aclean"
+    assert "highpass=f=150,afftdn=nr=12[aclean]" in graph
+    graph, _, final_a = render.build_filter_graph(
+        slots, [2.0], [True], True, 1280, 720, 0.3, [], clean_chain=[]
+    )
+    assert final_a == "a0"
+    assert "[aclean]" not in graph
