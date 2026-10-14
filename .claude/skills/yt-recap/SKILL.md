@@ -47,6 +47,40 @@ Serve the finished workspaces over the tailnet so the recap opens on the phone:
 - `--port N` (default `8091`; `0` picks an ephemeral port). `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup.
 - URL layout: `<base>/` is the index, `<base>/<project>/` is the project page, and the three artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4` and `<base>/<project>/shotlog.html`. Nothing else in a project is served.
 
+## Phone flow: inbox.py
+
+Turn an inbox folder filled by a phone sync tool into one recap per day with no
+command per clip:
+
+```bash
+.venv/bin/python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects \
+    --preview-base http://10.10.1.61:8091 --notify
+```
+
+- `--inbox DIR` is the watched folder (required, read-only). `--projects DIR`
+  (default `~/media/projects`) holds one workspace per day (`<projects>/YYYY-MM-DD/`)
+  and must not be inside the inbox.
+- Groups clips by day: a dated parent folder (`inbox/2026-10-14/`) wins, then a
+  date in the filename (`YYYY-MM-DD`, `YYYYMMDD`, `YYYY_MM_DD`), then the file's
+  mtime. A day whose clips share one folder is handed to `recap.py` directly;
+  mixed folders get a symlink farm under `<workspace>/source/`.
+- Waits until the inbox has been quiet for `--quiet-minutes N` (default 5; `0`
+  disables) before running, so a sync in progress is not cut in half.
+- Brief priority: `brief.txt` in the day folder (the clips' folder, or their
+  `YYYY-MM-DD` parent when they are scattered), then `brief.txt` in the inbox,
+  then `--default-brief` (built-in default: `about 90 seconds, chronological,
+  calm start, more energy towards the end, ambient sound only`). The resolved
+  brief is copied to `<workspace>/inbox_brief.txt`.
+- `--once` scans and runs once then exits (for tests and cron); without it the
+  tool polls every `--poll-seconds N` (default 60) until Ctrl-C. `--notify`,
+  `--preview-base` and `--budget-usd` are forwarded to `recap.py`, and `--force`
+  re-runs days with nothing new.
+- Re-run safety lives in `<projects>/inbox_state.json`: a new clip, a changed
+  brief or `--force` re-invokes `recap.py`, which then skips its own up-to-date
+  stations. The inbox is never written to; everything goes under `--projects`.
+- `--json` prints one summary object (`wall_time_s`, `llm_cost_usd`, one entry
+  per day with `brief_source` and `status`); progress lines go to stderr.
+
 ## Go further
 
 - `--final` also renders `recap_final.mp4` from the originals and writes `fragments.yaml` + `recap.kdenlive`.
