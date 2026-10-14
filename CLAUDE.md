@@ -25,11 +25,13 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 | `docs/VISION.md` | AI Director plan — modes, principles, architecture, phases D0–D6, model routing |
 | `docs/research/prior-art.md` | Open-source and market research behind the AI Director plan |
 | `docs/research/rendering-and-audio.md` | Render engines, web editor (OpenCut), music/SFX/clean-up without ComfyUI — read before any output, graphics or audio task |
+| `docs/guides/user-guide.md` | How to use the AI Director: flow, commands, briefs, how it learns |
+| `docs/RISKS.md` | Risk register with mitigations — check before planning a phase |
 | `docs/guides/shot-grammar.md` | Filming and editing techniques the tools must detect and the director may use — read before any motion, quality, describe or director task |
 
 ## Working rules
 
-1. **Read `docs/DECISIONS.md`** before proposing an alternative approach — it may have already been considered and rejected.
+1. **Read `docs/RULES.md` first** (every rule in force, with its DECISIONS date) plus the **last 10 `docs/DECISIONS.md` entries** before any work. Open the full `docs/DECISIONS.md` only when the history of a specific decision matters — it may have already been considered and rejected.
 2. **Update `docs/DECISIONS.md`** after any significant architectural decision.
 3. **Update `docs/ROADMAP.md`** after completing a milestone or changing priorities.
 4. **GitHub commits** → backdate after 18:00, non-round times (e.g. 19:43:17). Repo is public.
@@ -39,12 +41,12 @@ CLI pipeline for YouTube clip processing: transcription → correction → trans
 
 ## Building the AI Director (phases D0–D5)
 
-Read `docs/VISION.md` before starting any D-phase task. These rules add to the working rules above.
+Read `docs/VISION.md` and `docs/RULES.md` before starting any D-phase task, plus the last 10 `docs/DECISIONS.md` entries (the full log only when the history matters). These rules add to the working rules above.
 
 **Roles.** Doru is product owner and reviewer: he steps in when a phase is ~70–80% done, plus one mandatory checkpoint at the end of D1. The agents build end-to-end and verify their own work. Conversation with Doru in Romanian; everything in the repo in English.
 
 **Autonomy.**
-- Decide reversible things yourself, record them in `docs/DECISIONS.md` (existing format), move on.
+- Decide reversible things yourself, record them in `docs/DECISIONS.md` (existing format), update `docs/RULES.md` in the same commit when the decision changes a rule, move on.
 - Stop and ask only for: anything irreversible or expensive (overwriting footage, paid APIs beyond OpenRouter model calls, downloads > 20 GB, changing an interface Doru approved), a pure taste/product choice between equal options, or a phase checkpoint.
 - Before any new library, model or format: check current version, maintenance, license and fit; compare at least two options; log the decision.
 - Reuse before building. Prefer maintained libraries and the existing scripts (`kdenlive_from_fragments.py` is the optional Kdenlive export adapter, not something new; the edit list is `edit.json`).
@@ -60,7 +62,7 @@ Read `docs/VISION.md` before starting any D-phase task. These rules add to the w
 
 **Every new tool** is a standalone script in `scripts/` plus a skill in `.claude/skills/`, with `--help`, `--json` and re-run safety. No tool imports another tool; shared code only in `scripts/common/`.
 
-**Definition of done (every task):** tests pass; ran end-to-end on sample media and, for anything visual, looked at output frames; outputs validated against `schemas/`; no source file modified; DECISIONS entry if something new was chosen; skill and README updated if behavior changed.
+**Definition of done (every task):** tests pass; ran end-to-end on sample media and, for anything visual, looked at output frames; outputs validated against `schemas/`; no source file modified; DECISIONS entry if something new was chosen and RULES.md updated if a rule changed; skill and README updated if behavior changed.
 
 **Phase report** in `docs/reports/D<n>-REPORT.md`, three short lists: *Works* (what was verified, how), *Mocked / not verified*, *Doru, check this* (max 5 bullets, each with a path or command). Send a short notification (max 5 lines) when a phase report is ready or when blocked.
 

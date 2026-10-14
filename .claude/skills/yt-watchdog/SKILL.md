@@ -18,4 +18,4 @@ compatibility: Run from the repository root on the machine where the agent runs 
 
 The key comes from `OPENROUTER_API_KEY` or `--key-file` (default `~/.config/opencode/secrets/openrouter.key`) and is never printed. Alerts already sent are remembered in `~/.cache/yt-pipeline/watchdog-state.json`. `--dry-run` sends nothing and keeps no state.
 
-Cron (every 30 minutes) is described in `docs/AGENT_SETUP.md`, section 11. Rejections and empty coder replies are reported by the architect itself (see `.opencode/agents/architect.md`), not by this script.
+Three checks now: spend, stall (no file changes) and no-progress (no commit for `--no-commit-hours`, default 1.5, while the agent runs — catches loops that keep writing logs). Cron (every 30 minutes) is described in `docs/AGENT_SETUP.md`, section 11. Rejections and empty coder replies are reported by the architect itself (see `.opencode/agents/architect.md`), not by this script.

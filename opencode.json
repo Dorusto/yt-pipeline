@@ -15,7 +15,10 @@
     "external_directory": {
       "*": "ask",
       "/tmp/**": "allow",
-      "~/media/**": "allow"
+      "~/media/**": "allow",
+      "/root/media/**": "allow",
+      "/root/projects/yt-pipeline/**": "allow",
+      "/root/.cache/yt-pipeline/**": "allow"
     },
     "doom_loop": "ask"
   }

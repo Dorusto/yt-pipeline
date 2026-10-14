@@ -1084,3 +1084,44 @@ chronological edit two beats of one clip cannot get another take between them
 score order or an LLM plan another take can sit between and both are allowed.
 The validation on 0072 is: approach and exit both eligible in the shotlog, and a
 director run that takes both with another take between (covered by tests).
+
+---
+
+## [2026-10-14] Feedback storage and the rules digest
+
+**Context:** Doru asked how the system learns, where it is written, and whether those files grow too large. `DECISIONS.md` already passed 1 000 lines and every agent task re-reads it.
+
+**Decision:**
+- **Feedback (D3):** the web editor appends one JSON line per action to `<workspace>/feedback.jsonl` — `{ts, kind: label_fix|approve|reject|trim|regenerate, clip, start_s, end_s, before, after}`. No footage, frames or thumbnails. A compaction step folds all workspaces into a per-user profile (`~/.local/share/yt-pipeline/profile.sqlite`): label fixes become ground-truth items (dedup by clip + range, newest wins); approvals/rejections become counts per tag, motion label and length bucket for the scorer. Per-project files are kept; the profile is rebuilt from them, so it can always be regenerated. Expected size: ~200 bytes per action.
+- **Rules digest (D3-00):** the architect writes `docs/RULES.md`, the rules in force in one short file (editing grammar, defaults, thresholds, model routing). Agents read `RULES.md` plus the last 10 DECISIONS entries, not the whole log. Every new decision that changes a rule updates `RULES.md` in the same commit.
+- Risk register: `docs/RISKS.md`. User guide: `docs/guides/user-guide.md`.
+
+**Rationale:** Small append-only files are easy to inspect, back up and rebuild; a current-state digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state, history lives in git).
+
+---
+
+## [2026-10-14] Public-repo guard: pre-commit check, CI check, GitHub push protection
+
+**Context:** The repo is public and agents commit unattended. Nothing automatic stopped footage, frames, transcripts, model weights or API keys from being committed; only a rule in CLAUDE.md. An audit of the full history on 2026-10-14 found no media, no keys and no other emails than the author's.
+
+**Options:** A) gitleaks (MIT, secrets only, extra binary on the LXC); B) detect-secrets (Apache, secrets only, baseline file to maintain); C) small `scripts/check_public.py` (stdlib) covering secrets **and** media/subtitles/model weights/large files/base64 images, run as a git hook and in CI, plus GitHub secret scanning with push protection on the server side.
+
+**Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by Doru in the GitHub settings (the API is not available from the agents).
+
+**Rationale:** Our main risk is personal media and transcripts, which secret scanners do not look for. The hook stops it before it exists in history; CI catches a skipped hook; push protection blocks known key formats even from other machines.
+
+---
+
+## [2026-10-14] Rules digest and golden edit-grammar tests pulled forward from D3
+
+**Context:** `docs/RISKS.md` rows 1 and 3 assigned the rules digest to D3-00 and golden edit tests to D3. Both were pulled forward onto the `rules-digest` branch while the D2-2 round runs on its own branch: `DECISIONS.md` passed 1 000 lines and every agent task re-reads it, and the D2-01 regression (0051 came back as an opener) showed how easily one fix breaks an earlier one. Budget: no model calls, fixtures only, no footage.
+
+**Options for the golden tests:** A) frozen `edit.json` diffs only — brittle against harmless re-scoring and blind to grammar; B) an invariant checker only — silent on reordering and window drift; C) both, plus tests proving the checker itself fires on each violation.
+
+**Decision:**
+- `docs/RULES.md` (68 lines): current-state digest of every rule in force from `DECISIONS.md`, `VISION.md` and `CLAUDE.md` — editing grammar, defaults and thresholds, model routing, safety rules — one dated line per rule. `CLAUDE.md` and `.opencode/agents/*.md` now say: read `RULES.md` plus the last 10 `DECISIONS.md` entries; every decision that changes a rule updates `RULES.md` in the same commit; `DECISIONS.md` stays the history.
+- C for the goldens: `tests/test_edit_golden.py` with `tests/fixtures/golden/` — seven frozen synthetic workspaces (skip_roles, phrase_move_strong, phrase_hold_strong, same_take, similar_excluded, similar_not_adjacent, hero_present) with frozen expected cut windows from the deterministic `scripts/director.py`. Every produced edit is judged by a `grammar_violations` checker: never accidental/setup/teardown slots (geometry final), never a move cut before its landing and never move-then-own-landing, never adjacent non-contiguous same-take slots, never adjacent similar pairs, never a missed eligible hero. Checker self-tests prove each rule fires.
+- CI: `.github/workflows/tests.yml` runs the full pytest suite (golden next to the label eval) with the light dependencies (no torch/whisperx), alongside `public-check`.
+- `docs/RISKS.md` rows 1 and 3 updated; per-shoot golden edit sets on real test sets stay at D3.
+
+**Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.
