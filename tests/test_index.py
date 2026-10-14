@@ -293,7 +293,7 @@ def test_confident_ineligible_role_is_zeroed(tmp_path, role):
     assert shot["reason"].endswith("not eligible")
 
 
-@pytest.mark.parametrize("role", ["accidental", "setup", "teardown"])
+@pytest.mark.parametrize("role", ["setup", "teardown"])
 def test_uncertain_ineligible_role_stays_eligible(tmp_path, role):
     segment = quality_segment("s1", 0.0, 10.0, role=role, confidence=0.6, uncertain=True)
     data, _ = build(tmp_path, segments=[segment])
@@ -303,7 +303,17 @@ def test_uncertain_ineligible_role_stays_eligible(tmp_path, role):
     assert not shot["reason"].endswith("not eligible")
 
 
-def test_verdict_can_make_uncertain_accidental_eligible(tmp_path):
+def test_uncertain_accidental_is_ineligible(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0, role="accidental", confidence=0.6, uncertain=True)
+    data, _ = build(tmp_path, segments=[segment])
+    shot = data["shots"][0]
+    assert shot["role"] == "accidental"
+    assert shot["role_source"] == "geometry"
+    assert shot["eligible"] is False
+    assert shot["score"] == 0.0
+
+
+def test_geometry_accidental_role_is_final(tmp_path):
     segment = quality_segment(
         "s1", 0.0, 10.0, role="accidental", confidence=0.65, motion_label="complex_motion", uncertain=True
     )
@@ -315,12 +325,33 @@ def test_verdict_can_make_uncertain_accidental_eligible(tmp_path):
         uncertain=True,
         role="accidental",
         motion_label="complex_motion",
-        verdict={"role": "accidental", "motion_label": "complex_motion", "confidence": 0.5, "note": "x"},
+        verdict={"role": "move", "motion_label": "pan_left", "confidence": 0.6, "note": "x"},
     )
     data, _ = build(tmp_path, segments=[segment], describe_segments=[describe])
     shot = data["shots"][0]
-    assert shot["eligible"] is True
-    assert shot["role_source"] == "verdict"
+    assert shot["role"] == "accidental"
+    assert shot["role_source"] == "geometry"
+    assert shot["eligible"] is False
+    assert shot["score"] == 0.0
+
+
+def test_geometry_accidental_keeps_verdict_motion_label(tmp_path):
+    segment = quality_segment(
+        "s1", 0.0, 10.0, role="accidental", confidence=0.65, motion_label="complex_motion", uncertain=True
+    )
+    describe = described_segment(
+        "s1",
+        0.0,
+        10.0,
+        interest=68,
+        uncertain=True,
+        role="accidental",
+        motion_label="complex_motion",
+        verdict={"role": "move", "motion_label": "pan_left", "confidence": 0.6, "note": "x"},
+    )
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe])
+    shot = data["shots"][0]
+    assert shot["motion_label"] == "pan_left"
     assert shot["label_source"] == "verdict"
 
 

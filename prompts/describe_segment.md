@@ -118,6 +118,9 @@ ends, each beat's start is the previous beat's end:
 - The verdict is **required whenever the segment facts say `uncertain: yes`**.
   The geometric label could not commit — your label wins in the edit, so decide
   carefully and say why in `note`.
+- When the geometric role is `accidental`, the verdict must keep
+  `role: "accidental"` — that role is final. The note may still explain what is
+  on screen and `motion_label` may still be corrected.
 - When the segment facts say `uncertain: no`, `verdict` must be `null`. Do not
   second-guess confident geometry.
 - `role` is what the segment is for an editor: `move` (intentional camera move),

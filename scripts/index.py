@@ -14,7 +14,8 @@ workspace and writes one ``shotlog.json`` validated against
 ``schemas/shotlog.schema.json``. Every quality segment becomes a scored
 candidate with a hook and a reason — one candidate per content beat when
 describe split a long segment into beats — and the vision verdict supplies the
-effective role and motion label on uncertain segments. A self-contained
+effective role and motion label on uncertain segments, except a geometry
+``accidental`` whose role is final. A self-contained
 ``shotlog.html`` contact sheet is written next to it, with one base64 thumbnail
 per shot. No model is called. Sources are read-only; the outputs are written
 atomically.
@@ -316,19 +317,25 @@ def _build_shot(
 
 
 def _effective_labels(segment, describe_segment):
-    if _is_described(describe_segment) and describe_segment.get("verdict"):
-        verdict = describe_segment["verdict"]
-        return (
-            verdict.get("role"),
-            "verdict",
-            verdict.get("motion_label"),
-            "verdict",
-            verdict.get("confidence"),
-        )
-    motion_label = segment.get("motion_label")
-    if motion_label is None:
-        motion_label = "static"
-    return segment.get("role"), "geometry", motion_label, "geometry", segment.get("confidence")
+    geometry_role = segment.get("role")
+    geometry_motion = segment.get("motion_label")
+    if geometry_motion is None:
+        geometry_motion = "static"
+    verdict = describe_segment.get("verdict") if _is_described(describe_segment) else None
+    if verdict is None:
+        return geometry_role, "geometry", geometry_motion, "geometry", segment.get("confidence")
+    if geometry_role == "accidental":
+        motion_label = verdict.get("motion_label")
+        if motion_label is None:
+            return geometry_role, "geometry", geometry_motion, "geometry", segment.get("confidence")
+        return geometry_role, "geometry", motion_label, "verdict", verdict.get("confidence")
+    return (
+        verdict.get("role"),
+        "verdict",
+        verdict.get("motion_label"),
+        "verdict",
+        verdict.get("confidence"),
+    )
 
 
 def _is_described(describe_segment):
@@ -411,6 +418,8 @@ def _fused_score(vision, labels, weight_vision, weight_labels):
 
 
 def _is_eligible(role, uncertain):
+    if role == "accidental":
+        return False
     return not (role in INELIGIBLE_ROLES and not uncertain)
 
 
