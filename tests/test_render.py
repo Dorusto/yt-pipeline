@@ -833,7 +833,8 @@ def test_music_summary_fields(tmp_path, capsys):
     summary = json.loads(capsys.readouterr().out)
     assert summary["music"] == {
         "path": str(music),
-        "gain_db": -12.0,
+        "gain_db": 0.0,
+        "ambient_under_db": 12.0,
         "ducking": True,
         "looped": True,
     }
@@ -923,3 +924,38 @@ def test_help_lists_music_flags(capsys):
 
 
 
+
+
+def band_rms(path, start, duration, freq, width=60.0):
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", str(start), "-t", str(duration), "-i", str(path),
+         "-f", "f32le", "-ac", "1", "-ar", "48000", "-"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    samples = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
+    spectrum = np.abs(np.fft.rfft(samples * np.hanning(samples.size)))
+    freqs = np.fft.rfftfreq(samples.size, 1.0 / 48000)
+    band = (freqs > freq - width) & (freqs < freq + width)
+    return float(np.sqrt(np.sum(spectrum[band] ** 2)))
+
+
+def test_music_is_the_bed_and_the_ambient_stays_audible_under_it(tmp_path, capsys):
+    clip = tmp_path / "amb.mp4"
+    make_clip(clip, duration=4.0, freq=440)
+    edit = make_edit(tmp_path, [clip], [{"type": "cut", "duration_s": 0}])
+    data = json.loads(edit.read_text(encoding="utf-8"))
+    data["video"][0]["out_s"] = 4.0
+    edit.write_text(json.dumps(data), encoding="utf-8")
+    music = make_music(tmp_path / "music.wav", duration=4.0, freq=1000)
+    out = tmp_path / "out.mp4"
+    assert render.main(
+        ["--edit", str(edit), "--out", str(out), "--music", str(music),
+         "--denoiser", "none", "--json"]
+    ) == 0
+    capsys.readouterr()
+    ambient = band_rms(out, 1.0, 1.0, 440)
+    bed = band_rms(out, 1.0, 1.0, 1000)
+    assert ambient > 0.0
+    gap_db = 20 * np.log10(bed / ambient)
+    assert 8.0 <= gap_db <= 16.0, gap_db

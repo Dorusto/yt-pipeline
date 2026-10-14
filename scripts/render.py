@@ -44,10 +44,11 @@ from common.schema import SchemaError, validate_or_raise
 FPS = 25
 SAMPLE_RATE = 48000
 PREVIEW_FRAME = (1280, 720)
-DEFAULT_MUSIC_GAIN_DB = -12.0
+DEFAULT_MUSIC_GAIN_DB = 0.0
+DEFAULT_AMBIENT_UNDER_MUSIC_DB = 12.0
 DEFAULT_MUSIC_FADE_OUT_S = 2.0
-MUSIC_DUCK_THRESHOLD = 0.03
-MUSIC_DUCK_RATIO = 8.0
+MUSIC_DUCK_THRESHOLD = 0.1
+MUSIC_DUCK_RATIO = 3.0
 MUSIC_DUCK_ATTACK_MS = 20
 MUSIC_DUCK_RELEASE_MS = 400
 
@@ -111,8 +112,17 @@ def build_parser():
         type=float,
         default=None,
         help=(
-            "music gain in dB (default: the edit's audio.music.gain_db,"
-            f" else {DEFAULT_MUSIC_GAIN_DB:g})"
+            "music gain in dB after the track is normalised to --target-lufs"
+            f" (default: the edit's audio.music.gain_db, else {DEFAULT_MUSIC_GAIN_DB:g})"
+        ),
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=DEFAULT_AMBIENT_UNDER_MUSIC_DB,
+        help=(
+            "how far the ambient sound sits under the music, in dB; it stays audible,"
+            f" never removed (default: {DEFAULT_AMBIENT_UNDER_MUSIC_DB:g})"
         ),
     )
     parser.add_argument(
@@ -322,7 +332,9 @@ def total_duration(slots, durations, xfade_s):
     return total
 
 
-def resolve_music(edit_music, music_flag, gain_flag, edit_dir):
+def resolve_music(edit_music, music_flag, gain_flag, edit_dir,
+                  target_lufs=DEFAULT_TARGET_LUFS,
+                  ambient_under_db=DEFAULT_AMBIENT_UNDER_MUSIC_DB):
     """Resolve the music track from ``audio.music`` and the CLI flags.
 
     ``--music`` overrides ``audio.music.path``; ``--music-gain-db`` overrides
@@ -346,17 +358,20 @@ def resolve_music(edit_music, music_flag, gain_flag, edit_dir):
         "fade_in_s": float(edit_music.get("fade_in_s", 0.0)),
         "fade_out_s": float(edit_music.get("fade_out_s", DEFAULT_MUSIC_FADE_OUT_S)),
         "start_s": float(edit_music.get("start_s", 0.0)),
+        "target_lufs": float(target_lufs),
+        "ambient_under_db": max(0.0, float(ambient_under_db)),
     }
 
 
 def build_music_chain(music_index, ambient_label, edit_duration, music_duration, music, ducking):
     """Build the music mix chain and return ``(parts, final_label)``.
 
-    The track is resampled, looped to the edit length, trimmed, gained, ducked
-    under the ambient bus with ``sidechaincompress`` (music main, ambient
-    sidechain) and mixed with the ambient bus. The mix is faded out over the
-    last ``fade_out_s`` seconds of the edit. Without ducking the track is mixed
-    straight with the ambient bus.
+    The music is the main bed: the track is resampled, looped to the edit
+    length, trimmed, normalised to ``target_lufs`` and offset by ``gain_db``.
+    The ambient bus stays audible ``ambient_under_db`` below it (never
+    removed); a loud ambient event (someone speaking close to the camera)
+    dips the music gently through ``sidechaincompress``. The mix is faded out
+    over the last ``fade_out_s`` seconds of the edit.
     """
     loop_size = max(1, int(round(music_duration * SAMPLE_RATE)))
     start = max(0.0, float(music["start_s"]))
@@ -364,7 +379,9 @@ def build_music_chain(music_index, ambient_label, edit_duration, music_duration,
     chain = (
         f"[{music_index}:a]aresample={SAMPLE_RATE},aformat=channel_layouts=stereo,"
         f"aloop=loop=-1:size={loop_size},atrim=start=0:end={fmt(play)},"
-        f"asetpts=PTS-STARTPTS,volume={fmt(music['gain_db'])}dB"
+        f"asetpts=PTS-STARTPTS,"
+        f"loudnorm=I={fmt(music['target_lufs'])}:TP=-1.5:LRA=11,"
+        f"aresample={SAMPLE_RATE},volume={fmt(music['gain_db'])}dB"
     )
     if start > 0:
         delay_ms = int(round(start * 1000))
@@ -374,8 +391,9 @@ def build_music_chain(music_index, ambient_label, edit_duration, music_duration,
         )
     chain += "[music]"
     parts = [chain]
+    under = f"volume=-{fmt(music['ambient_under_db'])}dB"
     if ducking:
-        parts.append(f"[{ambient_label}]asetpts=PTS-STARTPTS,asplit=2[amb_sc][amb_mix]")
+        parts.append(f"[{ambient_label}]asetpts=PTS-STARTPTS,{under},asplit=2[amb_sc][amb_mix]")
         parts.append(
             f"[music][amb_sc]sidechaincompress=threshold={fmt(MUSIC_DUCK_THRESHOLD)}:"
             f"ratio={fmt(MUSIC_DUCK_RATIO)}:attack={MUSIC_DUCK_ATTACK_MS}:"
@@ -383,7 +401,7 @@ def build_music_chain(music_index, ambient_label, edit_duration, music_duration,
         )
         parts.append("[ducked][amb_mix]amix=inputs=2:duration=first:normalize=0[amixed]")
     else:
-        parts.append(f"[{ambient_label}]asetpts=PTS-STARTPTS[amb_norm]")
+        parts.append(f"[{ambient_label}]asetpts=PTS-STARTPTS,{under}[amb_norm]")
         parts.append("[music][amb_norm]amix=inputs=2:duration=first:normalize=0[amixed]")
     fades = []
     if music["fade_in_s"] > 0:
@@ -548,6 +566,7 @@ def render(
     wind_hz=DEFAULT_WIND_HZ,
     music=None,
     music_gain_db=None,
+    ambient_under_music_db=DEFAULT_AMBIENT_UNDER_MUSIC_DB,
 ):
     """Render ``edit_path`` to ``out_path`` and return the run summary."""
     started = time.monotonic()
@@ -572,7 +591,10 @@ def render(
     durations = [slot_duration(slot) for slot in slots]
     edit_duration = total_duration(slots, durations, xfade_s)
 
-    music_config = resolve_music(audio.get("music"), music, music_gain_db, edit_path.parent)
+    music_config = resolve_music(
+        audio.get("music"), music, music_gain_db, edit_path.parent,
+        target_lufs=target_lufs, ambient_under_db=ambient_under_music_db,
+    )
     music_duration = None
     music_mtime = None
     if music_config is not None:
@@ -591,6 +613,7 @@ def render(
         music_info = {
             "path": str(music_config["path"]),
             "gain_db": music_config["gain_db"],
+            "ambient_under_db": music_config["ambient_under_db"],
             "ducking": ducking,
             "looped": looped,
         }
@@ -793,6 +816,7 @@ def main(argv=None):
             wind_hz=args.wind_hz,
             music=args.music,
             music_gain_db=args.music_gain_db,
+            ambient_under_music_db=args.ambient_under_music_db,
         )
     except (RenderError, SchemaError, AmbienceError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

@@ -66,6 +66,28 @@ def test_writes_proxy_with_audio(tmp_path, capsys):
     assert any(s["codec_type"] == "audio" for s in probe(target)["streams"])
 
 
+def test_proxy_keeps_the_clip_creation_time(tmp_path, capsys):
+    source = tmp_path / "C0001.MP4"
+    raw = tmp_path / "raw.mp4"
+    make_clip(raw)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(raw), "-c", "copy", "-metadata",
+         "creation_time=2026-10-12T11:38:00.000000Z", str(source)],
+        check=True,
+        capture_output=True,
+    )
+    out = tmp_path / "proxy"
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    tags = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time",
+         "-of", "csv=p=0", str(out / "C0001.MP4")],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert tags.startswith("2026-10-12T11:38:00")
+
+
 def test_skips_existing_and_force_rewrites(tmp_path, capsys):
     source = tmp_path / "clip.mp4"
     make_clip(source)

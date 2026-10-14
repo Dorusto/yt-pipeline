@@ -165,6 +165,8 @@ def build_command(source, tmp_path, height, crf, encoder, frame_rate):
         "0:v:0",
         "-map",
         "0:a:0?",
+        "-map_metadata",
+        "0",
         "-vf",
         f"scale=-2:{height}",
         "-r",
