@@ -368,6 +368,30 @@
               "minLength": 1,
               "maxLength": 32
             }
+          },
+          "subject_position": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "main subject centre in normalised image coordinates (photos only; drives the Ken Burns move)",
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": true,
@@ -412,6 +436,15 @@
       "items": {
         "type": "string"
       }
+    },
+    "media_type": {
+      "type": "string",
+      "enum": [
+        "video",
+        "photo"
+      ],
+      "default": "video",
+      "description": "photo records describe one still frame as pseudo-segment p1 (0..0.04 s)"
     }
   },
   "additionalProperties": true

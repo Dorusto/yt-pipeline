@@ -69,3 +69,13 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `scripts/recap.py` is the single entry point for agents and humans; it only chains the station CLIs as subprocesses. — 2026-10-14
 - Recap skip rule: per-station output/input mtimes plus the brief text recorded in `route.json`/`edit.json`; a new brief redoes only router → llm_director → render, `--force` re-runs everything. — 2026-10-14
 - Proxies keep the source filename and live in `workspace/proxy/`; `proxy.py` refuses an `--out` that would write onto an original. — 2026-10-14
+
+## Photos and music (D2-6)
+
+- Photos are first-class candidates: ingest scans stills next to the videos (JPEG/HEIC, EXIF capture time via Pillow + pillow-heif), describe covers each photo with one frame, similarity dedups bursts, index writes them to the shotlog with `media_type: "photo"`. — 2026-10-14
+- A photo describes as pseudo-segment `p1` (`0..0.04 s`) with `subject_position`; its labels score is a fixed clean-still prior 0.7 fused with vision as usual. — 2026-10-14
+- Burst rule: photo shots linked by similarity and captured within 30 s of each other form a burst; only the best stays eligible (`suppressed_by` the winner). — 2026-10-14
+- Photo slots (`kind: "photo"`) last 2–4 s and carry a Ken Burns move chosen deterministically from `subject_position`: centre box → `zoom_in` on the subject; else `pan_left`/`pan_right` toward the subject; `zoom_out` only for close-ups. — 2026-10-14
+- Ken Burns renders with ffmpeg `zoompan`; portrait photos sit on a blurred background (cover-scaled copy + boxblur), never black bars. — 2026-10-14
+- Music: `render.py`/`recap.py` take `--music FILE`; the track mixes under the cleaned ambient bus with sidechain ducking and a fade-out at the end; no music generation before D6. — 2026-10-14
+- With a music track, the directors snap every timeline cut to the nearest beat (max shift 0.4 of a beat period); a cut that starts a new structure beat snaps to the nearest downbeat; slots join with hard cuts when a beat grid is present (crossfades stay for ambient-only). — 2026-10-14

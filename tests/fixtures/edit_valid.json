@@ -18,6 +18,12 @@
       "file": "dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
       "path": "/root/media/yt-test/proxy/dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
       "duration_s": 15.56
+    },
+    {
+      "file": "dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
+      "path": "/root/media/yt-test/proxy/dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
+      "duration_s": null,
+      "media_type": "photo"
     }
   ],
   "video": [
@@ -28,11 +34,34 @@
       "out_s": 14.0,
       "score": 0.82,
       "reason": "hold, clean, calm opening",
-      "transition": {"type": "cut", "duration_s": 0},
+      "transition": {
+        "type": "cut",
+        "duration_s": 0
+      },
       "speed": 1.0,
       "role": "hold",
       "motion_label": "static",
       "description": null
+    },
+    {
+      "id": "p1",
+      "kind": "photo",
+      "photo": "dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
+      "duration_s": 3.0,
+      "ken_burns": {
+        "move": "zoom_in",
+        "amount": 0.08,
+        "focus_x": 0.5,
+        "focus_y": 0.42
+      },
+      "score": 0.77,
+      "reason": "hero photo, calm opening",
+      "transition": {
+        "type": "crossfade",
+        "duration_s": 0.3
+      },
+      "description": "The chapel above the bay at golden hour.",
+      "capture_time": "2026-10-12T12:01:02+00:00"
     },
     {
       "id": "v2",
@@ -41,7 +70,10 @@
       "out_s": 8.75,
       "score": 0.71,
       "reason": "travel_forward, steady, energy towards the end",
-      "transition": {"type": "crossfade", "duration_s": 0.3},
+      "transition": {
+        "type": "crossfade",
+        "duration_s": 0.3
+      },
       "speed": 1.0,
       "role": "move",
       "motion_label": "travel_forward",

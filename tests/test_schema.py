@@ -29,7 +29,29 @@ def test_edit_without_video_is_rejected():
 def test_edit_slot_requires_reason():
     data = load("edit_valid.json")
     del data["video"][0]["reason"]
-    assert any("reason" in e for e in schema.validate(data, "edit"))
+    assert any("video/0" in e for e in schema.validate(data, "edit"))
+
+
+def test_edit_photo_slot_validates():
+    data = load("edit_valid.json")
+    photo = next(item for item in data["video"] if item.get("kind") == "photo")
+    assert photo["duration_s"] >= 2
+    assert photo["ken_burns"]["move"] in {"zoom_in", "zoom_out", "pan_left", "pan_right"}
+    assert schema.validate(data, "edit") == []
+
+
+def test_edit_photo_slot_requires_ken_burns():
+    data = load("edit_valid.json")
+    photo = next(item for item in data["video"] if item.get("kind") == "photo")
+    del photo["ken_burns"]
+    assert any("video/1" in e for e in schema.validate(data, "edit"))
+
+
+def test_edit_photo_slot_duration_is_capped():
+    data = load("edit_valid.json")
+    photo = next(item for item in data["video"] if item.get("kind") == "photo")
+    photo["duration_s"] = 8.0
+    assert any("video/1" in e for e in schema.validate(data, "edit"))
 
 
 def test_edit_rejects_unknown_top_level_field():
