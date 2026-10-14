@@ -1280,3 +1280,132 @@ def test_photo_slot_from_in_out_answer(tmp_path):
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     slot = next(item for item in edit["video"] if item.get("kind") == "photo")
     assert slot["duration_s"] == 3.0
+
+
+def beat_grid(period=0.5, count=60, downbeats=None, top_level=False):
+    beats = [round(period * index, 4) for index in range(count)]
+    down = downbeats if downbeats is not None else beats[::4]
+    payload = {
+        "beat_s": beats,
+        "downbeat_s": down,
+        "beat_period_s": period,
+        "duration_s": round(beats[-1] + period, 3),
+        "bpm": round(60.0 / period, 3),
+    }
+    return payload if top_level else {"measurement": payload}
+
+
+def video_bound_fact(key, clip, window_in, window_out, keep_whole=False):
+    return {
+        "shot_key": key,
+        "clip": clip,
+        "window_in_s": window_in,
+        "window_out_s": window_out,
+        "landing_at_s": None,
+        "landing_hold_key": None,
+        "keep_whole": keep_whole,
+        "target_s": 5.0,
+        "score": 0.5,
+        "summary": None,
+        "role": "hold",
+        "motion_label": "static",
+        "hero": False,
+        "similar_to": [],
+    }
+
+
+def record_cuts(record):
+    cuts = []
+    position = 0.0
+    for slot in record["video"]:
+        position += slot["duration_s"] if slot.get("kind") == "photo" else slot["out_s"] - slot["in_s"]
+        cuts.append(round(position, 4))
+    return cuts
+
+
+def test_load_beats_accepts_both_shapes(tmp_path):
+    for index, data in enumerate([beat_grid(top_level=False), beat_grid(top_level=True)]):
+        path = tmp_path / f"beats{index}.json"
+        write_json(path, data)
+        grid = llm_director.load_beats(path)
+        assert grid["beat_s"][0] == 0.0
+        assert grid["beat_period_s"] == 0.5
+        assert grid["downbeat_s"]
+
+
+def test_beat_snap_uses_downbeats_at_structure_boundaries():
+    beat_s = [round(0.5 * index, 4) for index in range(60)]
+    grid = {"beat_s": beat_s, "downbeat_s": [0.0, 4.75, 9.5, 14.25], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "crossfade", "duration_s": 0.3}},
+            {"id": "v2", "clip": "b.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "crossfade", "duration_s": 0.3}},
+            {"id": "v3", "clip": "c.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "crossfade", "duration_s": 0.3}},
+        ]
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "beat": "b1", "shot_key": "a/s1"},
+            {"id": "v2", "beat": "b1", "shot_key": "b/s1"},
+            {"id": "v3", "beat": "b2", "shot_key": "c/s1"},
+        ]
+    }
+    facts = {
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 5.0),
+        "b/s1": video_bound_fact("b/s1", "b.mp4", 0.0, 5.0),
+        "c/s1": video_bound_fact("c/s1", "c.mp4", 0.0, 5.0),
+    }
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert stats == {"beats": 60, "snapped": 3, "unsnapped": 0}
+    assert record_cuts(record) == [2.5, 4.75, 7.0]
+    assert all(slot["transition"] == {"type": "cut", "duration_s": 0} for slot in record["video"][1:])
+
+
+def test_beat_snap_video_window_exhausted_warns():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "cut", "duration_s": 0}},
+        ]
+    }
+    plan = {"slot_plan": [{"id": "v1", "beat": "b1", "shot_key": "a/s1"}]}
+    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4)}
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert record["video"][0]["out_s"] == 2.4
+    assert stats["unsnapped"] == 1
+    assert any("not snapped" in warning for warning in warnings)
+
+
+def test_run_with_beats_writes_cut_transitions(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    beats_path = tmp_path / "beats.json"
+    write_json(beats_path, beat_grid(top_level=True, count=80))
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, beats=str(beats_path))
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["beat_snap"]["beats"] == 80
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert edit["video"][0]["transition"] == {"type": "cut", "duration_s": 0}
+    assert all(slot["transition"]["type"] == "cut" for slot in edit["video"][1:])
+
+
+def test_run_without_beats_reports_no_beat_snap(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["beat_snap"] is None
+
+
+def test_help_lists_beats():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--beats" in result.stdout

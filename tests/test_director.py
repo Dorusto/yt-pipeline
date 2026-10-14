@@ -1378,3 +1378,134 @@ def test_burst_suppressed_photo_is_not_a_candidate(tmp_path):
     workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
     _, record = run_edit(workspace, tmp_path / "edit.json", "--target-duration-s", "30")
     assert not any(slot.get("kind") == "photo" for slot in record["video"])
+
+
+def write_beats_file(path, phase=0.0, period=0.5, count=200, downbeat_every=4, nested=True):
+    beats = [round(phase + period * index, 6) for index in range(count)]
+    downbeats = beats[::downbeat_every]
+    payload = {
+        "beat_s": beats,
+        "downbeat_s": downbeats,
+        "beat_period_s": period,
+        "duration_s": round(beats[-1] + period, 3),
+        "bpm": round(60.0 / period, 3),
+    }
+    write_json(path, {"measurement": payload} if nested else payload)
+    return beats
+
+
+def edit_cuts(record):
+    cuts = []
+    position = 0.0
+    for slot in record["video"]:
+        position += slot["duration_s"] if slot.get("kind") == "photo" else slot["out_s"] - slot["in_s"]
+        cuts.append(round(position, 4))
+    return cuts
+
+
+def test_beats_snap_every_cut_to_a_beat(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    beats_path = tmp_path / "beats.json"
+    beats = write_beats_file(beats_path, phase=0.1)
+    out = tmp_path / "edit.json"
+    result = run_director(
+        "--workspace", workspace, "--out", out, "--target-duration-s", "24",
+        "--pacing", "uniform", "--beats", beats_path, "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["beat_snap"]["unsnapped"] == 0
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert len(record["video"]) == 4
+    for cut in edit_cuts(record):
+        assert min(abs(cut - beat) for beat in beats) <= 0.02
+    assert all(slot["transition"]["type"] == "cut" for slot in record["video"][1:])
+
+
+def test_beat_snap_cut_that_cannot_move_warns_and_stays():
+    beat_s = [round(0.1 + 0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.0,
+        "out_s": 2.5,
+        "window_in_s": 0.0,
+        "window_out_s": 2.5,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.0, "duration_s": 3.0}
+    warnings = []
+    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    assert video["out_s"] == 2.5
+    assert any("cut 1: not snapped" in warning for warning in warnings)
+    assert stats["unsnapped"] >= 1
+
+
+def test_beat_snap_photo_duration_lands_on_a_whole_beat():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.9, "duration_s": 2.9}
+    warnings = []
+    director.snap_slots([photo], grid, [False], warnings)
+    assert abs(photo["duration_s"] - round(photo["duration_s"] / 0.5) * 0.5) <= 0.02
+    assert 2.0 <= photo["duration_s"] <= 4.0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+
+
+def test_beat_snap_photo_slots_stay_on_beats_in_an_edit(tmp_path):
+    photo = write_photo(tmp_path / "media" / "photo_01.jpg")
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+    ]
+    photos = [photo_ingest_record(photo, "2026-01-01T10:01:00+00:00")]
+    video_shots = [
+        shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 60.0, True, 0.5, "a hold", "interest 50 · static by geometry · hold · clean"),
+    ]
+    photo_shots = [photo_shot("photo_01/p1", photo.name, "2026-01-01T10:01:00+00:00", 0.8)]
+    workspace = build_photo_workspace(tmp_path / "ws", clips, photos, video_shots, photo_shots)
+    beats_path = tmp_path / "beats.json"
+    beats = write_beats_file(beats_path, phase=0.1)
+    _, record = run_edit(
+        workspace, tmp_path / "edit.json", "--target-duration-s", "30", "--beats", beats_path,
+    )
+    photo_slots = [slot for slot in record["video"] if slot.get("kind") == "photo"]
+    assert photo_slots
+    for slot in photo_slots:
+        assert 2.0 <= slot["duration_s"] <= 4.0
+        assert abs(slot["duration_s"] - round(slot["duration_s"] / 0.5) * 0.5) <= 0.02
+    for cut in edit_cuts(record):
+        assert min(abs(cut - beat) for beat in beats) <= 0.02
+
+
+def test_without_beats_transitions_stay_crossfades(tmp_path):
+    _, _, summary, record = write_edit(tmp_path)
+    assert summary["beat_snap"] is None
+    assert record["video"][1]["transition"] == {"type": "crossfade", "duration_s": 0.3}
+
+
+def test_help_lists_beats():
+    result = run_director("--help")
+    assert result.returncode == 0
+    assert "--beats" in result.stdout
+
+
+def test_beats_joins_the_input_mtimes(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    beats_path = tmp_path / "beats.json"
+    write_beats_file(beats_path, phase=0.1)
+    out = tmp_path / "edit.json"
+    args = (
+        "--workspace", workspace, "--out", out, "--target-duration-s", "24",
+        "--pacing", "uniform", "--beats", beats_path, "--json",
+    )
+    first = run_director(*args)
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["status"] == "written"
+    second = run_director(*args)
+    assert second.returncode == 0, second.stderr
+    assert json.loads(second.stdout)["status"] == "skipped"
+    beats_path.write_text(beats_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    third = run_director(*args)
+    assert third.returncode == 0, third.stderr
+    assert json.loads(third.stdout)["status"] == "written"

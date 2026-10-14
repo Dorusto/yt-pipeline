@@ -1265,7 +1265,7 @@ a slow zoom/pan over the slot (amount default 0.08).
 **Music and beat snap.** `render.py --music FILE` and `recap.py --music FILE`
 (also `edit.json` `audio.music` as today). With music, `beats.py` writes
 `beats.json` (already has the grid) and **the directors snap every timeline cut
-point to the nearest beat** (max shift 0.4 of a beat period, else warn); in
+point to the nearest beat** (max shift half a beat period — the nearest beat is always within reach, so only a slot that cannot absorb the shift warns); in
 `llm_director` a cut that starts a new `shot_plan` structure beat snaps to the
 nearest **downbeat** instead; `director.py` (rule-based) has no sections and
 snaps to beats only. With a beat grid the slots join with **hard cuts** (music

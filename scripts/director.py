@@ -63,6 +63,8 @@ NON_MOVE_MOTION_LABELS = {"static", "minor_motion"}
 PHOTO_MIN_S = 2.0
 PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
+BEAT_SNAP_FRACTION = 0.5
+SNAP_MIN_SLOT_S = 0.5
 
 
 class DirectorError(RuntimeError):
@@ -104,6 +106,11 @@ def build_parser():
     parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
     parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
+    parser.add_argument(
+        "--beats",
+        default=None,
+        help="beat grid JSON from beats.py; snap every cut to the nearest beat and join with hard cuts",
+    )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -542,6 +549,16 @@ def merge_contiguous(slots):
             previous = merged[-1]
             previous["in_s"] = min(previous["in_s"], slot["in_s"])
             previous["out_s"] = max(previous["out_s"], slot["out_s"])
+            previous["window_in_s"] = min(
+                previous.get("window_in_s", previous["in_s"]), slot.get("window_in_s", slot["in_s"])
+            )
+            previous["window_out_s"] = max(
+                previous.get("window_out_s", previous["out_s"]), slot.get("window_out_s", slot["out_s"])
+            )
+            if slot.get("landing_floor_s") is not None:
+                previous["landing_floor_s"] = max(
+                    previous.get("landing_floor_s") or 0.0, slot["landing_floor_s"]
+                )
             if slot["score"] > previous["score"]:
                 previous["score"] = slot["score"]
                 previous["shot_reason"] = slot.get("shot_reason")
@@ -739,7 +756,133 @@ def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=No
         "similar_to": candidate.get("similar_to") or [],
         "description": candidate.get("description"),
         "shot_reason": candidate.get("shot_reason"),
+        "window_in_s": float(candidate["in_s"]),
+        "window_out_s": float(candidate["out_s"]),
+        "landing_floor_s": (
+            float(candidate["landing_start_s"]) + LANDING_FLOOR_S if candidate.get("phrase") else None
+        ),
+        "important": important_max_s is not None and is_important(candidate),
     }
+
+
+def load_beats(path):
+    """The beat grid from ``beats.py``: ``measurement`` nested or the keys at the top."""
+    data = load_json(Path(path))
+    if not isinstance(data, dict):
+        raise DirectorError(f"unreadable beats file: {path}")
+    measurement = data.get("measurement")
+    source = measurement if isinstance(measurement, dict) else data
+    beat_s = [float(value) for value in (source.get("beat_s") or [])]
+    downbeat_s = [float(value) for value in (source.get("downbeat_s") or [])]
+    period = source.get("beat_period_s")
+    period = float(period) if period else derive_beat_period(beat_s)
+    if not beat_s or period <= 0:
+        raise DirectorError(f"beats file has no beat grid: {path}")
+    return {"beat_s": beat_s, "downbeat_s": downbeat_s or list(beat_s), "beat_period_s": period}
+
+
+def derive_beat_period(beat_s):
+    """The median spacing of a beat list, for grids written without ``beat_period_s``."""
+    if len(beat_s) < 2:
+        return 0.0
+    spacings = sorted(later - earlier for earlier, later in zip(beat_s, beat_s[1:]))
+    return spacings[len(spacings) // 2]
+
+
+def nearest_beat(value, times):
+    if not times:
+        return None
+    return min(times, key=lambda moment: abs(moment - value))
+
+
+def timeline_length(slot):
+    """The on-screen length of an internal slot, photo or video."""
+    if slot.get("media_type") == "photo":
+        return float(slot["duration_s"])
+    return float(slot["out_s"]) - float(slot["in_s"])
+
+
+def snap_warning(cut_number, end, target):
+    if target is None:
+        return f"cut {cut_number}: not snapped to a beat (no beat grid)"
+    return f"cut {cut_number}: not snapped to a beat (nearest {abs(end - target):.1f} s away)"
+
+
+def absorb_out(slot, delta):
+    """Move a slot's end by ``delta`` within its window; False when it cannot."""
+    if slot.get("media_type") == "photo":
+        target = float(slot["duration_s"]) + delta
+        if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
+            return False
+        slot["duration_s"] = round(target, 3)
+        slot["out_s"] = slot["duration_s"]
+        return True
+    if slot.get("important"):
+        return False
+    low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
+    if slot.get("landing_floor_s") is not None:
+        low = max(low, float(slot["landing_floor_s"]))
+    high = float(slot.get("window_out_s", slot["out_s"]))
+    target = float(slot["out_s"]) + delta
+    if not (low - 1e-9 <= target <= high + 1e-9):
+        return False
+    slot["out_s"] = round(target, 3)
+    return True
+
+
+def snap_photo(slot, start, times):
+    """Put a photo's end on a beat that keeps its length in 2-4 s; False when none fits."""
+    current = float(slot["duration_s"])
+    fitting = [
+        moment
+        for moment in times
+        if PHOTO_MIN_S - 1e-9 <= moment - start <= PHOTO_MAX_S + 1e-9
+    ]
+    if not fitting:
+        return False, start + current
+    target = min(fitting, key=lambda moment: abs(moment - (start + current)))
+    slot["duration_s"] = round(target - start, 3)
+    slot["out_s"] = slot["duration_s"]
+    return True, target
+
+
+def snap_slots(slots, beat_grid, downbeat_at, warnings):
+    """Snap every timeline cut to the nearest beat, in place; return the summary counts."""
+    beat_s = beat_grid["beat_s"]
+    downbeat_s = beat_grid["downbeat_s"] or beat_s
+    tolerance = BEAT_SNAP_FRACTION * beat_grid["beat_period_s"]
+    snapped = 0
+    unsnapped = 0
+    start = 0.0
+    for index, slot in enumerate(slots):
+        length = timeline_length(slot)
+        end = start + length
+        times = downbeat_s if downbeat_at[index] else beat_s
+        target = nearest_beat(end, times)
+        if target is None or abs(end - target) > tolerance:
+            warnings.append(snap_warning(index + 1, end, target))
+            unsnapped += 1
+            start = end
+            continue
+        if slot.get("media_type") == "photo":
+            moved, new_end = snap_photo(slot, start, times)
+            if not moved:
+                warnings.append(snap_warning(index + 1, end, target))
+                unsnapped += 1
+                start = end
+                continue
+            snapped += 1
+            start = start + timeline_length(slot)
+            continue
+        delta = target - end
+        if abs(delta) < 1e-9 or absorb_out(slot, delta):
+            snapped += 1
+            start = start + timeline_length(slot)
+            continue
+        warnings.append(snap_warning(index + 1, end, target))
+        unsnapped += 1
+        start = end
+    return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
 
 
 def pacing_part(slot):
@@ -905,14 +1048,14 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
     return chosen
 
 
-def build_record(args, sources, slots, wall_time_s):
+def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
     video = []
     video_index = 0
     photo_index = 0
     for index, slot in enumerate(slots):
         transition = (
             {"type": "cut", "duration_s": 0}
-            if index == 0
+            if index == 0 or hard_cuts
             else {"type": "crossfade", "duration_s": args.xfade_s}
         )
         if slot.get("media_type") == "photo":
@@ -982,21 +1125,23 @@ def atomic_write_json(path, data):
             temporary.unlink()
 
 
-def input_paths(workspace):
+def input_paths(workspace, beats_path=None):
     paths = [workspace / "ingest.json", workspace / "shotlog.json"]
     paths.extend(sorted((workspace / "motion").glob("*.json")))
     paths.extend(sorted((workspace / "quality").glob("*.json")))
+    if beats_path is not None:
+        paths.append(beats_path)
     return paths
 
 
-def is_up_to_date(out_path, workspace):
+def is_up_to_date(out_path, workspace, beats_path=None):
     if not out_path.exists():
         return False
     data = load_json(out_path)
     if data is None or validate(data, "edit"):
         return False
     out_mtime = out_path.stat().st_mtime
-    for path in input_paths(workspace):
+    for path in input_paths(workspace, beats_path):
         if path.exists() and path.stat().st_mtime > out_mtime:
             return False
     return True
@@ -1025,8 +1170,10 @@ def run(args, started):
     if not workspace.is_dir():
         raise DirectorError(f"workspace not found: {workspace}")
     out_path = Path(args.out).expanduser().resolve() if args.out else workspace / "edit.json"
+    beats_path = Path(args.beats).expanduser().resolve() if args.beats else None
+    beat_grid = load_beats(beats_path) if beats_path is not None else None
 
-    if not args.force and is_up_to_date(out_path, workspace):
+    if not args.force and is_up_to_date(out_path, workspace, beats_path):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
         total = sum(slot_duration(slot) for slot in slots)
@@ -1040,6 +1187,7 @@ def run(args, started):
                 "warnings": [],
                 "wall_time_s": round(time.monotonic() - started, 2),
                 "llm_cost_usd": 0.0,
+                "beat_snap": None,
             },
             None,
         )
@@ -1162,11 +1310,15 @@ def run(args, started):
     if not slots:
         raise DirectorError("no usable candidates")
 
+    beat_snap = None
+    if beat_grid is not None:
+        beat_snap = snap_slots(slots, beat_grid, [False] * len(slots), warnings)
+
     used_photos = [slot["photo"] for slot in slots if slot.get("media_type") == "photo"]
     photo_sources = [photo_source(name, photos_by_name) for name in used_photos]
 
     wall_time_s = time.monotonic() - started
-    record = build_record(args, sources + photo_sources, slots, wall_time_s)
+    record = build_record(args, sources + photo_sources, slots, wall_time_s, hard_cuts=beat_grid is not None)
     validate_or_raise(record, "edit")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(out_path, record)
@@ -1181,6 +1333,7 @@ def run(args, started):
         "warnings": warnings,
         "wall_time_s": round(wall_time_s, 2),
         "llm_cost_usd": 0.0,
+        "beat_snap": beat_snap,
     }
     return summary, record
 

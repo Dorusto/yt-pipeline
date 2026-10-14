@@ -48,6 +48,9 @@ PHOTO_MIN_S = 2.0
 PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
 PHOTO_TOLERANCE_S = 0.01
+BEAT_SNAP_FRACTION = 0.5
+SNAP_MIN_SLOT_S = 0.5
+LANDING_FLOOR_S = 0.75
 
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 MOVE_ROLES = {"move", "transition_in", "transition_out"}
@@ -150,6 +153,11 @@ def build_parser():
     parser.add_argument("--target-duration-s", type=float, default=None, help="override the target duration parsed from the brief")
     parser.add_argument("--order", choices=["chronological", "score"], default=None, help="override the order parsed from the brief")
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default=None, help="override the pacing parsed from the brief")
+    parser.add_argument(
+        "--beats",
+        default=None,
+        help="beat grid JSON from beats.py; snap cuts to beats (structure boundaries to downbeats) and join with hard cuts",
+    )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -1016,6 +1024,150 @@ def slot_duration(slot):
     return slot["out_s"] - slot["in_s"]
 
 
+def load_beats(path):
+    """The beat grid from ``beats.py``: ``measurement`` nested or the keys at the top."""
+    data = load_json(Path(path))
+    if not isinstance(data, dict):
+        raise LLMDirectorError(f"unreadable beats file: {path}")
+    measurement = data.get("measurement")
+    source = measurement if isinstance(measurement, dict) else data
+    beat_s = [float(value) for value in (source.get("beat_s") or [])]
+    downbeat_s = [float(value) for value in (source.get("downbeat_s") or [])]
+    period = source.get("beat_period_s")
+    period = float(period) if period else derive_beat_period(beat_s)
+    if not beat_s or period <= 0:
+        raise LLMDirectorError(f"beats file has no beat grid: {path}")
+    return {"beat_s": beat_s, "downbeat_s": downbeat_s or list(beat_s), "beat_period_s": period}
+
+
+def derive_beat_period(beat_s):
+    """The median spacing of a beat list, for grids written without ``beat_period_s``."""
+    if len(beat_s) < 2:
+        return 0.0
+    spacings = sorted(later - earlier for earlier, later in zip(beat_s, beat_s[1:]))
+    return spacings[len(spacings) // 2]
+
+
+def nearest_beat(value, times):
+    if not times:
+        return None
+    return min(times, key=lambda moment: abs(moment - value))
+
+
+def snap_warning(cut_number, end, target):
+    if target is None:
+        return f"cut {cut_number}: not snapped to a beat (no beat grid)"
+    return f"cut {cut_number}: not snapped to a beat (nearest {abs(end - target):.1f} s away)"
+
+
+def slot_bounds(slot, fact):
+    """The range a snap may move this slot's end within: photo length or video window."""
+    if fact is not None and fact.get("media_type") == "photo":
+        return {"photo": True, "important": False}
+    if slot.get("kind") == "photo":
+        return {"photo": True, "important": False}
+    low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
+    high = float(slot["out_s"])
+    important = False
+    if fact is not None:
+        high = float(fact.get("window_out_s", slot["out_s"]))
+        important = bool(fact.get("keep_whole"))
+        if fact.get("landing_at_s") is not None:
+            low = max(low, float(fact["landing_at_s"]) + LANDING_FLOOR_S)
+    return {"photo": False, "important": important, "low": low, "high": high}
+
+
+def absorb_out(slot, bounds, delta):
+    """Move a slot's end by ``delta`` within its bounds; False when it cannot."""
+    if bounds.get("photo"):
+        target = float(slot["duration_s"]) + delta
+        if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
+            return False
+        slot["duration_s"] = round(target, 3)
+        return True
+    if bounds.get("important"):
+        return False
+    target = float(slot["out_s"]) + delta
+    if not (bounds["low"] - 1e-9 <= target <= bounds["high"] + 1e-9):
+        return False
+    slot["out_s"] = round(target, 3)
+    return True
+
+
+def snap_photo(slot, start, times):
+    """Put a photo's end on a beat that keeps its length in 2-4 s; False when none fits."""
+    current = float(slot["duration_s"])
+    fitting = [
+        moment
+        for moment in times
+        if PHOTO_MIN_S - 1e-9 <= moment - start <= PHOTO_MAX_S + 1e-9
+    ]
+    if not fitting:
+        return False
+    target = min(fitting, key=lambda moment: abs(moment - (start + current)))
+    slot["duration_s"] = round(target - start, 3)
+    return True
+
+
+def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
+    """Snap every timeline cut to the nearest beat, in place; return the summary counts."""
+    beat_s = beat_grid["beat_s"]
+    downbeat_s = beat_grid["downbeat_s"] or beat_s
+    tolerance = BEAT_SNAP_FRACTION * beat_grid["beat_period_s"]
+    snapped = 0
+    unsnapped = 0
+    start = 0.0
+    for index, slot in enumerate(slots):
+        if index > 0:
+            slot["transition"] = {"type": "cut", "duration_s": 0}
+        end = start + slot_duration(slot)
+        times = downbeat_s if downbeat_at[index] else beat_s
+        target = nearest_beat(end, times)
+        if target is None or abs(end - target) > tolerance:
+            warnings.append(snap_warning(index + 1, end, target))
+            unsnapped += 1
+            start = end
+            continue
+        if bounds[index].get("photo"):
+            if not snap_photo(slot, start, times):
+                warnings.append(snap_warning(index + 1, end, target))
+                unsnapped += 1
+                start = end
+                continue
+            snapped += 1
+            start += slot_duration(slot)
+            continue
+        delta = target - end
+        if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta):
+            snapped += 1
+            start += slot_duration(slot)
+            continue
+        warnings.append(snap_warning(index + 1, end, target))
+        unsnapped += 1
+        start = end
+    return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
+
+
+def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings):
+    """Snap a record's cuts to the grid; a cut that starts a new plan beat snaps to a downbeat."""
+    slots = record.get("video") or []
+    plan_by_id = {slot.get("id"): slot for slot in plan.get("slot_plan") or []}
+    plan_beat = {slot_id: entry.get("beat") for slot_id, entry in plan_by_id.items()}
+    downbeat_at = []
+    for index, slot in enumerate(slots):
+        current = plan_beat.get(slot.get("id"))
+        following = plan_beat.get(slots[index + 1].get("id")) if index + 1 < len(slots) else None
+        downbeat_at.append(
+            bool(index + 1 < len(slots) and following is not None and current is not None and following != current)
+        )
+    bounds = []
+    for slot in slots:
+        plan_slot = plan_by_id.get(slot.get("id")) or {}
+        fact = facts_by_key.get(plan_slot.get("shot_key"))
+        bounds.append(slot_bounds(slot, fact))
+    return snap_slots(slots, bounds, beat_grid, downbeat_at, warnings)
+
+
 def default_window(fact, plan_slot, important_max_s):
     """The cut window the editor spec asks for when the model gave none."""
     window_in = fact["window_in_s"]
@@ -1062,7 +1214,7 @@ def normalise_window(in_s, out_s, fact, plan_slot, important_max_s):
     return new_in, new_out, notes
 
 
-def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief_obj, wall_time_s, cost_usd, warnings=None, important_max_s=DEFAULT_IMPORTANT_MAX_S):
+def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief_obj, wall_time_s, cost_usd, warnings=None, important_max_s=DEFAULT_IMPORTANT_MAX_S, beats=None):
     answer_by_id = {}
     for slot in answer.get("slots") or []:
         if isinstance(slot, dict) and slot.get("id"):
@@ -1079,7 +1231,7 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
         if fact is None:
             continue
         shot = shotlog_by_key.get(plan_slot.get("shot_key")) or {}
-        if not video or ans.get("transition") == "cut":
+        if not video or beats is not None or ans.get("transition") == "cut":
             transition = {"type": "cut", "duration_s": 0}
         else:
             transition = {"type": "crossfade", "duration_s": XFADE_S}
@@ -1236,7 +1388,7 @@ def hint_flags(hints):
     return flags
 
 
-def run_rules_director(workspace, brief_text, hints, out_path):
+def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir) / "rules_edit.json"
         command = [
@@ -1250,17 +1402,20 @@ def run_rules_director(workspace, brief_text, hints, out_path):
             str(tmp),
             "--json",
         ] + hint_flags(hints)
+        if beats_path is not None:
+            command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             raise LLMDirectorError(f"rule-based director failed: {result.stderr.strip()}")
         data = load_json(tmp)
+        summary = parse_json(result.stdout) or {}
     if data is None:
         raise LLMDirectorError("rule-based director wrote no edit")
     atomic_write_json(out_path, data)
-    return data
+    return data, summary.get("beat_snap")
 
 
-def run_baseline(workspace, brief_text, hints):
+def run_baseline(workspace, brief_text, hints, beats_path=None):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir) / "baseline_edit.json"
         command = [
@@ -1274,6 +1429,8 @@ def run_baseline(workspace, brief_text, hints):
             str(tmp),
             "--json",
         ] + hint_flags(hints)
+        if beats_path is not None:
+            command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             raise LLMDirectorError(f"rule-based director failed: {result.stderr.strip()}")
@@ -1289,29 +1446,31 @@ def run_baseline(workspace, brief_text, hints):
     }
 
 
-def input_paths(workspace, brief_path, plan_path):
+def input_paths(workspace, brief_path, plan_path, beats_path=None):
     paths = [workspace / "shotlog.json"]
     if brief_path is not None:
         paths.append(brief_path)
     if plan_path is not None:
         paths.append(plan_path)
+    if beats_path is not None:
+        paths.append(beats_path)
     return paths
 
 
-def is_up_to_date(out_path, workspace, brief_path, plan_path):
+def is_up_to_date(out_path, workspace, brief_path, plan_path, beats_path=None):
     if not out_path.exists():
         return False
     data = load_json(out_path)
     if data is None or validate(data, "edit"):
         return False
     out_mtime = out_path.stat().st_mtime
-    for path in input_paths(workspace, brief_path, plan_path):
+    for path in input_paths(workspace, brief_path, plan_path, beats_path):
         if path.exists() and path.stat().st_mtime > out_mtime:
             return False
     return True
 
 
-def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, slots, total, violations, warnings, started, cost_usd, candidates=0):
+def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, slots, total, violations, warnings, started, cost_usd, candidates=0, beat_snap=None):
     return {
         "status": status,
         "out": str(out_path) if out_path is not None else None,
@@ -1326,18 +1485,19 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(cost_usd, 8),
+        "beat_snap": beat_snap,
     }
 
 
-def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0):
+def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None):
     try:
-        data = run_rules_director(workspace, brief_text, hints, out_path)
+        data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path)
     except LLMDirectorError as exc:
         warnings.append(str(exc))
         return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates), 1
     slots = data.get("video") or []
     total = sum(slot_duration(slot) for slot in slots)
-    return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates), 0
+    return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
 
 
 def stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, code, candidates=0):
@@ -1362,6 +1522,7 @@ def run(
     target_duration_s=None,
     order=None,
     pacing=None,
+    beats=None,
 ):
     """Run the three-role loop and return ``(summary, exit_code)``."""
     started = time.monotonic()
@@ -1386,6 +1547,8 @@ def run(
 
     out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
     plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
+    beats_path = Path(beats).expanduser().resolve() if beats else None
+    beat_grid = load_beats(beats_path) if beats_path is not None else None
 
     hints = parse_brief(brief_text)
     if target_duration_s is not None:
@@ -1395,7 +1558,7 @@ def run(
     if pacing is not None:
         hints["pacing"] = pacing
 
-    if not force and not dry_run and is_up_to_date(out_path, workspace_path, brief_path, plan_path):
+    if not force and not dry_run and is_up_to_date(out_path, workspace_path, brief_path, plan_path, beats_path):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
         total = sum(slot_duration(slot) for slot in slots)
@@ -1407,7 +1570,7 @@ def run(
     if shotlog is None:
         warnings.append("no shotlog.json in the workspace; using the rule-based director")
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path)
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
 
     facts, clips, fact_warnings = build_shot_facts(workspace_path, shotlog, important_max_s)
@@ -1415,7 +1578,7 @@ def run(
     if not facts:
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path)
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
 
     sources = [
@@ -1459,7 +1622,7 @@ def run(
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
         if dry_run:
-            baseline = run_baseline(workspace_path, brief_text, hints)
+            baseline = run_baseline(workspace_path, brief_text, hints, beats_path)
             summary = base_summary("written", None, plan_path, 0, None, None, 0, 0.0, 0, warnings, started, state.cost_usd, candidates)
             summary["baseline"] = baseline
             summary["dry_run"] = True
@@ -1467,7 +1630,7 @@ def run(
 
         def build_record_fn(answer):
             return build_edit_record(
-                plan, answer, facts, shotlog, sources, brief_obj, time.monotonic() - started, state.cost_usd, warnings, important_max_s
+                plan, answer, facts, shotlog, sources, brief_obj, time.monotonic() - started, state.cost_usd, warnings, important_max_s, beats=beat_grid
             )
 
         review = None
@@ -1488,19 +1651,20 @@ def run(
     except BudgetExceeded as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path)
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 2, candidates)
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path)
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
 
     if approved:
+        beat_snap = apply_beat_snap(record, plan, facts, beat_grid, warnings) if beat_grid is not None else None
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
-        return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates), 0
+        return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
 
     if violations:
         added = ensure_all_planned_slots(record, plan, facts, shotlog, important_max_s)
@@ -1513,10 +1677,11 @@ def run(
 
     if not violations:
         warnings.append("reviewer did not approve; keeping the last valid draft")
+        beat_snap = apply_beat_snap(record, plan, facts, beat_grid, warnings) if beat_grid is not None else None
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
-        return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates), 0
+        return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap), 0
 
     warnings.append("reviewer did not approve and the draft still has violations")
     for item in violations:
@@ -1524,7 +1689,7 @@ def run(
         if note not in warnings:
             warnings.append(note)
     if fallback_rules:
-        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates)
+        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path)
     return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
 
 
@@ -1570,6 +1735,7 @@ def main(argv=None):
             target_duration_s=args.target_duration_s,
             order=args.order,
             pacing=args.pacing,
+            beats=args.beats,
         )
     except (LLMDirectorError, ConfigError, SchemaError, LLMError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
