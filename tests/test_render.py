@@ -1,7 +1,9 @@
 import json
 import subprocess
 
+import numpy as np
 import pytest
+from PIL import Image
 
 import render
 
@@ -490,3 +492,207 @@ def test_filter_graph_appends_the_clean_chain():
     )
     assert final_a == "a0"
     assert "[aclean]" not in graph
+
+
+def make_photo(path, size=(640, 360), color=(200, 60, 60)):
+    Image.new("RGB", size, color).save(path)
+    return path
+
+
+def make_gradient_photo(path, size=(300, 600)):
+    width, height = size
+    x = np.arange(width)[None, :]
+    y = np.arange(height)[:, None]
+    red = np.broadcast_to(x % 256, (height, width))
+    green = np.broadcast_to(y % 256, (height, width))
+    blue = (x + y) % 256
+    array = np.stack([red, green, blue], axis=-1).astype("uint8")
+    Image.fromarray(array, "RGB").save(path)
+    return path
+
+
+def photo_source(path):
+    return {"file": path.name, "path": str(path), "duration_s": None, "media_type": "photo"}
+
+
+def photo_slot(slot_id, photo_name, duration_s=3.0, move="zoom_in", transition=None):
+    slot = {
+        "id": slot_id,
+        "kind": "photo",
+        "photo": photo_name,
+        "duration_s": duration_s,
+        "ken_burns": {"move": move, "amount": 0.08, "focus_x": 0.5, "focus_y": 0.5},
+        "score": 0.5,
+        "reason": "test",
+    }
+    if transition is not None:
+        slot["transition"] = transition
+    return slot
+
+
+def make_photo_edit(tmp_path, slots, sources, name="photo_edit.json"):
+    edit = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-14T19:43:17+00:00",
+        "brief": {"text": "test"},
+        "sources": sources,
+        "video": slots,
+        "audio": {"ambience": {"enabled": True, "source": "slot"}},
+        "captions": [],
+        "graphics": [],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(edit), encoding="utf-8")
+    return path
+
+
+def extract_frame(video, t, out):
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(video), "-ss", str(t), "-frames:v", "1", str(out)],
+        check=True,
+        capture_output=True,
+    )
+    return out
+
+
+def frame_array(path):
+    return np.asarray(Image.open(path).convert("RGB"), dtype=float)
+
+
+def test_photo_slot_renders_duration_and_frame(tmp_path, capsys):
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "written"
+    assert summary["slots"] == 1
+    data = probe(out)
+    assert abs(float(data["format"]["duration"]) - 3.0) <= 0.1
+    assert video_size(out) == (1280, 720)
+    assert any(s["codec_type"] == "audio" for s in data["streams"])
+
+
+def test_portrait_photo_renders_on_blurred_background(tmp_path, capsys):
+    photo = make_gradient_photo(tmp_path / "port.jpg", size=(300, 600))
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    array = frame_array(extract_frame(out, 1.5, tmp_path / "frame.png"))
+    left = array[300:420, 0:4, :]
+    right = array[300:420, -4:, :]
+    assert left.std() > 0
+    assert right.std() > 0
+    assert left.mean() > 0
+    assert right.mean() > 0
+
+
+def test_zoom_in_produces_visible_motion(tmp_path, capsys):
+    photo = make_gradient_photo(tmp_path / "land.jpg", size=(640, 360))
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0, move="zoom_in")],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    first = frame_array(extract_frame(out, 0.05, tmp_path / "first.png"))
+    last = frame_array(extract_frame(out, 2.9, tmp_path / "last.png"))
+    assert np.abs(first - last).mean() > 0
+
+
+def test_mixed_video_and_photo_slots(tmp_path, capsys):
+    clip = tmp_path / "clip.mp4"
+    make_clip(clip, color="blue", freq=440)
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [
+            {
+                "id": "v0",
+                "clip": clip.name,
+                "in_s": 0.0,
+                "out_s": 2.0,
+                "score": 0.5,
+                "reason": "test",
+                "transition": {"type": "cut", "duration_s": 0},
+            },
+            photo_slot("p1", photo.name, duration_s=3.0, transition={"type": "cut", "duration_s": 0}),
+        ],
+        [
+            {"file": clip.name, "path": str(clip), "duration_s": 2.0, "media_type": "video"},
+            photo_source(photo),
+        ],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["slots"] == 2
+    data = probe(out)
+    assert abs(float(data["format"]["duration"]) - 5.0) <= 0.1
+    assert video_size(out) == (1280, 720)
+
+
+def test_photo_first_slot_uses_photo_size_from_originals(tmp_path, capsys):
+    photo = make_photo(tmp_path / "land.jpg", size=(640, 360))
+    originals = tmp_path / "originals"
+    originals.mkdir()
+    make_photo(originals / "land.jpg", size=(640, 360))
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "final.mp4"
+    assert (
+        render.main(
+            ["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals), "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["source"] == "originals"
+    assert video_size(out) == (640, 360)
+
+
+def test_unresolvable_photo_exits_1_without_output(tmp_path, capsys):
+    photo = make_photo(tmp_path / "land.jpg")
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", "missing.jpg", duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert not out.exists()
+    assert "[error]" in capsys.readouterr().err
+
+
+def test_heic_photo_is_converted_to_jpeg(tmp_path, capsys):
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    photo = tmp_path / "still.heic"
+    Image.new("RGB", (300, 600), (120, 180, 90)).save(photo, quality=90)
+    edit = make_photo_edit(
+        tmp_path,
+        [photo_slot("p0", photo.name, duration_s=3.0)],
+        [photo_source(photo)],
+    )
+    out = tmp_path / "out.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--json"]) == 0
+    capsys.readouterr()
+    assert out.exists()
+    assert list((tmp_path / "photos").glob("*.jpg"))
+
+

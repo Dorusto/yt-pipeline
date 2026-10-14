@@ -9,15 +9,18 @@ The tool cuts each video slot from the clip named in ``sources[]`` (the proxy)
 or, when ``--originals-dir`` is given, from the full-resolution original of the
 same name, scales and pads it to the requested frame, joins the slots in
 timeline order with crossfades or hard cuts and keeps each slot's own ambient
-audio. The ambient bus is cleaned like ``audio_clean.py`` cleans a clip — wind
-high-pass, RNNoise/afftdn noise reduction and loudnorm — unless
-``--no-audio-clean`` is given. Captions, graphics, music and SFX are warned
-about and ignored. Sources are read-only; the MP4 is written atomically to
-``--out``.
+audio. A photo slot (``kind: "photo"``) is held for its ``duration_s`` with a
+Ken Burns move; a portrait photo, or one whose aspect differs from the frame,
+sits on a blurred cover-scaled copy of itself, never on black bars. The ambient
+bus is cleaned like ``audio_clean.py`` cleans a clip — wind high-pass,
+RNNoise/afftdn noise reduction and loudnorm — unless ``--no-audio-clean`` is
+given. Captions, graphics, music and SFX are warned about and ignored. Sources
+are read-only; the MP4 is written atomically to ``--out``.
 """
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -33,6 +36,7 @@ from common.ambience import (
     resolve_denoiser,
 )
 from common.ffmpeg_tools import ffmpeg_path
+from common.photos import ensure_jpeg, open_photo
 from common.schema import SchemaError, validate_or_raise
 
 FPS = 25
@@ -214,6 +218,42 @@ def resolve_clip(clip, sources, media_dir, originals_dir):
     return None, None
 
 
+def resolve_photo(photo, sources, media_dir, originals_dir):
+    """Resolve a photo slot's ``photo`` to a path and its origin.
+
+    Order: ``--originals-dir``, then a ``sources[]`` row with
+    ``media_type == "photo"``, then any ``sources[]`` row with that file, then
+    ``--media-dir``. Origin is ``"originals"`` or ``"sources"``.
+    """
+    if originals_dir is not None:
+        candidate = Path(originals_dir).expanduser() / photo
+        if candidate.is_file():
+            return candidate, "originals"
+    for source in sources:
+        if source.get("file") == photo and source.get("media_type") == "photo":
+            return Path(source["path"]), "sources"
+    for source in sources:
+        if source.get("file") == photo:
+            return Path(source["path"]), "sources"
+    if media_dir is not None:
+        candidate = Path(media_dir).expanduser() / photo
+        if candidate.is_file():
+            return candidate, "sources"
+    return None, None
+
+
+def slot_duration(slot):
+    """The on-screen length of a slot: ``duration_s`` for photos, out-in for video."""
+    if slot.get("kind") == "photo":
+        return float(slot["duration_s"])
+    return float(slot["out_s"]) - float(slot["in_s"])
+
+
+def oriented_photo_size(path):
+    """Return ``(width, height)`` of a photo after EXIF orientation."""
+    return open_photo(path).size
+
+
 def is_within(path, directory):
     path = Path(path).expanduser().resolve()
     directory = Path(directory).expanduser().resolve()
@@ -250,22 +290,82 @@ def fade_for_join(slot, dur_prev, dur_next, xfade_s):
     return min(requested, dur_prev / 2, dur_next / 2)
 
 
-def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings, clean_chain=None):
+def photo_filters(index, slot, duration, width, height, photo_size):
+    """The filter chain for one photo slot: frame, Ken Burns move, output label.
+
+    A photo whose aspect differs from the frame (or that is portrait) sits on a
+    blurred cover-scaled copy of itself, never on black bars. The Ken Burns move
+    runs with ``zoompan`` over the composed frame for exactly ``duration``.
+    """
+    burns = slot.get("ken_burns") or {}
+    move = burns.get("move", "zoom_in")
+    amount = float(burns.get("amount", 0.08))
+    focus_x = float(burns.get("focus_x", 0.5))
+    focus_y = float(burns.get("focus_y", 0.5))
+    frames = max(1, math.ceil(duration * FPS))
+    span = max(1, frames - 1)
+    progress = f"on/{span}"
+    if move == "zoom_out":
+        zoom = f"1+{fmt(amount)}*(1-{progress})"
+        centre_x = fmt(focus_x)
+        centre_y = fmt(focus_y)
+    elif move == "pan_left":
+        zoom = fmt(1 + amount)
+        centre_x = f"{fmt(focus_x)}+{fmt(amount)}*(1-{progress})"
+        centre_y = fmt(focus_y)
+    elif move == "pan_right":
+        zoom = fmt(1 + amount)
+        centre_x = f"{fmt(focus_x)}-{fmt(amount)}*(1-{progress})"
+        centre_y = fmt(focus_y)
+    else:
+        zoom = f"1+{fmt(amount)}*{progress}"
+        centre_x = fmt(focus_x)
+        centre_y = fmt(focus_y)
+    x_expr = f"clip(({centre_x})*iw-iw/(2*zoom),0,iw-iw/zoom)"
+    y_expr = f"clip(({centre_y})*ih-ih/(2*zoom),0,ih-ih/zoom)"
+    zoompan = (
+        f"zoompan=z='{zoom}':x='{x_expr}':y='{y_expr}':"
+        f"d={frames}:s={width}x{height}:fps={FPS}"
+    )
+    photo_width, photo_height = photo_size
+    frame_aspect = width / height
+    photo_aspect = photo_width / photo_height
+    if photo_height > photo_width or abs(photo_aspect - frame_aspect) > 0.01:
+        return [
+            f"[{index}:v]split=2[pbg{index}][pfg{index}]",
+            f"[pbg{index}]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=20:2[pbgb{index}]",
+            f"[pfg{index}]scale={width}:{height}:force_original_aspect_ratio=decrease[pfgs{index}]",
+            f"[pbgb{index}][pfgs{index}]overlay=(W-w)/2:(H-h)/2,setsar=1,{zoompan}[v{index}]",
+        ]
+    return [
+        f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1,{zoompan}[v{index}]"
+    ]
+
+
+def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings, clean_chain=None, photo_sizes=None):
     """Build the ``filter_complex`` graph and return it with the final labels.
 
     ``clean_chain`` is the ambient cleanup filter list (wind high-pass, RNNoise
     or afftdn, loudnorm); it runs on the mixed ambient bus before the output.
+    ``photo_sizes`` holds the oriented ``(width, height)`` of each photo slot.
     """
     parts = []
+    sizes = photo_sizes or [None] * len(slots)
     for index, slot in enumerate(slots):
-        start = fmt(slot["in_s"])
-        end = fmt(slot["out_s"])
-        parts.append(
-            f"[{index}:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
-            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{index}]"
-        )
-        if ambience_enabled and has_audio[index]:
+        is_photo = slot.get("kind") == "photo"
+        if is_photo:
+            parts.extend(photo_filters(index, slot, durations[index], width, height, sizes[index]))
+        else:
+            start = fmt(slot["in_s"])
+            end = fmt(slot["out_s"])
+            parts.append(
+                f"[{index}:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{index}]"
+            )
+        if ambience_enabled and has_audio[index] and not is_photo:
             parts.append(
                 f"[{index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
                 f"aresample={SAMPLE_RATE}[a{index}]"
@@ -406,35 +506,57 @@ def render(
         }
 
     clip_paths = []
+    photo_sizes = []
     missing = []
+    photo_cache = edit_path.parent / "photos"
     for slot in slots:
-        resolved, origin = resolve_clip(slot["clip"], sources, media_dir, originals_dir)
-        if resolved is None:
-            raise RenderError(f"could not resolve clip: {slot['clip']}")
-        clip_paths.append(resolved)
-        if origin == "sources" and originals_dir is not None:
-            missing.append(slot["clip"])
+        if slot.get("kind") == "photo":
+            resolved, origin = resolve_photo(slot["photo"], sources, media_dir, originals_dir)
+            if resolved is None:
+                raise RenderError(f"could not resolve photo: {slot['photo']}")
+            jpeg = ensure_jpeg(resolved, photo_cache)
+            clip_paths.append(jpeg)
+            photo_sizes.append(oriented_photo_size(jpeg))
+            if origin == "sources" and originals_dir is not None:
+                missing.append(slot["photo"])
+        else:
+            resolved, origin = resolve_clip(slot["clip"], sources, media_dir, originals_dir)
+            if resolved is None:
+                raise RenderError(f"could not resolve clip: {slot['clip']}")
+            clip_paths.append(resolved)
+            photo_sizes.append(None)
+            if origin == "sources" and originals_dir is not None:
+                missing.append(slot["clip"])
     if missing:
         warnings.append(
             "clips missing from originals dir, fell back to sources: " + ", ".join(missing)
         )
 
     if width is None or height is None:
-        native = probe_native_size(clip_paths[0]) if originals_dir is not None else PREVIEW_FRAME
+        if originals_dir is not None:
+            if slots[0].get("kind") == "photo":
+                native = photo_sizes[0]
+            else:
+                native = probe_native_size(clip_paths[0])
+        else:
+            native = PREVIEW_FRAME
         if width is None:
             width = native[0]
         if height is None:
             height = native[1]
 
-    durations = [float(slot["out_s"]) - float(slot["in_s"]) for slot in slots]
+    durations = [slot_duration(slot) for slot in slots]
     if ambience_enabled:
-        has_audio = [has_audio_stream(path) for path in clip_paths]
+        has_audio = [
+            False if slot.get("kind") == "photo" else has_audio_stream(path)
+            for slot, path in zip(slots, clip_paths)
+        ]
     else:
         has_audio = [False] * len(slots)
 
     filter_complex, final_v, final_a = build_filter_graph(
         slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings,
-        clean_chain=clean_chain,
+        clean_chain=clean_chain, photo_sizes=photo_sizes,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
