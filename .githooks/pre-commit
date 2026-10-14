@@ -1,3 +1,25 @@
-#!/bin/sh
-cd "$(git rev-parse --show-toplevel)" || exit 1
-python3 scripts/check_public.py
+#!/usr/bin/env python3
+"""Git pre-commit hook: run the public-repo guard on the staged files."""
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main():
+    repo_root = Path(__file__).resolve().parents[1]
+    guard = repo_root / "scripts" / "check_public.py"
+    if not guard.is_file():
+        print(f"pre-commit: {guard} is missing; refusing the commit.", file=sys.stderr)
+        return 1
+    try:
+        result = subprocess.run([sys.executable, str(guard)], cwd=repo_root)
+    except OSError as error:
+        print(f"pre-commit: cannot run the public-repo guard: {error}", file=sys.stderr)
+        print("pre-commit: refusing the commit because the guard did not run.", file=sys.stderr)
+        return 1
+    return result.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

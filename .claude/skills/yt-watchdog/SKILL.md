@@ -1,7 +1,7 @@
 ---
 name: yt-watchdog
 description: Check whether the build agent is overspending on OpenRouter or stalled, and alert Doru on ntfy only when something is wrong. Use when the user asks if the agent is stuck, how much the agents spent today, or wants the watchdog set up or tested. Trigger phrases - "agentul s-a blocat?", "cât a cheltuit azi", "verifică paznicul", "is the agent stuck", "watchdog". Not for phase reports or normal status messages (that is scripts/notify.py).
-compatibility: Run from the repository root on the machine where the agent runs (the LXC). Needs pgrep and network access to openrouter.ai and the ntfy server. No GPU, no LLM cost.
+compatibility: Run from the repository root on the machine where the agent runs (the LXC). Detects the agent process with psutil when available, else pgrep (POSIX) or tasklist (Windows). Needs network access to openrouter.ai and the ntfy server. No GPU, no LLM cost.
 ---
 
 # yt-watchdog

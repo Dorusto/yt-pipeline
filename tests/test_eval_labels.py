@@ -342,8 +342,9 @@ def test_out_written_and_overwritten(tmp_path):
     first = json.loads(out.read_text(encoding="utf-8"))
     assert eval_labels.main(args) == 0
     second = json.loads(out.read_text(encoding="utf-8"))
-    first.pop("generated_at")
-    second.pop("generated_at")
+    for report in (first, second):
+        report.pop("generated_at")
+        report["meta"].pop("wall_time_s")
     assert first == second
     assert not (tmp_path / "report.json.tmp").exists()
     assert validate({**second, "generated_at": "2026-10-13T00:00:00+00:00"}, "eval") == []
