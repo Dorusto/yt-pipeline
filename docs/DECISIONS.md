@@ -1149,3 +1149,38 @@ director run that takes both with another take between (covered by tests).
 - **D2-4 phone flow, repo side.** `scripts/inbox.py`: watches an inbox folder (filled by a sync tool from the phone), groups new clips into a project per day, waits until the folder is quiet for N minutes, then runs `recap.py` with a default or per-folder brief (`brief.txt`). `scripts/serve.py`: read-only HTTP server for workspaces, bound to the tailnet address only, with an index page per project (recap, final, shotlog.html). `recap.py --notify` posts the preview link to ntfy. The `yt-recap` skill gains the phrases an assistant like Hermes receives from Telegram ("fă-mi un recap din clipurile de azi"). Installing the sync tool and wiring Hermes are system changes on Doru's machines: the repo ships instructions in `docs/guides/phone-flow.md`, Doru runs them.
 - **D2-5 cross-platform.** Replace the Unix-only pieces: `fcntl` ledger lock → a portable lock (choose by comparing at least two options), `pgrep` → `psutil` or a portable fallback, shell hook → Python hook. Paths through `pathlib` everywhere. CI matrix on ubuntu, macos and windows. Hardware encoders by platform: `h264_nvenc` (NVIDIA), `h264_videotoolbox` (macOS), else `libx264`. Install notes per OS in the quickstart.
 - Order: D2-5 can run in parallel with D2-3 (separate worktree, disjoint files); D2-4 starts after D2-3 is merged, because it builds on `recap.py`.
+
+---
+
+## [2026-10-14] D2-5 portable ledger lock: `filelock` instead of `fcntl`
+
+**Context:** `scripts/common/llm.py` took an exclusive `fcntl.flock` on the
+spend ledger's sidecar lock file. `fcntl` does not exist on Windows, so the
+budget cap breaks on the "normal PC" the D2-5 demo target needs. The lock must
+be exclusive across processes, release on crash and work on Linux, macOS and
+Windows.
+
+**Options compared (current PyPI, 2026-10-14):**
+- `filelock` 4.1.1 (MIT, tox-dev, released 2026-10-11, Python >= 3.11) — the
+  lock `pip`, `tox` and `virtualenv` themselves use; `FileLock` picks
+  `flock` on Unix and `msvcrt.locking` on Windows, is a context manager,
+  blocking by default, released when the process dies, one small pure-Python
+  package.
+- `portalocker` 4.4.0 (BSD-3-Clause, released 2026-09-19, Python >= 3.10) —
+  also a portable `flock`/`msvcrt` wrapper, but an older API surface
+  (`Lock`, `LOCK_EX` flags, exceptions per platform) and less used in the
+  Python tooling ecosystem.
+- `fasteners` 0.20 (Apache-2.0, last release 2025-08) — process lock is a
+  side feature next to its inter-thread primitives; maintenance is slower.
+
+**Decision:** **`filelock`** (`FileLock` on the `<ledger>.lock` sidecar,
+blocking). `ledger_lock()` keeps its context-manager signature and raises
+`LLMError` on `OSError`; `write_ledger()` now does the atomic swap with
+`Path.replace` (also Windows-portable). Added to `requirements.txt`.
+
+**Rationale:** `filelock` is the most maintained of the three and the API is
+exactly the one we already had (a blocking exclusive lock in a `with` block),
+so the diff stays inside `ledger_lock`. Its Unix backend still uses `flock`,
+so crash-release semantics are unchanged on the build machine; its Windows
+backend is the library's problem, not ours. Tests cover the sidecar name, the
+exclusive window and release on body exception (`tests/test_llm.py`).

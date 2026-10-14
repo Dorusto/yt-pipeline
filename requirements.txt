@@ -3,6 +3,7 @@ openai
 pysubs2
 pyyaml
 jsonschema
+filelock
 torch
 torchaudio
 whisperx

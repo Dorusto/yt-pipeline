@@ -15,6 +15,7 @@ from common.llm import (
     MissingUsageCost,
     MockClient,
     OpenRouterClient,
+    ledger_lock,
     make_client,
     read_ledger,
     resolve_ledger_path,
@@ -432,3 +433,38 @@ def test_budget_check_sees_other_process_spend(tmp_path):
     assert result.returncode == 0, result.stderr
     with pytest.raises(BudgetExceeded):
         watcher.complete("vision", MESSAGES)
+
+
+def test_ledger_lock_creates_sidecar_and_holds_exclusive(tmp_path):
+    from filelock import FileLock, Timeout
+
+    ledger = tmp_path / "llm_spend.json"
+    lock_path = tmp_path / "llm_spend.json.lock"
+    with ledger_lock(ledger):
+        assert lock_path.exists()
+        contender = FileLock(str(lock_path), timeout=0.2)
+        with pytest.raises(Timeout):
+            with contender:
+                pass
+    with FileLock(str(lock_path), timeout=0.2):
+        pass
+
+
+def test_ledger_lock_releases_on_body_exception(tmp_path):
+    from filelock import FileLock, Timeout
+
+    ledger = tmp_path / "llm_spend.json"
+    lock_path = tmp_path / "llm_spend.json.lock"
+    with pytest.raises(RuntimeError):
+        with ledger_lock(ledger):
+            raise RuntimeError("boom")
+    with FileLock(str(lock_path), timeout=0.2):
+        pass
+
+
+def test_ledger_lock_creates_missing_parent_directory(tmp_path):
+    ledger = tmp_path / "deep" / "workspace" / "llm_spend.json"
+    lock_path = ledger.with_name(ledger.name + ".lock")
+    with ledger_lock(ledger):
+        assert lock_path.exists()
+        assert lock_path.parent == ledger.parent
