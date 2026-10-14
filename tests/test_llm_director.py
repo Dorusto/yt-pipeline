@@ -742,7 +742,7 @@ def test_editor_facts_follow_fact_keep_whole(tmp_path):
     record = llm_director.build_edit_record(plan, answer, facts, shotlog, [], {}, 0.0, 0.0, warnings)
     assert record is not None
     slot = record["video"][0]
-    assert slot["in_s"] == pytest.approx(12.0)
+    assert slot["in_s"] == pytest.approx(14.0)
     assert slot["out_s"] == pytest.approx(20.0)
     assert any("fixed v3" in note for note in warnings)
     violations = llm_director.validate_edit(record, plan, facts)
@@ -782,7 +782,7 @@ def test_missing_last_round_slot_is_synthesised(tmp_path):
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     assert {slot["id"] for slot in edit["video"]} == {"v1", "v2", "v3"}
     slot = next(item for item in edit["video"] if item["id"] == "v3")
-    assert slot["in_s"] == pytest.approx(12.0)
+    assert slot["in_s"] == pytest.approx(14.0)
     assert slot["out_s"] == pytest.approx(20.0)
 
 
@@ -895,3 +895,46 @@ def test_same_take_rule_allows_beats_with_another_take_between():
     record["video"][1], record["video"][2] = record["video"][2], record["video"][1]
     violations = llm_director.validate_edit(record, plan, facts)
     assert any(item["rule"] == "same_take" for item in violations)
+
+
+def test_window_ends_at_the_steady_motion_end(tmp_path):
+    clips = [{"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 30.0, "creation_time": "2026-01-01T10:00:00"}]
+    write_json(
+        tmp_path / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        tmp_path / "quality" / "clipA.json",
+        quality_doc("clipA.mp4", 30.0, [segment("s1", 0.0, 30.0, "move", motion_label="pan_right")]),
+    )
+    write_json(
+        tmp_path / "motion" / "clipA.json",
+        motion_doc(
+            "clipA.mp4",
+            30.0,
+            [{
+                "id": "m1", "start_s": 0.0, "end_s": 30.0, "label": "pan_right",
+                "speed": "regular", "steadiness": "no_shaking",
+                "steady_start_s": 2.0, "steady_end_s": 18.0, "handle_in_s": 1.75, "handle_out_s": 25.0,
+                "confidence": 0.9,
+            }],
+        ),
+    )
+    write_json(
+        tmp_path / "shotlog.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "weights": {"vision": 0.55, "labels": 0.45},
+            "shots": [
+                shotlog_shot("clipA/s1", "clipA.mp4", "s1", 0.0, 30.0, True, 0.9, "the move", "interest 90 · pan_right", role="move", motion_label="pan_right"),
+            ],
+        },
+    )
+    shotlog = llm_director.load_shotlog(tmp_path)
+    facts, _, _ = llm_director.build_shot_facts(tmp_path, shotlog)
+    assert facts["clipA/s1"]["window_in_s"] == 1.75
+    assert facts["clipA/s1"]["window_out_s"] == 18.0
+
+
+def test_important_cap_defaults_to_six():
+    assert llm_director.DEFAULT_IMPORTANT_MAX_S == 6.0

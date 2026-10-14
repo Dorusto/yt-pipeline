@@ -922,7 +922,7 @@ def test_hero_window_longer_than_cap_keeps_tail(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+    assert round(slot["out_s"] - slot["in_s"], 2) == 6.0
     assert slot["out_s"] == 20.0
 
 
@@ -941,7 +941,7 @@ def test_semantic_move_without_hero_keeps_window(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+    assert round(slot["out_s"] - slot["in_s"], 2) == 6.0
     assert slot["in_s"] > 0.0
 
 
@@ -977,7 +977,7 @@ def test_hero_static_hold_kept_to_cap(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+    assert round(slot["out_s"] - slot["in_s"], 2) == 6.0
 
 
 def test_orbit_candidate_without_shotlog_is_important(tmp_path):
@@ -988,7 +988,7 @@ def test_orbit_candidate_without_shotlog_is_important(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 8.0
+    assert round(slot["out_s"] - slot["in_s"], 2) == 6.0
 
 
 def test_important_max_s_flag_is_honoured(tmp_path):
@@ -1115,3 +1115,48 @@ def test_two_beats_of_one_take_with_another_take_between(tmp_path):
     assert first["out_s"] <= 60.0
     assert last["in_s"] >= 60.0
     assert middle["clip"] == "clipB.mp4"
+
+
+def test_window_ends_at_the_steady_motion_end():
+    clip = {"file": "clipA.mp4"}
+    quality = quality_doc("clipA.mp4", 30.0, [segment("s1", 0.0, 30.0, "move", motion_label="pan_right")])
+    motion = motion_doc(
+        "clipA.mp4", 30.0,
+        [move("m1", 0.0, 30.0, "pan_right", "regular", "no_shaking", 2.0, 18.0, 1.75, 25.0)],
+    )
+    candidates, _ = director.build_candidates(clip, None, 0.0, 0.0, quality, motion, 2.0)
+    assert len(candidates) == 1
+    assert candidates[0]["in_s"] == 1.75
+    assert candidates[0]["out_s"] == 18.0
+
+
+def test_important_cap_defaults_to_six(tmp_path):
+    workspace = build_important_workspace(
+        tmp_path / "ws",
+        [segment("s1", 0.0, 20.0, "move", motion_label="pan_right")],
+        [move("m1", 0.0, 20.0, "pan_right", "regular", "no_shaking", 0.0, 20.0, 0.0, 20.0)],
+        [
+            shotlog_shot(
+                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 20.0, True, 0.9, "hero move",
+                "interest 90 · hero", hero=True, role="move", motion_label="pan_right",
+            )
+        ],
+    )
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert round(slot["out_s"] - slot["in_s"], 2) == 6.0
+    assert slot["out_s"] == 20.0
+
+
+def test_prompts_state_the_six_second_cap():
+    for name in ("editor.md", "reviewer.md", "screenwriter.md"):
+        text = (ROOT / "prompts" / name).read_text(encoding="utf-8")
+        assert "8.0 s" not in text
+        assert "8 seconds" not in text
+        assert "up to 8 s" not in text
+        assert "6" in text
+    editor = (ROOT / "prompts" / "editor.md").read_text(encoding="utf-8")
+    assert "capped at 6.0 s" in editor
+    reviewer = (ROOT / "prompts" / "reviewer.md").read_text(encoding="utf-8")
+    assert "up to 6 s" in reviewer
+    assert "ends where the steady motion ends" in reviewer

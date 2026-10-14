@@ -39,13 +39,13 @@ no extra keys.
 - **Slots serve beats.** Every slot says which beat it serves and why. The
   `target_s` of the slots must sum to the target duration and follow the pacing:
   calm opening, shorter and more energetic toward the end when the brief asks
-  for it. **Count every `keep_whole` slot as 8 seconds** — those keep their whole
+  for it. **Count every `keep_whole` slot as 6 seconds** — those keep their whole
   window and cannot be trimmed to the pacing target — so plan fewer slots when
   several of the best shots are keep_whole. A plan whose slots do not add up to
   the target duration will be sent back.
 - **`keep_whole: true`** for hero shots (`hero: true`) and for complete semantic
   moves (an `orbit`, a `reveal`, a travel through a cave or a tunnel). Those keep
-  their whole window up to 8 seconds instead of being trimmed to the pacing
+  their whole window up to 6 seconds instead of being trimmed to the pacing
   target. Everything else follows the pacing.
 - **Editing grammar** (the editor enforces this, but do not plan against it):
   - a move and the hold it lands on are one phrase — never plan a move and then

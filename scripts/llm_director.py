@@ -40,7 +40,7 @@ DIRECTOR_SCRIPT = REPO_ROOT / "scripts" / "director.py"
 MAX_ROUNDS = 3
 MIN_SLOT_S = 2.0
 MAX_SLOT_S = 12.0
-DEFAULT_IMPORTANT_MAX_S = 8.0
+DEFAULT_IMPORTANT_MAX_S = 6.0
 XFADE_S = 0.3
 TOLERANCE_S = 0.05
 
@@ -141,7 +141,7 @@ def build_parser():
     parser.add_argument("--no-fallback-rules", dest="fallback_rules", action="store_false", help="error instead of falling back to the rule-based director")
     parser.add_argument("--model", default=None, help="director model id override (default models.director from config)")
     parser.add_argument("--budget-usd", type=float, default=None, help="refuse calls past this spend (default llm_budget_usd)")
-    parser.add_argument("--important-max-s", type=float, default=DEFAULT_IMPORTANT_MAX_S, help="longest a hero or semantic-move slot may be (default 8.0)")
+    parser.add_argument("--important-max-s", type=float, default=DEFAULT_IMPORTANT_MAX_S, help="longest a hero or semantic-move slot may be (default 6.0)")
     parser.add_argument("--target-duration-s", type=float, default=None, help="override the target duration parsed from the brief")
     parser.add_argument("--order", choices=["chronological", "score"], default=None, help="override the order parsed from the brief")
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default=None, help="override the pacing parsed from the brief")
@@ -257,7 +257,7 @@ def build_candidates(clip, clip_dt, position, content_offset, quality, motion, m
                 move = best_overlapping_move({"start_s": sub_start, "end_s": sub_end}, moves)
                 if move is not None:
                     in_s = first_not_none(move.get("handle_in_s"), move.get("steady_start_s"), move.get("start_s"))
-                    out_s = first_not_none(move.get("handle_out_s"), move.get("steady_end_s"), move.get("end_s"))
+                    out_s = first_not_none(move.get("steady_end_s"), move.get("handle_out_s"), move.get("end_s"))
                 else:
                     in_s, out_s = sub_start, sub_end
                 in_s = max(in_s, sub_start)

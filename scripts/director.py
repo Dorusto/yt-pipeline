@@ -78,7 +78,7 @@ def build_parser():
             "  python scripts/director.py --workspace ~/Videos/ws --brief \"calm start\" \\\n"
             "      --target-duration-s 90 --order chronological --pacing calm-to-energy --json\n"
             "  python scripts/director.py --workspace ~/Videos/ws --order score --pacing uniform --force\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --important-max-s 8.0 --json\n"
+            "  python scripts/director.py --workspace ~/Videos/ws --important-max-s 6.0 --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -93,8 +93,8 @@ def build_parser():
     parser.add_argument(
         "--important-max-s",
         type=float,
-        default=8.0,
-        help="longest a hero or semantic-move slot may be (default 8.0)",
+        default=6.0,
+        help="longest a hero or semantic-move slot may be (default 6.0)",
     )
     parser.add_argument("--calm-slot-s", type=float, default=6.0, help="target length of the opening slots in calm-to-energy")
     parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
@@ -219,7 +219,7 @@ def build_candidates(
                 move = best_overlapping_move({"start_s": sub_start, "end_s": sub_end}, moves)
                 if move is not None:
                     in_s = first_not_none(move.get("handle_in_s"), move.get("steady_start_s"), move.get("start_s"))
-                    out_s = first_not_none(move.get("handle_out_s"), move.get("steady_end_s"), move.get("end_s"))
+                    out_s = first_not_none(move.get("steady_end_s"), move.get("handle_out_s"), move.get("end_s"))
                 else:
                     in_s, out_s = sub_start, sub_end
                 in_s = max(in_s, sub_start)
