@@ -14,8 +14,10 @@ Ken Burns move; a portrait photo, or one whose aspect differs from the frame,
 sits on a blurred cover-scaled copy of itself, never on black bars. The ambient
 bus is cleaned like ``audio_clean.py`` cleans a clip — wind high-pass,
 RNNoise/afftdn noise reduction and loudnorm — unless ``--no-audio-clean`` is
-given. Captions, graphics, music and SFX are warned about and ignored. Sources
-are read-only; the MP4 is written atomically to ``--out``.
+given. A music track (``--music`` or ``audio.music``) is looped to the edit
+length, gained, ducked under the cleaned ambient bus with ``sidechaincompress``
+and faded out at the end. Captions, graphics and SFX are warned about and
+ignored. Sources are read-only; the MP4 is written atomically to ``--out``.
 """
 
 import argparse
@@ -42,6 +44,12 @@ from common.schema import SchemaError, validate_or_raise
 FPS = 25
 SAMPLE_RATE = 48000
 PREVIEW_FRAME = (1280, 720)
+DEFAULT_MUSIC_GAIN_DB = -12.0
+DEFAULT_MUSIC_FADE_OUT_S = 2.0
+MUSIC_DUCK_THRESHOLD = 0.03
+MUSIC_DUCK_RATIO = 8.0
+MUSIC_DUCK_ATTACK_MS = 20
+MUSIC_DUCK_RELEASE_MS = 400
 
 
 class RenderError(RuntimeError):
@@ -92,6 +100,20 @@ def build_parser():
         "--no-audio-clean",
         action="store_true",
         help="keep the raw ambient mix (no wind high-pass, denoise or loudnorm)",
+    )
+    parser.add_argument(
+        "--music",
+        default=None,
+        help="music track to mix under the cleaned ambient bus (overrides audio.music.path)",
+    )
+    parser.add_argument(
+        "--music-gain-db",
+        type=float,
+        default=None,
+        help=(
+            "music gain in dB (default: the edit's audio.music.gain_db,"
+            f" else {DEFAULT_MUSIC_GAIN_DB:g})"
+        ),
     )
     parser.add_argument(
         "--denoiser",
@@ -290,6 +312,91 @@ def fade_for_join(slot, dur_prev, dur_next, xfade_s):
     return min(requested, dur_prev / 2, dur_next / 2)
 
 
+def total_duration(slots, durations, xfade_s):
+    """The on-screen length of the whole edit, crossfades included."""
+    total = durations[0]
+    for join in range(len(slots) - 1):
+        nxt = join + 1
+        fade = fade_for_join(slots[nxt], durations[join], durations[nxt], xfade_s)
+        total += durations[nxt] - fade
+    return total
+
+
+def resolve_music(edit_music, music_flag, gain_flag, edit_dir):
+    """Resolve the music track from ``audio.music`` and the CLI flags.
+
+    ``--music`` overrides ``audio.music.path``; ``--music-gain-db`` overrides
+    ``audio.music.gain_db``. Returns ``None`` when no track is configured.
+    """
+    edit_music = edit_music or {}
+    raw_path = music_flag if music_flag is not None else edit_music.get("path")
+    if raw_path is None:
+        return None
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = Path(edit_dir) / path
+    gain_db = (
+        float(gain_flag)
+        if gain_flag is not None
+        else float(edit_music.get("gain_db", DEFAULT_MUSIC_GAIN_DB))
+    )
+    return {
+        "path": path,
+        "gain_db": gain_db,
+        "fade_in_s": float(edit_music.get("fade_in_s", 0.0)),
+        "fade_out_s": float(edit_music.get("fade_out_s", DEFAULT_MUSIC_FADE_OUT_S)),
+        "start_s": float(edit_music.get("start_s", 0.0)),
+    }
+
+
+def build_music_chain(music_index, ambient_label, edit_duration, music_duration, music, ducking):
+    """Build the music mix chain and return ``(parts, final_label)``.
+
+    The track is resampled, looped to the edit length, trimmed, gained, ducked
+    under the ambient bus with ``sidechaincompress`` (music main, ambient
+    sidechain) and mixed with the ambient bus. The mix is faded out over the
+    last ``fade_out_s`` seconds of the edit. Without ducking the track is mixed
+    straight with the ambient bus.
+    """
+    loop_size = max(1, int(round(music_duration * SAMPLE_RATE)))
+    start = max(0.0, float(music["start_s"]))
+    play = max(0.0, edit_duration - start)
+    chain = (
+        f"[{music_index}:a]aresample={SAMPLE_RATE},aformat=channel_layouts=stereo,"
+        f"aloop=loop=-1:size={loop_size},atrim=start=0:end={fmt(play)},"
+        f"asetpts=PTS-STARTPTS,volume={fmt(music['gain_db'])}dB"
+    )
+    if start > 0:
+        delay_ms = int(round(start * 1000))
+        chain += (
+            f",adelay={delay_ms}:all=1,apad,"
+            f"atrim=start=0:end={fmt(edit_duration)},asetpts=PTS-STARTPTS"
+        )
+    chain += "[music]"
+    parts = [chain]
+    if ducking:
+        parts.append(f"[{ambient_label}]asetpts=PTS-STARTPTS,asplit=2[amb_sc][amb_mix]")
+        parts.append(
+            f"[music][amb_sc]sidechaincompress=threshold={fmt(MUSIC_DUCK_THRESHOLD)}:"
+            f"ratio={fmt(MUSIC_DUCK_RATIO)}:attack={MUSIC_DUCK_ATTACK_MS}:"
+            f"release={MUSIC_DUCK_RELEASE_MS}[ducked]"
+        )
+        parts.append("[ducked][amb_mix]amix=inputs=2:duration=first:normalize=0[amixed]")
+    else:
+        parts.append(f"[{ambient_label}]asetpts=PTS-STARTPTS[amb_norm]")
+        parts.append("[music][amb_norm]amix=inputs=2:duration=first:normalize=0[amixed]")
+    fades = []
+    if music["fade_in_s"] > 0:
+        fades.append(f"afade=t=in:st=0:d={fmt(music['fade_in_s'])}")
+    if music["fade_out_s"] > 0:
+        fade_start = max(0.0, edit_duration - music["fade_out_s"])
+        fades.append(f"afade=t=out:st={fmt(fade_start)}:d={fmt(music['fade_out_s'])}")
+    if fades:
+        parts.append(f"[amixed]{','.join(fades)}[afinal]")
+        return parts, "afinal"
+    return parts, "amixed"
+
+
 def photo_filters(index, slot, duration, width, height, photo_size):
     """The filter chain for one photo slot: frame, Ken Burns move, output label.
 
@@ -416,8 +523,8 @@ def collect_warnings(document, ambience):
     audio = document.get("audio") or {}
     if ambience.get("enabled") and ambience.get("source") == "file":
         warnings.append("ambience file ignored in S1 render, using slot audio")
-    if audio.get("music") is not None or audio.get("sfx"):
-        warnings.append("music/sfx ignored in S1 render")
+    if audio.get("sfx"):
+        warnings.append("sfx ignored in S1 render")
     if document.get("captions"):
         warnings.append("captions ignored in S1 render")
     if document.get("graphics"):
@@ -439,6 +546,8 @@ def render(
     model=None,
     target_lufs=DEFAULT_TARGET_LUFS,
     wind_hz=DEFAULT_WIND_HZ,
+    music=None,
+    music_gain_db=None,
 ):
     """Render ``edit_path`` to ``out_path`` and return the run summary."""
     started = time.monotonic()
@@ -460,6 +569,31 @@ def render(
     ambience = audio.get("ambience") or {}
     ambience_enabled = bool(ambience.get("enabled", False))
     warnings = collect_warnings(document, ambience)
+    durations = [slot_duration(slot) for slot in slots]
+    edit_duration = total_duration(slots, durations, xfade_s)
+
+    music_config = resolve_music(audio.get("music"), music, music_gain_db, edit_path.parent)
+    music_duration = None
+    music_mtime = None
+    if music_config is not None:
+        if not music_config["path"].is_file():
+            raise RenderError(f"music file not found: {music_config['path']}")
+        if not has_audio_stream(music_config["path"]):
+            raise RenderError(f"music file has no audio stream: {music_config['path']}")
+        music_duration = probe_duration(music_config["path"])
+        if music_duration is None:
+            raise RenderError(f"could not read music duration: {music_config['path']}")
+        music_mtime = music_config["path"].stat().st_mtime
+    ducking = bool(music_config is not None and ambience_enabled)
+    looped = bool(music_config is not None and music_duration < edit_duration)
+    music_info = None
+    if music_config is not None:
+        music_info = {
+            "path": str(music_config["path"]),
+            "gain_db": music_config["gain_db"],
+            "ducking": ducking,
+            "looped": looped,
+        }
     clean_chain = []
     clean_applied = []
     clean_denoiser = None
@@ -488,22 +622,28 @@ def render(
         str(Path(originals_dir).expanduser()) if originals_dir is not None else None
     )
 
-    if out_path.exists() and not force and out_path.stat().st_mtime > edit_path.stat().st_mtime:
-        size = probe_video_size(out_path)
-        return {
-            "status": "skipped",
-            "out": str(out_path),
-            "duration_s": probe_duration(out_path),
-            "slots": len(slots),
-            "width": size[0] if size else width,
-            "height": size[1] if size else height,
-            "warnings": warnings,
-            "originals_dir": originals_label,
-            "source": source,
-            "audio_clean": audio_clean_info,
-            "wall_time_s": round(time.monotonic() - started, 3),
-            "llm_cost_usd": 0.0,
-        }
+    if out_path.exists() and not force:
+        out_mtime = out_path.stat().st_mtime
+        up_to_date = out_mtime > edit_path.stat().st_mtime
+        if music_mtime is not None:
+            up_to_date = up_to_date and out_mtime > music_mtime
+        if up_to_date:
+            size = probe_video_size(out_path)
+            return {
+                "status": "skipped",
+                "out": str(out_path),
+                "duration_s": probe_duration(out_path),
+                "slots": len(slots),
+                "width": size[0] if size else width,
+                "height": size[1] if size else height,
+                "warnings": warnings,
+                "originals_dir": originals_label,
+                "source": source,
+                "audio_clean": audio_clean_info,
+                "music": music_info,
+                "wall_time_s": round(time.monotonic() - started, 3),
+                "llm_cost_usd": 0.0,
+            }
 
     clip_paths = []
     photo_sizes = []
@@ -558,12 +698,24 @@ def render(
         slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings,
         clean_chain=clean_chain, photo_sizes=photo_sizes,
     )
+    if music_config is not None:
+        music_parts, final_a = build_music_chain(
+            len(slots),
+            final_a,
+            edit_duration,
+            music_duration,
+            music_config,
+            ducking,
+        )
+        filter_complex = ";".join([filter_complex, *music_parts])
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_name(out_path.name + ".tmp.mp4")
     command = [ffmpeg_path(), "-y"]
     for path in clip_paths:
         command += ["-i", str(path)]
+    if music_config is not None:
+        command += ["-i", str(music_config["path"])]
     command += [
         "-filter_complex",
         filter_complex,
@@ -616,6 +768,7 @@ def render(
         "originals_dir": originals_label,
         "source": source,
         "audio_clean": audio_clean_info,
+        "music": music_info,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -638,6 +791,8 @@ def main(argv=None):
             model=args.model,
             target_lufs=args.target_lufs,
             wind_hz=args.wind_hz,
+            music=args.music,
+            music_gain_db=args.music_gain_db,
         )
     except (RenderError, SchemaError, AmbienceError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
@@ -656,6 +811,12 @@ def main(argv=None):
         clean = summary.get("audio_clean") or {}
         if clean.get("enabled"):
             print("ambient cleaned: " + ", ".join(clean.get("filters") or []))
+        music = summary.get("music")
+        if music:
+            print(
+                f"music: {music['path']} ({music['gain_db']:g} dB,"
+                f" ducking={music['ducking']}, looped={music['looped']})"
+            )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
     return 0
