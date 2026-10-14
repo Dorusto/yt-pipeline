@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+from PIL import Image
 
 import describe
 from common.llm import BudgetExceeded
@@ -74,6 +75,41 @@ def write_quality(workspace, stem, clip_path, segments, duration_s=8.0):
 
 def read_describe(workspace, stem):
     return json.loads((workspace / "describe" / f"{stem}.json").read_text(encoding="utf-8"))
+
+
+def write_photo(path, size=(64, 48), color=(120, 80, 40)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, "JPEG")
+    return path
+
+
+def photo_record(path, creation_time="2026-10-12T11:42:00+00:00"):
+    return {
+        "file": path.name,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "width": 64,
+        "height": 48,
+        "orientation": None,
+        "creation_time": creation_time,
+        "creation_time_source": "exif",
+        "format": "JPEG",
+        "warnings": [],
+    }
+
+
+def write_ingest(workspace, photos, clips=None):
+    data = {
+        "generated_at": "2026-10-14T00:00:00+00:00",
+        "source_dir": str(workspace),
+        "clip_count": len(clips or []),
+        "clips": clips or [],
+        "photo_count": len(photos),
+        "photos": photos,
+        "warnings": [],
+    }
+    (workspace / "ingest.json").write_text(json.dumps(data), encoding="utf-8")
+    return data
 
 
 class BrokenModel:
@@ -883,3 +919,168 @@ def test_json_summary_counts_beats(tmp_path):
     summary, exit_code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
     assert exit_code == 0
     assert summary["beats"] == 2
+
+
+class PhotoPositionModel:
+    """Returns a photo answer with an explicit subject position."""
+
+    def __init__(self, position):
+        self.position = position
+        self.calls = []
+
+    def describe(self, request):
+        self.calls.append(request)
+        text = json.dumps(
+            {
+                "description": "a photo of a boat",
+                "summary": "boat moored in a turquoise bay",
+                "tags": ["boat", "bay"],
+                "subject": "boat",
+                "scenery": "sea",
+                "semantic_motion": "none",
+                "interest": 65,
+                "hero": False,
+                "subject_position": self.position,
+            }
+        )
+        return VisionResponse(
+            text=text,
+            model="photo",
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=0.0,
+        )
+
+
+def test_photo_described_with_pseudo_segment(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    summary, code = describe.run(
+        tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True
+    )
+    assert code == 0
+    assert summary["photos"] == 1
+    assert len(model.calls) == 1
+    assert len(model.calls[0].frames) == 1
+    data = read_describe(tmp_path, "photo_01")
+    assert data["media_type"] == "photo"
+    assert data["file"] == "photo_01.jpg"
+    assert data["duration_s"] == 0.0
+    seg = data["segments"][0]
+    assert seg["id"] == "p1"
+    assert seg["status"] == "described"
+    assert seg["start_s"] == 0.0
+    assert seg["end_s"] == 0.04
+    assert seg["role"] == "hold"
+    assert seg["motion_label"] == "static"
+    assert seg["uncertain"] is False
+    assert seg["uncertain_reasons"] == []
+    assert seg["frames"] == [{"t_s": 0.0}]
+    assert seg["semantic_motion"] == "none"
+    assert seg["verdict"] is None
+    assert seg["subject_position"] == {"x": 0.5, "y": 0.5}
+    assert validate(data, "describe") == []
+
+
+def test_photo_subject_position_falls_back_to_center(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True)
+    data = read_describe(tmp_path, "photo_01")
+    assert data["segments"][0]["subject_position"] == {"x": 0.5, "y": 0.5}
+
+
+def test_photo_subject_position_is_used(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = PhotoPositionModel({"x": 0.2, "y": 0.8})
+    describe.run(tmp_path, model=model, model_id="photo", config=CONFIG, photos_only=True)
+    data = read_describe(tmp_path, "photo_01")
+    assert data["segments"][0]["subject_position"] == {"x": 0.2, "y": 0.8}
+    assert validate(data, "describe") == []
+
+
+def test_normalize_subject_position_clamps_and_falls_back():
+    assert describe.normalize_subject_position({"x": 1.5, "y": -0.2}) == {"x": 1.0, "y": 0.0}
+    assert describe.normalize_subject_position(None) == {"x": 0.5, "y": 0.5}
+    assert describe.normalize_subject_position({"x": "a", "y": 0.5}) == {"x": 0.5, "y": 0.5}
+
+
+def test_photo_rerun_skips_and_force_redescribes(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True)
+    calls_after_first = len(model.calls)
+    summary, code = describe.run(
+        tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True
+    )
+    assert code == 0
+    assert summary["photos"] == 0
+    assert len(model.calls) == calls_after_first
+    summary, code = describe.run(
+        tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True, force=True
+    )
+    assert code == 0
+    assert summary["photos"] == 1
+    assert len(model.calls) == calls_after_first + 1
+
+
+def test_photos_only_skips_video_segments(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(tmp_path, "clip", clip, [segment("s1", 0.0, 4.0, "hold")])
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    summary, code = describe.run(
+        tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True
+    )
+    assert code == 0
+    assert summary["clips"] == 0
+    assert summary["photos"] == 1
+    assert not (tmp_path / "describe" / "clip.json").exists()
+    assert (tmp_path / "describe" / "photo_01.json").exists()
+
+
+def test_photos_described_automatically_with_video(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(tmp_path, "clip", clip, [segment("s1", 0.0, 4.0, "hold")])
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    summary, code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
+    assert code == 0
+    assert summary["described"] == 1
+    assert summary["photos"] == 1
+    assert (tmp_path / "describe" / "clip.json").exists()
+    assert (tmp_path / "describe" / "photo_01.json").exists()
+
+
+def test_photo_prompt_uses_photo_file(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True)
+    prompt = model.calls[0].prompt
+    assert "Photo facts:" in prompt
+    assert "photo_01.jpg" in prompt
+    assert "subject_position" in prompt
+
+
+def test_prompt_file_overrides_photo_prompt(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    custom = tmp_path / "custom.md"
+    custom.write_text("CUSTOM PHOTO PROMPT", encoding="utf-8")
+    model = MockVisionModel()
+    describe.run(
+        tmp_path,
+        model=model,
+        model_id="mock/vision",
+        config=CONFIG,
+        photos_only=True,
+        prompt_path=custom,
+    )
+    assert model.calls[0].prompt.startswith("CUSTOM PHOTO PROMPT")
