@@ -1,7 +1,7 @@
 # D2 — router + LLM director + render, recap from a brief
 
-Date: 2026-10-13, branch `d2-director`. **Checkpoint report at ~80%** — two
-tasks (audio clean-up, beats) are still open; see *Mocked / not verified*.
+Date: 2026-10-14, branch `d2-director`. **Checkpoint report** — all eleven D2
+tasks are delivered; the ~80% checkpoint was notified on 2026-10-13.
 
 Delivered: the five D1b recap-feedback tasks, then the D2 proper — the router,
 the LLM director loop (screenwriter / editor / reviewer), the final render from
@@ -80,14 +80,30 @@ buckets, but both land on the same length.
 - **`edit_to_fragments.py`** — `edit.json` → `fragments.yaml` with
   frame-inclusive out timecodes; `kdenlive_from_fragments.py` opens it
   (15 fragments, 15 AV groups, melt validation OK).
+- **`audio_clean.py`** — measures a clip's ambient sound (per-2s-window RMS,
+  wind band ratio, stationary noise floor, one-word verdict) and cleans it with
+  a wind high-pass, `arnndn`/`afftdn` and `loudnorm`, reporting before and
+  after. On 0080's ambient: `windy+noisy` → `noisy`, wind ratio 0.84 → 0.23.
+- **`beats.py`** — pure-numpy onset detection and autocorrelation tempo on a
+  music file (no new dependency), downbeats at 4/4, an energy curve and a
+  `cut_grid` whose slot lengths land on whole beats. 120 BPM fixture detected
+  as 120.03 BPM with the grid within 15 ms of the beat lines.
 
 ## Mocked / not verified
 
-- **D2-08 wind/noise detection and `audio_clean` (ffmpeg arnndn + loudnorm)** —
-  **not delivered in this checkpoint**. The recap's ambient audio is the raw
-  mix (mean −10.1 dB, peak −0.4 dB); loudnorm alone would already help.
-- **D2-09 beat detection and beat-aligned cuts** — **not delivered**, and the
-  S1 brief has no music file so the deliverable does not exercise it.
+- **`audio_clean` applied to the render's ambient mix** — the tool works
+  standalone (on the recap's own audio: `windy+noisy` → `noisy`, wind ratio
+  0.67 → 0.25, RMS −11.2 → −19.0 dBFS) but is not yet wired into `render.py`,
+  so `recap_d2_720p.mp4` still carries the raw mix (mean −10.1 dB, peak
+  −0.4 dB).
+- **Beat-aligned cuts in the director** — `beats.py` detects tempo, beats,
+  downbeats and energy and writes the cut grid, but `director.py` /
+  `llm_director.py` do not consume it yet. The S1 brief has no music file, so
+  the deliverable does not exercise it either.
+- **`arnndn` (RNNoise)** — no `.rnnn` model on this machine, so the real
+  `arnndn` pass is unexercised; the tool falls back to `afftdn` with a warning
+  and refuses `--denoiser arnndn` cleanly when no model is given. RNNoise is
+  mono — multi-channel `arnndn` behaviour is untested.
 - **The LLM reviewer does not approve** (`approved: false` after 3 rounds).
   Its objections are concrete and mostly about the `keep_whole` rule (below);
   the kept draft is the one the code validator cleared.
