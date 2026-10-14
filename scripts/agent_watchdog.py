@@ -22,6 +22,7 @@ The API key is read from OPENROUTER_API_KEY or from --key-file
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -37,6 +38,7 @@ DEFAULT_KEY_FILE = "~/.config/opencode/secrets/openrouter.key"
 DEFAULT_STATE_FILE = "~/.cache/yt-pipeline/watchdog-state.json"
 DEFAULT_EXTRA_WATCH = "~/.local/share/opencode"
 SKIPPED_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
+IS_WINDOWS = sys.platform.startswith("win")
 
 
 def read_api_key(key_file):
@@ -58,11 +60,56 @@ def fetch_daily_usage(api_key, timeout=15):
 
 
 def agent_running():
+    """Return True when a process named opencode (or opencode.exe on Windows) is running."""
+    names = {"opencode", "opencode.exe"} if IS_WINDOWS else {"opencode"}
     try:
-        result = subprocess.run(["pgrep", "-x", "opencode"], capture_output=True, check=False)
-    except FileNotFoundError:
+        import psutil
+    except ImportError:
+        return _agent_running_fallback()
+    try:
+        for process in psutil.process_iter(["name"]):
+            try:
+                name = process.info.get("name")
+            except psutil.Error:
+                continue
+            if name and name.lower() in names:
+                return True
+    except psutil.Error:
+        return False
+    return False
+
+
+def _agent_running_fallback():
+    if IS_WINDOWS:
+        return _tasklist_finds_agent()
+    return _pgrep_finds_agent()
+
+
+def _pgrep_finds_agent():
+    executable = shutil.which("pgrep")
+    if not executable:
+        return False
+    try:
+        result = subprocess.run([executable, "-x", "opencode"], capture_output=True, check=False)
+    except OSError:
         return False
     return result.returncode == 0
+
+
+def _tasklist_finds_agent():
+    executable = shutil.which("tasklist")
+    if not executable:
+        return False
+    try:
+        result = subprocess.run(
+            [executable, "/FI", "IMAGENAME eq opencode.exe"], capture_output=True, check=False
+        )
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+    output = result.stdout.decode("utf-8", errors="ignore").lower()
+    return "opencode.exe" in output
 
 
 def newest_mtime(paths):

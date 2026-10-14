@@ -4,6 +4,7 @@ pysubs2
 pyyaml
 jsonschema
 filelock
+psutil
 torch
 torchaudio
 whisperx
