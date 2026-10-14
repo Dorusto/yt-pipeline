@@ -42,7 +42,7 @@ from PIL import Image
 from common.config import ConfigError, load_config
 from common.llm import BudgetExceeded, LLMError
 from common.peak import valid_vision_peak
-from common.photos import jpeg_bytes, open_photo
+from common.photos import PHOTO_FLAWS, PhotoError, jpeg_bytes, open_photo, sharpness
 from common.schema import SchemaError, validate, validate_or_raise
 from common.vision import VisionFrame, VisionRequest, make_vision_model
 
@@ -463,7 +463,16 @@ def normalize_photo_answer(data):
     """Coerce a parsed photo answer into the fields the schema accepts."""
     normalized = normalize_answer(data)
     normalized["subject_position"] = normalize_subject_position(data.get("subject_position"))
+    normalized["photo_flaws"] = normalize_photo_flaws(data.get("photo_flaws"))
     return normalized
+
+
+def normalize_photo_flaws(value):
+    """Keep only the known flaw words, once each, in the fixed order."""
+    if not isinstance(value, list):
+        return []
+    found = {str(item).strip().lower().replace(" ", "_").replace("-", "_") for item in value}
+    return [flaw for flaw in PHOTO_FLAWS if flaw in found]
 
 
 def normalize_subject_position(value):
@@ -686,6 +695,15 @@ def describe_clip(
     }
 
 
+def photo_sharpness(path, warnings, name):
+    """The photo's Laplacian sharpness rounded to one decimal, or None when unreadable."""
+    try:
+        return round(sharpness(path), 1)
+    except (PhotoError, OSError, ValueError) as exc:
+        warnings.append(f"{name} p1: sharpness not measured: {exc}")
+        return None
+
+
 def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
     """Describe one still photo with a single frame and return its describe record."""
     started = time.monotonic()
@@ -721,6 +739,7 @@ def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
             segment = _skipped_photo_segment("unparseable model output", cost_usd)
         else:
             segment = _photo_segment(normalize_photo_answer(answer), cost_usd)
+            segment["sharpness"] = photo_sharpness(photo["path"], warnings, photo["file"])
     return {
         "media_type": "photo",
         "file": photo["file"],
@@ -834,7 +853,7 @@ def run(
     photos_described = 0
     for photo in photos:
         output_path = output_dir / f"{Path(photo['file']).stem}.json"
-        if not force and _output_is_valid(output_path):
+        if not force and _output_is_valid(output_path) and _photo_has_flaws(output_path):
             continue
         if state.stop_reason is not None:
             break
@@ -1071,6 +1090,7 @@ def _photo_segment(normalized, cost_usd):
         "skip_reason": None,
         "cost_usd": cost_usd,
         "subject_position": normalized["subject_position"],
+        "photo_flaws": normalized["photo_flaws"],
     }
 
 
@@ -1206,6 +1226,16 @@ def _read_prompt(path):
     return path.read_text(encoding="utf-8")
 
 
+def _photo_has_flaws(path):
+    """False for a photo described before ``photo_flaws`` existed, so it is described again."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    segments = [segment for segment in data.get("segments") or [] if segment.get("status") == "described"]
+    return all("photo_flaws" in segment for segment in segments)
+
+
 def _load_photos(workspace_path):
     ingest_path = workspace_path / "ingest.json"
     if not ingest_path.exists():
@@ -1217,7 +1247,15 @@ def _load_photos(workspace_path):
     photos = data.get("photos") if isinstance(data, dict) else None
     if not isinstance(photos, list):
         return []
-    return [photo for photo in photos if isinstance(photo, dict) and photo.get("path")]
+    proxy_dir = workspace_path / "proxy"
+    usable = []
+    for photo in photos:
+        if not isinstance(photo, dict) or not photo.get("path"):
+            continue
+        if not Path(photo["path"]).is_file() and (proxy_dir / str(photo.get("file") or "")).is_file():
+            photo = {**photo, "path": str(proxy_dir / photo["file"])}
+        usable.append(photo)
+    return usable
 
 
 def _clip_path(record, quality_file):

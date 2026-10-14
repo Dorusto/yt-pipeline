@@ -19,7 +19,8 @@ no extra keys:
   "semantic_motion": "none",
   "interest": 0,
   "hero": false,
-  "subject_position": {"x": 0.5, "y": 0.5}
+  "subject_position": {"x": 0.5, "y": 0.5},
+  "photo_flaws": []
 }
 
 `interest` is an integer from 0 to 100. `hero` is a boolean. `semantic_motion`
@@ -35,6 +36,18 @@ is always `"none"` for a still photo.
   return `{"x": 0.5, "y": 0.5}`.
 - The editor uses this point as the end of a slow push or pan, so be as precise
   as the frame allows.
+
+## photo_flaws
+
+- `photo_flaws` lists what spoils this photo, from exactly these words:
+  `eyes_closed` (a person who matters has closed or half-closed eyes),
+  `blur` (out of focus), `motion_blur` (smeared by movement), `tilted`
+  (horizon clearly crooked), `overexposed`, `underexposed`, `obstructed`
+  (a finger, strap or object covers part of the frame), `cut_off` (the main
+  subject is cut by the frame edge).
+- Return `[]` for a clean photo. Be strict about `eyes_closed`: look at every
+  face that is large enough to see the eyes. Burst photos are compared by this
+  field, so the editor keeps the one without flaws.
 
 ## summary and tags
 

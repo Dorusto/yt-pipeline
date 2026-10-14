@@ -220,3 +220,35 @@ def ken_burns_for(subject_position, tags):
         return {"move": "zoom_in", "amount": KEN_BURNS_AMOUNT, "focus_x": x, "focus_y": y}
     move = "pan_left" if x < 0.5 else "pan_right"
     return {"move": move, "amount": KEN_BURNS_AMOUNT, "focus_x": x, "focus_y": y}
+
+
+PHOTO_FLAWS = (
+    "eyes_closed",
+    "blur",
+    "motion_blur",
+    "tilted",
+    "overexposed",
+    "underexposed",
+    "obstructed",
+    "cut_off",
+)
+BLOCKING_PHOTO_FLAWS = {"eyes_closed", "blur", "motion_blur", "obstructed"}
+SHARPNESS_WIDTH = 1000
+
+
+def sharpness(path):
+    """Variance of the Laplacian on a 1000 px wide grey copy: higher is sharper.
+
+    Only comparable between photos of similar content (a burst); a clear sky
+    scores low without being blurred.
+    """
+    import cv2
+    import numpy as np
+
+    image = open_photo(path)
+    if image.width > SHARPNESS_WIDTH:
+        image = image.resize(
+            (SHARPNESS_WIDTH, max(1, round(image.height * SHARPNESS_WIDTH / image.width)))
+        )
+    grey = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2GRAY)
+    return float(cv2.Laplacian(grey, cv2.CV_64F).var())

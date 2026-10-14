@@ -1327,3 +1327,52 @@ def test_beat_peaks_are_validated_against_their_beat():
 def test_the_segment_prompt_asks_for_peak_s():
     text = (ROOT / "prompts" / "describe_segment.md").read_text(encoding="utf-8")
     assert '"peak_s"' in text and "interesting moment" in text
+
+
+class FlawModel(PhotoPositionModel):
+    def __init__(self, flaws):
+        super().__init__({"x": 0.5, "y": 0.5})
+        self.flaws = flaws
+
+    def describe(self, request):
+        response = super().describe(request)
+        data = json.loads(response.text)
+        data["photo_flaws"] = self.flaws
+        return VisionResponse(text=json.dumps(data), model="photo", prompt_tokens=0, completion_tokens=0, cost_usd=0.0)
+
+
+def test_photo_flaws_and_sharpness_are_recorded(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    describe.run(tmp_path, model=FlawModel(["Eyes closed", "made up", "blur"]), model_id="photo",
+                 config=CONFIG, photos_only=True)
+    data = read_describe(tmp_path, "photo_01")
+    seg = data["segments"][0]
+    assert seg["photo_flaws"] == ["eyes_closed", "blur"]
+    assert isinstance(seg["sharpness"], float)
+    assert validate(data, "describe") == []
+
+
+def test_photo_described_before_flaws_existed_is_described_again(tmp_path):
+    photo = write_photo(tmp_path / "photo_01.jpg")
+    write_ingest(tmp_path, [photo_record(photo)])
+    model = MockVisionModel()
+    describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True)
+    path = tmp_path / "describe" / "photo_01.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["segments"][0].pop("photo_flaws")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    summary, _ = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True)
+    assert summary["photos"] == 1
+
+
+def test_photo_with_a_stale_path_is_read_from_the_workspace_proxy(tmp_path):
+    proxy = tmp_path / "proxy"
+    proxy.mkdir()
+    photo = write_photo(proxy / "photo_01.jpg")
+    record = photo_record(photo)
+    record["path"] = "/gone/proxy/photo_01.jpg"
+    write_ingest(tmp_path, [record])
+    summary, code = describe.run(tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG, photos_only=True)
+    assert code == 0
+    assert summary["photos"] == 1
