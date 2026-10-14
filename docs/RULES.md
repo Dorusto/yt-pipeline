@@ -49,13 +49,14 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `config.yaml` holds model ids per role and the per-run budget; `llm_backend: mock` for offline runs; no secrets in the file. — 2026-10-12
 - Music: YuE2 first (editable ABC score → cuts land on beats by construction), ACE-Step 1.5 fallback; excluded for licence: MusicGen, AudioGen, MMAudio, HunyuanVideo-Foley. — 2026-10-13
 - No ComfyUI: music, SFX and clean-up are plain Python tools, one model loaded at a time. — 2026-10-13
-- No torch unless needed; the encoder is `h264_nvenc` only when a GPU is present, else `libx264` with a runtime retry. — 2026-10-12
+- No torch unless needed; the encoder is `h264_nvenc` with an NVIDIA GPU, `h264_videotoolbox` on macOS, else `libx264`, with a runtime retry to `libx264`. — 2026-10-12 / 2026-10-14
 
 ## Safety rules
 
 - Originals are read-only; outputs go to the project workspace; tools refuse to write inside the originals folder. — 2026-10-13
 - Private by default: the web editor and its services are tailnet-only; footage leaves the homelab only as frames to the configured vision model. — 2026-10-13
 - Never commit footage, frames, transcripts, subtitles, model weights or keys: `scripts/check_public.py` runs as pre-commit hook and in CI; `tests/fixtures/` and `examples/` hold synthetic data only. — 2026-10-14
+- CI runs the suite on ubuntu, macos and windows (`fail-fast: false`); `needs_melt` / `needs_footage` tests run on the ubuntu job only, deselected with `-m` on the others. — 2026-10-14
 - Feedback is append-only JSON lines per workspace (`feedback.jsonl`, ~200 bytes/action), never footage or frames; the per-user profile is rebuilt from those files. — 2026-10-14
 - Every `--json` summary reports wall time and LLM cost (USD). — 2026-10-13
 - Watchdog every 30 min: $3/day spend, 2 h stall, no-commit alerts; the architect notifies on the second failed audit of a task or two empty coder replies. — 2026-10-13
@@ -69,6 +70,12 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `scripts/recap.py` is the single entry point for agents and humans; it only chains the station CLIs as subprocesses. — 2026-10-14
 - Recap skip rule: per-station output/input mtimes plus the brief text recorded in `route.json`/`edit.json`; a new brief redoes only router → llm_director → render, `--force` re-runs everything. — 2026-10-14
 - Proxies keep the source filename and live in `workspace/proxy/`; `proxy.py` refuses an `--out` that would write onto an original. — 2026-10-14
+- Preview services are tailnet-only: `serve.py` binds one address, never the wildcard, and serves only `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html` per project (allowlist routes, Range supported). — 2026-10-14
+- `recap.py --notify` posts the preview link (`<preview-base>/<workspace name>/recap_720p.mp4`) on success only; a failed run never notifies and a notify error never fails the recap. — 2026-10-14
+- Proxies keep the source's global metadata (`-map_metadata 0`) so `creation_time` survives for clips whose names carry no date. — 2026-10-14
+- Inbox grouping: a `YYYY-MM-DD` folder in the inbox wins over the filename date, then mtime; one workspace per day under `--projects`; a day whose clips share one folder is passed to `recap.py` directly, otherwise a rebuilt symlink farm (the inbox is read-only). — 2026-10-14
+- `inbox.py` waits for the inbox to be quiet (`--quiet-minutes`, default 5) and re-invokes `recap.py` on a new clip, a changed brief or `--force`; the station skip rule stays the only caching. — 2026-10-14
+- Phone sync is Syncthing: phone send-only camera folder → LXC receive-only `~/media/inbox`; setup steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14
 
 ## Photos and music (D2-6)
 
@@ -77,5 +84,5 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Burst rule: photo shots linked by similarity and captured within 30 s of each other form a burst; only the best stays eligible (`suppressed_by` the winner). — 2026-10-14
 - Photo slots (`kind: "photo"`) last 2–4 s and carry a Ken Burns move chosen deterministically from `subject_position`: centre box → `zoom_in` on the subject; else `pan_left`/`pan_right` toward the subject; `zoom_out` only for close-ups. — 2026-10-14
 - Ken Burns renders with ffmpeg `zoompan`; portrait photos sit on a blurred background (cover-scaled copy + boxblur), never black bars. — 2026-10-14
-- Music: `render.py`/`recap.py` take `--music FILE`; the track mixes under the cleaned ambient bus with sidechain ducking and a fade-out at the end; no music generation before D6. — 2026-10-14
+- Music: `render.py`/`recap.py` take `--music FILE`; the track is the bed, normalised to the loudness target, and the cleaned ambient bus stays audible `--ambient-under-music-db` (default 12) below it — never removed; a loud ambient event dips the music gently (sidechain, ratio 3); fade-out at the end; no music generation before D6. — 2026-10-14
 - With a music track, the directors snap every timeline cut to the nearest beat (max shift half a beat period — the nearest beat is always within reach); a cut that starts a new structure beat snaps to the nearest downbeat; slots join with hard cuts when a beat grid is present (crossfades stay for ambient-only). — 2026-10-14

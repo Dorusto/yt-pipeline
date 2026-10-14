@@ -13,7 +13,6 @@ one process. An OpenRouter response without ``usage.cost`` raises instead of
 being counted as free.
 """
 
-import fcntl
 import json
 import os
 from collections.abc import Mapping
@@ -24,6 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import openai
+from filelock import FileLock
 
 from common.config import load_config, model_for
 
@@ -101,27 +101,25 @@ def write_ledger(path, entries):
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(payload + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        tmp.replace(path)
     except OSError as exc:
         raise LLMError(f"could not write spend ledger {path}: {exc}") from exc
 
 
 @contextmanager
 def ledger_lock(path):
-    """Hold an exclusive ``fcntl.flock`` on a sidecar lock file for one ledger."""
+    """Hold an exclusive cross-process lock on a sidecar lock file for one ledger."""
     path = Path(path)
     lock = path.with_name(path.name + ".lock")
     try:
         lock.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(lock, "a", encoding="utf-8")
     except OSError as exc:
         raise LLMError(f"could not open spend ledger lock {lock}: {exc}") from exc
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
-    finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
+        with FileLock(str(lock)):
+            yield
+    except OSError as exc:
+        raise LLMError(f"could not lock spend ledger {lock}: {exc}") from exc
 
 
 def _value(source, name, default=None):

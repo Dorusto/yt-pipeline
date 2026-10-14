@@ -148,7 +148,7 @@ def test_default_source_dir_and_kdenlive_out(tmp_path, capsys):
     rc, _, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
     assert rc == 0
     config = load_fragments(out)
-    assert config["source_dir"] == "/src/raw"
+    assert Path(config["source_dir"]) == Path("/src/raw")
     assert config["output"] == str(out.with_suffix(".kdenlive"))
 
 
@@ -213,6 +213,7 @@ def test_json_summary_keys_and_no_llm_cost(tmp_path, capsys):
     assert summary["llm_cost_usd"] == 0.0
 
 
+@pytest.mark.needs_melt
 @pytest.mark.skipif(shutil.which("melt") is None, reason="melt (Kdenlive's MLT CLI) is not installed")
 def test_end_to_end_with_kdenlive_consumer(tmp_path, capsys):
     raw = tmp_path / "raw"

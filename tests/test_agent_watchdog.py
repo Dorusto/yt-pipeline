@@ -1,7 +1,97 @@
 import json
 import os
+import sys
 
 import agent_watchdog as watchdog
+
+
+class _FakeProcess:
+    def __init__(self, name):
+        self.info = {"name": name}
+
+
+class _FakePsutil:
+    class Error(Exception):
+        pass
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def process_iter(self, attrs=None):
+        for name in self._names:
+            yield _FakeProcess(name)
+
+
+class _FakeCompleted:
+    def __init__(self, returncode=0, stdout=b""):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+def test_agent_running_true_with_psutil(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(["bash", "opencode", "python"]))
+    assert watchdog.agent_running() is True
+
+
+def test_agent_running_accepts_opencode_exe_on_windows(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", True)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(["opencode.exe"]))
+    assert watchdog.agent_running() is True
+
+
+def test_agent_running_false_without_match(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(["bash", "python"]))
+    assert watchdog.agent_running() is False
+
+
+def test_agent_running_false_without_psutil_or_fallback(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        watchdog.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("run"))
+    )
+    assert watchdog.agent_running() is False
+
+
+def test_agent_running_uses_pgrep_fallback(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: "/usr/bin/pgrep")
+    monkeypatch.setattr(watchdog.subprocess, "run", lambda *a, **k: _FakeCompleted(0))
+    assert watchdog.agent_running() is True
+
+
+def test_agent_running_pgrep_fallback_no_match(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: "/usr/bin/pgrep")
+    monkeypatch.setattr(watchdog.subprocess, "run", lambda *a, **k: _FakeCompleted(1))
+    assert watchdog.agent_running() is False
+
+
+def test_agent_running_uses_tasklist_fallback_on_windows(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", True)
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: "C:/Windows/System32/tasklist.exe")
+    monkeypatch.setattr(
+        watchdog.subprocess, "run", lambda *a, **k: _FakeCompleted(0, b"opencode.exe 1234 Console")
+    )
+    assert watchdog.agent_running() is True
+
+
+def test_agent_running_tasklist_fallback_no_match(monkeypatch):
+    monkeypatch.setattr(watchdog, "IS_WINDOWS", True)
+    monkeypatch.setitem(sys.modules, "psutil", None)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: "C:/Windows/System32/tasklist.exe")
+    monkeypatch.setattr(
+        watchdog.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(0, b"INFO: No tasks are running which match the criteria."),
+    )
+    assert watchdog.agent_running() is False
 
 
 def test_spend_alert_once_per_day():
@@ -38,6 +128,20 @@ def test_newest_mtime_skips_venv(tmp_path):
     ignored.write_text("y")
     os.utime(ignored, (9000, 9000))
     assert watchdog.newest_mtime([tmp_path]) == 1000
+
+
+def test_newest_mtime_accepts_string_and_prunes_nested_skipped_dirs(tmp_path):
+    nested = tmp_path / "sub" / "deep"
+    nested.mkdir(parents=True)
+    kept = nested / "a.txt"
+    kept.write_text("x")
+    os.utime(kept, (2000, 2000))
+    skipped = tmp_path / "sub" / "node_modules"
+    skipped.mkdir()
+    ignored = skipped / "b.txt"
+    ignored.write_text("y")
+    os.utime(ignored, (9000, 9000))
+    assert watchdog.newest_mtime([str(tmp_path)]) == 2000
 
 
 def test_read_api_key_prefers_env(tmp_path, monkeypatch):

@@ -9,8 +9,9 @@ Usage:
 proxy keeps the source file name and is written to ``--out`` (default:
 ``<source parent>/proxy``). Existing proxies are skipped unless ``--force`` is
 given. Originals are read-only; the tool refuses to write inside the source
-folder. The encoder is chosen at runtime (``h264_nvenc`` only with a GPU, else
-``libx264``) with a retry to ``libx264`` when the chosen encoder fails.
+folder. The encoder is chosen at runtime (``h264_nvenc`` with an NVIDIA GPU,
+``h264_videotoolbox`` on macOS, else ``libx264``) with a retry to ``libx264``
+when the chosen encoder fails.
 """
 
 import argparse
@@ -22,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder
+from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder, video_encode_args
 from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
@@ -149,12 +150,6 @@ def probe_frame_rate(path):
     return DEFAULT_FRAME_RATE
 
 
-def encode_args(encoder, crf):
-    if encoder == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf)]
-
-
 def build_command(source, tmp_path, height, crf, encoder, frame_rate):
     command = [
         ffmpeg_path(),
@@ -174,7 +169,7 @@ def build_command(source, tmp_path, height, crf, encoder, frame_rate):
         "-fps_mode",
         "cfr",
     ]
-    command += encode_args(encoder, crf)
+    command += video_encode_args(encoder, crf=crf, preset="veryfast")
     command += [
         "-pix_fmt",
         "yuv420p",

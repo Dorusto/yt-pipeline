@@ -19,7 +19,11 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 # re-running skips finished stations; a new brief only redoes the edit
 ```
 
+Install per OS — `ffmpeg` + `ffprobe` first: `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS), `winget install ffmpeg` (Windows, then reopen the shell). Python 3.11+ and `uv` everywhere (`pip install uv`). On Windows run the commands from PowerShell with `.venv\Scripts\python.exe` and `$env:OPENROUTER_API_KEY=...`. The video encoder is picked per machine: `h264_nvenc` with an NVIDIA GPU, `h264_videotoolbox` on macOS, else `libx264` (everywhere, CPU).
+
 For the details see [docs/guides/user-guide.md](docs/guides/user-guide.md); agents should load the `yt-recap` skill.
+
+Phone-only flow (Syncthing → inbox.py → serve.py → ntfy): [docs/guides/phone-flow.md](docs/guides/phone-flow.md).
 
 ---
 
@@ -68,6 +72,8 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
 | `notify.py` | message | POST to the project's ntfy topic |
+| `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
+| `serve.py` | server | read-only preview of the workspaces on the tailnet |
 
 ---
 
@@ -87,7 +93,7 @@ Shared building blocks for the AI Director track (see `docs/VISION.md`). Indepen
 .venv/bin/python scripts/notify.py "hello" --dry-run
 ```
 
-`shorts_generator.py` and the two rough-cut generators no longer assume a GPU: they pick `h264_nvenc` when an NVIDIA GPU is present and fall back to `libx264` otherwise, and validate their `fragments.yaml` input against the schema before touching any media.
+`shorts_generator.py` and the two rough-cut generators no longer assume a GPU: they pick `h264_nvenc` with an NVIDIA GPU, `h264_videotoolbox` on macOS, and fall back to `libx264` otherwise, and validate their `fragments.yaml` input against the schema before touching any media.
 
 ---
 
@@ -206,7 +212,7 @@ uv venv
 uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
 ```
 
-Requires: `ffmpeg` (nvenc optional — `libx264` is used when no NVIDIA GPU is present), `openai-whisper` via pipx, `OPENROUTER_API_KEY` in environment (DeepSeek-direct retired 2026-09-02, no more top-ups — see `docs/DECISIONS.md`). Run the test suite with `.venv/bin/python -m pytest -q` (deps: `requirements-dev.txt`).
+Requires: `ffmpeg` (the encoder is automatic — `h264_nvenc` with an NVIDIA GPU, `h264_videotoolbox` on macOS, else `libx264`), `openai-whisper` via pipx, `OPENROUTER_API_KEY` in environment (DeepSeek-direct retired 2026-09-02, no more top-ups — see `docs/DECISIONS.md`). Run the test suite with `.venv/bin/python -m pytest -q` (deps: `requirements-dev.txt`).
 
 ---
 
@@ -241,7 +247,7 @@ Copy from `shorts_config_example.yaml`. File is git-ignored.
 | Forced alignment | `whisperx` (wav2vec2 Romanian) |
 | Face detection | OpenCV Haar cascades |
 | ASS subtitles | `pysubs2` |
-| Video render | `ffmpeg h264_nvenc` (GPU) or `libx264` (CPU fallback, automatic) |
+| Video render | `ffmpeg h264_nvenc` (NVIDIA GPU) / `h264_videotoolbox` (macOS) / `libx264` (CPU fallback, automatic) |
 | AI (translation; metadata gen deprecated) | DeepSeek via OpenRouter |
 | Notifications | ntfy (`scripts/notify.py`) |
 | Schemas / tests | JSON Schema (`jsonschema`) / `pytest` |
