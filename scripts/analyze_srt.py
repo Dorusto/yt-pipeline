@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import unicodedata
+from pathlib import Path
 
 import yaml
 from openai import OpenAI
@@ -117,7 +118,7 @@ FORMAT RĂSPUNS:
 
 
 def make_output_dir(video_file):
-    return os.path.dirname(os.path.abspath(video_file))
+    return Path(video_file).expanduser().resolve().parent
 
 
 def parse_time_secs(t):
@@ -180,7 +181,8 @@ def generate_shorts_metadata(srt_file, config_path, shorts_dir, youtube_url):
     segments = config.get("segments", [])
     if youtube_url == "[LINK VIDEO PRINCIPAL]" and config.get("youtube_url"):
         youtube_url = config["youtube_url"]
-    os.makedirs(shorts_dir, exist_ok=True)
+    shorts_dir = Path(shorts_dir)
+    shorts_dir.mkdir(parents=True, exist_ok=True)
     for i, seg in enumerate(segments, 1):
         name = seg["name"]
         start = seg["start"]
@@ -205,10 +207,10 @@ Clip complet: {youtube_url}
 === INTERVAL DIN VIDEO ORIGINAL ===
 {start} → {end}
 """
-        out = os.path.join(shorts_dir, f"{name}_metadata.txt")
+        out = shorts_dir / f"{name}_metadata.txt"
         with open(out, "w", encoding="utf-8") as f:
             f.write(content)
-        print(f"     ✓ {os.path.basename(out)}")
+        print(f"     ✓ {out.name}")
         print(f"     Titlu: {meta.get('title', '—')}")
 
 
@@ -228,7 +230,7 @@ def save_video_metadata(result, chapters, out_dir, basename):
 === TAGS ===
 {tags_text}
 """
-    out = os.path.join(out_dir, f"{basename}_video_metadata.txt")
+    out = Path(out_dir) / f"{basename}_video_metadata.txt"
     with open(out, "w", encoding="utf-8") as f:
         f.write(content)
     return out
@@ -252,14 +254,15 @@ Clip complet: {youtube_url}
 === INTERVAL DIN VIDEO ORIGINAL ===
 {short['start']} → {short['end']}
 """
-    meta_path = output_path.replace(".mp4", "_metadata.txt")
+    output_path = Path(output_path)
+    meta_path = output_path.with_name(output_path.stem + "_metadata.txt")
     with open(meta_path, "w", encoding="utf-8") as f:
         f.write(content)
 
 
 def cut_shorts(selected, video_file, youtube_url, out_dir):
-    shorts_dir = os.path.join(out_dir, "shorts")
-    os.makedirs(shorts_dir, exist_ok=True)
+    shorts_dir = Path(out_dir) / "shorts"
+    shorts_dir.mkdir(parents=True, exist_ok=True)
 
     for i, s in enumerate(selected, 1):
         title_ascii = ''.join(
@@ -267,7 +270,7 @@ def cut_shorts(selected, video_file, youtube_url, out_dir):
             if unicodedata.category(c) != 'Mn'
         )
         safe_title = re.sub(r"[^\w\-]", "_", title_ascii)[:40]
-        output = os.path.join(shorts_dir, f"short_{i:02d}_{safe_title}.mp4")
+        output = shorts_dir / f"short_{i:02d}_{safe_title}.mp4"
         cmd = (
             f'ffmpeg -y -i "{video_file}" -ss {s["start"]} -to {s["end"]} '
             f'-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=1080:1080" '
@@ -307,11 +310,11 @@ def main():
         print("Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] [--shorts-config config.yaml]")
         sys.exit(1)
 
-    srt_file = os.path.abspath(os.path.expanduser(sys.argv[1]))
-    video_file = os.path.abspath(os.path.expanduser(sys.argv[2]))
+    srt_file = Path(sys.argv[1]).expanduser().resolve()
+    video_file = Path(sys.argv[2]).expanduser().resolve()
 
     for label, path in [("SRT", srt_file), ("Video", video_file)]:
-        if not os.path.exists(path):
+        if not path.exists():
             print(f"[eroare] {label} negăsit: {path}")
             print("Folosește căi absolute (ex: ~/Videos/Lenea/Export/subtitles/Lenea_RO.srt)")
             sys.exit(1)
@@ -322,7 +325,7 @@ def main():
     i = 0
     while i < len(args):
         if args[i] == "--shorts-config" and i + 1 < len(args):
-            shorts_config_path = os.path.abspath(os.path.expanduser(args[i + 1]))
+            shorts_config_path = Path(args[i + 1]).expanduser().resolve()
             i += 2
         elif not args[i].startswith("--"):
             youtube_url = args[i]
@@ -331,7 +334,7 @@ def main():
             i += 1
 
     out_dir = make_output_dir(video_file)
-    shorts_dir = os.path.join(out_dir, "shorts")
+    shorts_dir = out_dir / "shorts"
 
     # --- Metadata per short din config ---
     if shorts_config_path:
@@ -340,7 +343,7 @@ def main():
         print(f"\nMetadata shorturi salvate în: {shorts_dir}/")
         return
 
-    basename = os.path.splitext(os.path.basename(srt_file))[0]
+    basename = srt_file.stem
 
     print(f"Parsez {srt_file}...")
     segments = parse_srt(srt_file)
@@ -384,12 +387,12 @@ def main():
         lines.append(f"    Motiv  : {s.get('reason', '—')}")
         lines.append("")
 
-    candidates_file = os.path.join(out_dir, f"{basename}_shorts_candidates.txt")
+    candidates_file = out_dir / f"{basename}_shorts_candidates.txt"
     with open(candidates_file, "w", encoding="utf-8") as f:
         f.write(f"SHORTURI CANDIDATE — {basename}\n")
         f.write("=" * 50 + "\n\n")
         f.write("\n".join(lines))
-    print(f"\nCandidați salvați → {os.path.basename(candidates_file)}")
+    print(f"\nCandidați salvați → {candidates_file.name}")
 
     # --- Confirmare tăiere ---
     try:

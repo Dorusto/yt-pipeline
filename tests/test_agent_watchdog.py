@@ -130,6 +130,20 @@ def test_newest_mtime_skips_venv(tmp_path):
     assert watchdog.newest_mtime([tmp_path]) == 1000
 
 
+def test_newest_mtime_accepts_string_and_prunes_nested_skipped_dirs(tmp_path):
+    nested = tmp_path / "sub" / "deep"
+    nested.mkdir(parents=True)
+    kept = nested / "a.txt"
+    kept.write_text("x")
+    os.utime(kept, (2000, 2000))
+    skipped = tmp_path / "sub" / "node_modules"
+    skipped.mkdir()
+    ignored = skipped / "b.txt"
+    ignored.write_text("y")
+    os.utime(ignored, (9000, 9000))
+    assert watchdog.newest_mtime([str(tmp_path)]) == 2000
+
+
 def test_read_api_key_prefers_env(tmp_path, monkeypatch):
     key_file = tmp_path / "k"
     key_file.write_text("from-file\n")

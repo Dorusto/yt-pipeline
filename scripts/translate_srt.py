@@ -16,6 +16,7 @@ Necesita: pip install openai
 import os
 import re
 import sys
+from pathlib import Path
 
 from openai import OpenAI
 
@@ -73,15 +74,15 @@ def main():
         print("Utilizare: python3 translate_srt.py input.srt [video.mp4 | output_EN.srt]")
         sys.exit(1)
 
-    input_file = sys.argv[1]
+    input_file = Path(sys.argv[1])
     if len(sys.argv) > 2 and sys.argv[2].lower().endswith(".mp4"):
-        video_dir = os.path.dirname(os.path.abspath(sys.argv[2]))
-        basename_en = os.path.basename(input_file).replace(".srt", "_EN.srt")
-        output_file = os.path.join(video_dir, basename_en)
+        video_dir = Path(sys.argv[2]).expanduser().resolve().parent
+        basename_en = input_file.name.replace(".srt", "_EN.srt")
+        output_file = video_dir / basename_en
     elif len(sys.argv) > 2:
-        output_file = sys.argv[2]
+        output_file = Path(sys.argv[2])
     else:
-        output_file = input_file.replace(".srt", "_EN.srt")
+        output_file = input_file.with_name(input_file.name.replace(".srt", "_EN.srt"))
 
     segments = parse_srt(input_file)
     print(f"Segmente găsite: {len(segments)}")

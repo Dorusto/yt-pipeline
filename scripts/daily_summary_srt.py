@@ -19,6 +19,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 from openai import OpenAI
 
@@ -44,17 +45,18 @@ def parse_srt(path):
 
 
 def group_by_day(srt_dir):
-    files = [f for f in os.listdir(srt_dir) if f.lower().endswith(".srt")]
+    srt_dir = Path(srt_dir)
+    files = [p for p in srt_dir.iterdir() if p.suffix.lower() == ".srt"]
     days = defaultdict(list)
     skipped = []
-    for f in sorted(files):
-        m = DATE_PATTERN.search(f)
+    for path in sorted(files):
+        m = DATE_PATTERN.search(path.name)
         if not m:
-            skipped.append(f)
+            skipped.append(path.name)
             continue
         date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
         timestamp = m.group(1) + m.group(2) + m.group(3) + m.group(4)
-        days[date].append((timestamp, os.path.join(srt_dir, f)))
+        days[date].append((timestamp, path))
     for date in days:
         days[date].sort(key=lambda x: x[0])
     return dict(sorted(days.items())), skipped
@@ -88,13 +90,13 @@ def main():
         print("Utilizare: python3 daily_summary_srt.py transcripts_raw/ [output.md]")
         sys.exit(1)
 
-    srt_dir = os.path.abspath(os.path.expanduser(sys.argv[1]))
-    if not os.path.isdir(srt_dir):
+    srt_dir = Path(sys.argv[1]).expanduser().resolve()
+    if not srt_dir.is_dir():
         print(f"[eroare] Folder negăsit: {srt_dir}")
         sys.exit(1)
 
-    output_path = os.path.abspath(os.path.expanduser(sys.argv[2])) if len(sys.argv) > 2 \
-        else os.path.join(os.path.dirname(srt_dir.rstrip("/")), "rezumat_pe_zile.md")
+    output_path = Path(sys.argv[2]).expanduser().resolve() if len(sys.argv) > 2 \
+        else srt_dir.resolve().parent / "rezumat_pe_zile.md"
 
     days, skipped = group_by_day(srt_dir)
     if skipped:

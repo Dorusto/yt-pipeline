@@ -118,11 +118,11 @@ def newest_mtime(paths):
         root = Path(root).expanduser()
         if not root.exists():
             continue
-        for current, dirs, files in os.walk(root):
+        for current, dirs, files in root.walk():
             dirs[:] = [d for d in dirs if d not in SKIPPED_DIRS]
             for name in files:
                 try:
-                    newest = max(newest, os.stat(os.path.join(current, name)).st_mtime)
+                    newest = max(newest, (current / name).stat().st_mtime)
                 except OSError:
                     continue
     return newest

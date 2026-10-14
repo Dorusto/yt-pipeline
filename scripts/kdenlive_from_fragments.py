@@ -28,12 +28,12 @@ fragments.yaml format:
 """
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import yaml
 
@@ -283,7 +283,7 @@ def build(config_path, quiet=False):
  </tractor>
 </mlt>
 '''
-    if os.path.exists(output):
+    if Path(output).exists():
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         backup = f"{output}.bak-{stamp}"
         shutil.copy2(output, backup)
