@@ -66,7 +66,9 @@ no extra keys.
   - a move and the hold it lands on are one phrase — never plan a move and then
     its own landing hold as two slots;
   - never plan two slots from the same take back to back unless their windows
-    are contiguous;
+    are contiguous, or both are camera moves at least 8 s apart in source time,
+    in time order (a long travelling take may give its approach and its exit
+    one after the other);
   - never plan two visually similar shots next to each other.
 - **Long takes are several moments.** When the menu splits one take into content
   beats (`beat_of` set: `approach`, `inside`, `exit`, `enter`, `leave`, ...),

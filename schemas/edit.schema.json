@@ -109,7 +109,11 @@
         },
         "peak_source": {
           "type": "string",
-          "enum": ["vision", "motion", "middle"],
+          "enum": [
+            "vision",
+            "motion",
+            "middle"
+          ],
           "description": "where peak_s came from"
         },
         "centred": {
@@ -635,6 +639,35 @@
         "speed_ramp": {
           "type": "boolean",
           "description": "true when the optional middle speed ramp was allowed for this edit (default off)"
+        },
+        "director": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "who made the edit: the LLM loop (approved or a kept draft) or the rule-based director as its fallback, with plain-word notes",
+          "required": [
+            "by"
+          ],
+          "properties": {
+            "by": {
+              "enum": [
+                "llm",
+                "rules"
+              ]
+            },
+            "approved": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20
+            }
+          }
         }
       }
     }

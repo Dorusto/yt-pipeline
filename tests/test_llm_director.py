@@ -1,4 +1,5 @@
 import json
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -509,7 +510,7 @@ def test_max_rounds_keeps_clean_draft(tmp_path):
     assert (workspace / "edit.json").exists()
 
 
-def test_max_rounds_with_violations_falls_back(tmp_path):
+def test_max_rounds_with_violations_keeps_the_repaired_draft(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(
         [
@@ -522,9 +523,30 @@ def test_max_rounds_with_violations_falls_back(tmp_path):
     )
     summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
-    assert summary["status"] == "fallback"
-    assert summary["fallback"] == "rules"
-    assert summary["validator_violations"] >= 1
+    assert summary["status"] == "written"
+    assert summary["fallback"] is None
+    assert summary["approved"] is False
+    assert any(warning.startswith("repaired:") for warning in summary["warnings"])
+    record = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert record["meta"]["director"]["by"] == "llm"
+    assert record["meta"]["director"]["approved"] is False
+    plan = json.loads((workspace / "shot_plan.json").read_text(encoding="utf-8"))
+    assert [slot["id"] for slot in record["video"]] == [slot["id"] for slot in plan["slot_plan"]]
+
+
+def test_repair_rebuilds_a_bad_cut_from_its_shot():
+    facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0)}
+    plan = {"slot_plan": [{"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": False}]}
+    record = {"video": [
+        {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 30.0, "out_s": 40.0},
+        {"id": "v9", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 4.0},
+    ]}
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert violations
+    notes = llm_director.repair_draft(record, plan, facts, {}, violations)
+    assert [slot["id"] for slot in record["video"]] == ["v1"]
+    assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+    assert any("v9" in note for note in notes)
 
 
 def test_validator_catches_rule_break(tmp_path):
@@ -613,6 +635,9 @@ def test_empty_editor_answer_falls_back(tmp_path):
     assert code == 0
     assert summary["status"] == "fallback"
     assert summary["fallback"] == "rules"
+    record = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert record["meta"]["director"]["by"] == "rules"
+    assert any("editor produced no valid edit" in note for note in record["meta"]["director"]["notes"])
 
 
 def test_validator_catches_missing_plan_slot():
@@ -1057,7 +1082,30 @@ def test_same_take_rule_allows_beats_with_another_take_between():
     assert not any(item["rule"] == "same_take" for item in violations)
     record["video"][1], record["video"][2] = record["video"][2], record["video"][1]
     violations = llm_director.validate_edit(record, plan, facts)
+    assert not any(item["rule"] == "same_take" for item in violations)
+    record["video"][1]["in_s"], record["video"][1]["out_s"] = 28.0, 33.0
+    violations = llm_director.validate_edit(record, plan, facts)
     assert any(item["rule"] == "same_take" for item in violations)
+
+
+def test_same_take_static_framings_always_jump():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0),
+        "0001/s2": fact("0001/s2", "clip_0001_x.mp4", 60.0, 80.0),
+    }
+    plan = {"slot_plan": [
+        {"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": False},
+        {"id": "v2", "shot_key": "0001/s2", "target_s": 5.0, "why": "b", "keep_whole": False},
+    ]}
+    record = {"video": [
+        {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 7.5, "out_s": 12.5},
+        {"id": "v2", "clip": "clip_0001_x.mp4", "in_s": 67.5, "out_s": 72.5},
+    ]}
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "same_take" for item in violations)
+    notes = llm_director.repair_draft(record, plan, facts, {"0001/s1": {"score": 0.9}, "0001/s2": {"score": 0.5}}, violations)
+    assert [slot["id"] for slot in record["video"]] == ["v1"]
+    assert any("0001/s2" in note for note in notes)
 
 
 def test_window_ends_at_the_steady_motion_end(tmp_path):
