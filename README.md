@@ -4,6 +4,23 @@ CLI pipeline for processing YouTube clips: transcription → correction → tran
 
 **Use it from an AI agent** (Claude Code or opencode): see [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md).
 
+## Quickstart — folder + brief to recap
+
+```bash
+git clone https://github.com/Dorusto/yt-pipeline && cd yt-pipeline
+uv venv && uv pip install -r requirements.txt
+export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.ai/keys
+.venv/bin/python scripts/doctor.py --source ~/media/trip/raw
+.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace \
+    --brief "90 s, chronological, calm start, ambient sound only"
+# -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json and shotlog.html)
+# full quality from the originals + a Kdenlive project:
+.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
+# re-running skips finished stations; a new brief only redoes the edit
+```
+
+For the details see [docs/guides/user-guide.md](docs/guides/user-guide.md); agents should load the `yt-recap` skill.
+
 ---
 
 ## Workflow

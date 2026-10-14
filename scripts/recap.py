@@ -1,0 +1,675 @@
+#!/usr/bin/env python3
+"""Run every pipeline station from a folder of clips and a brief to a recap MP4.
+
+Usage:
+    python scripts/recap.py --source ~/media/raw --brief "about 90 seconds, calm start"
+    python scripts/recap.py --source ~/media/raw --brief-file brief.txt --final --json
+
+``recap.py`` is the single entry point: it chains the existing station CLIs as
+subprocesses in order (proxy, ingest, motion, quality, describe, similarity,
+index, router, llm_director, render, and with ``--final`` the final render and
+the Kdenlive export), skips stations whose outputs are already up to date,
+prints one progress line per station and a ``--json`` summary with the wall time
+and the total LLM cost. It imports no other tool and calls no model itself.
+Originals are read-only; everything is written under the workspace.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TOOL = "scripts/recap.py"
+
+
+class RecapError(RuntimeError):
+    """Raised when a recap run cannot be started or completed."""
+
+
+class Context:
+    """Paths and flags shared by every station in one recap run."""
+
+    def __init__(
+        self,
+        source,
+        workspace,
+        brief_text,
+        final,
+        budget_usd,
+        force,
+        json_mode,
+        python,
+        repo_root,
+    ):
+        self.source = source
+        self.workspace = workspace
+        self.brief_text = brief_text
+        self.final = final
+        self.budget_usd = budget_usd
+        self.force = force
+        self.json_mode = json_mode
+        self.python = python
+        self.repo_root = repo_root
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="recap.py",
+        usage=(
+            "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
+            " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
+            " [--force] [--json]"
+        ),
+        description=(
+            "Run every pipeline station from a folder of clips and a brief to a recap MP4."
+        ),
+        epilog=(
+            "examples:\n"
+            "  python scripts/recap.py --source ~/media/raw --brief \"about 90 seconds\"\n"
+            "  python scripts/recap.py --source ~/media/raw --brief-file brief.txt"
+            " --final --json\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--source",
+        required=True,
+        help="folder of original clips (non-recursive, read-only)",
+    )
+    parser.add_argument("--brief", help="the brief in plain language")
+    parser.add_argument("--brief-file", help="path to a file holding the brief")
+    parser.add_argument(
+        "--workspace",
+        help="workspace folder (default: <source parent>/workspace)",
+    )
+    parser.add_argument(
+        "--final",
+        action="store_true",
+        help="also render the final from the originals and export Kdenlive",
+    )
+    parser.add_argument(
+        "--budget-usd",
+        type=float,
+        default=None,
+        help="LLM budget forwarded to describe and llm_director",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-run every station",
+    )
+    parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
+    return parser
+
+
+def is_within(path, directory):
+    path = Path(path).expanduser().resolve()
+    directory = Path(directory).expanduser().resolve()
+    return path == directory or directory in path.parents
+
+
+def video_files(directory):
+    """Return the video files directly inside ``directory``, sorted by name."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    return sorted(
+        (
+            path
+            for path in directory.iterdir()
+            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+        ),
+        key=lambda path: path.name,
+    )
+
+
+def load_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def is_newer(path, reference):
+    path = Path(path)
+    reference = Path(reference)
+    if not path.is_file() or not reference.is_file():
+        return False
+    return path.stat().st_mtime > reference.stat().st_mtime
+
+
+def all_newer(output, inputs):
+    output = Path(output)
+    if not output.is_file() or not inputs:
+        return False
+    out_mtime = output.stat().st_mtime
+    return all(
+        Path(item).is_file() and Path(item).stat().st_mtime < out_mtime for item in inputs
+    )
+
+
+def recorded_brief_matches(path, brief_text):
+    data = load_json(path)
+    if not isinstance(data, dict):
+        return False
+    brief = data.get("brief")
+    if not isinstance(brief, dict):
+        return False
+    return brief.get("text") == brief_text
+
+
+def directory_files(directory):
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    return [path for path in directory.iterdir() if path.is_file()]
+
+
+def is_up_to_date(name, ctx):
+    """Return True when a station's outputs are newer than its inputs."""
+    ws = ctx.workspace
+    src = ctx.source
+    proxy_dir = ws / "proxy"
+    proxies = video_files(proxy_dir)
+    if name == "proxy":
+        clips = video_files(src)
+        return bool(clips) and all((proxy_dir / clip.name).is_file() for clip in clips)
+    if name == "ingest":
+        return all_newer(ws / "ingest.json", proxies)
+    if name == "motion":
+        return bool(proxies) and all(
+            is_newer(ws / "motion" / f"{clip.stem}.json", clip) for clip in proxies
+        )
+    if name == "quality":
+        return bool(proxies) and all(
+            is_newer(ws / "quality" / f"{clip.stem}.json", clip)
+            and is_newer(
+                ws / "quality" / f"{clip.stem}.json",
+                ws / "motion" / f"{clip.stem}.json",
+            )
+            for clip in proxies
+        )
+    if name == "describe":
+        return bool(proxies) and all(
+            is_newer(
+                ws / "describe" / f"{clip.stem}.json",
+                ws / "quality" / f"{clip.stem}.json",
+            )
+            for clip in proxies
+        )
+    if name == "similarity":
+        return all_newer(ws / "similarity.json", directory_files(ws / "quality"))
+    if name == "index":
+        inputs = []
+        for sub in ("motion", "quality", "describe"):
+            files = directory_files(ws / sub)
+            if not files:
+                return False
+            inputs.extend(files)
+        if not (ws / "similarity.json").is_file():
+            return False
+        inputs.append(ws / "similarity.json")
+        return all_newer(ws / "shotlog.json", inputs)
+    if name == "router":
+        path = ws / "route.json"
+        return recorded_brief_matches(path, ctx.brief_text) and is_newer(
+            path, ws / "shotlog.json"
+        )
+    if name == "llm_director":
+        path = ws / "edit.json"
+        return recorded_brief_matches(path, ctx.brief_text) and is_newer(
+            path, ws / "shotlog.json"
+        )
+    if name == "render":
+        return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
+    if name == "render_final":
+        return is_newer(ws / "recap_final.mp4", ws / "edit.json")
+    if name == "export_kdenlive":
+        return is_newer(ws / "recap.kdenlive", ws / "edit.json")
+    return False
+
+
+def station_command(ctx, script, args, force=False, budget=False):
+    command = [ctx.python, f"scripts/{script}", *args]
+    if force:
+        command.append("--force")
+    if budget and ctx.budget_usd is not None:
+        command += ["--budget-usd", str(ctx.budget_usd)]
+    command.append("--json")
+    return command
+
+
+def build_stations(ctx):
+    """Return the ordered station specs for this run, each with its command list."""
+    ws = ctx.workspace
+    src = ctx.source
+    proxy_dir = ws / "proxy"
+    force = ctx.force
+    stations = [
+        {
+            "name": "proxy",
+            "argv": [
+                station_command(
+                    ctx, "proxy.py", [str(src), "--out", str(proxy_dir)], force=force
+                )
+            ],
+        },
+        {
+            "name": "ingest",
+            "argv": [
+                station_command(ctx, "ingest.py", [str(proxy_dir), "--workspace", str(ws)])
+            ],
+        },
+        {
+            "name": "motion",
+            "argv": [
+                station_command(
+                    ctx, "motion.py", [str(proxy_dir), "--workspace", str(ws)], force=force
+                )
+            ],
+        },
+        {
+            "name": "quality",
+            "argv": [
+                station_command(
+                    ctx, "quality.py", [str(proxy_dir), "--workspace", str(ws)], force=force
+                )
+            ],
+        },
+        {
+            "name": "describe",
+            "argv": [
+                station_command(
+                    ctx, "describe.py", ["--workspace", str(ws)], force=force, budget=True
+                )
+            ],
+        },
+        {
+            "name": "similarity",
+            "argv": [
+                station_command(
+                    ctx, "similarity.py", ["--workspace", str(ws)], force=force
+                )
+            ],
+        },
+        {
+            "name": "index",
+            "argv": [
+                station_command(ctx, "index.py", ["--workspace", str(ws)], force=force)
+            ],
+        },
+        {
+            "name": "router",
+            "argv": [
+                station_command(
+                    ctx,
+                    "router.py",
+                    ["--brief-file", str(ws / "brief.txt"), "--workspace", str(ws)],
+                    force=force,
+                )
+            ],
+        },
+        {
+            "name": "llm_director",
+            "argv": [
+                station_command(
+                    ctx,
+                    "llm_director.py",
+                    ["--workspace", str(ws), "--brief-file", str(ws / "brief.txt")],
+                    force=force,
+                    budget=True,
+                )
+            ],
+        },
+        {
+            "name": "render",
+            "argv": [
+                station_command(
+                    ctx,
+                    "render.py",
+                    ["--edit", str(ws / "edit.json"), "--out", str(ws / "recap_720p.mp4")],
+                    force=force,
+                )
+            ],
+        },
+    ]
+    if ctx.final:
+        stations.append(
+            {
+                "name": "render_final",
+                "argv": [
+                    station_command(
+                        ctx,
+                        "render.py",
+                        [
+                            "--edit",
+                            str(ws / "edit.json"),
+                            "--out",
+                            str(ws / "recap_final.mp4"),
+                            "--originals-dir",
+                            str(src),
+                        ],
+                        force=force,
+                    )
+                ],
+            }
+        )
+        kdenlive_args = [str(ws / "fragments.yaml")]
+        if shutil.which("melt") is None:
+            kdenlive_args.append("--skip-melt")
+        stations.append(
+            {
+                "name": "export_kdenlive",
+                "argv": [
+                    station_command(
+                        ctx,
+                        "edit_to_fragments.py",
+                        [
+                            "--edit",
+                            str(ws / "edit.json"),
+                            "--out",
+                            str(ws / "fragments.yaml"),
+                            "--source-dir",
+                            str(src),
+                            "--kdenlive-out",
+                            str(ws / "recap.kdenlive"),
+                        ],
+                        force=force,
+                    ),
+                    station_command(ctx, "kdenlive_from_fragments.py", kdenlive_args),
+                ],
+            }
+        )
+    return stations
+
+
+def normalize_commands(argv):
+    if not argv:
+        return []
+    if isinstance(argv[0], str):
+        return [argv]
+    return list(argv)
+
+
+def parse_child_json(stdout):
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def execute(station, argv, ctx):
+    """Run one station as a subprocess and return {"status", "wall_time_s", "llm_cost_usd", "detail"}."""
+    started = time.monotonic()
+    returncode = 0
+    stdout = ""
+    stderr = ""
+    for command in normalize_commands(argv):
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                cwd=str(ctx.repo_root),
+            )
+        except OSError as exc:
+            return {
+                "status": "FAIL",
+                "wall_time_s": round(time.monotonic() - started, 3),
+                "llm_cost_usd": 0.0,
+                "detail": "exit 1",
+                "returncode": 1,
+                "stderr": str(exc),
+            }
+        returncode = result.returncode
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if returncode != 0:
+            break
+    wall_time_s = round(time.monotonic() - started, 3)
+    if returncode != 0:
+        return {
+            "status": "FAIL",
+            "wall_time_s": wall_time_s,
+            "llm_cost_usd": 0.0,
+            "detail": f"exit {returncode}",
+            "returncode": returncode,
+            "stderr": stderr,
+        }
+    data = parse_child_json(stdout)
+    llm_cost_usd = 0.0
+    child_status = None
+    if isinstance(data, dict):
+        value = data.get("llm_cost_usd")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            llm_cost_usd = float(value)
+        status_value = data.get("status")
+        if isinstance(status_value, str):
+            child_status = status_value
+    detail = child_status if child_status in ("written", "skipped") else "ok"
+    return {
+        "status": "done",
+        "wall_time_s": wall_time_s,
+        "llm_cost_usd": llm_cost_usd,
+        "detail": detail,
+        "returncode": 0,
+        "stderr": stderr,
+    }
+
+
+def write_brief(workspace, text):
+    """Write ``brief.txt`` atomically, only when its content differs."""
+    path = Path(workspace) / "brief.txt"
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == text:
+                return path
+        except OSError:
+            pass
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, path)
+    return path
+
+
+def read_ledger(workspace):
+    data = load_json(Path(workspace) / "llm_spend.json")
+    if not isinstance(data, dict):
+        return 0.0
+    value = data.get("total_usd")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return 0.0
+
+
+def print_progress(ctx, index, total, name, status, wall_time_s, detail):
+    line = f"[{index:2d}/{total:2d}] {name:<15} {status:<5} {wall_time_s:8.1f}s  {detail}"
+    stream = sys.stderr if ctx.json_mode else sys.stdout
+    print(line, file=stream)
+
+
+def print_failure(name, result):
+    code = result.get("returncode")
+    if code is None:
+        detail = result.get("detail") or ""
+        code = detail.split()[-1] if detail.startswith("exit ") else "?"
+    print(f"[error] {name} failed (exit {code})", file=sys.stderr)
+    lines = (result.get("stderr") or "").strip().splitlines()
+    for line in lines[-20:]:
+        print(line, file=sys.stderr)
+
+
+def run(ctx):
+    """Run the station chain and return the flat summary object."""
+    started = time.monotonic()
+    write_brief(ctx.workspace, ctx.brief_text)
+    stations = build_stations(ctx)
+    total = len(stations)
+    entries = []
+    failed_name = None
+    for index, station in enumerate(stations, start=1):
+        name = station["name"]
+        if not ctx.force and is_up_to_date(name, ctx):
+            entries.append(
+                {
+                    "name": name,
+                    "status": "skip",
+                    "wall_time_s": 0.0,
+                    "llm_cost_usd": 0.0,
+                    "detail": "up to date",
+                }
+            )
+            print_progress(ctx, index, total, name, "skip", 0.0, "up to date")
+            continue
+        result = execute(station, station["argv"], ctx)
+        entries.append(
+            {
+                "name": name,
+                "status": result["status"],
+                "wall_time_s": result["wall_time_s"],
+                "llm_cost_usd": result["llm_cost_usd"],
+                "detail": result["detail"],
+            }
+        )
+        print_progress(
+            ctx,
+            index,
+            total,
+            name,
+            result["status"],
+            result["wall_time_s"],
+            result["detail"],
+        )
+        if result["status"] == "FAIL":
+            failed_name = name
+            print_failure(name, result)
+            break
+    wall_time_s = round(time.monotonic() - started, 3)
+    llm_cost_usd = round(sum(entry["llm_cost_usd"] for entry in entries), 8)
+    outputs = {
+        "preview": str(ctx.workspace / "recap_720p.mp4"),
+        "final": str(ctx.workspace / "recap_final.mp4") if ctx.final else None,
+        "kdenlive": str(ctx.workspace / "recap.kdenlive") if ctx.final else None,
+    }
+    return {
+        "tool": TOOL,
+        "status": "failed" if failed_name else "done",
+        "source": str(ctx.source),
+        "workspace": str(ctx.workspace),
+        "brief": ctx.brief_text,
+        "final": ctx.final,
+        "stations": entries,
+        "outputs": outputs,
+        "wall_time_s": wall_time_s,
+        "llm_cost_usd": llm_cost_usd,
+        "llm_spend_usd": read_ledger(ctx.workspace),
+    }
+
+
+def print_human(summary):
+    if summary["status"] == "failed":
+        failed = next(
+            (entry for entry in reversed(summary["stations"]) if entry["status"] == "FAIL"),
+            None,
+        )
+        name = failed["name"] if failed else "?"
+        print(
+            f"recap: failed at {name} after {summary['wall_time_s']:.1f}s,"
+            f" llm cost ${summary['llm_cost_usd']:.4f}"
+        )
+        return
+    print(
+        f"recap: done in {summary['wall_time_s']:.1f}s,"
+        f" llm cost ${summary['llm_cost_usd']:.4f}"
+        f" (ledger ${summary['llm_spend_usd']:.4f})"
+    )
+    print(f"preview: {summary['outputs']['preview']}")
+    if summary["outputs"]["final"]:
+        print(f"final: {summary['outputs']['final']}")
+    if summary["outputs"]["kdenlive"]:
+        print(f"kdenlive: {summary['outputs']['kdenlive']}")
+
+
+def resolve_brief(args):
+    if args.brief is not None and args.brief_file is not None:
+        raise RecapError("give either --brief or --brief-file, not both")
+    if args.brief is None and args.brief_file is None:
+        raise RecapError("provide --brief or --brief-file")
+    if args.brief_file is not None:
+        path = Path(args.brief_file).expanduser()
+        if not path.is_file():
+            raise RecapError(f"brief file not found: {path}")
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RecapError(f"could not read brief file: {exc}") from exc
+    return args.brief
+
+
+def resolve_workspace(value, source):
+    if value is None:
+        return (source.parent / "workspace").resolve()
+    return Path(value).expanduser().resolve()
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        source = Path(args.source).expanduser().resolve()
+        if not source.exists():
+            raise RecapError(f"source not found: {source}")
+        if not source.is_dir():
+            raise RecapError(f"source is not a directory: {source}")
+        if not video_files(source):
+            raise RecapError(f"no video files in {source}")
+        brief_text = resolve_brief(args)
+        workspace = resolve_workspace(args.workspace, source)
+        if is_within(workspace, source):
+            raise RecapError(f"workspace must not be inside the source: {workspace}")
+        workspace.mkdir(parents=True, exist_ok=True)
+    except RecapError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
+    ctx = Context(
+        source=source,
+        workspace=workspace,
+        brief_text=brief_text,
+        final=args.final,
+        budget_usd=args.budget_usd,
+        force=args.force,
+        json_mode=args.json,
+        python=sys.executable,
+        repo_root=REPO_ROOT,
+    )
+    summary = run(ctx)
+    if args.json:
+        print(json.dumps(summary))
+    else:
+        print_human(summary)
+    return 1 if summary["status"] == "failed" else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
