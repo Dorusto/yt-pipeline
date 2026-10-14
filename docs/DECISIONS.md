@@ -1428,3 +1428,11 @@ independent and the LXC happy; the pseudo-segment convention reuses the whole
 shotlog/index/director machinery for photos instead of a parallel code path;
 hard cuts on beats are what Quik/Mimo do and make the 80 ms acceptance check
 unambiguous.
+
+---
+
+## [2026-10-15] Coder switched to GLM 5.3 Flash (fallback) after repeated empty replies
+
+**Context:** during D2-6 the DeepSeek V4.1 Flash coder returned empty replies twice on three separate tasks (proxy photo pass-through, paired beat snap, one more), so the architect did the work itself and finally stalled. The routing rule allows a coder switch on outage, never mid-task.
+
+**Decision:** D2-7 starts with GLM 5.3 Flash as the coder (`.opencode/agents/coder.md`). DeepSeek stays the fallback. Revisit after D2-7: keep whichever coder needed fewer architect takeovers.
