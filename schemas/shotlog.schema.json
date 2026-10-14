@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/shotlog.schema.json",
   "title": "shotlog",
-  "description": "One shotlog per project workspace, written by scripts/index.py: every quality segment as a scored candidate with hook and reason, the effective labels (the vision verdict wins on uncertain segments) and the similar-segment links the director uses for diversity. Score = weighted fusion of the vision content score and the label score; audio and text components join at D2/D4 with zero weight until then. Overlapping shots keep the higher score, the other is marked suppressed_by.",
+  "description": "One shotlog per project workspace, written by scripts/index.py: every quality segment as a scored candidate with hook and reason \u2014 one candidate per content beat when describe split a long segment into beats \u2014 the effective labels (the vision verdict wins on uncertain segments) and the similar-segment links the director uses for diversity. Score = weighted fusion of the vision content score and the label score; audio and text components join at D2/D4 with zero weight until then. Overlapping shots keep the higher score, the other is marked suppressed_by.",
   "type": "object",
   "required": [
     "generated_at",
@@ -13,7 +13,7 @@
     "segment_ref": {
       "type": "string",
       "minLength": 3,
-      "description": "shot key: <clip counter>/<segment id>, e.g. 0081/s7"
+      "description": "shot key: <clip counter>/<segment id>, or <clip counter>/<segment id><beat id> for a content beat, e.g. 0081/s7 or 0072/s7b1"
     },
     "role": {
       "type": "string",
@@ -138,6 +138,27 @@
           "segment_id": {
             "type": "string",
             "minLength": 1
+          },
+          "beat_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "parent quality segment id when this shot is a content beat of a long segment; null otherwise"
+          },
+          "beat_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "beat id inside the parent segment (b1..bN) when this shot is a content beat"
+          },
+          "beat_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "what this beat is: approach, inside, exit, enter, leave, ..."
           },
           "start_s": {
             "type": "number",

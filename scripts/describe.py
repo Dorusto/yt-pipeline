@@ -6,17 +6,21 @@ Usage:
     python scripts/describe.py --workspace DIR --json
     python scripts/describe.py --workspace DIR --clips 0067,0081 --backend mock --force
 
-Reads ``quality/<stem>.json`` from the workspace, samples three frames per kept
-segment, sends them with the segment facts to the vision model and writes
+Reads ``quality/<stem>.json`` from the workspace, samples frames per kept
+segment (three frames, or one every ~5 s on a segment longer than 20 s), sends
+them with the segment facts to the vision model and writes
 ``describe/<stem>.json`` validated against ``schemas/describe.schema.json``.
-Confident accidental/setup/teardown segments are skipped without a model call;
-every uncertain segment carries a verdict whose label wins in the shotlog.
-Frames live in memory only and are never written to disk. Sources are read-only;
-outputs are written atomically.
+A long segment also returns its content beats — a contiguous tiling into
+scene-change parts (approach / inside / exit) — and each beat becomes its own
+shotlog candidate. Confident accidental/setup/teardown segments are skipped
+without a model call; every uncertain segment carries a verdict whose label wins
+in the shotlog. Frames live in memory only and are never written to disk.
+Sources are read-only; outputs are written atomically.
 """
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -34,6 +38,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROMPT = REPO_ROOT / "prompts" / "describe_segment.md"
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 FRAME_COUNT = 3
+BEATS_MIN_DURATION_S = 20.0
+BEATS_SAMPLE_S = 5.0
+BEATS_MAX_FRAMES = 24
+BEATS_MAX = 16
 JPEG_QUALITY = 85
 SEMANTIC_MOTIONS = {"orbit", "tracking", "reveal", "travel", "none"}
 SUMMARY_MAX_WORDS = 12
@@ -123,9 +131,17 @@ def build_parser():
 
 
 def frame_times(start_s, end_s):
-    """Three evenly spaced timestamps inside the segment interior, in time order."""
+    """Sample timestamps inside the segment interior, in time order.
+
+    Short segments get three frames; segments longer than 20 s get one frame
+    every ~5 s (capped at 24) so the model can mark content beats.
+    """
     span = end_s - start_s
-    return [start_s + (index + 0.5) / FRAME_COUNT * span for index in range(FRAME_COUNT)]
+    if span > BEATS_MIN_DURATION_S:
+        count = min(BEATS_MAX_FRAMES, max(FRAME_COUNT, int(math.ceil(span / BEATS_SAMPLE_S))))
+    else:
+        count = FRAME_COUNT
+    return [start_s + (index + 0.5) / count * span for index in range(count)]
 
 
 def read_frames(path, times, width):
@@ -193,7 +209,67 @@ def normalize_answer(data):
         "interest": _clamp_interest(data.get("interest")),
         "hero": data.get("hero") if isinstance(data.get("hero"), bool) else False,
         "verdict": normalize_verdict(data.get("verdict")),
+        "beats": normalize_beats(data.get("beats")),
     }
+
+
+def normalize_beats(value):
+    """Return schema-valid content beats tiling their span, or [] when unusable."""
+    if not isinstance(value, list):
+        return []
+    raw = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        start_s = _as_float(item.get("start_s"))
+        end_s = _as_float(item.get("end_s"))
+        if start_s is None or end_s is None:
+            continue
+        raw.append((start_s, end_s, item))
+    if len(raw) < 2:
+        return []
+    raw.sort(key=lambda entry: (entry[0], entry[1]))
+    span_start = raw[0][0]
+    span_end = max(entry[1] for entry in raw)
+    beats = []
+    cursor = span_start
+    for start_s, end_s, item in raw:
+        start_s = max(span_start, min(span_end, start_s))
+        end_s = max(span_start, min(span_end, end_s))
+        if end_s <= start_s:
+            continue
+        if start_s > cursor:
+            if beats:
+                beats[-1]["end_s"] = start_s
+            else:
+                start_s = cursor
+        if start_s < cursor:
+            start_s = cursor
+        if end_s <= start_s:
+            continue
+        beats.append(
+            {
+                "id": "",
+                "start_s": round(start_s, 3),
+                "end_s": round(end_s, 3),
+                "label": _as_string(item.get("label")).strip()[:32] or "beat",
+                "summary": _normalize_summary(item.get("summary")),
+                "interest": _clamp_interest(item.get("interest")),
+                "hero": item.get("hero") if isinstance(item.get("hero"), bool) else None,
+            }
+        )
+        cursor = end_s
+        if len(beats) >= BEATS_MAX:
+            break
+    if not beats:
+        return []
+    if cursor < span_end:
+        beats[-1]["end_s"] = round(span_end, 3)
+    if len(beats) < 2:
+        return []
+    for index, beat in enumerate(beats):
+        beat["id"] = f"b{index + 1}"
+    return beats
 
 
 def normalize_verdict(value):
@@ -341,6 +417,7 @@ def run(
     skipped = 0
     segments_described = 0
     segments_skipped = 0
+    beats_found = 0
     for quality_file in selected:
         output_path = output_dir / quality_file.name
         if not force and _output_is_valid(output_path):
@@ -360,6 +437,7 @@ def run(
         segments_skipped += sum(
             1 for segment in clip_record["segments"] if segment["status"] == "skipped"
         )
+        beats_found += sum(len(segment.get("beats") or []) for segment in clip_record["segments"])
         if state.stop_reason is not None:
             break
     summary = {
@@ -368,6 +446,7 @@ def run(
         "skipped": skipped,
         "segments_described": segments_described,
         "segments_skipped": segments_skipped,
+        "beats": beats_found,
         "model": model_id,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(state.cost_usd, 8),
@@ -403,7 +482,7 @@ def main(argv=None):
         )
         print(
             f"segments: {summary['segments_described']} described, "
-            f"{summary['segments_skipped']} skipped"
+            f"{summary['segments_skipped']} skipped, {summary['beats']} beats"
         )
         print(
             f"model {summary['model']}, cost ${summary['llm_cost_usd']:.4f}, "
@@ -484,6 +563,7 @@ def _context(segment):
 
 
 def _described_segment(segment, times, normalized, verdict, cost_usd):
+    beats = beats_for_segment(segment, normalized["beats"])
     return {
         "id": segment["id"],
         "start_s": segment["start_s"],
@@ -502,10 +582,20 @@ def _described_segment(segment, times, normalized, verdict, cost_usd):
         "semantic_motion": normalized["semantic_motion"],
         "interest": normalized["interest"],
         "hero": normalized["hero"],
+        "beats": beats,
         "verdict": verdict,
         "skip_reason": None,
         "cost_usd": cost_usd,
     }
+
+
+def beats_for_segment(segment, beats):
+    """Content beats of a segment, or [] when the segment is short or unsplit."""
+    if segment["end_s"] - segment["start_s"] <= BEATS_MIN_DURATION_S:
+        return []
+    if len(beats) < 2:
+        return []
+    return beats
 
 
 def _skipped_segment(segment, reason, cost_usd=None):
@@ -556,6 +646,12 @@ def _loads(text):
 
 def _as_string(value):
     return value if isinstance(value, str) else ""
+
+
+def _as_float(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def _clamp_interest(value):

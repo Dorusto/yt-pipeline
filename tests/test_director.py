@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import director
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1005,3 +1006,112 @@ def test_help_lists_important_max_s():
     result = run_director("--help")
     assert result.returncode == 0
     assert "--important-max-s" in result.stdout
+
+
+def build_beats_workspace(root):
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 160.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clipB.mp4", "path": "/media/clipB.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:03:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        root / "quality" / "clipA.json",
+        quality_doc("clipA.mp4", 160.0, [segment("s1", 0.0, 160.0, "move", motion_label="travel_forward")]),
+    )
+    write_json(
+        root / "motion" / "clipA.json",
+        motion_doc("clipA.mp4", 160.0, [move("m1", 10.0, 150.0, "travel_forward", "regular", "no_shaking", 10.0, 150.0, 10.0, 150.0)]),
+    )
+    write_json(
+        root / "quality" / "clipB.json",
+        quality_doc("clipB.mp4", 60.0, [segment("s1", 0.0, 20.0, "hold", motion_label="static")]),
+    )
+    write_json(root / "motion" / "clipB.json", motion_doc("clipB.mp4", 60.0, []))
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("clipA/s1b1", "clipA.mp4", "s1b1", 0.0, 60.0, True, 0.95, "approach", "approach · interest 95", hero=True, role="move", motion_label="travel_forward"),
+            shotlog_shot("clipA/s1b2", "clipA.mp4", "s1b2", 60.0, 160.0, True, 0.55, "exit", "exit · interest 55", role="move", motion_label="travel_forward"),
+            shotlog_shot("clipB/s1", "clipB.mp4", "s1", 0.0, 20.0, True, 0.70, "the other take", "interest 70"),
+        ],
+    )
+    shots = json.loads((root / "shotlog.json").read_text(encoding="utf-8"))["shots"]
+    for shot in shots:
+        if shot["key"] == "clipA/s1b1":
+            shot["beat_of"] = "s1"
+            shot["beat_id"] = "b1"
+            shot["beat_label"] = "approach"
+        if shot["key"] == "clipA/s1b2":
+            shot["beat_of"] = "s1"
+            shot["beat_id"] = "b2"
+            shot["beat_label"] = "exit"
+    write_json(root / "shotlog.json", {"generated_at": "2026-01-01T00:00:00+00:00", "workspace": str(root), "weights": {"vision": 0.55, "labels": 0.45}, "shots": shots})
+    return root
+
+
+def test_beats_by_segment_from_shotlog_groups_and_sorts():
+    shotlog = {
+        "a/s1b2": {"key": "a/s1b2", "clip": "clipA.mp4", "beat_of": "s1", "start_s": 60.0, "end_s": 160.0},
+        "a/s1b1": {"key": "a/s1b1", "clip": "clipA.mp4", "beat_of": "s1", "start_s": 0.0, "end_s": 60.0},
+        "b/s1": {"key": "b/s1", "clip": "clipB.mp4", "beat_of": None, "start_s": 0.0, "end_s": 5.0},
+    }
+    grouped = director.beats_by_segment_from_shotlog(shotlog)
+    assert list(grouped) == [("clipA.mp4", "s1")]
+    assert [b["key"] for b in grouped[("clipA.mp4", "s1")]] == ["a/s1b1", "a/s1b2"]
+    assert director.beats_by_segment_from_shotlog(None) == {}
+
+
+def test_segment_subranges_prefers_beats():
+    segment = {"id": "s1", "start_s": 0.0, "end_s": 160.0}
+    beats = {
+        "s1": [
+            {"key": "a/s1b1", "start_s": 0.0, "end_s": 60.0},
+            {"key": "a/s1b2", "start_s": 60.0, "end_s": 160.0},
+        ]
+    }
+    assert director.segment_subranges(segment, beats) == [
+        (0.0, 60.0, "a/s1b1"),
+        (60.0, 160.0, "a/s1b2"),
+    ]
+    assert director.segment_subranges(segment, {}) == [(0.0, 160.0, None)]
+
+
+def test_beat_window_is_clamped_to_the_beat():
+    clip = {"file": "clipA.mp4"}
+    quality = quality_doc("clipA.mp4", 160.0, [segment("s1", 0.0, 160.0, "move", motion_label="travel_forward")])
+    motion = motion_doc(
+        "clipA.mp4", 160.0,
+        [move("m1", 10.0, 150.0, "travel_forward", "regular", "no_shaking", 10.0, 150.0, 10.0, 150.0)],
+    )
+    beats = {
+        "s1": [
+            {"key": "clipA/s1b1", "start_s": 0.0, "end_s": 60.0},
+            {"key": "clipA/s1b2", "start_s": 60.0, "end_s": 160.0},
+        ]
+    }
+    candidates, _ = director.build_candidates(
+        clip, None, 0.0, 0.0, quality, motion, 2.0, beats_by_segment=beats,
+    )
+    assert [(c["shot_key"], c["in_s"], c["out_s"]) for c in candidates] == [
+        ("clipA/s1b1", 10.0, 60.0),
+        ("clipA/s1b2", 60.0, 150.0),
+    ]
+
+
+def test_two_beats_of_one_take_with_another_take_between(tmp_path):
+    workspace = build_beats_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "12", "--order", "score", "--pacing", "uniform", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    clips = [slot["clip"] for slot in record["video"]]
+    assert clips == ["clipA.mp4", "clipB.mp4", "clipA.mp4"]
+    first, middle, last = record["video"]
+    assert first["out_s"] <= 60.0
+    assert last["in_s"] >= 60.0
+    assert middle["clip"] == "clipB.mp4"

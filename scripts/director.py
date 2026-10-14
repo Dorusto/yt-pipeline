@@ -198,8 +198,11 @@ def best_overlapping_move(segment, moves):
     return best
 
 
-def build_candidates(clip, clip_dt, position, content_offset, quality, motion, min_slot_s, skip_roles=True):
+def build_candidates(
+    clip, clip_dt, position, content_offset, quality, motion, min_slot_s, skip_roles=True, beats_by_segment=None,
+):
     moves = (motion or {}).get("moves") or []
+    beats_by_segment = beats_by_segment or {}
     candidates = []
     skipped_roles = 0
     for segment in quality.get("segments") or []:
@@ -207,36 +210,71 @@ def build_candidates(clip, clip_dt, position, content_offset, quality, motion, m
         if skip_roles and role in SKIP_ROLES:
             skipped_roles += 1
             continue
-        move = None
-        if role == "hold":
-            in_s, out_s = segment["start_s"], segment["end_s"]
-        else:
-            move = best_overlapping_move(segment, moves)
-            if move is not None:
-                in_s = first_not_none(move.get("handle_in_s"), move.get("steady_start_s"), move.get("start_s"))
-                out_s = first_not_none(move.get("handle_out_s"), move.get("steady_end_s"), move.get("end_s"))
+        subranges = segment_subranges(segment, beats_by_segment, clip.get("file"))
+        for sub_start, sub_end, shot_key in subranges:
+            move = None
+            if role == "hold":
+                in_s, out_s = sub_start, sub_end
             else:
-                in_s, out_s = segment["start_s"], segment["end_s"]
-        if in_s is None or out_s is None or out_s - in_s < min_slot_s:
-            continue
-        candidates.append(
-            {
-                "clip": clip["file"],
-                "clip_dt": clip_dt,
-                "position": position,
-                "content_offset": content_offset,
-                "role": role,
-                "segment": segment,
-                "move": move,
-                "in_s": float(in_s),
-                "out_s": float(out_s),
-                "motion_label": move.get("label") if move else segment.get("motion_label"),
-                "steadiness": move.get("steadiness") if move else ("static" if role == "hold" else None),
-                "hero": None,
-                "semantic_motion": None,
-            }
-        )
+                move = best_overlapping_move({"start_s": sub_start, "end_s": sub_end}, moves)
+                if move is not None:
+                    in_s = first_not_none(move.get("handle_in_s"), move.get("steady_start_s"), move.get("start_s"))
+                    out_s = first_not_none(move.get("handle_out_s"), move.get("steady_end_s"), move.get("end_s"))
+                else:
+                    in_s, out_s = sub_start, sub_end
+                in_s = max(in_s, sub_start)
+                out_s = min(out_s, sub_end)
+            if in_s is None or out_s is None or out_s - in_s < min_slot_s:
+                continue
+            candidates.append(
+                {
+                    "clip": clip["file"],
+                    "clip_dt": clip_dt,
+                    "position": position,
+                    "content_offset": content_offset,
+                    "role": role,
+                    "segment": segment,
+                    "move": move,
+                    "in_s": float(in_s),
+                    "out_s": float(out_s),
+                    "motion_label": move.get("label") if move else segment.get("motion_label"),
+                    "steadiness": move.get("steadiness") if move else ("static" if role == "hold" else None),
+                    "hero": None,
+                    "semantic_motion": None,
+                    "shot_key": shot_key,
+                }
+            )
     return candidates, skipped_roles
+
+
+def segment_subranges(segment, beats_by_segment, clip_file=None):
+    """The ``(start, end, shot key)`` units of a segment: its beats or itself."""
+    beats = beats_by_segment.get((clip_file, segment.get("id"))) or beats_by_segment.get(segment.get("id")) or []
+    if not beats:
+        return [(float(segment["start_s"]), float(segment["end_s"]), None)]
+    subranges = []
+    for beat in beats:
+        start_s = max(float(segment["start_s"]), float(beat.get("start_s", segment["start_s"])))
+        end_s = min(float(segment["end_s"]), float(beat.get("end_s", segment["end_s"])))
+        if end_s - start_s <= 0:
+            continue
+        subranges.append((start_s, end_s, beat.get("key")))
+    return subranges or [(float(segment["start_s"]), float(segment["end_s"]), None)]
+
+
+def beats_by_segment_from_shotlog(shotlog):
+    """Group the shotlog's content-beat shots by their clip and parent segment id."""
+    grouped = {}
+    if not shotlog:
+        return grouped
+    for shot in shotlog.values():
+        beat_of = shot.get("beat_of")
+        if not beat_of:
+            continue
+        grouped.setdefault((shot.get("clip"), beat_of), []).append(shot)
+    for beats in grouped.values():
+        beats.sort(key=lambda item: (item.get("start_s") or 0.0, item.get("key") or ""))
+    return grouped
 
 
 def pacing_bonus(candidate, position):
@@ -318,17 +356,24 @@ def build_phrases(scored, quality):
     pairs = landing_pairs(quality)
     if not pairs:
         return scored
-    by_segment = {id(candidate["segment"]): candidate for candidate in scored}
     removed = set()
     phrases = []
     for move_segment, hold_segment in pairs:
-        move_candidate = by_segment.get(id(move_segment))
+        siblings = [c for c in scored if c.get("segment") is move_segment]
+        move_candidate = _phrase_move(siblings)
         if move_candidate is None:
             continue
         removed.add(id(move_candidate))
         phrases.append(make_phrase_candidate(move_candidate, hold_segment))
     kept = [candidate for candidate in scored if id(candidate) not in removed]
     return kept + phrases
+
+
+def _phrase_move(candidates):
+    """The candidate that lands on the hold: the one latest in source time."""
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item["out_s"], item.get("score") or 0.0))
 
 
 def source_contiguous(first, second):
@@ -374,11 +419,13 @@ def slot_label(item):
 
 
 def resolve_same_take(candidate, chosen, insert_at, warnings, recompute):
-    """Resolve a same-take conflict before make_slot.
+    """Resolve a same-take conflict for a finished slot before it joins the timeline.
 
-    Returns ``(insert_at, removed, upgraded)``. ``removed`` is the ``(index, slot)``
+    The check runs on the slot's final cut window, after trimming, so a trim that
+    breaks source contiguity cannot slip through as a jump cut. Returns
+    ``(insert_at, removed, upgraded)``. ``removed`` is the ``(index, slot)``
     popped for an upgrade, or None. ``upgraded`` is True when a weaker same-take
-    neighbour was replaced. Returns ``(None, None, False)`` to skip the candidate.
+    neighbour was replaced. Returns ``(None, None, False)`` to skip the slot.
     """
     conflict = same_take_conflict(candidate, chosen, insert_at)
     if conflict is None:
@@ -633,17 +680,16 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
             continue
         used.add(id(best))
         insert_at = content_insert_index(chosen, best["content_offset"] + best["in_s"])
-        insert_at, removed, upgraded = resolve_same_take(
-            best, chosen, insert_at, warnings,
-            lambda current: content_insert_index(current, best["content_offset"] + best["in_s"]),
-        )
-        if insert_at is None:
-            continue
         slot = make_slot(best, durations[index], max_slot_s, min_slot_s, chosen, warnings, important_max_s)
         if slot is None:
-            if removed is not None:
-                chosen.insert(removed[0], removed[1])
             warnings.append(f"bucket {index + 1}: candidate dropped by overlap guard")
+            continue
+        insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
+        insert_at, removed, upgraded = resolve_same_take(
+            slot, chosen, insert_at, warnings,
+            lambda current: content_insert_index(current, slot["content_offset"] + slot["in_s"]),
+        )
+        if insert_at is None:
             continue
         if not upgraded:
             insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
@@ -663,13 +709,11 @@ def pick_by_score(candidates, n_slots, durations, max_slot_s, min_slot_s, warnin
             continue
         used.add(id(candidate))
         duration_index = len(chosen)
-        insert_at, removed, _ = resolve_same_take(candidate, chosen, len(chosen), warnings, len)
-        if insert_at is None:
-            continue
         slot = make_slot(candidate, durations[duration_index], max_slot_s, min_slot_s, chosen, warnings, important_max_s)
         if slot is None:
-            if removed is not None:
-                chosen.insert(removed[0], removed[1])
+            continue
+        insert_at, removed, _ = resolve_same_take(slot, chosen, len(chosen), warnings, len)
+        if insert_at is None:
             continue
         chosen.insert(insert_at, slot)
     if not chosen:
@@ -696,13 +740,17 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
         if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
             warn_similar(warnings, candidate)
             continue
-        insert_at, removed, upgraded = resolve_same_take(candidate, chosen, insert_at, warnings, recompute)
-        if insert_at is None:
-            continue
         slot = make_slot(candidate, last_target, max_slot_s, min_slot_s, chosen, warnings, important_max_s)
         if slot is None:
-            if removed is not None:
-                chosen.insert(removed[0], removed[1])
+            continue
+        if order == "chronological":
+            insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
+            recompute = lambda current: content_insert_index(current, slot["content_offset"] + slot["in_s"])
+        else:
+            insert_at = len(chosen)
+            recompute = len
+        insert_at, removed, upgraded = resolve_same_take(slot, chosen, insert_at, warnings, recompute)
+        if insert_at is None:
             continue
         if not upgraded and order == "chronological":
             insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
@@ -832,6 +880,7 @@ def run(args, started):
     skipped_roles = 0
     skipped_ineligible = 0
     shotlog = load_shotlog(workspace)
+    beats_by_segment = beats_by_segment_from_shotlog(shotlog)
     content_offsets = []
     running_content = 0.0
     for clip, _ in clips:
@@ -850,11 +899,13 @@ def run(args, started):
         position = clip_position(moment, first_moment, span_seconds)
         clip_candidates, clip_skipped = build_candidates(
             clip, moment, position, content_offset, quality, motion, args.min_slot_s,
+            beats_by_segment=beats_by_segment,
         )
         skipped_roles += clip_skipped
         scored = []
         for candidate in clip_candidates:
-            shot = shotlog.get(candidate_key(candidate)) if shotlog is not None else None
+            lookup_key = candidate.get("shot_key") or candidate_key(candidate)
+            shot = shotlog.get(lookup_key) if shotlog is not None else None
             if shot is not None:
                 if not shot.get("eligible", True):
                     skipped_ineligible += 1

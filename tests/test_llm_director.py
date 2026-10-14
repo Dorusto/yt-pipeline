@@ -784,3 +784,114 @@ def test_missing_last_round_slot_is_synthesised(tmp_path):
     slot = next(item for item in edit["video"] if item["id"] == "v3")
     assert slot["in_s"] == pytest.approx(12.0)
     assert slot["out_s"] == pytest.approx(20.0)
+
+
+def build_beats_workspace(root):
+    clips = [
+        {"file": "clipA.mp4", "path": "/media/clipA.mp4", "duration_s": 160.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clipB.mp4", "path": "/media/clipB.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:03:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        root / "quality" / "clipA.json",
+        quality_doc("clipA.mp4", 160.0, [segment("s1", 0.0, 160.0, "move", motion_label="travel_forward")]),
+    )
+    write_json(
+        root / "motion" / "clipA.json",
+        motion_doc(
+            "clipA.mp4",
+            160.0,
+            [{
+                "id": "m1", "start_s": 10.0, "end_s": 150.0, "label": "travel_forward",
+                "speed": "regular", "steadiness": "no_shaking",
+                "steady_start_s": 10.0, "steady_end_s": 150.0, "handle_in_s": 10.0, "handle_out_s": 150.0,
+                "confidence": 0.9,
+            }],
+        ),
+    )
+    write_json(
+        root / "quality" / "clipB.json",
+        quality_doc("clipB.mp4", 60.0, [segment("s1", 0.0, 20.0, "hold")]),
+    )
+    write_json(root / "motion" / "clipB.json", motion_doc("clipB.mp4", 60.0, []))
+    first = shotlog_shot(
+        "clipA/s1b1", "clipA.mp4", "s1b1", 0.0, 60.0, True, 0.95, "approach",
+        "approach · interest 95", role="move", motion_label="travel_forward",
+    )
+    first.update({"beat_of": "s1", "beat_id": "b1", "beat_label": "approach", "summary": "boat approaches the tunnel"})
+    second = shotlog_shot(
+        "clipA/s1b2", "clipA.mp4", "s1b2", 60.0, 160.0, True, 0.55, "exit",
+        "exit · interest 55", role="move", motion_label="travel_forward",
+    )
+    second.update({"beat_of": "s1", "beat_id": "b2", "beat_label": "exit", "summary": "tunnel exit"})
+    other = shotlog_shot(
+        "clipB/s1", "clipB.mp4", "s1", 0.0, 20.0, True, 0.7, "the other take", "interest 70",
+    )
+    write_json(
+        root / "shotlog.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "weights": {"vision": 0.55, "labels": 0.45},
+            "shots": [first, second, other],
+        },
+    )
+    return root
+
+
+def test_shot_facts_one_per_beat(tmp_path):
+    workspace = build_beats_workspace(tmp_path / "ws")
+    shotlog = llm_director.load_shotlog(workspace)
+    facts, _, _ = llm_director.build_shot_facts(workspace, shotlog)
+    assert set(facts) == {"clipA/s1b1", "clipA/s1b2", "clipB/s1"}
+    first = facts["clipA/s1b1"]
+    assert first["window_in_s"] == 10.0
+    assert first["window_out_s"] == 60.0
+    assert first["summary"] == "boat approaches the tunnel"
+    second = facts["clipA/s1b2"]
+    assert second["window_in_s"] == 60.0
+    assert second["window_out_s"] == 150.0
+    assert facts["clipB/s1"]["window_out_s"] == 20.0
+
+
+def test_same_take_rule_allows_beats_with_another_take_between():
+    first = llm_director.make_fact(
+        {"shot_key": "clipA/s1b1", "clip": "clipA.mp4", "in_s": 10.0, "out_s": 60.0,
+         "keep_whole": False, "target_s": 5.0, "score": 0.9, "summary": "approach",
+         "role": "move", "motion_label": "travel_forward", "hero": True, "similar_to": []},
+        6.0,
+    )
+    middle = llm_director.make_fact(
+        {"shot_key": "clipB/s1", "clip": "clipB.mp4", "in_s": 0.0, "out_s": 20.0,
+         "keep_whole": False, "target_s": 5.0, "score": 0.7, "summary": "other",
+         "role": "hold", "motion_label": "static", "hero": None, "similar_to": []},
+        6.0,
+    )
+    last = llm_director.make_fact(
+        {"shot_key": "clipA/s1b2", "clip": "clipA.mp4", "in_s": 60.0, "out_s": 150.0,
+         "keep_whole": False, "target_s": 5.0, "score": 0.55, "summary": "exit",
+         "role": "move", "motion_label": "travel_forward", "hero": None, "similar_to": []},
+        6.0,
+    )
+    facts = {fact["shot_key"]: fact for fact in (first, middle, last)}
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "clipA/s1b1", "target_s": 5.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "clipB/s1", "target_s": 5.0, "why": "b", "keep_whole": False},
+            {"id": "v3", "shot_key": "clipA/s1b2", "target_s": 5.0, "why": "c", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clipA.mp4", "in_s": 20.0, "out_s": 25.0},
+            {"id": "v2", "clip": "clipB.mp4", "in_s": 5.0, "out_s": 10.0},
+            {"id": "v3", "clip": "clipA.mp4", "in_s": 70.0, "out_s": 75.0},
+        ]
+    }
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert not any(item["rule"] == "same_take" for item in violations)
+    record["video"][1], record["video"][2] = record["video"][2], record["video"][1]
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "same_take" for item in violations)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/describe.schema.json",
   "title": "describe",
-  "description": "Vision descriptions written by scripts/describe.py per clip: one entry per quality segment, three frames in order with timestamps and the motion label sent to the VisionModel. Confident accidental/setup/teardown segments are skipped (no model call). Every uncertain segment carries a verdict from the model whose label wins in the shotlog. Frames are never written to disk \u2014 only their timestamps.",
+  "description": "Vision descriptions written by scripts/describe.py per clip: one entry per quality segment, frames in order with timestamps and the motion label sent to the VisionModel (three frames, or one frame every ~5 s on a segment longer than 20 s). Confident accidental/setup/teardown segments are skipped (no model call). Every uncertain segment carries a verdict from the model whose label wins in the shotlog. A long segment also carries its content beats \u2014 a contiguous tiling into scene-change parts (approach / inside / exit) \u2014 and each beat becomes its own shotlog candidate. Frames are never written to disk \u2014 only their timestamps.",
   "type": "object",
   "required": [
     "file",
@@ -117,6 +117,64 @@
         }
       },
       "additionalProperties": false
+    },
+    "beat": {
+      "type": "object",
+      "description": "one content beat of a long segment: a contiguous part of the segment between scene changes, its own shotlog candidate",
+      "required": [
+        "id",
+        "start_s",
+        "end_s",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^b[0-9]+$",
+          "description": "beat id inside the segment, b1..bN in time order"
+        },
+        "start_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "beat start inside the source clip, in seconds; equals the previous beat's end"
+        },
+        "end_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "beat end inside the source clip, in seconds"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "what this part of the take is: approach, inside, exit, enter, leave, ..."
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200,
+          "description": "one-line summary of the beat in at most 12 words"
+        },
+        "interest": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "how interesting this beat is on its own, 0-100"
+        },
+        "hero": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "true when this beat is a hero moment"
+        }
+      },
+      "additionalProperties": true
     }
   },
   "properties": {
@@ -210,9 +268,17 @@
           "frames": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 8,
+            "maxItems": 32,
             "items": {
               "$ref": "#/$defs/frame"
+            }
+          },
+          "beats": {
+            "type": "array",
+            "maxItems": 16,
+            "description": "content beats of a long segment (> 20 s): a contiguous tiling of the segment in time order, present only when the model marked at least two scene changes; each beat becomes its own shotlog candidate",
+            "items": {
+              "$ref": "#/$defs/beat"
             }
           },
           "description": {

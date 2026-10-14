@@ -240,43 +240,79 @@ def best_overlapping_move(segment, moves):
     return best
 
 
-def build_candidates(clip, clip_dt, position, content_offset, quality, motion, min_slot_s):
+def build_candidates(clip, clip_dt, position, content_offset, quality, motion, min_slot_s, beats_by_segment=None):
     moves = (motion or {}).get("moves") or []
+    beats_by_segment = beats_by_segment or {}
     candidates = []
     for segment in quality.get("segments") or []:
         role = segment.get("role")
         if role in SKIP_ROLES:
             continue
-        move = None
-        if role == "hold":
-            in_s, out_s = segment["start_s"], segment["end_s"]
-        else:
-            move = best_overlapping_move(segment, moves)
-            if move is not None:
-                in_s = first_not_none(move.get("handle_in_s"), move.get("steady_start_s"), move.get("start_s"))
-                out_s = first_not_none(move.get("handle_out_s"), move.get("steady_end_s"), move.get("end_s"))
+        subranges = segment_subranges(segment, beats_by_segment, clip.get("file"))
+        for sub_start, sub_end, shot_key in subranges:
+            move = None
+            if role == "hold":
+                in_s, out_s = sub_start, sub_end
             else:
-                in_s, out_s = segment["start_s"], segment["end_s"]
-        if in_s is None or out_s is None or out_s - in_s < min_slot_s:
-            continue
-        candidates.append(
-            {
-                "clip": clip["file"],
-                "clip_dt": clip_dt,
-                "position": position,
-                "content_offset": content_offset,
-                "role": role,
-                "segment": segment,
-                "move": move,
-                "in_s": float(in_s),
-                "out_s": float(out_s),
-                "motion_label": move.get("label") if move else segment.get("motion_label"),
-                "steadiness": move.get("steadiness") if move else ("static" if role == "hold" else None),
-                "hero": None,
-                "semantic_motion": None,
-            }
-        )
+                move = best_overlapping_move({"start_s": sub_start, "end_s": sub_end}, moves)
+                if move is not None:
+                    in_s = first_not_none(move.get("handle_in_s"), move.get("steady_start_s"), move.get("start_s"))
+                    out_s = first_not_none(move.get("handle_out_s"), move.get("steady_end_s"), move.get("end_s"))
+                else:
+                    in_s, out_s = sub_start, sub_end
+                in_s = max(in_s, sub_start)
+                out_s = min(out_s, sub_end)
+            if in_s is None or out_s is None or out_s - in_s < min_slot_s:
+                continue
+            candidates.append(
+                {
+                    "clip": clip["file"],
+                    "clip_dt": clip_dt,
+                    "position": position,
+                    "content_offset": content_offset,
+                    "role": role,
+                    "segment": segment,
+                    "move": move,
+                    "in_s": float(in_s),
+                    "out_s": float(out_s),
+                    "motion_label": move.get("label") if move else segment.get("motion_label"),
+                    "steadiness": move.get("steadiness") if move else ("static" if role == "hold" else None),
+                    "hero": None,
+                    "semantic_motion": None,
+                    "shot_key": shot_key,
+                }
+            )
     return candidates
+
+
+def segment_subranges(segment, beats_by_segment, clip_file=None):
+    """The ``(start, end, shot key)`` units of a segment: its beats or itself."""
+    beats = beats_by_segment.get((clip_file, segment.get("id"))) or beats_by_segment.get(segment.get("id")) or []
+    if not beats:
+        return [(float(segment["start_s"]), float(segment["end_s"]), None)]
+    subranges = []
+    for beat in beats:
+        start_s = max(float(segment["start_s"]), float(beat.get("start_s", segment["start_s"])))
+        end_s = min(float(segment["end_s"]), float(beat.get("end_s", segment["end_s"])))
+        if end_s - start_s <= 0:
+            continue
+        subranges.append((start_s, end_s, beat.get("key")))
+    return subranges or [(float(segment["start_s"]), float(segment["end_s"]), None)]
+
+
+def beats_by_segment_from_shotlog(shotlog):
+    """Group the shotlog's content-beat shots by their clip and parent segment id."""
+    grouped = {}
+    if not shotlog:
+        return grouped
+    for shot in shotlog.values():
+        beat_of = shot.get("beat_of")
+        if not beat_of:
+            continue
+        grouped.setdefault((shot.get("clip"), beat_of), []).append(shot)
+    for beats in grouped.values():
+        beats.sort(key=lambda item: (item.get("start_s") or 0.0, item.get("key") or ""))
+    return grouped
 
 
 def landing_pairs(quality):
@@ -304,17 +340,24 @@ def build_phrases(scored, quality):
     pairs = landing_pairs(quality)
     if not pairs:
         return scored
-    by_segment = {id(candidate["segment"]): candidate for candidate in scored}
     removed = set()
     phrases = []
     for move_segment, hold_segment in pairs:
-        move_candidate = by_segment.get(id(move_segment))
+        siblings = [c for c in scored if c.get("segment") is move_segment]
+        move_candidate = _phrase_move(siblings)
         if move_candidate is None:
             continue
         removed.add(id(move_candidate))
         phrases.append(make_phrase_candidate(move_candidate, hold_segment))
     kept = [candidate for candidate in scored if id(candidate) not in removed]
     return kept + phrases
+
+
+def _phrase_move(candidates):
+    """The candidate that lands on the hold: the one latest in source time."""
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item["out_s"], item.get("score") or 0.0))
 
 
 def dedupe_candidates(candidates):
@@ -380,6 +423,7 @@ def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S
         running += clip.get("duration_s") or 0.0
     facts = {}
     warnings = []
+    beats_by_segment = beats_by_segment_from_shotlog(shotlog)
     for (clip, moment), content_offset in zip(clips, content_offsets):
         stem = Path(clip["file"]).stem
         quality = load_json(workspace / "quality" / f"{stem}.json")
@@ -388,10 +432,14 @@ def build_shot_facts(workspace, shotlog, important_max_s=DEFAULT_IMPORTANT_MAX_S
             continue
         motion = load_json(workspace / "motion" / f"{stem}.json")
         position = clip_position(moment, first_moment, span_seconds)
-        candidates = build_candidates(clip, moment, position, content_offset, quality, motion, MIN_SLOT_S)
+        candidates = build_candidates(
+            clip, moment, position, content_offset, quality, motion, MIN_SLOT_S,
+            beats_by_segment=beats_by_segment,
+        )
         scored = []
         for candidate in candidates:
-            shot = shotlog.get(candidate_key(candidate))
+            lookup_key = candidate.get("shot_key") or candidate_key(candidate)
+            shot = shotlog.get(lookup_key)
             if shot is None or not shot.get("eligible", True):
                 continue
             candidate["score"] = shot["score"]
