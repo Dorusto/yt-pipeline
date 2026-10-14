@@ -1138,3 +1138,62 @@ director run that takes both with another take between (covered by tests).
 - `scripts/doctor.py`: checks python deps, ffmpeg/ffprobe, `OPENROUTER_API_KEY`, config models, disk space, write access to the workspace and that the originals folder is not writable by mistake; prints what to fix.
 - Skill `yt-recap` (the front door for any agent) and a 10-line quickstart at the top of `README.md` and `docs/guides/user-guide.md`.
 - Acceptance: on a clean clone in a fresh shell, `doctor.py` then `recap.py --source ~/media/yt-test/raw --brief "<S1 brief>"` produces the MP4 with no other command.
+
+---
+
+## [2026-10-14] D2-3 implementation decisions: proxy naming, recap skip rule, doctor safety checks
+
+**Context:** Building the four D2-3 items on `d2-3-agent-ready`. Five points needed
+a choice; all are reversible and were made by the architect (one proxy bug was
+found in audit and fixed before merge).
+
+**Proxy naming and the single-file case.** The proxy keeps the exact source
+filename so `ingest`/`render` match originals by name (`clip.MOV` → `clip.MOV`).
+An audit repro showed the first version overwrote an original when the source
+was a single file and `--out` was that file's folder with `--force`. Now: for a
+folder source `--out` must not be inside the folder; for a file source `--out`
+must not be the file's own folder (the name-collision case the default
+`<parent>/proxy` avoids), and no proxy is ever written onto a source file path
+(asserted per clip). Height 720 with `scale=-2:H`, `-fps_mode cfr` locked to the
+source `r_frame_rate`, `libx264 -preset veryfast -crf 23` (nvenc `p4/cq23` when a
+GPU is present, runtime retry to libx264), audio `aac 128k 48k stereo` optional.
+The rebuilt set for the 21 Kotor clips is 402 MB, byte-for-byte the same format
+as the hand-made proxies.
+
+**Recap skip rule (what "outputs exist" means).** Plain existence is not enough
+(a new clip or a new brief would silently produce a stale edit), so each station
+carries an up-to-date rule: per-clip output mtime vs its input for
+proxy/ingest/motion/quality/describe/similarity/index, and for the brief-driven
+side (router, llm_director, render, render_final, export_kdenlive) the recorded
+`brief.text` in `route.json`/`edit.json` must equal the current brief and the
+output must be newer than `shotlog.json`/`edit.json`. A **new brief** therefore
+redoes only router → llm_director → render; a second run with the same brief
+skips every station in 0.01 s and costs nothing. `recap.py` writes exactly one
+file itself, `workspace/brief.txt`, and only when the content changed (the
+stations use its mtime for their own checks). `--force` re-runs everything.
+Progress lines go to stdout normally and to stderr under `--json`, so the JSON
+summary is always exactly one object. Per-station `llm_cost_usd` is taken from
+the child's own `--json` summary; the run total is their sum, and
+`llm_spend_usd` is the workspace ledger (`llm_spend.json`) total.
+
+**Kdenlive export is one station, two commands.** `edit_to_fragments.py` then
+`kdenlive_from_fragments.py`, with `--skip-melt` only when `melt` is not on the
+PATH, so machines without MLT still get the project file.
+
+**Doctor's originals check.** "Not writable by mistake" is a `warn` on the
+source folder's write bits (`st_mode & 0o222`, never `os.access` — the tests run
+as root) plus a hard `fail` when the workspace would be inside the source. The
+warning does not fail the run (exit 0) because the tools already refuse to write
+there; it tells the user how to make the folder read-only. The API-key check
+reports only `set (hidden)` — the key never appears in any output.
+
+**Acceptance (2026-10-14, `~/media/yt-test/ws-d23`, S1 brief, budget 1 USD):**
+`doctor.py` then `recap.py --source ~/media/yt-test/raw --workspace
+~/media/yt-test/ws-d23 --brief "<S1 brief>" --budget-usd 1` produced
+`recap_720p.mp4` (84.3 s, 1280x720) with no other command — 10 stations,
+1967 s wall, **$0.1651** LLM (describe $0.116 + llm_director $0.0495). Re-run:
+all ten stations `skip` in 0.008 s at $0. `--final` added `recap_final.mp4`
+(1920x1080 from the originals) and `recap.kdenlive` with no model calls. All 21
+originals verified unchanged by md5 before and after; every one of the 15 slots
+in the recap was frame-matched against its source window (mean abs diff ≈ 1–2,
+i.e. re-encode noise).
