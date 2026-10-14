@@ -1051,3 +1051,19 @@ important move") — but the reviewer's taste point is in the D2 report.
 **Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by Doru in the GitHub settings (the API is not available from the agents).
 
 **Rationale:** Our main risk is personal media and transcripts, which secret scanners do not look for. The hook stops it before it exists in history; CI catches a skipped hook; push protection blocks known key formats even from other machines.
+
+---
+
+## [2026-10-14] Rules digest and golden edit-grammar tests pulled forward from D3
+
+**Context:** `docs/RISKS.md` rows 1 and 3 assigned the rules digest to D3-00 and golden edit tests to D3. Both were pulled forward onto the `rules-digest` branch while the D2-2 round runs on its own branch: `DECISIONS.md` passed 1 000 lines and every agent task re-reads it, and the D2-01 regression (0051 came back as an opener) showed how easily one fix breaks an earlier one. Budget: no model calls, fixtures only, no footage.
+
+**Options for the golden tests:** A) frozen `edit.json` diffs only — brittle against harmless re-scoring and blind to grammar; B) an invariant checker only — silent on reordering and window drift; C) both, plus tests proving the checker itself fires on each violation.
+
+**Decision:**
+- `docs/RULES.md` (68 lines): current-state digest of every rule in force from `DECISIONS.md`, `VISION.md` and `CLAUDE.md` — editing grammar, defaults and thresholds, model routing, safety rules — one dated line per rule. `CLAUDE.md` and `.opencode/agents/*.md` now say: read `RULES.md` plus the last 10 `DECISIONS.md` entries; every decision that changes a rule updates `RULES.md` in the same commit; `DECISIONS.md` stays the history.
+- C for the goldens: `tests/test_edit_golden.py` with `tests/fixtures/golden/` — seven frozen synthetic workspaces (skip_roles, phrase_move_strong, phrase_hold_strong, same_take, similar_excluded, similar_not_adjacent, hero_present) with frozen expected cut windows from the deterministic `scripts/director.py`. Every produced edit is judged by a `grammar_violations` checker: never accidental/setup/teardown slots (geometry final), never a move cut before its landing and never move-then-own-landing, never adjacent non-contiguous same-take slots, never adjacent similar pairs, never a missed eligible hero. Checker self-tests prove each rule fires.
+- CI: `.github/workflows/tests.yml` runs the full pytest suite (golden next to the label eval) with the light dependencies (no torch/whisperx), alongside `public-check`.
+- `docs/RISKS.md` rows 1 and 3 updated; per-shoot golden edit sets on real test sets stay at D3.
+
+**Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.

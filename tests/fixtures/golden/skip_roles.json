@@ -1,0 +1,261 @@
+{
+  "name": "skip_roles",
+  "intent": "geometry accidental/setup/teardown never become slots, whatever the shotlog says",
+  "args": [
+    "--target-duration-s",
+    "24.0",
+    "--pacing",
+    "uniform",
+    "--order",
+    "score"
+  ],
+  "workspace": {
+    "ingest.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "source_dir": "/media",
+      "clips": [
+        {
+          "file": "clip_0001_x.mp4",
+          "path": "/media/clip_0001_x.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:00:00"
+        },
+        {
+          "file": "clip_0002_x.mp4",
+          "path": "/media/clip_0002_x.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:01:00"
+        },
+        {
+          "file": "clip_0003_x.mp4",
+          "path": "/media/clip_0003_x.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:02:00"
+        },
+        {
+          "file": "clip_0004_x.mp4",
+          "path": "/media/clip_0004_x.mp4",
+          "duration_s": 60.0,
+          "creation_time": "2026-01-01T10:03:00"
+        }
+      ]
+    },
+    "quality/clip_0001_x.json": {
+      "file": "clip_0001_x.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "accidental",
+          "confidence": 0.8,
+          "defects": []
+        }
+      ]
+    },
+    "quality/clip_0002_x.json": {
+      "file": "clip_0002_x.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "setup",
+          "confidence": 0.8,
+          "defects": []
+        }
+      ]
+    },
+    "quality/clip_0003_x.json": {
+      "file": "clip_0003_x.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "teardown",
+          "confidence": 0.8,
+          "defects": []
+        }
+      ]
+    },
+    "quality/clip_0004_x.json": {
+      "file": "clip_0004_x.mp4",
+      "duration_s": 60.0,
+      "segments": [
+        {
+          "id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "role": "hold",
+          "confidence": 0.8,
+          "defects": [],
+          "motion_label": "static"
+        }
+      ]
+    },
+    "motion/clip_0001_x.json": {
+      "file": "clip_0001_x.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "motion/clip_0002_x.json": {
+      "file": "clip_0002_x.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "motion/clip_0003_x.json": {
+      "file": "clip_0003_x.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "motion/clip_0004_x.json": {
+      "file": "clip_0004_x.mp4",
+      "duration_s": 60.0,
+      "analysis": {
+        "method": "test",
+        "source": "optical_flow",
+        "sample_fps": 10
+      },
+      "trajectory": [],
+      "phases": [],
+      "moves": [],
+      "scene_activity": [],
+      "events": []
+    },
+    "shotlog.json": {
+      "generated_at": "2026-01-01T00:00:00+00:00",
+      "weights": {
+        "vision": 0.55,
+        "labels": 0.45
+      },
+      "shots": [
+        {
+          "key": "0001/s1",
+          "clip": "clip_0001_x.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "move",
+          "role_source": "geometry",
+          "motion_label": "complex_motion",
+          "label_source": "geometry",
+          "score": 0.99,
+          "scores": {
+            "labels": 0.99
+          },
+          "description": "junk take",
+          "hook": "junk take",
+          "reason": "interest 99 \u00b7 move by verdict \u00b7 move \u00b7 clean",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        },
+        {
+          "key": "0002/s1",
+          "clip": "clip_0002_x.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "move",
+          "role_source": "geometry",
+          "motion_label": "complex_motion",
+          "label_source": "geometry",
+          "score": 0.99,
+          "scores": {
+            "labels": 0.99
+          },
+          "description": "junk take",
+          "hook": "junk take",
+          "reason": "interest 99 \u00b7 move by verdict \u00b7 move \u00b7 clean",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        },
+        {
+          "key": "0003/s1",
+          "clip": "clip_0003_x.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "move",
+          "role_source": "geometry",
+          "motion_label": "complex_motion",
+          "label_source": "geometry",
+          "score": 0.99,
+          "scores": {
+            "labels": 0.99
+          },
+          "description": "junk take",
+          "hook": "junk take",
+          "reason": "interest 99 \u00b7 move by verdict \u00b7 move \u00b7 clean",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        },
+        {
+          "key": "0004/s1",
+          "clip": "clip_0004_x.mp4",
+          "segment_id": "s1",
+          "start_s": 0.0,
+          "end_s": 60.0,
+          "eligible": true,
+          "role": "hold",
+          "role_source": "geometry",
+          "motion_label": "static",
+          "label_source": "geometry",
+          "score": 0.5,
+          "scores": {
+            "labels": 0.5
+          },
+          "description": "keep",
+          "hook": "keep",
+          "reason": "interest 50 \u00b7 static by geometry \u00b7 hold \u00b7 clean",
+          "similar_to": [],
+          "hero": null,
+          "semantic_motion": null
+        }
+      ]
+    }
+  },
+  "expected_slots": [
+    {
+      "clip": "clip_0004_x.mp4",
+      "in_s": 0.0,
+      "out_s": 6.0
+    }
+  ]
+}
