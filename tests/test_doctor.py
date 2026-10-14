@@ -43,7 +43,7 @@ def patch_config(monkeypatch, config, filename="config.yaml"):
 @pytest.fixture(autouse=True)
 def clean_project(monkeypatch):
     patch_config(monkeypatch, clean_config())
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-fake-for-tests")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "placeholder-key-for-tests")
 
 
 def run_main(capsys, argv):
@@ -82,7 +82,7 @@ def test_missing_api_key_fails(monkeypatch, capsys):
 
 
 def test_api_key_never_printed(monkeypatch, capsys):
-    secret = "sk-or-v1-supersecret123"
+    secret = "placeholder-secret-must-not-print"
     monkeypatch.setenv("OPENROUTER_API_KEY", secret)
     for argv in (["--json"], []):
         code, out, err = run_main(capsys, argv)

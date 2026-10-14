@@ -21,6 +21,8 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 
 For the details see [docs/guides/user-guide.md](docs/guides/user-guide.md); agents should load the `yt-recap` skill.
 
+Phone-only flow (Syncthing → inbox.py → serve.py → ntfy): [docs/guides/phone-flow.md](docs/guides/phone-flow.md).
+
 ---
 
 ## Workflow
@@ -68,6 +70,8 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
 | `notify.py` | message | POST to the project's ntfy topic |
+| `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
+| `serve.py` | server | read-only preview of the workspaces on the tailnet |
 
 ---
 

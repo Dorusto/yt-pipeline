@@ -1243,3 +1243,88 @@ so the diff stays inside `ledger_lock`. Its Unix backend still uses `flock`,
 so crash-release semantics are unchanged on the build machine; its Windows
 backend is the library's problem, not ours. Tests cover the sidecar name, the
 exclusive window and release on body exception (`tests/test_llm.py`).
+
+---
+
+## [2026-10-14] D2-4 phone flow: inbox grouping, tailnet serve, notify link shape
+
+**Context:** Building the four D2-4 items on `d2-4-phone-flow` (serve.py,
+recap.py --notify, inbox.py, phone-flow docs). Six points needed a choice; all
+are reversible and were made by the architect (one inbox behaviour was sent
+back for a fix round and is folded in below).
+
+**serve.py: allowlist routes, wildcard refused, Range required.** The server
+binds a single address (auto-detected default-route IPv4, `--bind` to override)
+and refuses `0.0.0.0` / `::` / empty — "tailnet-only" is enforced in code, not
+just documented. Routing is an allowlist: `/`, `/<project>/`, and only
+`recap_720p.mp4`, `recap_final.mp4`, `shotlog.html` inside a project. Proxies,
+`edit.json`, `source/` symlink farms and every analysis folder stay private.
+A folder counts as a project when it holds at least one of those three plus
+`edit.json`; projects list newest-folder-name first. Single-range HTTP (`Range:
+bytes=…`) returns 206 because mobile browsers refuse to play video without it.
+`--check` binds the requested port, reads the real bound port and closes — so a
+port conflict is caught before a service starts. URL contract with `--notify`:
+`<base>/<workspace folder name>/recap_720p.mp4` (name URL-quoted).
+
+**recap.py --notify: notify on success only, never fail on notify.** Message
+title `Recap ready (720p)`, `Recap ready (cached)` when every station skipped;
+a failed run posts nothing (stderr + exit code already report it). A notify
+send error is a `[warn]` and `"notified": false`, exit code stays 0 — the recap
+itself succeeded and the phone message is not worth failing a render for. Two
+keys added to the existing `--json` summary (`preview_url`, `notified`); no
+existing key changed.
+
+**inbox.py: day grouping and the source folder.** A clip's project day is, in
+priority: a `YYYY-MM-DD` parent folder inside the inbox (wins — the acceptance
+layout `inbox/2026-10-14/clip...20261012...` groups under `2026-10-14`), then a
+date in the filename (`YYYY-MM-DD`/`YYYYMMDD`/`YYYY_MM_DD`), then the file's
+mtime date. One workspace per day under `--projects/<day>/`; `--projects`
+inside `--inbox` is refused (its proxies would be rescanned as new clips).
+Source: when the day's clips all live in one folder that holds no other video,
+that folder is passed to `recap.py --source` directly; otherwise a symlink farm
+`<workspace>/source/` is rebuilt per run (no copies, no moves — the inbox is
+read-only). The brief is the day folder's `brief.txt` (the clips' folder, or
+their single `YYYY-MM-DD` parent when scattered — the fix round extended this
+to farm groups), else the inbox `brief.txt`, else `--default-brief`; the
+resolved brief is copied to `<workspace>/inbox_brief.txt`. Quiet wait: a group
+runs only when no file under the inbox changed for `--quiet-minutes` (default
+5, `0` disables). State (`<projects>/inbox_state.json`, internal) records
+per-file size+mtime and the brief sha per day: a new clip, a changed brief or
+`--force` re-invokes `recap.py`, whose own skip rule then decides the stations;
+clips are marked processed only after a successful run. Watch mode prints a
+group line only on a run or a status change (the fix round stopped per-poll
+log spam); `--once` prints one line per group always.
+
+**Sync tool: Syncthing** (this closes the "sync tool chosen by its own entry"
+placeholder from the D3 plan). Phone = send-only camera folder, LXC =
+receive-only into `~/media/inbox`: nothing the pipeline does can delete clips
+from the phone. `docs/guides/phone-flow.md` carries the steps; installing it
+and wiring Hermes remain Doru's machine steps — the repo ships instructions
+only.
+
+**Acceptance (2026-10-14, budget 1 USD):** 5 clips copied (never moved) from
+`~/media/yt-test/raw` into `~/media/inbox-test/2026-10-14/` with a folder
+`brief.txt`; `inbox.py --once --quiet-minutes 0 --notify --preview-base
+http://10.10.1.61:8091` picked them up as project `2026-10-14` (brief_source
+`folder`) and rendered `recap_720p.mp4` (1280x720, 19.5 s, 4 slots) for
+**$0.043** in 540 s. `serve.py --bind 10.10.1.61 --port 8091` lists the
+project; index, project page, preview and shotlog all return 200 over the
+tailnet address, and the ntfy message (`Recap ready (720p)` + preview link)
+arrived with that exact URL. Second `--once` run: `skipped (nothing new)` at
+$0. All 21 originals verified unchanged by md5.
+
+---
+
+## [2026-10-14] Demo scope extended: photos + music (D2-6) and the web app with explanations (D2-7)
+
+**Context:** Doru reviewed the D2-4 phone flow (link opens, quality fine for the demo) and wants the demo clip to beat DJI Mimo clearly: a day with more photos than clips, a soundtrack, and a view of *why* the edit looks the way it does. Spending stays paused after these phases until the Second Brain clip and the Facturi Agent demo are done.
+
+**D2-6 (running):** photos as candidates (EXIF time, describe, burst dedup, Ken Burns, portrait on a blurred background), `--music`, cuts on beats. Mix rule decided by Doru: the ambient sound stays under the music, quieter, never removed — default ambient 12 dB below the music, adjustable.
+
+**D2-7 (after D2-6 merges), one agent, two parts in order:**
+1. *Explanations.* The director records a reason for every candidate it does not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length). `explain.html` per project: brief, screenwriter plan in words, the edit timeline (thumbnail, source in/out seconds versus the segment range, reason), every candidate with used / rejected and the reason, short IDs (`0071/s2`). A re-edit command takes feedback in plain words against those IDs ("drop 0071/s2, tunnel longer") and re-runs only the edit + render, so Doru can talk to the agent (Hermes or OpenCode) about its own analysis.
+2. *One web app with a menu,* served by `serve.py`, tailnet-only: Projects (list with status: done / running), Upload (clips + photos from the phone browser, project folder name, brief, options, Start → files land in the inbox, the recap starts), and per project the tabs Recap / Why? / Shots. Options menu, each defaulting to **Auto** (the agent decides from the brief and the footage): length (30 s / 60 s / 90 s / 3 min), order (chronological / best first), audio clean-up (yes / no), music (none / pick a track / auto from `~/media/music`), ambient level under the music. The same options appear on "re-edit" in the project page.
+
+**Pacing rule (D2-7, director):** shot length scales with the target length so a short recap carries more, shorter shots: ~20 s → 1.5–2.5 s per shot (≈8–10 shots), ~90 s → 2–5 s (≈20–25), 3 min → up to 6 s with whole moves. Hero and semantic moves stay the longest shots but shrink in proportion. Today's 20 s inbox recap had only 4 shots, which Doru finds too few.
+
+**Later:** `--music auto` picks a track from `~/media/music` by brief and shot tags (needs the library analysed with `beats.py`); generated music (YuE2) waits for the 3090.

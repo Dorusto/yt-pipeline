@@ -69,3 +69,8 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `scripts/recap.py` is the single entry point for agents and humans; it only chains the station CLIs as subprocesses. — 2026-10-14
 - Recap skip rule: per-station output/input mtimes plus the brief text recorded in `route.json`/`edit.json`; a new brief redoes only router → llm_director → render, `--force` re-runs everything. — 2026-10-14
 - Proxies keep the source filename and live in `workspace/proxy/`; `proxy.py` refuses an `--out` that would write onto an original. — 2026-10-14
+- Preview services are tailnet-only: `serve.py` binds one address, never the wildcard, and serves only `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html` per project (allowlist routes, Range supported). — 2026-10-14
+- `recap.py --notify` posts the preview link (`<preview-base>/<workspace name>/recap_720p.mp4`) on success only; a failed run never notifies and a notify error never fails the recap. — 2026-10-14
+- Inbox grouping: a `YYYY-MM-DD` folder in the inbox wins over the filename date, then mtime; one workspace per day under `--projects`; a day whose clips share one folder is passed to `recap.py` directly, otherwise a rebuilt symlink farm (the inbox is read-only). — 2026-10-14
+- `inbox.py` waits for the inbox to be quiet (`--quiet-minutes`, default 5) and re-invokes `recap.py` on a new clip, a changed brief or `--force`; the station skip rule stays the only caching. — 2026-10-14
+- Phone sync is Syncthing: phone send-only camera folder → LXC receive-only `~/media/inbox`; setup steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14
