@@ -31,7 +31,13 @@ REQUIRED_SCENARIOS = {
     "similar_excluded",
     "similar_not_adjacent",
     "hero_present",
+    "photo_slots",
+    "photo_similar",
 }
+
+PHOTO_MIN_S = 2.0
+PHOTO_MAX_S = 4.0
+KEN_BURNS_MOVES = {"zoom_in", "zoom_out", "pan_left", "pan_right"}
 
 
 def load_scenarios():
@@ -70,7 +76,30 @@ def run_scenario(tmp_path, name):
 
 
 def slot_times(edit):
-    return [(slot["clip"], round(slot["in_s"], 3), round(slot["out_s"], 3)) for slot in edit.get("video") or []]
+    return [slot_signature(slot) for slot in edit.get("video") or []]
+
+
+def slot_signature(slot):
+    """One frozen expectation row: a video window or a photo hold."""
+    if slot.get("kind") == "photo":
+        return ("photo", slot["photo"], round(slot["duration_s"], 3))
+    return ("video", slot["clip"], round(slot["in_s"], 3), round(slot["out_s"], 3))
+
+
+def expected_signature(slot):
+    if slot.get("kind") == "photo":
+        return ("photo", slot["photo"], round(slot["duration_s"], 3))
+    return ("video", slot["clip"], round(slot["in_s"], 3), round(slot["out_s"], 3))
+
+
+def slot_shot(shots, slot):
+    """The shotlog row a slot comes from: by window for video, by file for photos."""
+    if slot.get("kind") == "photo":
+        for shot in shots:
+            if shot.get("media_type") == "photo" and shot.get("clip") == slot["photo"]:
+                return shot
+        return None
+    return shot_for(shots, slot["clip"], slot["in_s"], slot["out_s"])
 
 
 def quality_segments(root, clip_name):
@@ -138,8 +167,24 @@ def grammar_violations(edit, root):
     violations = []
     segments_by_clip = {}
     for slot in slots:
-        segments_by_clip.setdefault(slot["clip"], quality_segments(root, slot["clip"]))
+        if slot.get("kind") != "photo":
+            segments_by_clip.setdefault(slot["clip"], quality_segments(root, slot["clip"]))
     for slot in slots:
+        if slot.get("kind") == "photo":
+            duration = slot.get("duration_s")
+            if (
+                not isinstance(duration, (int, float))
+                or isinstance(duration, bool)
+                or duration < PHOTO_MIN_S - TOLERANCE_S
+                or duration > PHOTO_MAX_S + TOLERANCE_S
+            ):
+                violations.append(f"{slot['id']}: photo duration {duration} is outside {PHOTO_MIN_S}-{PHOTO_MAX_S}")
+            burns = slot.get("ken_burns") or {}
+            if burns.get("move") not in KEN_BURNS_MOVES:
+                violations.append(f"{slot['id']}: photo has no valid Ken Burns move")
+            if slot.get("role") in SKIP_ROLES:
+                violations.append(f"{slot['id']}: role {slot['role']} is never a slot")
+            continue
         segments = segments_by_clip[slot["clip"]]
         segment = segment_for(segments, slot["in_s"], slot["out_s"])
         if slot.get("role") in SKIP_ROLES:
@@ -150,29 +195,33 @@ def grammar_violations(edit, root):
         if hold is not None and slot["out_s"] < hold["start_s"] + LANDING_FLOOR_S - TOLERANCE_S:
             violations.append(f"{slot['id']}: move cut before its landing at {hold['start_s']}")
     for first, second in zip(slots, slots[1:]):
-        if first["clip"] == second["clip"] and not source_contiguous(first, second):
-            violations.append(f"{second['id']}: adjacent same-take slot, not source-contiguous with {first['id']}")
-        if shots_similar(
-            shot_for(shots, first["clip"], first["in_s"], first["out_s"]),
-            shot_for(shots, second["clip"], second["in_s"], second["out_s"]),
-        ):
+        if first.get("kind") != "photo" and second.get("kind") != "photo":
+            if first["clip"] == second["clip"] and not source_contiguous(first, second):
+                violations.append(f"{second['id']}: adjacent same-take slot, not source-contiguous with {first['id']}")
+            segments = segments_by_clip[first["clip"]]
+            if first["clip"] == second["clip"]:
+                segment = segment_for(segments, first["in_s"], first["out_s"])
+                hold = landing_hold(segments, segment)
+                if hold is not None and second["in_s"] < hold["end_s"] and second["out_s"] > hold["start_s"]:
+                    if first["out_s"] <= hold["start_s"] + TOLERANCE_S:
+                        violations.append(f"{first['id']}: move then its own landing {second['id']}")
+        if shots_similar(slot_shot(shots, first), slot_shot(shots, second)):
             violations.append(f"{second['id']}: adjacent similar pair with {first['id']}")
-        segments = segments_by_clip[first["clip"]]
-        if first["clip"] == second["clip"]:
-            segment = segment_for(segments, first["in_s"], first["out_s"])
-            hold = landing_hold(segments, segment)
-            if hold is not None and second["in_s"] < hold["end_s"] and second["out_s"] > hold["start_s"]:
-                if first["out_s"] <= hold["start_s"] + TOLERANCE_S:
-                    violations.append(f"{first['id']}: move then its own landing {second['id']}")
+    photo_files = {slot["photo"] for slot in slots if slot.get("kind") == "photo"}
     for shot in shots:
         if not shot.get("eligible") or not shot.get("hero"):
+            continue
+        if shot.get("media_type") == "photo":
+            if shot["clip"] not in photo_files:
+                violations.append(f"eligible hero {shot['key']} is missing from the edit")
             continue
         segments = segments_by_clip.setdefault(shot["clip"], quality_segments(root, shot["clip"]))
         segment = segment_for(segments, shot["start_s"], shot["end_s"])
         if segment is not None and segment.get("role") in SKIP_ROLES:
             continue
         covered = any(
-            slot["clip"] == shot["clip"]
+            slot.get("kind") != "photo"
+            and slot["clip"] == shot["clip"]
             and max(0.0, min(slot["out_s"], shot["end_s"]) - max(slot["in_s"], shot["start_s"])) > 0.0
             for slot in slots
         )
@@ -192,6 +241,18 @@ def craft_slot(slot_id, clip_name, in_s, out_s, role=None):
     return slot
 
 
+def craft_photo_slot(slot_id, photo_name, duration_s=3.0, move="zoom_in"):
+    return {
+        "id": slot_id,
+        "kind": "photo",
+        "photo": photo_name,
+        "duration_s": duration_s,
+        "ken_burns": {"move": move, "amount": 0.08, "focus_x": 0.5, "focus_y": 0.5},
+        "score": 0.5,
+        "reason": "crafted",
+    }
+
+
 def test_golden_scenarios_cover_every_rule():
     assert {scenario["name"] for scenario in SCENARIOS} == REQUIRED_SCENARIOS
 
@@ -201,9 +262,7 @@ def test_golden_edit_matches_frozen_expectations(tmp_path, scenario):
     root = tmp_path / scenario["name"]
     workspace = materialize(scenario["workspace"], root / "ws")
     _, edit = run_director(workspace, root / "edit.json", scenario["args"])
-    assert slot_times(edit) == [
-        (slot["clip"], round(slot["in_s"], 3), round(slot["out_s"], 3)) for slot in scenario["expected_slots"]
-    ]
+    assert slot_times(edit) == [expected_signature(slot) for slot in scenario["expected_slots"]]
     assert grammar_violations(edit, workspace) == []
 
 
@@ -309,3 +368,55 @@ def test_checker_accepts_clean_edit(tmp_path):
         craft_slot("v2", "clipO1.mp4", 0.0, 10.0),
     ])
     assert grammar_violations(edit, root) == []
+
+
+def test_golden_photo_slots_have_ken_burns_and_length(tmp_path):
+    _, edit, workspace = run_scenario(tmp_path, "photo_slots")
+    photos = [slot for slot in edit["video"] if slot.get("kind") == "photo"]
+    assert photos
+    for slot in photos:
+        assert PHOTO_MIN_S <= slot["duration_s"] <= PHOTO_MAX_S
+        assert slot["ken_burns"]["move"] in KEN_BURNS_MOVES
+    assert grammar_violations(edit, workspace) == []
+
+
+def test_golden_chronological_order_mixes_photos_by_capture_time(tmp_path):
+    _, edit, _ = run_scenario(tmp_path, "photo_slots")
+    names = [slot.get("photo") or slot["clip"] for slot in edit["video"]]
+    assert names.index("still_0002_a.jpg") < names.index("still_0003_b.jpg")
+
+
+def test_golden_photo_hero_is_never_missed(tmp_path):
+    _, edit, workspace = run_scenario(tmp_path, "photo_slots")
+    assert any(slot.get("photo") == "still_0002_a.jpg" for slot in edit["video"])
+    assert grammar_violations(edit, workspace) == []
+
+
+def test_golden_photo_similar_never_both_in_edit(tmp_path):
+    _, edit, workspace = run_scenario(tmp_path, "photo_similar")
+    names = {slot.get("photo") for slot in edit["video"] if slot.get("kind") == "photo"}
+    assert not {"still_0004_c.jpg", "still_0005_d.jpg"} <= names
+    assert grammar_violations(edit, workspace) == []
+
+
+def test_checker_flags_photo_duration_out_of_range(tmp_path):
+    root = workspace_root(tmp_path, "photo_slots")
+    edit = craft_edit([
+        craft_photo_slot("p1", "still_0002_a.jpg", duration_s=8.0),
+        craft_photo_slot("p2", "still_0003_b.jpg", duration_s=3.0),
+    ])
+    assert any("photo duration" in item for item in grammar_violations(edit, root))
+
+
+def test_checker_flags_photo_without_ken_burns(tmp_path):
+    root = workspace_root(tmp_path, "photo_slots")
+    slot = craft_photo_slot("p1", "still_0002_a.jpg")
+    slot["ken_burns"] = {"move": "slide", "amount": 0.08, "focus_x": 0.5, "focus_y": 0.5}
+    edit = craft_edit([slot, craft_photo_slot("p2", "still_0003_b.jpg")])
+    assert any("Ken Burns" in item for item in grammar_violations(edit, root))
+
+
+def test_checker_flags_missing_photo_hero(tmp_path):
+    root = workspace_root(tmp_path, "photo_slots")
+    edit = craft_edit([craft_photo_slot("p2", "still_0003_b.jpg")])
+    assert any("hero" in item for item in grammar_violations(edit, root))
