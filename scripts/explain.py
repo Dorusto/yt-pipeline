@@ -211,7 +211,8 @@ def _html_document(workspace_path, edit, plan, shotlog):
     used = sum(1 for row in decisions if row.get("status") == "used")
     sections = [
         _brief_section(edit.get("brief") or {}, edit.get("audio") or {}),
-        _plan_section(plan),
+        _director_section((edit.get("meta") or {}).get("director")),
+        _plan_section(plan, used_plan=((edit.get("meta") or {}).get("director") or {}).get("by") != "rules"),
         _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key),
         _candidates_section(decisions),
     ]
@@ -315,8 +316,30 @@ def _brief_section(brief, audio):
     return "\n".join(lines)
 
 
-def _plan_section(plan):
-    lines = ['<section id="plan">', "<h2>The plan in words</h2>"]
+DIRECTOR_TITLES = {
+    "llm": "Edited by the model",
+    "rules": "Edited by the rule-based director (the model's edit was not used)",
+}
+
+
+def _director_section(director):
+    """Who made this edit, and the notes of the model's loop (repairs, fallback reason)."""
+    if not isinstance(director, dict) or director.get("by") not in DIRECTOR_TITLES:
+        return ""
+    title = DIRECTOR_TITLES[director["by"]]
+    if director["by"] == "llm" and director.get("approved") is False:
+        title += " (reviewer did not approve; the last draft was kept and repaired)"
+    lines = ['<section id="director">', f"<h2>{escape(title)}</h2>"]
+    notes = [str(note) for note in director.get("notes") or []]
+    if notes:
+        lines.append("<ul>" + "".join(f"<li>{escape(note)}</li>" for note in notes) + "</ul>")
+    lines.append("</section>")
+    return "\n".join(lines)
+
+
+def _plan_section(plan, used_plan=True):
+    heading = "The plan in words" if used_plan else "The model's plan (not used for this edit)"
+    lines = ['<section id="plan">', f"<h2>{heading}</h2>"]
     if not isinstance(plan, dict):
         lines.append(
             '<p class="missing">No shot plan (shot_plan.json) in this workspace — '

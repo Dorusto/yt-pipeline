@@ -85,6 +85,8 @@ class Recorder:
             self.touch(ws / "route.json", json.dumps({"brief": {"text": brief_text}}))
         elif name == "llm_director":
             self.touch(ws / "edit.json", json.dumps({"brief": {"text": brief_text}, "made": self.clock}))
+        elif name == "explain":
+            self.touch(ws / "explain.html", "<html></html>")
         elif name == "render":
             self.touch(ws / "recap_720p.mp4", "video")
         elif name == "render_final":
@@ -149,6 +151,7 @@ def test_station_order_without_final(tmp_path, monkeypatch, capsys):
         "index",
         "router",
         "llm_director",
+        "explain",
         "render",
     ]
 
@@ -169,6 +172,7 @@ def test_station_order_with_final(tmp_path, monkeypatch, capsys):
         "index",
         "router",
         "llm_director",
+        "explain",
         "render",
         "render_final",
         "export_kdenlive",
@@ -200,7 +204,7 @@ def test_new_brief_redoes_only_the_edit(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     recorder.calls.clear()
     assert run_recap(source, workspace, brief="brief B", extra=["--json"]) == 0
-    assert recorder.calls == ["router", "llm_director", "render"]
+    assert recorder.calls == ["router", "llm_director", "explain", "render"]
 
 
 def test_failure_stops_the_chain(tmp_path, monkeypatch, capsys):
@@ -251,7 +255,7 @@ def test_progress_lines_format(tmp_path, monkeypatch, capsys):
         for line in lines
         if re.match(r"^\[\s*\d+/\d+\] \S+\s+(done|skip|FAIL)\s", line)
     ]
-    assert len(progress) == 10
+    assert len(progress) == 11
     assert any(line.startswith("recap:") for line in lines)
     assert run_recap(source, workspace, extra=["--json"]) == 0
     captured = capsys.readouterr()
@@ -403,7 +407,7 @@ def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
         run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
         == 0
     )
-    assert recorder.calls == ["llm_director", "render"]
+    assert recorder.calls == ["llm_director", "explain", "render"]
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
     statuses = {entry["name"]: entry["status"] for entry in summary["stations"]}

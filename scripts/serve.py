@@ -105,6 +105,68 @@ LENGTH_MAX_S = 3600
 LOG_TAIL_BYTES = 262144
 
 
+SHOTS_OVERLAY_STYLE = """
+.editbar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.editbar button{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--rope);
+background:var(--water);color:var(--stone);font:inherit;font-size:.85rem;cursor:pointer}
+.editbar button.on{background:var(--stone);color:var(--water)}
+.badge.used{color:var(--sea)}
+.why-out{font-size:.8rem;color:var(--left);margin:2px 0 6px;overflow-wrap:anywhere}
+.card.in-edit{outline:2px solid var(--sea)}
+"""
+
+SHOTS_OVERLAY_SCRIPT = """
+(function(){var d=window.EDIT_DECISIONS||{};var cards=[].slice.call(document.querySelectorAll('article.card'));
+if(!cards.length||!Object.keys(d).length)return;
+cards.forEach(function(c){var r=c.querySelector('.range');if(!r)return;var k=r.textContent.split(' \u00b7 ').pop().trim();var x=d[k];
+var b=c.querySelector('.badges');if(!x||!b)return;c.dataset.state=x.status;
+if(x.status==='used'){c.classList.add('in-edit');var s=document.createElement('span');s.className='badge used';s.textContent='in the edit as '+(x.slot||'');b.insertBefore(s,b.firstChild);}
+else{var w=document.createElement('p');w.className='why-out';w.textContent='left out: '+(x.reason||'');b.parentNode.insertBefore(w,b.nextSibling);}});
+var used=cards.filter(function(c){return c.dataset.state==='used';}).length;
+var good=cards.filter(function(c){return c.dataset.state!=='used'&&!c.classList.contains('ineligible');}).length;
+var bar=document.createElement('div');bar.className='editbar';
+[['all','All '+cards.length],['used','In the edit '+used],['out','Good but left out '+good]].forEach(function(o,i){
+var btn=document.createElement('button');btn.type='button';btn.textContent=o[1];if(!i)btn.className='on';
+btn.addEventListener('click',function(){[].forEach.call(bar.children,function(e){e.classList.remove('on');});btn.classList.add('on');
+cards.forEach(function(c){var st=c.dataset.state;var show=o[0]==='all'||(o[0]==='used'&&st==='used')||(o[0]==='out'&&st!=='used'&&!c.classList.contains('ineligible'));c.style.display=show?'':'none';});});
+bar.appendChild(btn);});
+var main=document.querySelector('main');if(main)main.parentNode.insertBefore(bar,main);})();
+"""
+
+
+def edit_decisions(directory):
+    """``{shot id: {status, slot, reason}}`` from the workspace's edit.json, or an empty dict."""
+    try:
+        document = json.loads((Path(directory) / "edit.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    rows = document.get("decisions") if isinstance(document, dict) else None
+    result = {}
+    for row in rows or []:
+        if isinstance(row, dict) and row.get("id"):
+            result[str(row["id"])] = {
+                "status": row.get("status"),
+                "slot": row.get("slot"),
+                "reason": row.get("reason"),
+            }
+    return result
+
+
+def shotlog_with_edit(path, decisions):
+    """The shotlog page with the edit's used/left-out marks and a filter bar added."""
+    text = Path(path).read_text(encoding="utf-8")
+    if not decisions:
+        return text
+    payload = json.dumps(decisions).replace("</", "<\\/")
+    addition = (
+        f"<style>{SHOTS_OVERLAY_STYLE}</style>"
+        f"<script>window.EDIT_DECISIONS={payload};{SHOTS_OVERLAY_SCRIPT}</script>"
+    )
+    if "</body>" in text:
+        return text.replace("</body>", addition + "</body>", 1)
+    return text + addition
+
+
 class ServeError(RuntimeError):
     """Raised when the server cannot start or the request is unacceptable."""
 
@@ -1519,6 +1581,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             target = directory / artifact
             if not directory.is_dir() or not target.is_file():
                 self.send_not_found()
+                return
+            if artifact == "shotlog.html":
+                self.send_html(shotlog_with_edit(target, edit_decisions(directory)), send_body)
                 return
             self.send_file(target, send_body)
             return

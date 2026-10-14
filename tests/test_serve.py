@@ -1013,3 +1013,30 @@ def test_exact_seconds_live_inside_the_length_menu(tmp_path):
     assert command[command.index("--target-duration-s") + 1] == "75"
     command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"length": "custom", "length_s": ""}, tmp_path)
     assert "--target-duration-s" not in command
+
+
+def test_shots_tab_marks_what_is_in_the_edit(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "shotlog.html").write_text(
+        "<html><body><main><article class=\"card\"><div class=\"range\">a.mp4 · 00:00.0–00:05.0 · 0001/s1</div>"
+        "<div class=\"badges\"></div></article></main></body></html>",
+        encoding="utf-8",
+    )
+    edit = {"video": [], "decisions": [
+        {"id": "0001/s1", "status": "used", "slot": "v3", "reason": "hero"},
+        {"id": "0001/s2", "status": "rejected", "reason": "did not fit the length </script>"},
+    ]}
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/shotlog.html")
+        page = body.decode()
+        assert status == 200
+        assert "EDIT_DECISIONS" in page
+        assert '"slot": "v3"' in page
+        assert "</script>\"" not in page
+        assert page.index("EDIT_DECISIONS") < page.index("</body>")
+    finally:
+        server.shutdown()
+        server.server_close()

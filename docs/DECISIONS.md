@@ -1813,3 +1813,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** B, in `scripts/common/versions.py`, called by `recap.py` after a run whose edit or render stations ran. Renders are hard-linked (they are replaced atomically by `render.py`), small files copied; a render older than `edit.json` is never kept with it. The first versioned run keeps the existing recap as v1. `serve.py` shows the newest version with a video, chips per version and a compare view. Photos resolve like clips: a stale `sources[]` path falls back to `<workspace>/proxy`. Render stations no longer stop each other. `serve.py` reaps its child (a zombie pid read as `running`) and reads progress and failure from `run.log` after a start marker. Ken Burns: the frame is enlarged up to 4x (max 8000 px wide) in yuv444 before `zoompan`, motion is smoothstep-eased, and pans stay inside the zoomed frame (before, half of a pan was clamped still and the rest moved in 2 px steps: 51 of 99 frames stood still; now 5, at the eased ends). "All good shots" now really sends `--target-duration-s 0` (the form value was dropped before).
 
 **Consequence:** each version costs only its JSON (videos are links). Versions are never deleted by the tools.
+
+---
+
+## [2026-10-15] Best shots win over time coverage; the model's edit is repaired, not discarded (D2-14)
+
+**Context:** On kotor-demo (60 s, chronological) the best shot of the day (0072/s7b1, hero, 0.95) and the tunnel approach (0072/s5, 0.91) were left out while a 0.68 shot with a tilted horizon got in. The screenwriter had planned the tunnel as three slots in a row; the validator called that a same-take jump cut, the three rounds ended with violations and the whole LLM edit was replaced by the rule director, silently. The rule director split the day into equal time buckets, one best shot each, so the long tunnel take got one slot.
+
+**Options:** (A) keep the rules, only explain better; (B) stars first in the rule director, repair instead of fallback in the LLM loop, and allow same-take moves that read as an ellipsis; (C) drop chronological buckets entirely (score order then sort by time).
+
+**Decision:** B. Chronological picks give up to 40 % of the slots to heroes or shots >= 0.85 first, then fill the uncovered buckets. Two cuts of one take may sit back to back when both are camera moves, forward in time, at least 8 s apart (static framings still never). The LLM loop repairs a draft's mechanical violations from the shot facts (rebuild the cut, drop slots outside the plan, drop the weaker of a jump-cut pair) and only falls back when that fails. `meta.director` (schema) records `llm`/`rules`, approval and notes; `explain` runs as a recap station after the edit, shows who made it and marks an unused plan; the Shots tab marks every card "in the edit as vN" or "left out: reason" with filters (All / In the edit / Good but left out).
+
+**Why not C:** coverage of the day still matters for a recap; stars-first keeps both.
+
+**Consequence:** a strong stretch (tunnel, cave) can hold several slots; the 8 s / 0.85 / 40 % numbers are first guesses to tune on real footage.
