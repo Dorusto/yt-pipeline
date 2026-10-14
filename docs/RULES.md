@@ -67,3 +67,5 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Commit backdating after 18:00 with non-round times; the repo is public. — CLAUDE.md
 - `--skip-alignment` only when the JSON is already correct and only ASS + video re-render is needed. — CLAUDE.md
 - `scripts/recap.py` is the single entry point for agents and humans; it only chains the station CLIs as subprocesses. — 2026-10-14
+- Recap skip rule: per-station output/input mtimes plus the brief text recorded in `route.json`/`edit.json`; a new brief redoes only router → llm_director → render, `--force` re-runs everything. — 2026-10-14
+- Proxies keep the source filename and live in `workspace/proxy/`; `proxy.py` refuses an `--out` that would write onto an original. — 2026-10-14
