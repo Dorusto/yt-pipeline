@@ -24,6 +24,15 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 |
 | D6 | Packaging and publishing: thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 |
 
+**D2-13 … D2-18 (2026-10-15):** versions + honest run state, smooth Ken Burns, exact length, heroes first, the model's edit repaired not discarded, Shots marks, best photo of a burst, still 9:16 crop without a face, explain thumbnails on moved workspaces, agent loop guards, running station + progress bar, Re-edit always makes a new edit — reports `D2-13`, `D2-14`, `D2-15`.
+
+**Next (open from 2026-10-15):**
+- Watchdog spend cap per agent run (spend since the run started), not per day; then set it back to 2 USD per run (cron is at 3.8 USD/day today).
+- Architect: switch back to `master` at the end of a run (D2-18 left the LXC checkout on its branch).
+- Progress bar colour: theme the `<progress>` element (Chrome on Android ignores `accent-color` there).
+- Check v4 of kotor-demo: Why? should say "Edited by the model" (D2-17 repair).
+- Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
+
 **Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
 Milestones 2–7 below are the older plan for the finished-clip pipeline. Where a D-phase covers the same ground (Milestone 7 → D4), the D-phase wins; the rest stay as they are.
