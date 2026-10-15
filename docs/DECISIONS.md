@@ -1505,3 +1505,56 @@ and approaches; 0081 people + cave):
 tracker and the fallback are all free CPU measurements, one 224 KB MIT model
 download, no new dependencies; the measured numbers above are the pick, not
 taste. Haar had to go anyway on OpenCV 5.
+
+---
+
+## [2026-10-15] D2-8 describe mosaic: event frame times, one image per group, legacy behind a flag
+
+**Context:** the D2-8 PART 1 backlog row: tile 6-9 frames of a segment into one
+mosaic image with their timestamps, pick the frames at OpenCV scene changes and
+motion phase boundaries instead of fixed 20/50/80 %, send one mosaic per segment
+(more on a long take) instead of separate frames, and keep the old path behind a
+flag. Measured old vs new on the Kotor eval set
+(`eval/ground_truth_boat_2026-10-12.yaml`, 6 clips, 6.92 min of footage,
+`z-ai/glm-5.3-flash` vision, 2026-10-15).
+
+**Decision:**
+- **Frame times** (`--frame-mode mosaic`, the default): candidates are the
+  segment's two edge anchors (`start+0.05`, `end-0.05`), the motion phase
+  boundaries from `motion/<stem>.json` and the OpenCV scene changes measured on
+  the segment (grayscale frame difference every 0.5 s, peak over
+  `max(3 x median, 8)`, merged within 1 s). Target count: 6 frames up to 20 s,
+  else `min(24, max(6, ceil(span / 5)))`; events win over the even fill, times
+  are deduped below 0.25 s.
+- **Mosaic**: tiles 480 px wide with the timestamp burned in (`12.4s`), grid 3
+  columns (2 when a group has <= 4 tiles), black canvas, JPEG 85; the tiles are
+  split into consecutive groups of at most 9 (`ceil(N/9)` groups, sizes as even
+  as possible) and **each group is one model image**. The facts block lists every
+  tile timestamp and a `long: yes|no` line that keys the beats rule (the old
+  "more than three frames" trigger no longer works now that short segments carry
+  6 tiles).
+- **`--frame-mode legacy`** keeps the old path exactly: fixed interior times
+  (three frames, or one every ~5 s capped at 24), one image per frame, the old
+  facts block. It is the A/B baseline, not the default.
+
+**Measured A/B (6 GT clips, `describe --force` then `index` then
+`eval_labels.py --labels shotlog`):**
+
+| | legacy (old) | mosaic (new) |
+|---|---|---|
+| move score | 0.678 | **0.681** |
+| role score | 0.996 | 0.996 |
+| horizon score | 0.970 | 0.970 |
+| events F1 | 0.667 | 0.667 |
+| model images sent | 134 | **35** (−74 %) |
+| frames shown to the model | 134 | **216** (+61 %) |
+| content beats found | 12 | **15** |
+| vision cost | 0.03643 USD | **0.03098 USD** (−15 %) |
+| **vision cost per minute of footage** | **0.00526 USD/min** | **0.00447 USD/min** |
+
+**Rationale:** the mosaic is not worse on any eval component (move is a hair
+better, the rest identical), shows 61 % more frames for 15 % less money and
+cuts the number of model images by three quarters — so it ships as the default
+and the old path stays behind `--frame-mode legacy` for the next bake-off
+(frames vs mosaic vs native video input, P1). Frame times at real events also
+found more content beats (15 vs 12), which is what the long-take split needs.

@@ -37,7 +37,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Confident `accidental`/`setup`/`teardown` are `eligible: false` in the shotlog. — 2026-10-13
 - Similarity: MobileNetV2 ONNX through `cv2.dnn` (hist backend offline); "similar" starts at 0.90 and stays a flag. — 2026-10-13
 - Eval scoring: interval overlap (full credit exact, 0.5 geometric look-alike), horizon tolerance 5°, events one-to-one F1 within ±3 s. — 2026-10-13
-- `describe`: 3 frames in order with timestamps + motion label, one-line summary (≤ 12 words) + tags, retry once on unparseable output, `max_tokens` 8000 for reasoning models. — 2026-10-13
+- `describe`: frames at OpenCV scene changes and motion phase boundaries, tiled 6-9 per mosaic image with burned-in timestamps (one image per group, `--frame-mode legacy` keeps the fixed-position separate frames), timestamps + motion label in the facts, `long: yes|no` keys the beats, one-line summary (≤ 12 words) + tags, retry once on unparseable output, `max_tokens` 8000 for reasoning models. — 2026-10-13 / 2026-10-15
 - Render: 720p preview from proxies, final from the originals at native size (`--originals-dir`), crossfade 0.3 s, frame-inclusive Kdenlive `out` (`out_s - 1/fps`). — 2026-10-13
 
 ## Model routing
@@ -63,7 +63,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Skills live in `.claude/skills/` and change together with their scripts in the same commit. — 2026-09-22
 - Short docstrings on public functions and modules allowed; inline comments not. — 2026-10-13
 - WhisperX forced alignment on the corrected SRT is the word-timestamp source of truth; never re-run Whisper for timings. — 2026-06-18
-- Face detection: OpenCV Haar cascades, one static crop offset per segment; `x_offset` override skips detection. — 2026-06-18
+- Reframe: `scripts/reframe.py` follows the subject with a moving crop path (YuNet face detection per sample, TrackerMIL between detections, saliency fallback with a stability gate, smoothed centre — no jumps, limited speed); `x_offset` in `shorts_config.yaml` still pins a fixed crop. Models live in `~/.cache/yt-pipeline/models/`, never in git. — 2026-06-18 / 2026-10-15
 - Every tool is a standalone script in `scripts/` with `--help`, `--json` and re-run safety; shared code only in `scripts/common/`; files validated against `schemas/` are the interfaces. — 2026-10-12
 - Commit backdating after 18:00 with non-round times; the repo is public. — CLAUDE.md
 - `--skip-alignment` only when the JSON is already correct and only ASS + video re-render is needed. — CLAUDE.md
