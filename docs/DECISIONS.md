@@ -1879,3 +1879,38 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not schema (A):** two keys and a length do not need a schema yet; the YAML is the interface and stays safe to commit (shot keys and numbers only, no footage, no paths).
 
 **Consequence:** Doru's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.
+
+---
+
+## [2026-10-15] Understand intent before penalising a motion defect (D2-20)
+
+**Context:** On kotor-demo, 0091/s1 (selfie hold, shake 0.055, horizon -7.2 deg)
+scores 0.34 and the deliberate 13 s orbit 0091/s2 loses 0.40 to a shake defect.
+`intent_evidence` in quality.py only adds a note for fast moves and changes no
+decision. The same shake is also counted twice: as the `shake` defect and as the
+`unsteady` steadiness word.
+
+**Options:** (A) explain motion defects at fusion from evidence already in the
+shotlog (vision `semantic_motion`, geometric label, sharpness) plus a
+`subject_centred` flag exported from motion.py; (B) measure subject stability
+with face detection in quality.py; (C) only dedupe the penalty and tune weights.
+
+**Decision:** A. `index.py` gets one function, `explained_defects`, that returns
+the motion defects (shake, horizon) the content explains: vision
+`semantic_motion` agrees with the move's geometric label, or `subject_centred`
+is true (subject fixed relative to the camera: selfie, orbit), and sharpness is
+intact (no `blur` defect). Blur is never explained: the sharpness condition is
+the absence of the blur defect. Explained defects do not lower the labels score
+and the `unsteady` penalty is dropped with them, so shake counts once. The
+evidence is stored as `intent` on the shot and shown in `reason` and
+explain.html. Non-motion defects (obstruction, exposure) are never explained;
+partial evidence changes nothing. No per-shot rule.
+
+**Why not B:** the centre-versus-periphery signal already exists in motion.py
+and only needed exporting; face detection adds a model dependency and fails on
+clips with no faces.
+
+**Consequence:** deliberate selfie and orbit shots are no longer buried by their
+own camera motion; a shaky shot with no supporting evidence stays penalised.
+Open: the `accidental` role from geometry still cannot be corrected by vision
+(no real case yet).

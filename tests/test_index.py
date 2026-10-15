@@ -353,6 +353,230 @@ def test_score_matches_formula_without_vision(tmp_path):
     assert expected_score == pytest.approx(0.66875)
 
 
+def test_explained_defects_agreement_and_subject():
+    move = {"label": "orbit_candidate", "subject_centred": False, "subject_ratio": 0.9}
+    assert index.explained_defects(["shake", "horizon"], move, "orbit") == {"shake", "horizon"}
+    assert index.explained_defects(["shake"], move, "travel") == set()
+    move = {"label": "pan_right", "subject_centred": True, "subject_ratio": 0.31}
+    assert index.explained_defects(["shake"], move, "none") == {"shake"}
+    move = {"label": "travel_forward", "subject_centred": False, "subject_ratio": 1.2}
+    assert index.explained_defects(["horizon"], move, "travel") == {"horizon"}
+
+
+def test_explained_defects_blur_blocks_everything():
+    move = {"label": "orbit_candidate", "subject_centred": True, "subject_ratio": 0.2}
+    assert index.explained_defects(["shake", "blur"], move, "orbit") == set()
+    assert index.explained_defects(["blur"], move, "orbit") == set()
+
+
+def test_explained_defects_requires_evidence():
+    move = {"label": "pan_right", "subject_centred": False, "subject_ratio": 1.1}
+    assert index.explained_defects(["shake", "horizon"], move, "none") == set()
+    assert index.explained_defects(["shake", "horizon"], move, None) == set()
+    assert index.explained_defects(["shake", "horizon"], None, "orbit") == set()
+
+
+def test_explained_defects_never_explains_non_motion():
+    move = {"label": "orbit_candidate", "subject_centred": True, "subject_ratio": 0.2}
+    assert index.explained_defects(["obstruction", "exposure"], move, "orbit") == set()
+    assert index.explained_defects(["shake", "obstruction"], move, "orbit") == {"shake"}
+
+
+def test_label_score_identical_without_intent():
+    defects = [
+        {"name": "shake", "value": 0.4},
+        {"name": "horizon", "value": 0.3},
+    ]
+    expected = index.clamp(
+        index.ROLE_BASE["hold"]
+        + 0.25 * 0.7
+        + index.STEADINESS_BONUS["unsteady"]
+        - min(0.4, 0.4 * index.DEFAULT_DEFECT_WEIGHT + 0.3 * index.DEFECT_WEIGHTS["horizon"]),
+        0.0,
+        1.0,
+    )
+    assert index._label_score("hold", 0.7, "unsteady", defects) == pytest.approx(expected)
+    assert index._label_score("hold", 0.7, "unsteady", defects, explained=()) == pytest.approx(expected)
+
+
+def test_label_score_shake_counted_once_when_explained():
+    defects = [{"name": "shake", "value": 0.4}]
+    explained_score = index._label_score("hold", 0.7, "unsteady", defects, explained={"shake"})
+    neutral = index._label_score("hold", 0.7, None, [])
+    assert explained_score == pytest.approx(neutral)
+    assert explained_score > index._label_score("hold", 0.7, "unsteady", defects)
+
+
+def test_label_score_clean_bonus_when_all_defects_explained():
+    defects = [{"name": "shake", "value": 0.4}, {"name": "horizon", "value": 0.5}]
+    explained_score = index._label_score(
+        "hold", 0.7, "unsteady", defects, explained={"shake", "horizon"}
+    )
+    expected = index.clamp(index.ROLE_BASE["hold"] + 0.25 * 0.7 + 0.10, 0.0, 1.0)
+    assert explained_score == pytest.approx(expected)
+    partial = index._label_score("hold", 0.7, "unsteady", defects, explained={"shake"})
+    expected_partial = index.clamp(
+        index.ROLE_BASE["hold"] + 0.25 * 0.7 - min(0.4, 0.5 * index.DEFECT_WEIGHTS["horizon"]),
+        0.0,
+        1.0,
+    )
+    assert partial == pytest.approx(expected_partial)
+
+
+def test_explained_defects_via_build_shot(tmp_path):
+    segment = quality_segment(
+        "s1",
+        0.0,
+        10.0,
+        role="move",
+        confidence=0.7,
+        motion_label="orbit_candidate",
+        defects=[{"name": "shake", "value": 0.4}],
+    )
+    describe = described_segment(
+        "s1", 0.0, 10.0, interest=60, role="move", motion_label="orbit_candidate"
+    )
+    describe["semantic_motion"] = "orbit"
+    moves = [
+        {
+            "id": "m1",
+            "start_s": 0.0,
+            "end_s": 10.0,
+            "label": "orbit_candidate",
+            "steadiness": "unsteady",
+            "subject_centred": True,
+            "subject_ratio": 0.41,
+        }
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe], motion_moves=moves)
+    shot = data["shots"][0]
+    assert shot["intent"] == [
+        {"defect": "shake", "because": "semantic_motion orbit matches orbit_candidate"}
+    ]
+    assert shot["reason"].endswith("intent: shake (orbit)")
+    assert shot["defects"] == ["shake"]
+    expected_labels = index.clamp(
+        index.ROLE_BASE["move"] + 0.25 * 0.7 + 0.10,
+        0.0,
+        1.0,
+    )
+    assert shot["scores"]["labels"] == pytest.approx(expected_labels)
+
+
+def test_subject_centred_explains_when_semantic_disagrees(tmp_path):
+    segment = quality_segment(
+        "s1",
+        0.0,
+        10.0,
+        role="hold",
+        confidence=0.7,
+        motion_label="static",
+        defects=[{"name": "shake", "value": 0.4}, {"name": "horizon", "value": 0.5}],
+    )
+    describe = described_segment("s1", 0.0, 10.0, interest=50)
+    describe["semantic_motion"] = "none"
+    moves = [
+        {
+            "id": "m1",
+            "start_s": 0.0,
+            "end_s": 10.0,
+            "label": "static",
+            "steadiness": "unsteady",
+            "subject_centred": True,
+            "subject_ratio": 0.41,
+        }
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe], motion_moves=moves)
+    shot = data["shots"][0]
+    assert {item["defect"] for item in shot["intent"]} == {"shake", "horizon"}
+    assert shot["intent"][0]["because"] == "subject centred (ratio 0.41)"
+    assert "intent: horizon,shake (subject centred)" in shot["reason"]
+    expected_labels = index.clamp(
+        index.ROLE_BASE["hold"] + 0.25 * 0.7 + 0.10,
+        0.0,
+        1.0,
+    )
+    assert shot["scores"]["labels"] == pytest.approx(expected_labels)
+
+
+def test_no_evidence_keeps_the_penalty_and_no_intent(tmp_path):
+    segment = quality_segment(
+        "s1",
+        0.0,
+        10.0,
+        role="hold",
+        confidence=0.7,
+        motion_label="static",
+        defects=[{"name": "shake", "value": 0.4}],
+    )
+    describe = described_segment("s1", 0.0, 10.0, interest=50)
+    describe["semantic_motion"] = "none"
+    moves = [
+        {
+            "id": "m1",
+            "start_s": 0.0,
+            "end_s": 10.0,
+            "label": "static",
+            "steadiness": "unsteady",
+            "subject_centred": False,
+            "subject_ratio": 1.4,
+        }
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[describe], motion_moves=moves)
+    shot = data["shots"][0]
+    assert shot["intent"] == []
+    assert "intent:" not in shot["reason"]
+    expected_labels = index.clamp(
+        index.ROLE_BASE["hold"]
+        + 0.25 * 0.7
+        + index.STEADINESS_BONUS["unsteady"]
+        - min(0.4, 0.4),
+        0.0,
+        1.0,
+    )
+    assert shot["scores"]["labels"] == pytest.approx(expected_labels)
+
+
+def test_old_shotlog_without_intent_still_validates():
+    shot = {
+        "key": "0081/s1",
+        "clip": "clip.mp4",
+        "segment_id": "s1",
+        "start_s": 0.0,
+        "end_s": 10.0,
+        "eligible": True,
+        "role": "hold",
+        "role_source": "geometry",
+        "motion_label": "static",
+        "label_source": "geometry",
+        "confidence": 0.7,
+        "uncertain": False,
+        "uncertain_reasons": [],
+        "description": None,
+        "summary": None,
+        "tags": [],
+        "subject": None,
+        "scenery": None,
+        "semantic_motion": None,
+        "interest": None,
+        "hero": None,
+        "peak_s": None,
+        "score": 0.5,
+        "scores": {"vision": None, "labels": 0.5},
+        "hook": "hold · static",
+        "reason": "no description · static by geometry · hold · clean",
+        "similar_to": [],
+        "defects": [],
+        "suppressed_by": None,
+    }
+    record = {
+        "generated_at": "2026-10-15T00:00:00+00:00",
+        "weights": {"vision": 0.55, "labels": 0.45},
+        "shots": [shot],
+    }
+    assert validate(record, "shotlog") == []
+
+
 def test_missing_vision_uses_neutral_prior(tmp_path):
     segment = quality_segment("s1", 0.0, 10.0, role="hold", confidence=0.7)
     data, _ = build(tmp_path, segments=[segment])

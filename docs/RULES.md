@@ -40,6 +40,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `accidental`: unstable run ≥ 5 s or ≥ 70% of the clip; whole-clip confidence 0.65, run 0.6; healthy travel shake 0.007–0.012 is stable content. — 2026-10-13
 - Quality segments: head/tail are before the first / after the last content segment; slivers merge into a neighbour with `end_s > start_s`; a `static` label is never role `move`. — 2026-10-13
 - Shotlog score = `0.55·vision + 0.45·labels`; vision = interest/100 (+0.15 hero); missing vision is a neutral 0.5 prior; the verdict wins on `uncertain` segments. — 2026-10-13
+- Intent before penalty (D2-20): a motion defect (`shake`, `horizon` — never obstruction/exposure/blur) is not penalised when the content explains it — the vision `semantic_motion` agrees with the move's geometric label, or the move has `subject_centred` (ratio ≤ 0.7) — and `blur` is not measured. The evidence is `shot.intent` and `intent: …` in the reason; the `unsteady` penalty drops with the explained `shake`, so shake counts once. With no evidence the score is unchanged. No per-shot rule. — 2026-10-15
 - Confident `accidental`/`setup`/`teardown` are `eligible: false` in the shotlog. — 2026-10-13
 - Similarity: MobileNetV2 ONNX through `cv2.dnn` (hist backend offline); "similar" starts at 0.90 and stays a flag. — 2026-10-13
 - Eval scoring: interval overlap (full credit exact, 0.5 geometric look-alike), horizon tolerance 5°, events one-to-one F1 within ±3 s. — 2026-10-13

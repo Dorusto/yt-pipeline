@@ -55,6 +55,7 @@ STEADINESS_BONUS = {
 }
 DEFECT_WEIGHTS = {"horizon": 0.5}
 DEFAULT_DEFECT_WEIGHT = 1.0
+STEADINESS_PENALTIES = frozenset({"unsteady", "very_unsteady"})
 ENERGY_LABELS = {
     "travel_forward",
     "travel_backward",
@@ -516,11 +517,16 @@ def pacing_bonus(candidate, position):
 
 def score_candidate(candidate, pacing):
     segment = candidate["segment"]
+    intent = {item.get("defect") for item in (candidate.get("intent") or []) if item.get("defect")}
     score = ROLE_BASE.get(candidate["role"], 0.0)
     score += 0.25 * segment.get("confidence", 0.0)
-    if candidate["steadiness"] in STEADINESS_BONUS:
+    if candidate["steadiness"] in STEADINESS_BONUS and not (
+        "shake" in intent and candidate["steadiness"] in STEADINESS_PENALTIES
+    ):
         score += STEADINESS_BONUS[candidate["steadiness"]]
-    defects = segment.get("defects") or []
+    defects = [
+        defect for defect in (segment.get("defects") or []) if defect.get("name") not in intent
+    ]
     if defects:
         penalty = sum(
             defect.get("value", 0.0) * DEFECT_WEIGHTS.get(defect.get("name"), DEFAULT_DEFECT_WEIGHT)
@@ -1646,7 +1652,9 @@ def run(args, started):
                 candidate["similar_to"] = list(shot.get("similar_to") or [])
                 candidate["hero"] = shot.get("hero")
                 candidate["semantic_motion"] = shot.get("semantic_motion")
+                candidate["intent"] = list(shot.get("intent") or [])
             else:
+                candidate["intent"] = []
                 candidate["score"] = score_candidate(candidate, args.pacing)
                 candidate["description"] = None
                 candidate["shot_reason"] = None

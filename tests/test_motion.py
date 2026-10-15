@@ -734,6 +734,92 @@ def test_orbit_without_quiet_centre_is_truck():
     assert moves[0]["label_geometric"] == "pan_right"
 
 
+def test_subject_centred_on_orbit_field():
+    source, target, matrix, width, height = _orbit_field()
+    parallax = motion._parallax_score(source, target, width)
+    centre_sum, centre_count, periphery_sum, periphery_count = motion._subject_residuals(
+        source, target, matrix, width, height
+    )
+    rows = _lateral_rows(parallax, centre_sum, centre_count, periphery_sum, periphery_count)
+    moves = motion.build_moves(LATERAL_PHASE, rows, 10.0)
+
+    assert moves[0]["subject_centred"] is True
+    assert moves[0]["subject_ratio"] is not None
+    assert moves[0]["subject_ratio"] <= motion.SUBJECT_RATIO_MAX
+
+
+def test_subject_not_centred_on_plain_pan():
+    moves = motion.build_moves(LATERAL_PHASE, _steady_rows(), 10.0)
+
+    assert moves[0]["label"] == "pan_right"
+    assert moves[0]["subject_centred"] is False
+    assert moves[0]["subject_ratio"] is None
+
+
+def test_subject_centred_matches_subject_is_centred():
+    rows = _lateral_rows(
+        0.8,
+        centre_sum=1.0,
+        centre_count=10,
+        periphery_sum=10.0,
+        periphery_count=10,
+    )
+    assert motion._subject_ratio(rows) == pytest.approx(0.1)
+    assert motion._subject_is_centred(rows) is True
+
+    rows = _lateral_rows(
+        0.8,
+        centre_sum=10.0,
+        centre_count=10,
+        periphery_sum=1.0,
+        periphery_count=10,
+    )
+    assert motion._subject_ratio(rows) == pytest.approx(10.0)
+    assert motion._subject_is_centred(rows) is False
+
+
+def test_old_motion_file_without_subject_fields_still_validates():
+    record = {
+        "file": "clip.mp4",
+        "path": "clip.mp4",
+        "generated_at": "2026-10-12T00:00:00+00:00",
+        "duration_s": 10.0,
+        "fps_source": 30.0,
+        "sample_fps": 10.0,
+        "analysis": {"method": "lucas_kanade_affine_partial_ransac", "source": "optical_flow", "sample_fps": 10.0, "width": 64, "frames_analyzed": 100},
+        "trajectory": [{"t": 0.5, "dx": 0.0, "dy": 0.0, "scale": 1.0, "roll_deg": 0.0, "inlier_ratio": 1.0, "speed": 0.0, "shake": 0.0}],
+        "phases": [
+            {
+                "start_s": 0.0,
+                "end_s": 10.0,
+                "type": "steady_move",
+                "dominant_motion": "pan_right",
+                "speed": "regular",
+                "steadiness": "no_shaking",
+                "confidence": 0.5,
+                "uncertain": False,
+            }
+        ],
+        "moves": [
+            {
+                "id": "m1",
+                "start_s": 0.0,
+                "end_s": 10.0,
+                "label": "pan_right",
+                "speed": "regular",
+                "steadiness": "no_shaking",
+                "steady_start_s": 0.0,
+                "steady_end_s": 10.0,
+                "confidence": 0.7,
+                "uncertain": False,
+            }
+        ],
+        "scene_activity": [{"t_s": 0.0, "activity": 0.0}],
+        "events": [],
+    }
+    assert validate(record, "motion") == []
+
+
 def test_few_matches_parallax_zero():
     source = np.zeros((5, 2))
     target = np.zeros((5, 2))

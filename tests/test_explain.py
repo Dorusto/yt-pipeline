@@ -203,6 +203,9 @@ def build_shotlog():
                 "scores": {"labels": 0.6},
                 "hook": "the wake",
                 "reason": "interest 60 · static by geometry · hold · clean",
+                "intent": [
+                    {"defect": "shake", "because": "semantic_motion orbit matches orbit_candidate"}
+                ],
             },
             {
                 "key": "0072/p1",
@@ -286,6 +289,15 @@ def test_explain_writes_html_with_brief_plan_timeline_and_candidates(tmp_path):
     assert "data:image/jpeg;base64," in html
     assert 'src="http' not in html
     assert 'href="http' not in html
+
+
+def test_explain_shows_intent_next_to_the_reason(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    result = run_tool(workspace)
+    assert result.returncode == 0, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "intent — shake: semantic_motion orbit matches orbit_candidate" in html
+    assert html.count("intent —") == 1
 
 
 def test_second_run_skips_and_force_rewrites(tmp_path):

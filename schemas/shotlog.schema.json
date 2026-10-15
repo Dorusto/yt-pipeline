@@ -317,6 +317,19 @@
             },
             "description": "measured defect names carried from quality"
           },
+          "intent": {
+            "type": "array",
+            "description": "motion defects the content explains (a matching semantic move or a held-centred subject) and therefore do not lower the labels score; empty when none",
+            "items": {
+              "type": "object",
+              "required": ["defect", "because"],
+              "properties": {
+                "defect": {"type": "string"},
+                "because": {"type": "string"}
+              },
+              "additionalProperties": true
+            }
+          },
           "suppressed_by": {
             "oneOf": [
               {

@@ -945,19 +945,25 @@ def _platform_bob_for_move(start_s, end_s, spans):
     }
 
 
-def _subject_is_centred(rows):
-    """True when the centre of frame moves with the global motion and the periphery does not."""
+def _subject_ratio(rows):
+    """Centre mean over periphery mean of the residual motion, or None when undefined."""
     centre_sum = sum(row.get("subject_centre_sum", 0.0) for row in rows)
     centre_count = sum(row.get("subject_centre_count", 0) for row in rows)
     periphery_sum = sum(row.get("subject_periphery_sum", 0.0) for row in rows)
     periphery_count = sum(row.get("subject_periphery_count", 0) for row in rows)
     if centre_count == 0 or periphery_count == 0:
-        return False
+        return None
     centre_mean = centre_sum / centre_count
     periphery_mean = periphery_sum / periphery_count
     if periphery_mean <= 0:
-        return False
-    return centre_mean <= SUBJECT_RATIO_MAX * periphery_mean
+        return None
+    return centre_mean / periphery_mean
+
+
+def _subject_is_centred(rows):
+    """True when the centre of frame moves with the global motion and the periphery does not."""
+    ratio = _subject_ratio(rows)
+    return ratio is not None and ratio <= SUBJECT_RATIO_MAX
 
 
 def _runs(classes):
@@ -1226,6 +1232,8 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
         steady_length = group["steady_end_s"] - group["steady_start_s"]
         steadiness = steadiness_word(mean_shake, label)
         parallax = _median([row.get("parallax", 0.0) for row in steady_rows])
+        subject_ratio = _subject_ratio(steady_rows)
+        subject_centred = _subject_is_centred(steady_rows)
         label_geometric = None
         platform = None
         if label == "static":
@@ -1268,6 +1276,8 @@ def build_moves(phases, rows, sample_fps, bob_spans=None):
                 "platform": platform,
                 "platform_bob": _platform_bob_for_move(start_s, end_s, bob_spans),
                 "parallax": parallax,
+                "subject_ratio": subject_ratio,
+                "subject_centred": subject_centred,
                 "speed": speed_word(mean_speed),
                 "steadiness": steadiness,
                 "steady_start_s": group["steady_start_s"],

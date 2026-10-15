@@ -206,14 +206,14 @@ def _html_document(workspace_path, edit, plan, shotlog):
     slots = edit.get("video") or []
     decisions = _sorted_decisions(edit.get("decisions") or [])
     used_by_slot, by_id = _decision_maps(decisions)
-    shotlog_by_key = _shotlog_windows(shotlog)
+    shotlog_by_key, intents_by_key = _shotlog_windows(shotlog)
     sources = _source_paths(edit.get("sources") or [], workspace_path)
     used = sum(1 for row in decisions if row.get("status") == "used")
     sections = [
         _brief_section(edit.get("brief") or {}, edit.get("audio") or {}),
         _director_section((edit.get("meta") or {}).get("director")),
         _plan_section(plan, used_plan=((edit.get("meta") or {}).get("director") or {}).get("by") != "rules"),
-        _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key),
+        _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key, intents_by_key),
         _candidates_section(decisions),
     ]
     return _page(
@@ -376,14 +376,14 @@ def _plan_section(plan, used_plan=True):
     return "\n".join(lines)
 
 
-def _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key):
+def _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key, intents_by_key=None):
     rows = "\n".join(
-        _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key) for slot in slots
+        _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key, intents_by_key) for slot in slots
     )
     return f'<section id="timeline">\n<h2>Timeline</h2>\n{rows}\n</section>'
 
 
-def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
+def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key, intents_by_key=None):
     is_photo = str(slot.get("kind") or "") == "photo"
     source_name = str(slot.get("photo") or "") if is_photo else str(slot.get("clip") or "")
     path = sources.get(source_name)
@@ -418,6 +418,14 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
     shot_key = slot.get("shot_key")
     key_html = f' <span class="short-id">· {escape(str(shot_key))}</span>' if shot_key else ""
     reason = escape(str(slot.get("reason") or ""))
+    intent_html = ""
+    if shot_key and intents_by_key:
+        intent = intents_by_key.get(str(shot_key)) or []
+        if intent:
+            becauses = " · ".join(
+                f'{escape(str(item.get("defect")))}: {escape(str(item.get("because")))}' for item in intent
+            )
+            intent_html = f'<div class="meta-line">intent — {becauses}</div>'
     return (
         f'<div class="slot">'
         f"{thumb}"
@@ -427,6 +435,7 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
         f'<div class="cut">{escape(cut_text)}</div>'
         f"{move_html}"
         f'<p class="reason">{reason}</p>'
+        f"{intent_html}"
         f"</div>"
         f"</div>"
     )
@@ -481,13 +490,16 @@ def _decision_maps(decisions):
 
 def _shotlog_windows(shotlog):
     windows = {}
+    intents = {}
     for shot in (shotlog or {}).get("shots") or []:
         key = shot.get("key")
         start = shot.get("start_s")
         end = shot.get("end_s")
         if isinstance(key, str) and _is_number(start) and _is_number(end):
             windows[key] = (float(start), float(end))
-    return windows
+        if isinstance(key, str) and shot.get("intent"):
+            intents[key] = list(shot.get("intent") or [])
+    return windows, intents
 
 
 def _source_paths(sources, workspace_path=None):
