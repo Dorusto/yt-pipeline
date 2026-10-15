@@ -822,3 +822,19 @@ def test_a_failed_render_keeps_the_new_edit_without_a_video(tmp_path, monkeypatc
     assert (kept / "edit.json").is_file()
     assert not (kept / "recap_720p.mp4").exists()
     assert json.loads((kept / "version.json").read_text(encoding="utf-8"))["failed_at"] == "render"
+
+
+def test_new_edit_reruns_the_edit_without_feedback(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(recap, "execute", Recorder())
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    capsys.readouterr()
+    recorder = Recorder()
+    recorder.clock += 10000.0
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--new-edit", "--json"]) == 0
+    assert recorder.calls == ["llm_director", "explain", "render"]
+    director_argv = dict(recorder.argvs)["llm_director"]
+    flat = director_argv[0] if isinstance(director_argv[0], list) else director_argv
+    assert "--force" in flat

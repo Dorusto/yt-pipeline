@@ -94,6 +94,7 @@ command per clip:
 - `--budget-usd X` caps the LLM spend for this run (forwarded to describe and llm_director).
 - `--feedback TEXT` (repeatable) sends plain-word feedback against the current edit's short ids (e.g. `--feedback "drop 0071/s2, tunnel longer"`) to the `llm_director` station and re-runs **only** llm_director → explain → render even when they are up to date — the analysis stations keep their normal skip rule. The feedback lines land in `WORKSPACE/feedback.jsonl` (written by `llm_director`, not by recap).
 - Every run that makes a new edit keeps it in `WORKSPACE/versions/vNNN/` (`edit.json`, the renders made from it, `version.json`); the summary's `version` names it (null when nothing new was made). A failed render station does not stop the other render stations (status is still `failed`).
+- `--new-edit` makes a new edit even when nothing changed (llm_director with `--force`, then explain and the renders); the web Re-edit button always sends it, so pressing Re-edit twice gives two versions.
 - `--force` re-runs every station.
 - `--notify` posts a short ntfy message with the preview link after a successful run (a fully skipped run says `Recap ready (cached)`); a failed run never notifies.
 - `--preview-base URL` is the base of the `serve.py` server (e.g. `http://10.10.1.61:8091`); the link is `<base>/<workspace folder name>/recap_720p.mp4`. Without it the message carries the workspace path and the summary's `preview_url` is `null`.

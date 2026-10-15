@@ -1407,6 +1407,8 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
     feedback = (fields.get("feedback") or "").strip()
     if feedback:
         command += ["--feedback", feedback[:BRIEF_MAX_CHARS]]
+    if fields.get("submit") == "reedit":
+        command.append("--new-edit")
     return command
 
 
