@@ -148,3 +148,23 @@ def test_spend_usd_sums_calls():
     model.describe(request())
     model.describe(request())
     assert model.spend_usd() == 0.02
+
+
+def test_mock_peak_is_inside_the_segment_and_deterministic():
+    context = {"id": "s3", "start_s": 10.0, "end_s": 20.0, "role": "move", "motion_label": "pan_right", "uncertain": False}
+    first = json.loads(MockVisionModel().describe(request(context=context)).text)
+    second = json.loads(MockVisionModel().describe(request(context=context)).text)
+    assert first["peak_s"] == second["peak_s"]
+    assert 13.5 <= first["peak_s"] <= 16.5
+
+
+def test_mock_peak_differs_between_segments_and_is_null_without_a_span():
+    peaks = {
+        json.loads(
+            MockVisionModel().describe(request(context={"id": key, "start_s": 0.0, "end_s": 30.0})).text
+        )["peak_s"]
+        for key in ("s1", "s2", "s3", "s4", "s5")
+    }
+    assert len(peaks) >= 2
+    no_span = json.loads(MockVisionModel().describe(request(context={"id": "p1"})).text)
+    assert no_span["peak_s"] is None

@@ -41,6 +41,7 @@ from PIL import Image
 
 from common.config import ConfigError, load_config
 from common.llm import BudgetExceeded, LLMError
+from common.peak import valid_vision_peak
 from common.photos import jpeg_bytes, open_photo
 from common.schema import SchemaError, validate, validate_or_raise
 from common.vision import VisionFrame, VisionRequest, make_vision_model
@@ -452,6 +453,7 @@ def normalize_answer(data):
         else "none",
         "interest": _clamp_interest(data.get("interest")),
         "hero": data.get("hero") if isinstance(data.get("hero"), bool) else False,
+        "peak_s": _as_float(data.get("peak_s")),
         "verdict": normalize_verdict(data.get("verdict")),
         "beats": normalize_beats(data.get("beats")),
     }
@@ -517,6 +519,7 @@ def normalize_beats(value):
                 "summary": _normalize_summary(item.get("summary")),
                 "interest": _clamp_interest(item.get("interest")),
                 "hero": item.get("hero") if isinstance(item.get("hero"), bool) else None,
+                "peak_s": valid_vision_peak(item.get("peak_s"), start_s, end_s),
             }
         )
         cursor = end_s
@@ -1000,6 +1003,7 @@ def _described_segment(segment, times, normalized, verdict, cost_usd):
         "semantic_motion": normalized["semantic_motion"],
         "interest": normalized["interest"],
         "hero": normalized["hero"],
+        "peak_s": valid_vision_peak(normalized.get("peak_s"), segment["start_s"], segment["end_s"]),
         "beats": beats,
         "verdict": verdict,
         "skip_reason": None,

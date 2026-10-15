@@ -123,6 +123,7 @@ class MockVisionModel(VisionModel):
         times = ", ".join(f"{frame.t_s:.2f}s" for frame in request.frames)
         semantic = SEMANTIC_BY_LABEL.get(label, "none")
         interest = _mock_interest(context.get("id") or label)
+        peak = _mock_peak(context)
         text = (
             "{\n"
             f'  "description": "Mock description of {frames} frames at {times} '
@@ -134,6 +135,7 @@ class MockVisionModel(VisionModel):
             f'  "semantic_motion": "{semantic}",\n'
             f'  "interest": {interest},\n'
             f'  "hero": {"true" if interest >= 75 else "false"},\n'
+            f'  "peak_s": {peak},\n'
             f'  "verdict": {_mock_verdict_json(context) if uncertain else "null"}\n'
             "}"
         )
@@ -186,6 +188,19 @@ def _mock_interest(key):
     import zlib
 
     return 50 + zlib.crc32(str(key).encode("utf-8")) % 30
+
+
+def _mock_peak(context):
+    """A deterministic peak_s inside the segment (35-65 % of its span), or JSON null without a span."""
+    import zlib
+
+    start = context.get("start_s")
+    end = context.get("end_s")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+        return "null"
+    key = f"{context.get('id') or ''}:{start}:{end}:peak"
+    fraction = 0.35 + (zlib.crc32(key.encode("utf-8")) % 31) / 100.0
+    return f"{round(start + fraction * (end - start), 2)}"
 
 
 def _mock_verdict_json(context):

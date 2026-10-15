@@ -172,6 +172,14 @@
             "null"
           ],
           "description": "true when this beat is a hero moment"
+        },
+        "peak_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "the most interesting moment of this beat, inside start_s..end_s; optional"
         }
       },
       "additionalProperties": true
@@ -317,6 +325,14 @@
             "minimum": 0,
             "maximum": 100,
             "description": "how interesting the shot is on its own, 0-100"
+          },
+          "peak_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "timestamp in the source clip of the most interesting moment of the segment (the object passing through the gate, the subject at its closest); validated to lie in start_s..end_s, null when the model gave none or an invalid one"
           },
           "hero": {
             "type": [

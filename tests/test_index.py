@@ -1008,3 +1008,36 @@ def test_html_contact_sheet_shows_photo_card(tmp_path):
     assert "data:image/jpeg;base64," in text
     assert "a lighthouse at dusk" in text
     assert validate(read_shotlog(tmp_path), "shotlog") == []
+
+
+def test_vision_peak_reaches_the_shotlog(tmp_path):
+    segment = quality_segment("s1", 0.0, 20.0, role="move", confidence=0.8, motion_label="pan_right")
+    described = described_segment("s1", 0.0, 20.0, interest=70, role="move", motion_label="pan_right")
+    described["peak_s"] = 12.4
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    assert data["shots"][0]["peak_s"] == 12.4
+    assert validate(data, "shotlog") == []
+
+
+def test_peak_outside_the_shot_or_missing_is_null_in_the_shotlog(tmp_path):
+    segment = quality_segment("s1", 0.0, 20.0, role="move", confidence=0.8, motion_label="pan_right")
+    described = described_segment("s1", 0.0, 20.0, interest=70, role="move", motion_label="pan_right")
+    described["peak_s"] = 25.0
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    assert data["shots"][0]["peak_s"] is None
+    undescribed, _ = build(tmp_path / "other", segments=[segment])
+    assert undescribed["shots"][0]["peak_s"] is None
+
+
+def test_beats_take_their_own_peak_or_the_segment_peak_when_it_falls_inside(tmp_path):
+    segment = quality_segment("s7", 20.0, 160.0, role="move", confidence=0.8, motion_label="travel_forward")
+    described = described_segment("s7", 20.0, 160.0, interest=70, summary="tunnel")
+    described["peak_s"] = 90.0
+    described["beats"] = [
+        {"id": "b1", "start_s": 20.0, "end_s": 60.0, "label": "approach", "interest": 80, "hero": True, "peak_s": 41.0},
+        {"id": "b2", "start_s": 60.0, "end_s": 120.0, "label": "inside", "interest": 55, "hero": False},
+        {"id": "b3", "start_s": 120.0, "end_s": 160.0, "label": "exit", "interest": 90, "hero": True},
+    ]
+    data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
+    assert [shot["peak_s"] for shot in data["shots"]] == [41.0, 90.0, None]
+    assert validate(data, "shotlog") == []
