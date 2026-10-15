@@ -28,6 +28,10 @@ The output adapter: turn an `edit.json` edit list into an MP4, either a preview-
 - The MP4 is encoded to `<out>.tmp.mp4`, probed, then moved into place with `os.replace`. A failed encode leaves no file at `--out`.
 - On any error (unreadable or invalid edit, unresolvable clip or photo, `--out` inside the originals folder, ffmpeg failure, write failure) it prints one `[error] ...` line to stderr and exits 1.
 
+## Speed ramp (`middle_speed`)
+
+A video slot with `middle_speed` above 1 (schema range 1.0-1.25, the directors write at most 1.2) is built from three trims of the same source window: the first quarter at real time, the middle half through `setpts=(PTS-STARTPTS)/s`, the last quarter at real time, joined with `concat`; the slot's ambient audio is cut the same way with `atempo=s` on the middle part, so it stays continuous. The on-screen length is `0.25L + 0.5L/s + 0.25L` (`common.moves.slot_screen_length`), and crossfade offsets and the music length use it. A slot without `middle_speed` (or 1.0) renders exactly as before, one trim.
+
 ## Photo slots
 
 A photo slot holds a still for its `duration_s` (2–4 s) with a slow Ken Burns move. The render:

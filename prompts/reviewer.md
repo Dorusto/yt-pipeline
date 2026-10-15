@@ -33,7 +33,10 @@ no extra keys.
    window (the window ends where the steady motion ends — never on aimless
    movement after it); a move with a landing hold ends inside that hold and never
    has its landing planned again; hero and complete semantic moves keep their whole
-   window up to the hero cap for this edit; no two slots from the same take back to back unless their
+   window up to the hero cap for this edit (a static hold is never kept whole: it
+   follows the slot maximum like any static shot; a camera move may run past the
+   slot maximum on at most 15% of the slots, and its middle half may play up to
+   1.2x — the tool writes that ramp, do not ask for it); no two slots from the same take back to back unless their
    windows touch; no two similar shots next to each other; ordinary slots follow
    the pacing limits stated in the user message; **photo slots last 2-4 s and carry a Ken Burns move** —
    a photo has no window, no landing and no same-take rule, and a planned hero

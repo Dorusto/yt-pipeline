@@ -43,6 +43,15 @@ no extra keys.
    short one): use `in_s = window_in_s` and `out_s = window_out_s` when the
    window is within the cap; when it is longer, keep the **tail** (the move
    must complete), so `out_s = window_out_s` and `in_s = window_out_s - cap`.
+   A hero that is a **static hold** (`motion_label` static or minor_motion) is
+   a static shot: it follows rule 4 like any ordinary shot, not this one.
+   The tool then applies the **move length policy** on top of your windows: the
+   middle half of a camera move may play up to 1.2x (it writes `middle_speed`
+   itself, never write it), so more of the move fits; at most 15% of the slots
+   (at least one) may run past the slot maximum on screen, the best moves first;
+   every static shot, hold and photo stays within the slot maximum. Give a
+   camera move the whole of its window within the hero cap and let the tool
+   trim and ramp it.
 4. **Ordinary shots follow the pacing** target of the slot, but never shorter
    than the slot minimum and never longer than the slot maximum stated in the
    user message. When the shot is a landing phrase
@@ -56,7 +65,7 @@ no extra keys.
    on aimless movement after the move: the usable window ends where the steady
    motion ends, so keep `in_s` at or after `window_in_s` and `out_s` at or
    before `window_out_s`.
-7. **Length.** The sum of `out_s - in_s` should reach the brief's target
+7. **Length.** The sum of the on-screen lengths (`out_s - in_s`) should reach the brief's target
    duration within about 10%.
 8. **Photos.** A photo slot has no window and no landing: answer with
    `duration_s` between 2.0 and 4.0 s (3.0 is the default). Never give a photo

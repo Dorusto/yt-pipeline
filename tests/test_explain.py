@@ -397,3 +397,14 @@ def test_run_returns_skipped_summary_counts(tmp_path):
     assert summary["candidates"] == 5
     assert summary["used"] == 3
     assert summary["rejected"] == 2
+
+
+def test_explain_shows_the_middle_speed_ramp_on_the_slot(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    edit["video"][0]["middle_speed"] = 1.2
+    write_json(workspace / "edit.json", edit)
+    result = run_tool(workspace, "--force")
+    assert result.returncode == 0, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "middle at 1.20x" in html

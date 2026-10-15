@@ -3,6 +3,8 @@ import json
 import os
 import threading
 
+import pytest
+
 import serve
 
 
@@ -776,3 +778,18 @@ def test_check_human_output(tmp_path, capsys):
     assert out.startswith("check: http://127.0.0.1:")
     assert "2026-10-14" in out
     assert "done" in out
+
+
+def test_edit_summary_uses_the_ramped_on_screen_length(tmp_path):
+    edit = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 5.0, "middle_speed": 1.2},
+            {"id": "v2", "clip": "b.mp4", "in_s": 0.0, "out_s": 2.0},
+        ]
+    }
+    (tmp_path / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    summary = serve.edit_summary(tmp_path)
+    ramped = 0.25 * 5.0 + 0.5 * 5.0 / 1.2 + 0.25 * 5.0
+    assert summary["blocks"][0]["end"] == pytest.approx(ramped)
+    assert summary["blocks"][1]["start"] == pytest.approx(ramped)
+    assert summary["total"] == pytest.approx(ramped + 2.0)

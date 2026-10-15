@@ -32,6 +32,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
+from common.moves import slot_screen_length
 from common.pacing import estimate_all_good
 
 TOOL = "scripts/serve.py"
@@ -366,7 +367,9 @@ def edit_summary(directory):
                 length = float(slot.get("duration_s") or 0.0)
                 kind = "photo"
             else:
-                length = float(slot.get("out_s", 0.0)) - float(slot.get("in_s", 0.0))
+                length = slot_screen_length(
+                    {**slot, "in_s": float(slot.get("in_s", 0.0)), "out_s": float(slot.get("out_s", 0.0))}
+                )
                 kind = "clip"
         except (TypeError, ValueError):
             continue

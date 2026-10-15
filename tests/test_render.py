@@ -959,3 +959,80 @@ def test_music_is_the_bed_and_the_ambient_stays_audible_under_it(tmp_path, capsy
     assert ambient > 0.0
     gap_db = 20 * np.log10(bed / ambient)
     assert 8.0 <= gap_db <= 16.0, gap_db
+
+
+def make_ramp_edit(tmp_path, clip, in_s, out_s, middle_speed):
+    slot = {
+        "id": "v1",
+        "clip": clip.name,
+        "in_s": in_s,
+        "out_s": out_s,
+        "score": 0.5,
+        "reason": "ramp",
+        "transition": {"type": "cut", "duration_s": 0},
+    }
+    if middle_speed is not None:
+        slot["middle_speed"] = middle_speed
+    edit = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-15T21:17:43+00:00",
+        "brief": {"text": "ramp"},
+        "sources": [{"file": clip.name, "path": str(clip)}],
+        "video": [slot],
+        "audio": {"ambience": {"enabled": True, "source": "slot"}},
+        "captions": [],
+        "graphics": [],
+    }
+    path = tmp_path / "ramp_edit.json"
+    path.write_text(json.dumps(edit), encoding="utf-8")
+    return path
+
+
+def decode_audio(path, rate=8000):
+    result = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1", "-ar", str(rate), "-"],
+        check=True,
+        capture_output=True,
+    )
+    return np.frombuffer(result.stdout, dtype=np.float32), rate
+
+
+def test_middle_speed_slot_has_the_ramped_on_screen_duration_and_continuous_audio(tmp_path, capsys):
+    clip = tmp_path / "long.mp4"
+    make_clip(clip, duration=7.0, freq=440)
+    edit = make_ramp_edit(tmp_path, clip, 1.0, 6.0, 1.2)
+    out = tmp_path / "ramp.mp4"
+    code = render.main(["--edit", str(edit), "--out", str(out), "--no-audio-clean", "--json"])
+    assert code == 0, capsys.readouterr().err
+    summary = json.loads(capsys.readouterr().out)
+    expected = 0.25 * 5.0 + 0.5 * 5.0 / 1.2 + 0.25 * 5.0
+    assert abs(summary["duration_s"] - expected) <= 0.1
+    video_duration = float(probe(out)["format"]["duration"])
+    assert abs(video_duration - expected) <= 0.1
+    samples, rate = decode_audio(out)
+    assert abs(len(samples) / rate - expected) <= 0.1
+    window = int(0.05 * rate)
+    levels = [
+        float(np.sqrt(np.mean(samples[start : start + window] ** 2)))
+        for start in range(0, len(samples) - window, window)
+    ]
+    assert min(levels[1:-1]) > 0.5 * float(np.median(levels))
+
+
+def test_slot_without_middle_speed_keeps_the_single_trim_graph(tmp_path):
+    slot = {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.0, "transition": {"type": "cut", "duration_s": 0}}
+    graph, _, _ = render.build_filter_graph([slot], [2.0], [True], True, 320, 180, 0.3, [])
+    assert "split" not in graph and "asplit" not in graph and "atempo" not in graph
+    assert "trim=start=0:end=2,setpts=PTS-STARTPTS,fps=25" in graph
+
+
+def test_slot_with_middle_speed_builds_three_trims_and_atempo(tmp_path):
+    slot = {
+        "id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 4.0, "middle_speed": 1.2,
+        "transition": {"type": "cut", "duration_s": 0},
+    }
+    graph, _, _ = render.build_filter_graph([slot], [render.slot_duration(slot)], [True], True, 320, 180, 0.3, [])
+    assert "setpts=(PTS-STARTPTS)/1.2" in graph
+    assert "atempo=1.2" in graph
+    assert graph.count("concat=n=3") == 2
+    assert render.slot_duration(slot) == pytest.approx(0.25 * 4 + 0.5 * 4 / 1.2 + 0.25 * 4)

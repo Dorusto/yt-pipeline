@@ -1,4 +1,5 @@
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 import director
+from common.moves import slot_screen_length
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -665,7 +667,9 @@ def test_calm_to_energy_targets_non_increasing_and_bounded(tmp_path):
 
 def test_uniform_pacing_slots_share_target(tmp_path):
     _, _, _, record = write_edit(tmp_path, "--pacing", "uniform")
-    lengths = [round(slot["out_s"] - slot["in_s"], 2) for slot in record["video"]]
+    ordinary = [slot for slot in record["video"] if not slot.get("middle_speed")]
+    lengths = [round(slot_screen_length(slot), 2) for slot in ordinary]
+    assert len(lengths) >= 3
     assert all(length == lengths[0] for length in lengths)
 
 
@@ -756,7 +760,8 @@ def test_move_without_landing_keeps_handle_window(tmp_path):
     move_slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
     assert len(move_slots) == 1
     assert move_slots[0]["in_s"] == 0.0
-    assert move_slots[0]["out_s"] == 2.64
+    assert move_slots[0]["out_s"] > 2.64
+    assert move_slots[0]["middle_speed"] <= 1.2
 
 
 def test_same_take_windows_never_adjacent(tmp_path):
@@ -787,7 +792,7 @@ def test_contiguous_same_take_windows_merge(tmp_path):
     clip_a = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
     assert len(clip_a) == 1
     assert clip_a[0]["in_s"] == 0.0
-    assert clip_a[0]["out_s"] > 2.64
+    assert clip_a[0]["out_s"] == 2.64
 
 
 def test_json_summary_has_required_keys(tmp_path):
@@ -906,7 +911,8 @@ def test_hero_keeps_whole_window_up_to_cap(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 3.5
+    assert round(slot_screen_length(slot), 2) == 3.5
+    assert slot["middle_speed"] <= 1.2
 
 
 def test_hero_window_longer_than_cap_keeps_tail(tmp_path):
@@ -923,7 +929,8 @@ def test_hero_window_longer_than_cap_keeps_tail(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 3.5
+    assert round(slot_screen_length(slot), 2) == 3.5
+    assert slot["middle_speed"] == 1.2
     assert slot["out_s"] == 20.0
 
 
@@ -942,7 +949,7 @@ def test_semantic_move_without_hero_keeps_window(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 3.5
+    assert round(slot_screen_length(slot), 2) == 3.5
     assert slot["in_s"] > 0.0
 
 
@@ -964,7 +971,7 @@ def test_static_semantic_travel_is_not_important(tmp_path):
     assert round(slot["out_s"] - slot["in_s"], 2) == 2.0
 
 
-def test_hero_static_hold_kept_to_cap(tmp_path):
+def test_hero_static_hold_respects_slot_max(tmp_path):
     workspace = build_important_workspace(
         tmp_path / "ws",
         [segment("s1", 0.0, 11.0, "hold", motion_label="static")],
@@ -978,7 +985,8 @@ def test_hero_static_hold_kept_to_cap(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 3.5
+    assert round(slot["out_s"] - slot["in_s"], 2) == 2.5
+    assert "middle_speed" not in slot
 
 
 def test_orbit_candidate_without_shotlog_is_important(tmp_path):
@@ -989,7 +997,7 @@ def test_orbit_candidate_without_shotlog_is_important(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 3.5
+    assert round(slot_screen_length(slot), 2) == 3.5
 
 
 def test_important_max_s_flag_is_honoured(tmp_path):
@@ -1000,7 +1008,7 @@ def test_important_max_s_flag_is_honoured(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json", "--important-max-s", 5)
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 5.0
+    assert round(slot_screen_length(slot), 2) == 5.0
 
 
 def test_help_lists_important_max_s():
@@ -1145,7 +1153,8 @@ def test_important_cap_defaults_to_the_pacing_hero_max(tmp_path):
     )
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
-    assert round(slot["out_s"] - slot["in_s"], 2) == 3.5
+    assert round(slot_screen_length(slot), 2) == 3.5
+    assert slot["middle_speed"] == 1.2
     assert slot["out_s"] == 20.0
 
 
@@ -1401,7 +1410,7 @@ def edit_cuts(record):
     cuts = []
     position = 0.0
     for slot in record["video"]:
-        position += slot["duration_s"] if slot.get("kind") == "photo" else slot["out_s"] - slot["in_s"]
+        position += slot["duration_s"] if slot.get("kind") == "photo" else slot_screen_length(slot)
         cuts.append(round(position, 4))
     return cuts
 
@@ -1676,9 +1685,10 @@ def test_short_target_produces_many_short_slots(tmp_path):
     hero_slots = [slot for slot in slots if slot.get("shot_key") == "0000/s1"]
     ordinary = [slot for slot in slots if slot.get("shot_key") != "0000/s1"]
     assert len(hero_slots) == 1
-    assert round(hero_slots[0]["out_s"] - hero_slots[0]["in_s"], 2) <= 3.5
-    lengths = [round(slot["out_s"] - slot["in_s"], 2) for slot in ordinary]
-    assert all(1.5 <= length <= 2.5 for length in lengths)
+    assert round(slot_screen_length(hero_slots[0]), 2) <= 3.5
+    lengths = sorted((round(slot_screen_length(slot), 2) for slot in ordinary), reverse=True)
+    assert all(1.5 <= length for length in lengths)
+    assert sum(length > 2.5 + 0.01 for length in lengths) <= 2
 
 
 def test_ninety_second_target_produces_twenty_to_twenty_five_slots(tmp_path):
@@ -1688,9 +1698,10 @@ def test_ninety_second_target_produces_twenty_to_twenty_five_slots(tmp_path):
     assert 20 <= len(slots) <= 25
     hero_slots = [slot for slot in slots if slot.get("shot_key") == "0000/s1"]
     ordinary = [slot for slot in slots if slot.get("shot_key") != "0000/s1"]
-    assert all(slot["out_s"] - slot["in_s"] <= 6.0 for slot in hero_slots)
-    lengths = [round(slot["out_s"] - slot["in_s"], 2) for slot in ordinary]
-    assert all(2.0 <= length <= 5.0 for length in lengths)
+    assert all(slot_screen_length(slot) <= 6.0 for slot in hero_slots)
+    lengths = [round(slot_screen_length(slot), 2) for slot in ordinary]
+    assert all(2.0 <= length for length in lengths)
+    assert sum(length > 5.0 + 0.01 for length in lengths) <= 4
 
 
 def test_min_slot_s_override_wins_over_the_table(tmp_path):
@@ -1700,3 +1711,97 @@ def test_min_slot_s_override_wins_over_the_table(tmp_path):
     lengths = [round(slot["out_s"] - slot["in_s"], 2) for slot in ordinary]
     assert lengths
     assert all(length >= 2.5 - 0.01 for length in lengths)
+
+
+POLICY_SLOT_MAX_90 = 5.0
+POLICY_HERO_MAX_90 = 6.0
+
+
+def build_policy_workspace(root, pans, holds, pan_window=10.0, hold_window=10.0):
+    total = pans + holds
+    clips = [
+        {
+            "file": f"clip_{index:04d}_x.mp4",
+            "path": f"/media/clip_{index:04d}_x.mp4",
+            "duration_s": 60.0,
+            "creation_time": f"2026-01-01T10:{index:02d}:00",
+        }
+        for index in range(total)
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    for index, clip in enumerate(clips):
+        stem = Path(clip["file"]).stem
+        if index < pans:
+            segments = [segment("s1", 0.0, pan_window, "move", motion_label="pan_right")]
+            moves = [move("m1", 0.0, pan_window, "pan_right", "regular", "no_shaking", 0.0, pan_window, 0.0, pan_window)]
+        else:
+            segments = [segment("s1", 0.0, hold_window, "hold", motion_label="static")]
+            moves = []
+        write_json(root / "quality" / f"{stem}.json", quality_doc(clip["file"], 60.0, segments))
+        write_json(root / "motion" / f"{stem}.json", motion_doc(clip["file"], 60.0, moves))
+    return root
+
+
+def run_policy_edit(workspace, out, *extra):
+    result = run_director("--workspace", workspace, "--out", out, "--target-duration-s", 90, "--json", *extra)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout), json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_static_hold_stays_within_slot_max(tmp_path):
+    workspace = build_policy_workspace(tmp_path / "ws", pans=0, holds=12, hold_window=30.0)
+    _, record = run_policy_edit(workspace, tmp_path / "edit.json")
+    assert record["video"]
+    for slot in record["video"]:
+        assert slot_screen_length(slot) <= POLICY_SLOT_MAX_90 + 1e-6
+        assert "middle_speed" not in slot
+
+
+def test_long_pan_is_extended_with_a_middle_ramp_of_at_most_1_2(tmp_path):
+    workspace = build_policy_workspace(tmp_path / "ws", pans=1, holds=12, pan_window=5.8)
+    summary, record = run_policy_edit(workspace, tmp_path / "edit.json")
+    pans = [slot for slot in record["video"] if slot["motion_label"] == "pan_right"]
+    assert len(pans) == 1
+    pan = pans[0]
+    assert pan["out_s"] - pan["in_s"] > POLICY_SLOT_MAX_90 - 0.01
+    assert 1.0 <= pan.get("middle_speed", 1.0) <= 1.2
+    assert slot_screen_length(pan) <= POLICY_HERO_MAX_90 + 1e-6
+    assert any(warning.startswith("exception:") for warning in summary["warnings"])
+    assert not validate(record, "edit")
+
+
+def test_exception_share_is_at_most_fifteen_percent_of_the_slots(tmp_path):
+    workspace = build_policy_workspace(tmp_path / "ws", pans=20, holds=6, pan_window=12.0)
+    summary, record = run_policy_edit(workspace, tmp_path / "edit.json")
+    slots = record["video"]
+    over = [slot for slot in slots if slot_screen_length(slot) > POLICY_SLOT_MAX_90 + 1e-6]
+    assert 1 <= len(over) <= math.ceil(0.15 * len(slots))
+    assert sum(warning.startswith("exception:") for warning in summary["warnings"]) == len(over)
+    assert all(1.0 <= slot.get("middle_speed", 1.0) <= 1.2 for slot in slots)
+
+
+def test_policy_windows_stay_inside_the_candidate_window(tmp_path):
+    workspace = build_policy_workspace(tmp_path / "ws", pans=6, holds=6, pan_window=7.0)
+    _, record = run_policy_edit(workspace, tmp_path / "edit.json")
+    for slot in record["video"]:
+        limit = 7.0 if slot["motion_label"] == "pan_right" else 10.0
+        assert slot["in_s"] >= -1e-9
+        assert slot["out_s"] <= limit + 1e-9
+
+
+def test_beat_snap_keeps_ramped_cuts_on_beats_and_slots_within_their_cap(tmp_path):
+    workspace = build_policy_workspace(tmp_path / "ws", pans=10, holds=10, pan_window=12.0)
+    beats_path = tmp_path / "beats.json"
+    beats = write_beats_file(beats_path, phase=0.0, period=0.5)
+    summary, record = run_policy_edit(workspace, tmp_path / "edit.json", "--beats", beats_path)
+    position = 0.0
+    for slot in record["video"]:
+        position += slot_screen_length(slot)
+        assert min(abs(position - beat) for beat in beats) <= 0.03
+    holds = [slot for slot in record["video"] if slot["motion_label"] == "static"]
+    assert holds
+    assert all(slot_screen_length(slot) <= POLICY_SLOT_MAX_90 + 1e-6 for slot in holds)
+    assert summary["beat_snap"]["unsnapped"] == 0

@@ -8,6 +8,7 @@ from PIL import Image
 
 import llm_director
 from common.llm import BudgetExceeded
+from common.moves import slot_screen_length
 from common.photos import ken_burns_for
 from common.schema import validate
 
@@ -811,6 +812,7 @@ def test_validator_catches_similar():
 
 def test_validator_catches_keep_whole_and_length():
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, keep_whole=True)}
+    facts["0001/s1"].update({"role": "move", "motion_label": "pan_right"})
     plan = {"slot_plan": [{"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": True}]}
     record = {"video": [{"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 5.0}]}
     violations = llm_director.validate_edit(record, plan, facts)
@@ -938,8 +940,9 @@ def test_missing_last_round_slot_is_synthesised(tmp_path):
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     assert {slot["id"] for slot in edit["video"]} == {"v1", "v2", "v3"}
     slot = next(item for item in edit["video"] if item["id"] == "v3")
-    assert slot["in_s"] == pytest.approx(14.0)
     assert slot["out_s"] == pytest.approx(20.0)
+    assert slot["middle_speed"] == pytest.approx(1.2)
+    assert slot_screen_length(slot) == pytest.approx(6.0, abs=0.01)
 
 
 def build_beats_workspace(root):
@@ -1184,7 +1187,7 @@ def test_short_edit_allows_one_and_a_half_second_slots(tmp_path):
     assert summary["approved"] is True
     assert summary["validator_violations"] == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
-    lengths = {slot["id"]: round(slot["out_s"] - slot["in_s"], 2) for slot in edit["video"]}
+    lengths = {slot["id"]: round(slot_screen_length(slot), 2) for slot in edit["video"]}
     assert lengths["v1"] == 1.5
     assert lengths["v2"] == 2.0
     assert lengths["v3"] == 3.5
@@ -1701,3 +1704,61 @@ def test_help_lists_feedback():
     assert result.returncode == 0
     assert "--feedback" in result.stdout
     assert "drop 0071/s2" in result.stdout
+
+
+def move_fact(key, clip, window_in, window_out, keep_whole=True):
+    row = fact(key, clip, window_in, window_out, keep_whole=keep_whole)
+    row.update({"role": "move", "motion_label": "pan_right"})
+    return row
+
+
+POLICY_PACING = {"slot_min": 2.0, "slot_target": 3.6, "slot_max": 5.0, "hero_max": 6.0}
+
+
+def policy_plan(shot_keys):
+    return {
+        "brief": {"target_duration_s": 90},
+        "slot_plan": [
+            {"id": f"v{index + 1}", "shot_key": key, "target_s": 3.0, "why": "a", "keep_whole": False}
+            for index, key in enumerate(shot_keys)
+        ],
+    }
+
+
+def test_length_policy_extends_a_move_ramps_it_and_clamps_a_static_hold():
+    facts = {
+        "m/s1": move_fact("m/s1", "m.mp4", 0.0, 6.2),
+        "h/s1": fact("h/s1", "h.mp4", 0.0, 20.0),
+    }
+    plan = policy_plan(["m/s1", "h/s1"])
+    record = {
+        "video": [
+            {"id": "v1", "clip": "m.mp4", "in_s": 2.6, "out_s": 6.2, "score": 0.9, "role": "move", "motion_label": "pan_right", "shot_key": "m/s1"},
+            {"id": "v2", "clip": "h.mp4", "in_s": 0.0, "out_s": 9.0, "score": 0.5, "role": "hold", "motion_label": "static", "shot_key": "h/s1"},
+        ]
+    }
+    warnings = []
+    caps = llm_director.apply_length_policy(record, plan, facts, POLICY_PACING, 6.0, warnings)
+    first, second = record["video"]
+    assert first["in_s"] == 0.0 and first["out_s"] == 6.2
+    assert 1.0 < first["middle_speed"] <= 1.2
+    assert slot_screen_length(first) <= 6.0 + 1e-6
+    assert slot_screen_length(second) == pytest.approx(5.0)
+    assert "middle_speed" not in second
+    assert caps == {"v1": 6.0, "v2": 5.0}
+    assert any("exception" in warning for warning in warnings)
+    assert not llm_director.validate_edit(record, plan, facts)
+
+
+def test_validator_accepts_a_move_longer_than_slot_max_only_within_the_exception_share():
+    facts = {
+        f"m{index}/s1": move_fact(f"m{index}/s1", f"m{index}.mp4", 0.0, 6.0, keep_whole=False) for index in range(8)
+    }
+    plan = policy_plan(list(facts))
+    video = [
+        {"id": f"v{index + 1}", "clip": f"m{index}.mp4", "in_s": 0.0, "out_s": 6.0, "score": 0.5}
+        for index in range(8)
+    ]
+    violations = llm_director.validate_edit({"video": video}, plan, facts)
+    length_violations = [item for item in violations if item["rule"] == "length"]
+    assert len(length_violations) == 8 - 2

@@ -38,6 +38,7 @@ from common.ambience import (
     resolve_denoiser,
 )
 from common.ffmpeg_tools import ffmpeg_path
+from common.moves import middle_speed_of, slot_screen_length
 from common.photos import ensure_jpeg, open_photo
 from common.schema import SchemaError, validate_or_raise
 
@@ -281,10 +282,10 @@ def resolve_photo(photo, sources, media_dir, originals_dir):
 
 
 def slot_duration(slot):
-    """The on-screen length of a slot: ``duration_s`` for photos, out-in for video."""
+    """The on-screen length of a slot: ``duration_s`` for photos, the ramp-aware length for video."""
     if slot.get("kind") == "photo":
         return float(slot["duration_s"])
-    return float(slot["out_s"]) - float(slot["in_s"])
+    return slot_screen_length(slot)
 
 
 def oriented_photo_size(path):
@@ -475,6 +476,44 @@ def photo_filters(index, slot, duration, width, height, photo_size):
     ]
 
 
+def ramp_quarters(slot):
+    """The source times that split a ramped slot into head quarter, middle half and tail quarter."""
+    in_s = float(slot["in_s"])
+    out_s = float(slot["out_s"])
+    length = out_s - in_s
+    return in_s, in_s + length / 4, in_s + 3 * length / 4, out_s
+
+
+def ramp_video_filters(index, slot, speed, width, height):
+    """Three trims joined: head quarter and tail quarter in real time, middle half at ``speed``."""
+    start, first, second, end = ramp_quarters(slot)
+    return [
+        f"[{index}:v]split=3[rh{index}][rm{index}][rt{index}]",
+        f"[rh{index}]trim=start={fmt(start)}:end={fmt(first)},setpts=PTS-STARTPTS,fps={FPS}[rhs{index}]",
+        f"[rm{index}]trim=start={fmt(first)}:end={fmt(second)},setpts=(PTS-STARTPTS)/{fmt(speed)},"
+        f"fps={FPS}[rms{index}]",
+        f"[rt{index}]trim=start={fmt(second)}:end={fmt(end)},setpts=PTS-STARTPTS,fps={FPS}[rts{index}]",
+        f"[rhs{index}][rms{index}][rts{index}]concat=n=3:v=1:a=0,"
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{index}]",
+    ]
+
+
+def ramp_audio_filters(index, slot, speed):
+    """The ambient sound cut the same way: ``atempo`` on the middle half keeps it continuous."""
+    start, first, second, end = ramp_quarters(slot)
+    return [
+        f"[{index}:a]asplit=3[ah{index}][am{index}][at{index}]",
+        f"[ah{index}]atrim=start={fmt(start)}:end={fmt(first)},asetpts=PTS-STARTPTS,"
+        f"aresample={SAMPLE_RATE}[ahs{index}]",
+        f"[am{index}]atrim=start={fmt(first)}:end={fmt(second)},asetpts=PTS-STARTPTS,"
+        f"atempo={fmt(speed)},aresample={SAMPLE_RATE}[ams{index}]",
+        f"[at{index}]atrim=start={fmt(second)}:end={fmt(end)},asetpts=PTS-STARTPTS,"
+        f"aresample={SAMPLE_RATE}[ats{index}]",
+        f"[ahs{index}][ams{index}][ats{index}]concat=n=3:v=0:a=1,aresample={SAMPLE_RATE}[a{index}]",
+    ]
+
+
 def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings, clean_chain=None, photo_sizes=None):
     """Build the ``filter_complex`` graph and return it with the final labels.
 
@@ -491,16 +530,23 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
         else:
             start = fmt(slot["in_s"])
             end = fmt(slot["out_s"])
-            parts.append(
-                f"[{index}:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{index}]"
-            )
+            ramp = middle_speed_of(slot)
+            if ramp > 1.0:
+                parts.extend(ramp_video_filters(index, slot, ramp, width, height))
+            else:
+                parts.append(
+                    f"[{index}:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
+                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{index}]"
+                )
         if ambience_enabled and has_audio[index] and not is_photo:
-            parts.append(
-                f"[{index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
-                f"aresample={SAMPLE_RATE}[a{index}]"
-            )
+            if ramp > 1.0:
+                parts.extend(ramp_audio_filters(index, slot, ramp))
+            else:
+                parts.append(
+                    f"[{index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
+                    f"aresample={SAMPLE_RATE}[a{index}]"
+                )
         else:
             parts.append(
                 f"anullsrc=r={SAMPLE_RATE}:cl=stereo,"

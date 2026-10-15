@@ -31,6 +31,7 @@ from pathlib import Path
 
 import yaml
 
+from common.moves import middle_speed_of
 from common.schema import SchemaError, validate_or_raise
 
 FPS = 25
@@ -155,6 +156,7 @@ def run(args, started):
     slots = document["video"]
     fragments = [slot_to_fragment(slot) for slot in slots]
     total_duration_s = round(sum(slot["out_s"] - slot["in_s"] for slot in slots), 3)
+    ramped = [slot["id"] for slot in slots if middle_speed_of(slot) > 1.0]
 
     summary = {
         "status": "written",
@@ -163,7 +165,15 @@ def run(args, started):
         "source_dir": source_dir,
         "kdenlive_out": kdenlive_out,
         "total_duration_s": total_duration_s,
-        "warnings": [],
+        "warnings": (
+            [
+                "Kdenlive cannot express the middle speed ramp of "
+                + ", ".join(ramped)
+                + ": the fragments keep real time, so the project is longer than the render"
+            ]
+            if ramped
+            else []
+        ),
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }

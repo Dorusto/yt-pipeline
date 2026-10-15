@@ -246,3 +246,18 @@ def test_end_to_end_with_kdenlive_consumer(tmp_path, capsys):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "fragments.kdenlive").exists()
+
+
+def test_middle_speed_slot_stays_real_time_and_warns(tmp_path, capsys):
+    ramped = slot("v1", "a.mp4", 1.0, 5.0)
+    ramped["middle_speed"] = 1.2
+    edit = make_edit(tmp_path, [{"file": "a.mp4", "path": "/media/a.mp4"}], [ramped, slot("v2", "a.mp4", 8.0, 10.0)])
+    out = tmp_path / "fragments.yaml"
+    rc, payload, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
+    assert rc == 0
+    assert len(payload["warnings"]) == 1
+    assert "v1" in payload["warnings"][0] and "middle" in payload["warnings"][0]
+    fragments = load_fragments(out)["fragments"]
+    assert fragments[0]["in"] == etf.sec_to_tc(1.0)
+    assert fragments[0]["out"] == etf.sec_to_tc(5.0 - 1.0 / etf.FPS)
+    assert payload["total_duration_s"] == 6.0

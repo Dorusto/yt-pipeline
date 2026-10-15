@@ -27,6 +27,7 @@ from pathlib import Path
 
 import cv2
 
+from common.moves import middle_speed_of
 from common.schema import SchemaError, validate
 
 HTML_NAME = "explain.html"
@@ -374,6 +375,8 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
         in_s = float(slot.get("in_s") or 0.0)
         out_s = float(slot.get("out_s") or 0.0)
         cut_text = f"cut {in_s:.2f}–{out_s:.2f} s"
+        if middle_speed_of(slot) > 1.0:
+            cut_text += f", middle at {middle_speed_of(slot):.2f}x"
         move_html = ""
         data_uri = _thumbnail_data_uri(path, (in_s + out_s) / 2.0)
     if window is not None:
