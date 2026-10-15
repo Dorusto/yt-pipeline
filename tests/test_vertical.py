@@ -92,5 +92,5 @@ def test_reframe_command_uses_one_video_and_the_cache_path(tmp_path):
     command = vertical.reframe_command(sys.executable, "scripts/reframe.py", tmp_path / "a.mp4", tmp_path / "c.json")
     assert command == [sys.executable, "scripts/reframe.py", "--video", str(tmp_path / "a.mp4"),
                        "--out", str(tmp_path / "c.json"), "--json"]
-    assert vertical.cached_path_name(tmp_path / "clip_a.mp4") == "clip_a_reframe.json"
+    assert vertical.cached_path_name(tmp_path / "clip_a.mp4") == "clip_a_reframe_v2.json"
     json.dumps(command)

@@ -18,6 +18,9 @@ MAX_PATH_POINTS = 40
 WINDOW_MARGIN_S = 0.5
 
 
+CROP_CACHE_VERSION = "_v2"
+
+
 def vertical_out_path(out_path):
     """``recap_720p.mp4`` -> ``recap_720p_9x16.mp4`` next to it."""
     out_path = Path(out_path)
@@ -137,4 +140,4 @@ def reframe_command(python, reframe_script, video, out_path):
 
 def cached_path_name(video_path):
     """The cache file name of a clip's crop path under ``<workspace>/reframe/``."""
-    return f"{Path(video_path).stem}_reframe.json"
+    return f"{Path(video_path).stem}_reframe{CROP_CACHE_VERSION}.json"

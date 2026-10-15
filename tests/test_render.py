@@ -1082,7 +1082,7 @@ def test_vertical_render_is_720x1280_and_follows_the_subject(tmp_path, capsys):
     clip = tmp_path / "mover.mp4"
     make_moving_square_clip(clip)
     edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
-    write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip)
+    write_following_path(tmp_path / "reframe" / "mover_reframe_v2.json", clip)
     out = tmp_path / "recap_720p_9x16.mp4"
     code = render.main(["--edit", str(edit), "--out", str(out), "--format", "9x16", "--no-audio-clean", "--json"])
     assert code == 0, capsys.readouterr().err
@@ -1101,7 +1101,7 @@ def test_vertical_render_with_a_middle_speed_ramp_keeps_the_crop(tmp_path, capsy
     clip = tmp_path / "mover.mp4"
     make_moving_square_clip(clip, duration=4.0)
     edit = make_ramp_edit(tmp_path, clip, 0.0, 4.0, 1.2)
-    write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip, duration=4.0)
+    write_following_path(tmp_path / "reframe" / "mover_reframe_v2.json", clip, duration=4.0)
     out = tmp_path / "ramp_9x16.mp4"
     code = render.main(["--edit", str(edit), "--out", str(out), "--format", "9x16", "--no-audio-clean", "--json"])
     assert code == 0, capsys.readouterr().err
@@ -1117,7 +1117,7 @@ def test_reframe_is_called_once_per_clip_and_cached(tmp_path):
 
     def runner(command):
         calls.append(command)
-        write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip)
+        write_following_path(tmp_path / "reframe" / "mover_reframe_v2.json", clip)
         return None
 
     edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
@@ -1131,7 +1131,7 @@ def test_reframe_is_called_once_per_clip_and_cached(tmp_path):
     command = calls[0]
     assert command[1].endswith("reframe.py")
     assert command[command.index("--video") + 1] == str(clip)
-    assert command[command.index("--out") + 1] == str(tmp_path / "reframe" / "mover_reframe.json")
+    assert command[command.index("--out") + 1] == str(tmp_path / "reframe" / "mover_reframe_v2.json")
     assert "--json" in command
 
 
@@ -1151,7 +1151,7 @@ def test_format_both_writes_the_16x9_and_the_vertical_file(tmp_path, capsys):
     clip = tmp_path / "mover.mp4"
     make_moving_square_clip(clip)
     edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
-    write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip)
+    write_following_path(tmp_path / "reframe" / "mover_reframe_v2.json", clip)
     out = tmp_path / "recap_720p.mp4"
     code = render.main(["--edit", str(edit), "--out", str(out), "--format", "both", "--no-audio-clean", "--json"])
     assert code == 0, capsys.readouterr().err

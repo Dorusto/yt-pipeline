@@ -1821,6 +1821,17 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
         kept.append(slot)
     record["video"] = kept
     ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+    still_bad = {
+        item.get("slot") for item in validate_edit(record, plan, facts_by_key, important_max_s)
+        if item.get("rule") in REBUILT_RULES
+    }
+    if still_bad:
+        plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+        keys = {plan_by_id[slot_id].get("shot_key") for slot_id in still_bad if slot_id in plan_by_id}
+        drop_from_plan(plan, keys, "its window cannot give a valid cut", notes)
+        planned = {row["id"] for row in plan.get("slot_plan") or []}
+        record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
+        ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
     for _ in range(len(plan.get("slot_plan") or [])):
         pairs = [
             item for item in validate_edit(record, plan, facts_by_key, important_max_s)

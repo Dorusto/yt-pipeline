@@ -167,3 +167,19 @@ def test_json_summary_has_wall_time_and_zero_cost(tmp_path, monkeypatch, capsys)
     assert summary["points"] >= 2
     assert summary["wall_time_s"] >= 0.0
     assert summary["cost_usd"] == 0.0
+
+
+def test_range_without_any_face_keeps_a_still_crop(tmp_path, monkeypatch):
+    clip = write_video(tmp_path / "clip.mp4")
+    out = tmp_path / "crop.json"
+    install_detector(monkeypatch, [[] for _ in range(64)])
+    assert run_cli(["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--json"]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert validate(data, "reframe") == []
+    assert len({point["x"] for point in data["points"]}) == 1
+    assert any("static crop" in warning for warning in data["warnings"])
+
+
+def test_steady_targets_uses_the_median_or_the_middle():
+    assert reframe.steady_targets([(10.0, 5.0), None, (30.0, 7.0), (20.0, 6.0)], 100, 50)[1] == (20.0, 6.0)
+    assert reframe.steady_targets([None, None], 100, 50) == [(50.0, 25.0), (50.0, 25.0)]
