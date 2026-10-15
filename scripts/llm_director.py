@@ -1465,7 +1465,7 @@ def absorb_pair(left, left_bounds, right, right_bounds, delta, slack=0.0):
     the same length back from its head, so only their shared boundary moves.
     Both must fit; on a partial fit the left change is restored exactly.
     """
-    snapshot = {key: left.get(key) for key in ("in_s", "out_s", "duration_s")}
+    snapshot = {key: left[key] for key in ("in_s", "out_s", "duration_s") if key in left}
     if not absorb_length(left, left_bounds, delta, slack):
         return False
     if not absorb_head(right, right_bounds, -delta, slack):
@@ -2365,7 +2365,13 @@ def _run_loop(
     if approved:
         beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
-        write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings))
+        try:
+            write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings))
+        except SchemaError as exc:
+            warnings.append(str(exc))
+            if fallback_rules:
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
@@ -2394,7 +2400,13 @@ def _run_loop(
         warnings.append("reviewer did not approve; keeping the last valid draft")
         beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
-        write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings))
+        try:
+            write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings))
+        except SchemaError as exc:
+            warnings.append(str(exc))
+            if fallback_rules:
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap), 0
