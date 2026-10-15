@@ -326,7 +326,7 @@ def test_force_and_budget_forwarded(tmp_path, monkeypatch, capsys):
     assert "--force" not in commands["ingest"][0]
 
 
-def make_context(tmp_path, music=None, final=False):
+def make_context(tmp_path, music=None, final=False, feedback=None):
     source = tmp_path / "raw"
     source.mkdir(exist_ok=True)
     workspace = tmp_path / "workspace"
@@ -342,6 +342,7 @@ def make_context(tmp_path, music=None, final=False):
         python=sys.executable,
         repo_root=recap.REPO_ROOT,
         music=music,
+        feedback=feedback,
     )
 
 
@@ -374,6 +375,43 @@ def test_without_music_no_beats_or_flags(tmp_path):
         argv = station["argv"][0]
         assert "--beats" not in argv
         assert "--music" not in argv
+
+
+def test_feedback_forwarded_to_director_station(tmp_path):
+    ctx = make_context(tmp_path, feedback=["drop 0071/s2", "tunnel longer"])
+    stations = recap.build_stations(ctx)
+    command = next(s for s in stations if s["name"] == "llm_director")["argv"][0]
+    assert command.count("--feedback") == 2
+    assert "drop 0071/s2" in command
+    assert "tunnel longer" in command
+    for name in ("proxy", "render"):
+        argv = next(s for s in stations if s["name"] == name)["argv"][0]
+        assert "--feedback" not in argv
+
+
+def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    capsys.readouterr()
+    recorder.calls.clear()
+    assert (
+        run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
+        == 0
+    )
+    assert recorder.calls == ["llm_director", "render"]
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    statuses = {entry["name"]: entry["status"] for entry in summary["stations"]}
+    assert statuses["llm_director"] == "done"
+    assert statuses["render"] == "done"
+    for name in ("proxy", "ingest", "motion", "quality", "describe", "similarity", "index", "router"):
+        assert statuses[name] == "skip"
+    commands = dict(recorder.argvs)
+    assert "--feedback" in commands["llm_director"][0]
+    assert "drop 0071/s2" in commands["llm_director"][0]
 
 
 class NotifyRecorder:
@@ -524,3 +562,50 @@ def test_all_skipped_run_titles_cached(tmp_path, monkeypatch, capsys):
     assert summary["notified"] is True
     assert len(sent.calls) == 1
     assert sent.calls[0]["title"] == "Recap ready (cached)"
+
+
+def test_music_auto_places_music_pick_after_index(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    ctx.music_dir = tmp_path / "music"
+    stations = recap.build_stations(ctx)
+    names = [station["name"] for station in stations]
+    assert "music_pick" in names
+    assert "beats" not in names
+    assert names.index("music_pick") == names.index("index") + 1
+    pick = next(station for station in stations if station["name"] == "music_pick")
+    argv = pick["argv"][0]
+    assert "music_pick.py" in " ".join(argv)
+    assert "--workspace" in argv
+    for name in ("llm_director", "render"):
+        command = next(station for station in stations if station["name"] == name)["argv"][0]
+        assert recap.MUSIC_TOKEN in command
+
+
+def test_resolve_argv_substitutes_the_music_token(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    assert recap.resolve_argv(["--music", recap.MUSIC_TOKEN], ctx) == ["--music", recap.MUSIC_TOKEN]
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"")
+    ctx.music = track
+    assert recap.resolve_argv(["--music", recap.MUSIC_TOKEN], ctx) == ["--music", str(track)]
+
+
+def test_resolve_auto_music_reads_the_choice(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    assert recap.resolve_auto_music(ctx) is False
+    track = tmp_path / "chosen.mp3"
+    track.write_bytes(b"")
+    (ctx.workspace / "music_choice.json").write_text(
+        json.dumps({"path": str(track)}), encoding="utf-8"
+    )
+    assert recap.resolve_auto_music(ctx) is True
+    assert ctx.music == track.resolve()
+
+
+def test_resolve_argv_substitutes_inside_nested_commands(tmp_path):
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"")
+    ctx = make_context(tmp_path, music=track)
+    nested = [["python", "render.py", "--music", recap.MUSIC_TOKEN]]
+    resolved = recap.resolve_argv(nested, ctx)
+    assert resolved == [["python", "render.py", "--music", str(track)]]

@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import threading
 
 import serve
@@ -12,31 +13,80 @@ def make_root(tmp_path):
     project.mkdir()
     (project / "recap_720p.mp4").write_bytes(bytes(range(100)))
     (project / "shotlog.html").write_text("<html>contact sheet</html>", encoding="utf-8")
+    (project / "explain.html").write_text("<html>why</html>", encoding="utf-8")
     (project / "edit.json").write_text("{}", encoding="utf-8")
     proxy_only = root / "raw"
     (proxy_only / "proxy").mkdir(parents=True)
     (proxy_only / "proxy" / "clip.mp4").write_bytes(b"proxy")
+    (proxy_only / "proxy" / "x.mp4").write_bytes(b"proxy")
     (root / "notes.txt").write_text("ignore", encoding="utf-8")
     return root
 
 
-def start_server(root):
-    server = serve.build_server(root, "127.0.0.1", 0)
+def make_music_dir(tmp_path, names):
+    music = tmp_path / "music"
+    music.mkdir()
+    for name in names:
+        (music / name).write_bytes(b"audio")
+    return music
+
+
+def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480):
+    if music_dir is None:
+        music_dir = str(root / "no-music-dir")
+    if inbox is None:
+        inbox = root / "inbox"
+    inbox = str(inbox)
+    server = serve.build_server(
+        root,
+        "127.0.0.1",
+        0,
+        music_dir,
+        inbox,
+        max_upload_mb * 1024 * 1024,
+        max_total_mb * 1024 * 1024,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
 
 
-def request(server, method, path, headers=None):
+def request(server, method, path, headers=None, body=None):
     connection = http.client.HTTPConnection(
         "127.0.0.1", server.server_address[1], timeout=5
     )
-    connection.request(method, path, headers=headers or {})
+    connection.request(method, path, body=body, headers=headers or {})
     response = connection.getresponse()
-    body = response.read()
-    result = response.status, dict(response.getheaders()), body
+    data = response.read()
+    result = response.status, dict(response.getheaders()), data
     connection.close()
     return result
+
+
+BOUNDARY = "testboundary123"
+
+
+def multipart_body(parts):
+    """Build a multipart/form-data body from ``(name, filename, data)`` rows."""
+    chunks = []
+    for name, filename, data in parts:
+        chunks.append(f"--{BOUNDARY}\r\n".encode())
+        if filename is None:
+            chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+            chunks.append(data.encode() if isinstance(data, str) else data)
+        else:
+            chunks.append(
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                "Content-Type: application/octet-stream\r\n\r\n".encode()
+            )
+            chunks.append(data if isinstance(data, bytes) else data.encode())
+        chunks.append(b"\r\n")
+    chunks.append(f"--{BOUNDARY}--\r\n".encode())
+    return b"".join(chunks)
+
+
+def multipart_headers():
+    return {"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"}
 
 
 def test_discover_projects_ignores_non_projects(tmp_path):
@@ -54,7 +104,46 @@ def test_projects_sorted_descending(tmp_path):
     assert serve.discover_projects(root) == ["2026-10-14", "2026-10-13", "2026-10-12"]
 
 
-def test_index_lists_project(tmp_path):
+def test_run_json_alone_is_a_project(tmp_path):
+    root = tmp_path / "projects"
+    folder = root / "2026-10-15"
+    folder.mkdir(parents=True)
+    (folder / ".run.json").write_text('{"pid": 1, "started_at": "x", "label": "recap"}', encoding="utf-8")
+    assert serve.discover_projects(root) == ["2026-10-15"]
+
+
+def test_project_status_running_for_live_pid(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    assert serve.project_status(folder) == "running"
+
+
+def test_project_status_failed_for_dead_pid_without_recap(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(json.dumps({"pid": 2**31 - 1}), encoding="utf-8")
+    assert serve.project_status(folder) == "failed"
+
+
+def test_project_status_done_for_dead_pid_with_recap(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(json.dumps({"pid": 2**31 - 1}), encoding="utf-8")
+    (folder / "recap_720p.mp4").write_bytes(b"x")
+    assert serve.project_status(folder) == "done"
+
+
+def test_project_status_ignores_malformed_run_json(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text("not json", encoding="utf-8")
+    assert serve.project_status(folder) == "done"
+    (folder / ".run.json").write_text('{"pid": "abc"}', encoding="utf-8")
+    assert serve.project_status(folder) == "done"
+
+
+def test_index_lists_project_with_done_badge(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
@@ -63,21 +152,55 @@ def test_index_lists_project(tmp_path):
         assert headers["Content-Type"].startswith("text/html")
         assert b"2026-10-14" in body
         assert b'href="/2026-10-14/"' in body
+        assert b"badge-done" in body
+        assert b">done<" in body
         assert b"raw" not in body
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_project_page_links_existing_artifacts_only(tmp_path):
+def test_index_shows_running_badge(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        assert status == 200
+        assert b"badge-running" in body
+        assert b">running<" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_index_shows_failed_badge(tmp_path):
+    root = tmp_path / "projects"
+    project = root / "2026-10-14"
+    project.mkdir(parents=True)
+    (project / ".run.json").write_text(json.dumps({"pid": 2**31 - 1}), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        assert status == 200
+        assert b"badge-failed" in body
+        assert b">failed<" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_default_tab_is_recap(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
         assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
-        assert b"recap_720p.mp4" in body
-        assert b"shotlog.html" in body
+        assert b'href="/2026-10-14/?tab=recap"' in body
+        assert b'href="/2026-10-14/?tab=why"' in body
+        assert b'href="/2026-10-14/?tab=shots"' in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -101,6 +224,61 @@ def test_project_page_without_recap_has_no_player(tmp_path):
         server.server_close()
 
 
+def test_tab_why_embeds_explain(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b'<iframe src="explain.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tab_shots_embeds_shotlog(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
+        assert status == 200
+        assert b'<iframe src="shotlog.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tab_without_file_shows_placeholder(tmp_path):
+    root = tmp_path / "projects"
+    folder = root / "2026-10-14"
+    folder.mkdir(parents=True)
+    (folder / "recap_720p.mp4").write_bytes(b"x")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b"explain.html" not in body
+        assert b"scripts/explain.py" in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
+        assert status == 200
+        assert b"shotlog.html" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_unknown_tab_falls_back_to_recap(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=bogus")
+        assert status == 200
+        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_get_artifacts(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
@@ -113,7 +291,12 @@ def test_get_artifacts(tmp_path):
         assert body == bytes(range(100))
         status, headers, body = request(server, "GET", "/2026-10-14/shotlog.html")
         assert status == 200
+        assert headers["Content-Type"] == "text/html; charset=utf-8"
         assert body == (project / "shotlog.html").read_bytes()
+        status, headers, body = request(server, "GET", "/2026-10-14/explain.html")
+        assert status == 200
+        assert headers["Content-Type"] == "text/html; charset=utf-8"
+        assert body == (project / "explain.html").read_bytes()
         status, _, _ = request(server, "GET", "/2026-10-14/recap_final.mp4")
         assert status == 404
     finally:
@@ -141,7 +324,9 @@ def test_traversal_and_unknown_return_404(tmp_path):
         for path in (
             "/2026-10-14/../brief.txt",
             "/2026-10-14/edit.json",
+            "/2026-10-14/.run.json",
             "/2026-10-14/proxy/clip.mp4",
+            "/2026-10-14/proxy/x.mp4",
             "/2026-10-14/motion/",
             "/nope/",
             "/2026-10-14/missing.mp4",
@@ -165,13 +350,295 @@ def test_backslash_path_returns_404(tmp_path):
         server.server_close()
 
 
-def test_post_returns_405(tmp_path):
+def test_post_outside_upload_returns_405(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, headers, _ = request(server, "POST", "/")
         assert status == 405
         assert headers["Allow"] == "GET, HEAD"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_music_options_sorted_by_name(tmp_path):
+    root = make_root(tmp_path)
+    music = make_music_dir(tmp_path, ["b.mp3", "a.WAV", "skip.txt", "c.ogg"])
+    server = start_server(root, str(music))
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert b'<option value="a.WAV">a.WAV</option>' in body
+        assert b'<option value="b.mp3">b.mp3</option>' in body
+        assert b'<option value="c.ogg">c.ogg</option>' in body
+        assert b"skip.txt" not in body
+        assert body.index(b"a.WAV") < body.index(b"b.mp3") < body.index(b"c.ogg")
+        assert (
+            b'<option value="auto" selected>Auto</option><option value="none">none</option>' in body
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_missing_music_dir_has_no_tracks(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root, str(tmp_path / "gone"))
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert b'<option value="auto" selected>Auto</option>' in body
+        assert b'<option value="none">none</option>' in body
+        assert b".mp3" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+FAKE_PID = None
+
+
+def stub_recap(monkeypatch, tmp_path):
+    """Replace the spawned recap with a stub that records its argv."""
+    calls = []
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+    def fake_popen(command, **kwargs):
+        calls.append(command)
+        (tmp_path / "last_command.txt").write_text("\n".join(command), encoding="utf-8")
+        return FakeProcess(4242)
+
+    monkeypatch.setattr(serve.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve, "project_status", lambda directory: "done")
+    return calls
+
+
+def upload(server, parts):
+    return request(server, "POST", "/upload", headers=multipart_headers(), body=multipart_body(parts))
+
+
+def test_upload_stores_files_and_starts_the_recap(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    calls = stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, headers, body = upload(
+            server,
+            [
+                ("folder", None, "kotor-day"),
+                ("brief", None, "about 60 seconds, chronological"),
+                ("length", None, "60s"),
+                ("order", None, "best"),
+                ("audio_clean", None, "no"),
+                ("music", None, "auto"),
+                ("ambient_under_music_db", None, "8"),
+                ("files", "clip1.mp4", b"video-bytes"),
+                ("files", "photo1.jpg", b"photo-bytes"),
+            ],
+        )
+        assert status == 303, body
+        assert headers["Location"] == "/kotor-day/"
+        assert (inbox / "kotor-day" / "clip1.mp4").read_bytes() == b"video-bytes"
+        assert (inbox / "kotor-day" / "photo1.jpg").read_bytes() == b"photo-bytes"
+        assert (inbox / "kotor-day" / "brief.txt").read_text(encoding="utf-8").strip() == (
+            "about 60 seconds, chronological"
+        )
+        marker = json.loads((root / "kotor-day" / ".run.json").read_text(encoding="utf-8"))
+        assert marker["pid"] == 4242
+        assert marker["source"] == str(inbox / "kotor-day")
+        assert len(calls) == 1
+        command = calls[0]
+        assert "--target-duration-s" in command and "60" in command
+        assert "--order" in command and "score" in command
+        assert "--no-audio-clean" in command
+        assert "--music" in command and "auto" in command
+        assert "--ambient-under-music-db" in command and "8" in command
+        assert "--brief" in command
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_refuses_to_overwrite(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    (inbox / "kotor-day").mkdir(parents=True)
+    (inbox / "kotor-day" / "clip1.mp4").write_bytes(b"original")
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, _, body = upload(
+            server,
+            [
+                ("folder", None, "kotor-day"),
+                ("brief", None, "hello"),
+                ("files", "clip1.mp4", b"new-bytes"),
+            ],
+        )
+        assert status == 409
+        assert b"already exists" in body
+        assert (inbox / "kotor-day" / "clip1.mp4").read_bytes() == b"original"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_rejects_bad_names_and_folders(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, _, body = upload(
+            server,
+            [("folder", None, "ok"), ("brief", None, "hello"), ("files", "run.exe", b"x")],
+        )
+        assert status == 400
+        assert b"unsupported" in body
+        status, _, body = upload(
+            server,
+            [("folder", None, "../escape"), ("brief", None, "hello"), ("files", "a.mp4", b"x")],
+        )
+        assert status == 400
+        assert b"folder" in body
+        status, _, body = upload(
+            server,
+            [("folder", None, "ok"), ("brief", None, "   "), ("files", "a.mp4", b"x")],
+        )
+        assert status == 400
+        assert b"brief" in body
+        status, _, body = upload(
+            server,
+            [("folder", None, "ok"), ("brief", None, "hello")],
+        )
+        assert status == 400
+        assert b"no files" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_rejects_a_body_over_the_cap(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox, max_total_mb=0)
+    try:
+        status, _, body = upload(
+            server,
+            [("folder", None, "ok"), ("brief", None, "hello"), ("files", "a.mp4", b"x" * 100)],
+        )
+        assert status in (413, 400)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_reruns_with_feedback(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    source = inbox / "kotor-day"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    calls = stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, headers, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2, tunnel longer")]),
+        )
+        assert status == 409
+        assert b"source" in body
+        (root / "2026-10-14" / ".run.json").write_text(
+            json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+        )
+        status, headers, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2, tunnel longer")]),
+        )
+        assert status == 303, body
+        assert headers["Location"] == "/2026-10-14/"
+        command = calls[-1]
+        assert "--feedback" in command
+        assert "drop 0071/s2, tunnel longer" in command
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_endpoints_refuse_while_a_run_is_live(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    monkeypatch.setattr(serve, "project_status", lambda directory: "running")
+    server = start_server(root, inbox=inbox)
+    try:
+        status, _, _ = upload(
+            server,
+            [("folder", None, "kotor-day"), ("brief", None, "hello"), ("files", "a.mp4", b"x")],
+        )
+        assert status == 409
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "x")]),
+        )
+        assert status == 409
+        assert b"already running" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_shows_the_reedit_form(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b"re-edit" in body
+        assert b'name="feedback"' in body
+        assert b'action="/2026-10-14/re-edit"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_form(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert headers["Content-Type"].startswith("text/html")
+        for fragment in (
+            b' enctype="multipart/form-data"',
+            b' method="post"',
+            b' action="/upload"',
+            b'name="files"',
+            b'name="folder"',
+            b'name="brief"',
+            b'name="length"',
+            b'name="order"',
+            b'name="audio_clean"',
+            b'name="music"',
+            b'name="ambient_under_music_db"',
+            b">Auto<",
+            b"inbox",
+        ):
+            assert fragment in body, fragment
     finally:
         server.shutdown()
         server.server_close()
@@ -237,6 +704,7 @@ def test_missing_root_fails(tmp_path, capsys):
 
 def test_check_json_summary(tmp_path, capsys):
     root = make_root(tmp_path)
+    music = make_music_dir(tmp_path, ["a.mp3", "b.wav"])
     assert (
         serve.main(
             [
@@ -246,6 +714,8 @@ def test_check_json_summary(tmp_path, capsys):
                 "127.0.0.1",
                 "--port",
                 "0",
+                "--music-dir",
+                str(music),
                 "--check",
                 "--json",
             ]
@@ -258,11 +728,14 @@ def test_check_json_summary(tmp_path, capsys):
     assert summary["bind"] == "127.0.0.1"
     assert isinstance(summary["port"], int) and summary["port"] > 0
     assert summary["url"] == f"http://127.0.0.1:{summary['port']}/"
+    assert summary["music_tracks"] == 2
     assert len(summary["projects"]) == 1
     project = summary["projects"][0]
     assert project["name"] == "2026-10-14"
+    assert project["status"] == "done"
     assert project["preview"].endswith("/2026-10-14/recap_720p.mp4")
     assert project["shotlog"].endswith("/2026-10-14/shotlog.html")
+    assert project["why"].endswith("/2026-10-14/explain.html")
     assert project["final"] is None
     assert isinstance(summary["wall_time_s"], (int, float))
     assert summary["llm_cost_usd"] == 0.0
@@ -284,6 +757,14 @@ def test_default_bind_is_not_wildcard():
     assert serve.detect_bind() not in serve.WILDCARD_BINDS
 
 
+def test_help_mentions_music_dir(capsys):
+    try:
+        serve.build_parser().parse_args(["--help"])
+    except SystemExit:
+        pass
+    assert "--music-dir" in capsys.readouterr().out
+
+
 def test_check_human_output(tmp_path, capsys):
     root = make_root(tmp_path)
     assert (
@@ -292,3 +773,4 @@ def test_check_human_output(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.startswith("check: http://127.0.0.1:")
     assert "2026-10-14" in out
+    assert "done" in out

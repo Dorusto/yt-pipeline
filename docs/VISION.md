@@ -79,7 +79,8 @@ P0 = first usable version, P1 = next, P2 = later.
 | Audience signal for Shorts (YouTube "Most replayed") | Opus Clip workflow | B | P2 |
 | Frame grab, event grouping by day/place | Quik | A | P2 |
 | Project log: summary, topics, B-roll catalogue | Eddie AI | A+B | P0 (D1b) |
-| Automatic B-roll over talking-head | Eddie AI, Descript | B | P1 (D4) |
+| Automatic B-roll **from the user's own footage and photos**, matched to what is said: WhisperX word times → each sentence searched against shotlog descriptions/tags/embeddings, capture date narrows the search (the day being told), the voice continues while the matched shot plays 3-5 s. Market check 2026-10-15: Opus Clip, Submagic, Kapwing, Jupitrr, VEED and Descript use stock or generated B-roll, none clearly matches the user's own library — our differentiator | Eddie AI, Descript (stock/generated only) | B | P0 (D4, the Mode B wow moment) |
+| B-roll library builder: run the analysis over Doru's whole footage archive, rank every shot, propose what to keep as B-roll (best, non-duplicate, tagged) and what can be deleted, copy the keepers into a B-roll library with their index (descriptions, tags, embeddings, capture date) so the index survives deleting the originals; never deletes anything itself, the delete list is Doru's to act on. **When this ships, notify Doru: his archive clean-up and the vault Radar task "B-roll library" wait on it.** | — | A+B | P1 (with D4 own-footage B-roll) |
 | Speaker detection, take/topic chunking, retakes | CutBack Selects | B | P1 (D4) |
 | Multicam and audio sync without markers | CutBack Selects | A+B | P1 |
 | Overnight edit on the homelab, draft ready by morning | Insta360 AI Director, Eddie AI | A+B | P1 |

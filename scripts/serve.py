@@ -1,39 +1,79 @@
 #!/usr/bin/env python3
-"""Read-only HTTP server for recap workspaces, bound to the tailnet address only.
+"""Web app for recap workspaces, bound to the tailnet address only.
 
 Usage:
     python scripts/serve.py --workspaces ~/media/projects
-    python scripts/serve.py --workspaces ~/media/projects --check --json
+    python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox --check --json
 
 ``--workspaces`` is a folder whose direct subfolders are project workspaces. The
-server lists, in descending folder-name order, every direct child directory that
-holds at least one of ``recap_720p.mp4``, ``recap_final.mp4``, ``shotlog.html``
-or ``edit.json``, and serves an index page plus a page per project. Only the
-three finished artifacts are ever served; proxies, ``edit.json``, ``source/``
-symlinks and every other file stay private. The address is a single host,
-never the wildcard, so the server is reachable over the tailnet only. The tool
-only reads; it never writes inside the workspaces folder.
+Projects page lists, in descending folder-name order, every direct child
+directory that holds at least one of ``.run.json``, ``recap_720p.mp4``,
+``recap_final.mp4``, ``shotlog.html``, ``explain.html`` or ``edit.json``, with a
+running/failed/done status badge. Each project page has the Recap / Why? / Shots
+tabs (recap player, ``explain.html``, ``shotlog.html``) and a Re-edit form;
+``/upload`` takes clips and photos from a phone browser into the inbox and
+starts ``recap.py`` in the background. Only the four finished artifacts are ever
+served; proxies, ``edit.json``, ``.run.json``, ``source/`` symlinks and every
+other file stay private. The address is a single host, never the wildcard, so
+the server is reachable over the tailnet only. The tool writes inside a
+workspace only ``.run.json`` and ``run.log``; the inbox receives uploads and is
+never cleaned.
 """
 
 import argparse
 import http.server
 import json
+import os
+import re
 import socket
+import subprocess
 import sys
 import time
 import urllib.parse
 from pathlib import Path
 
 TOOL = "scripts/serve.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORT = 8091
+DEFAULT_MUSIC_DIR = "~/media/music"
+DEFAULT_INBOX = "~/media/inbox"
+DEFAULT_MAX_UPLOAD_MB = 4096
+DEFAULT_MAX_TOTAL_MB = 20480
+UPLOAD_CHUNK = 65536
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
-DETECTED_ARTIFACTS = ("recap_720p.mp4", "recap_final.mp4", "shotlog.html", "edit.json")
-SERVED_FILES = ("recap_720p.mp4", "recap_final.mp4", "shotlog.html")
+FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+BRIEF_MAX_CHARS = 4000
+UPLOAD_EXTENSIONS = {
+    ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
+    ".jpg", ".jpeg", ".heic", ".heif", ".png",
+}
+LENGTH_CHOICES = {"auto": None, "30s": 30, "60s": 60, "90s": 90, "3min": 180}
+ORDER_CHOICES = {"auto": None, "chronological": "chronological", "best": "score"}
+AMBIENT_CHOICES = {"auto", "6", "8", "12", "16", "20"}
+DETECTED_ARTIFACTS = (
+    ".run.json",
+    "recap_720p.mp4",
+    "recap_final.mp4",
+    "shotlog.html",
+    "explain.html",
+    "edit.json",
+)
+SERVED_FILES = ("recap_720p.mp4", "recap_final.mp4", "shotlog.html", "explain.html")
 CONTENT_TYPES = {
     "recap_720p.mp4": "video/mp4",
     "recap_final.mp4": "video/mp4",
     "shotlog.html": "text/html; charset=utf-8",
+    "explain.html": "text/html; charset=utf-8",
 }
+ARTIFACT_LABELS = (
+    ("recap_720p.mp4", "recap"),
+    ("recap_final.mp4", "final"),
+    ("explain.html", "why"),
+    ("shotlog.html", "shots"),
+)
+TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"))
+TAB_KEYS = tuple(key for key, _ in TABS)
+MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
 
 class ServeError(RuntimeError):
@@ -45,7 +85,7 @@ def build_parser():
         prog="serve.py",
         usage=(
             "serve.py [-h] --workspaces WORKSPACES [--bind ADDR] [--port PORT]"
-            " [--check] [--json]"
+            " [--music-dir DIR] [--check] [--json]"
         ),
         description=(
             "Serve the recap projects in a workspaces folder over the tailnet"
@@ -76,6 +116,28 @@ def build_parser():
         help=f"TCP port, 0 for an ephemeral port (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
+        "--music-dir",
+        default=DEFAULT_MUSIC_DIR,
+        help=f"folder of music tracks offered on the Upload page (default: {DEFAULT_MUSIC_DIR})",
+    )
+    parser.add_argument(
+        "--inbox",
+        default=DEFAULT_INBOX,
+        help=f"inbox the uploads land in (default: {DEFAULT_INBOX})",
+    )
+    parser.add_argument(
+        "--max-upload-mb",
+        type=int,
+        default=DEFAULT_MAX_UPLOAD_MB,
+        help=f"per-file upload size cap in MB (default: {DEFAULT_MAX_UPLOAD_MB})",
+    )
+    parser.add_argument(
+        "--max-total-mb",
+        type=int,
+        default=DEFAULT_MAX_TOTAL_MB,
+        help=f"whole-request upload size cap in MB (default: {DEFAULT_MAX_TOTAL_MB})",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="validate the root and the bind, print the summary and exit",
@@ -96,21 +158,66 @@ def detect_bind():
         sock.close()
 
 
+def is_project(directory):
+    """Return True when the folder holds at least one project marker file."""
+    return any((Path(directory) / name).is_file() for name in DETECTED_ARTIFACTS)
+
+
 def discover_projects(root):
     """Return the project folder names under ``root``, newest first."""
     root = Path(root)
-    names = [
-        child.name
-        for child in root.iterdir()
-        if child.is_dir()
-        and any((child / artifact).is_file() for artifact in DETECTED_ARTIFACTS)
-    ]
+    names = [child.name for child in root.iterdir() if child.is_dir() and is_project(child)]
     return sorted(names, reverse=True)
 
 
 def existing_artifacts(directory):
     """Return the served artifact names present in ``directory``, in fixed order."""
     return [name for name in SERVED_FILES if (Path(directory) / name).is_file()]
+
+
+def read_run_pid(directory):
+    """Return the pid from ``.run.json``, or None when it is absent or malformed."""
+    path = Path(directory) / ".run.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    pid = data.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return None
+    return pid
+
+
+def project_status(directory):
+    """Return running, failed or done for one project workspace."""
+    directory = Path(directory)
+    pid = read_run_pid(directory)
+    if pid is not None:
+        import psutil
+
+        if psutil.pid_exists(pid):
+            return "running"
+        if not (directory / "recap_720p.mp4").is_file():
+            return "failed"
+    return "done"
+
+
+def list_music_tracks(music_dir):
+    """Return the audio file names offered on the Upload page, sorted by name."""
+    directory = Path(music_dir).expanduser()
+    try:
+        names = [
+            child.name
+            for child in directory.iterdir()
+            if child.is_file() and child.suffix.lower() in MUSIC_EXTENSIONS
+        ]
+    except OSError:
+        return []
+    return sorted(names)
 
 
 def html_escape(text):
@@ -129,55 +236,189 @@ PAGE_STYLE = (
     "background:#111;color:#eee}a{color:#6cf}"
     "ul{list-style:none;padding:0}li{padding:.4rem 0}"
     "video{width:100%;max-width:640px;background:#000}"
-    ".marks{color:#aaa;font-size:.9rem}"
+    ".menu{display:flex;gap:1.2rem;padding:.4rem 0 .8rem;border-bottom:1px solid #333}"
+    ".menu a{text-decoration:none}"
+    ".badge{font-size:.8rem;padding:.1rem .5rem;border-radius:8px;border:1px solid #444}"
+    ".badge-done{color:#8f8}.badge-running{color:#fc6}.badge-failed{color:#f88}"
+    ".marks{color:#aaa;font-size:.9rem}.marks a{margin-right:.6rem}"
+    ".tabs{display:flex;gap:.5rem;margin:.6rem 0}"
+    ".tabs a{padding:.25rem .7rem;border:1px solid #444;border-radius:6px;text-decoration:none}"
+    ".tabs a.active{background:#6cf;color:#111;border-color:#6cf}"
+    "iframe{width:100%;min-height:70vh;border:1px solid #333;background:#111}"
+    "form{max-width:480px}form label{display:block;margin:.7rem 0}"
+    "input,select,textarea{width:100%;box-sizing:border-box;background:#1b1b1b;"
+    "color:#eee;border:1px solid #444;border-radius:4px;padding:.35rem}"
+    "button{background:#6cf;color:#111;border:0;border-radius:4px;padding:.5rem 1.2rem}"
+    ".empty{color:#aaa}"
 )
 
 
-def render_index(projects):
-    """Return the HTML index page linking to every project."""
+def render_page(title, body):
+    """Return one full HTML page with the top menu and the shared style."""
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{html_escape(title)}</title>"
+        f"<style>{PAGE_STYLE}</style></head><body>"
+        '<nav class="menu"><a href="/">Projects</a><a href="/upload">Upload</a></nav>'
+        f"{body}"
+        "</body></html>\n"
+    )
+
+
+def render_index(entries):
+    """Return the Projects page: one row per project with status and artifacts."""
     rows = []
-    for project in projects:
-        directory = Path(project["root"]) / project["name"]
-        marks = " ".join(existing_artifacts(directory))
+    for entry in entries:
+        name = html_escape(entry["name"])
+        status = entry["status"]
+        marks = " ".join(
+            f'<a href="/{name}/{html_escape(artifact)}">{html_escape(label)}</a>'
+            for artifact, label in ARTIFACT_LABELS
+            if artifact in entry["artifacts"]
+        )
         rows.append(
-            f'<li><a href="/{html_escape(project["name"])}/">'
-            f'{html_escape(project["name"])}</a> '
-            f'<span class="marks">{html_escape(marks)}</span></li>'
+            f'<li><a href="/{name}/">{name}</a> '
+            f'<span class="badge badge-{html_escape(status)}">{html_escape(status)}</span> '
+            f'<span class="marks">{marks}</span></li>'
         )
     body = "\n".join(rows) if rows else "<li>no projects</li>"
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        "<title>Recaps</title>"
-        f"<style>{PAGE_STYLE}</style></head><body>"
-        "<h1>Recaps</h1>"
-        f"<ul>{body}</ul>"
-        "</body></html>\n"
-    )
+    return render_page("Recaps", f"<h1>Recaps</h1><ul>{body}</ul>")
 
 
-def render_project(name, artifacts):
-    """Return the HTML page for one project with a player and artifact links."""
-    links = "\n".join(
-        f'<li><a href="{html_escape(artifact)}">{html_escape(artifact)}</a></li>'
-        for artifact in artifacts
-    )
-    player = ""
-    if "recap_720p.mp4" in artifacts:
-        player = (
-            '<video controls preload="metadata" src="recap_720p.mp4"></video>'
+def render_recap_panel(directory):
+    """Return the Recap tab panel: the player, or a placeholder line."""
+    parts = []
+    if (Path(directory) / "recap_720p.mp4").is_file():
+        parts.append('<video controls preload="metadata" src="recap_720p.mp4"></video>')
+    else:
+        parts.append('<p class="empty">No recap yet.</p>')
+    if (Path(directory) / "recap_final.mp4").is_file():
+        parts.append('<p><a href="recap_final.mp4">recap_final.mp4</a></p>')
+    return "\n".join(parts)
+
+
+def render_iframe_panel(directory, artifact, empty_text):
+    """Return a tab panel embedding ``artifact``, or a placeholder line."""
+    if (Path(directory) / artifact).is_file():
+        return f'<iframe src="{artifact}" title="{html_escape(artifact)}"></iframe>'
+    return f'<p class="empty">{html_escape(empty_text)}</p>'
+
+
+def render_project(name, directory, tab, music_tracks=()):
+    """Return the project page with the tabs and the Re-edit form."""
+    directory = Path(directory)
+    tab_links = []
+    for key, label in TABS:
+        active = ' class="active"' if key == tab else ""
+        tab_links.append(
+            f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(label)}</a>'
         )
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{html_escape(name)}</title>"
-        f"<style>{PAGE_STYLE}</style></head><body>"
+    panels = {
+        "recap": render_recap_panel(directory),
+        "why": render_iframe_panel(
+            directory,
+            "explain.html",
+            "The explanation has not been generated yet (scripts/explain.py).",
+        ),
+        "shots": render_iframe_panel(
+            directory,
+            "shotlog.html",
+            "The shotlog has not been generated yet.",
+        ),
+    }
+    body = (
         f"<h1>{html_escape(name)}</h1>"
-        f"{player}"
-        f"<ul>{links}</ul>"
-        "</body></html>\n"
+        f'<nav class="tabs">{"".join(tab_links)}</nav>'
+        f'<section class="panel">{panels[tab]}</section>'
+        f"{render_reedit(name, music_tracks)}"
+    )
+    return render_page(name, body)
+
+
+def render_select(name, options, default=None):
+    """Return one ``<select>`` with the given (value, label) options."""
+    rendered = "".join(
+        f'<option value="{html_escape(value)}"'
+        f'{" selected" if default == value else ""}>{html_escape(label)}</option>'
+        for value, label in options
+    )
+    return f'<select name="{html_escape(name)}">{rendered}</select>'
+
+
+def option_fields(music_tracks):
+    """The shared option selects, every one defaulting to Auto."""
+    music_options = [("auto", "Auto"), ("none", "none")]
+    music_options.extend((track, track) for track in music_tracks)
+    return [
+        (
+            "Length",
+            render_select(
+                "length",
+                [("auto", "Auto"), ("30s", "30s"), ("60s", "60s"), ("90s", "90s"), ("3min", "3min")],
+                default="auto",
+            ),
+        ),
+        (
+            "Order",
+            render_select(
+                "order",
+                [("auto", "Auto"), ("chronological", "chronological"), ("best", "best")],
+                default="auto",
+            ),
+        ),
+        (
+            "Audio clean",
+            render_select("audio_clean", [("auto", "Auto"), ("yes", "yes"), ("no", "no")], default="auto"),
+        ),
+        ("Music", render_select("music", music_options, default="auto")),
+        (
+            "Ambient under music (dB)",
+            render_select(
+                "ambient_under_music_db",
+                [("auto", "Auto"), ("6", "6"), ("8", "8"), ("12", "12"), ("16", "16"), ("20", "20")],
+                default="auto",
+            ),
+        ),
+    ]
+
+
+def render_form_rows(fields):
+    return "\n".join(f"<label>{html_escape(label)}{control}</label>" for label, control in fields)
+
+
+def render_upload(music_tracks):
+    """Return the Upload page with the form wired to POST /upload."""
+    fields = [
+        ("Files", '<input type="file" name="files" multiple accept="video/*,image/*">'),
+        ("Folder", '<input type="text" name="folder">'),
+        ("Brief", '<textarea name="brief" rows="4"></textarea>'),
+    ]
+    fields.extend(option_fields(music_tracks))
+    body = (
+        "<h1>Upload</h1>"
+        '<p class="empty">Files land in the inbox and the recap starts in the background.</p>'
+        '<form method="post" action="/upload" enctype="multipart/form-data">'
+        f"{render_form_rows(fields)}"
+        '<button type="submit" name="submit" value="start">Start</button>'
+        "</form>"
+    )
+    return render_page("Upload", body)
+
+
+def render_reedit(name, music_tracks):
+    """Return the Re-edit form with the same options plus a feedback box."""
+    fields = list(option_fields(music_tracks))
+    fields.append(("Feedback", '<textarea name="feedback" rows="3" '
+                   'placeholder="drop 0071/s2, tunnel longer"></textarea>'))
+    return (
+        "<details class=\"reedit\"><summary>Re-edit</summary>"
+        f'<form method="post" action="/{html_escape(name)}/re-edit" '
+        'enctype="multipart/form-data">'
+        f"{render_form_rows(fields)}"
+        '<button type="submit" name="submit" value="reedit">Re-edit</button>'
+        "</form></details>"
     )
 
 
@@ -191,6 +432,13 @@ def parse_path(raw_path):
     if any(segment == ".." for segment in segments):
         return None
     return segments
+
+
+def parse_tab(raw_path):
+    """Return the requested tab key from the query string, falling back to recap."""
+    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get("tab", [])
+    tab = values[0] if values else "recap"
+    return tab if tab in TAB_KEYS else "recap"
 
 
 def parse_range(value, size):
@@ -223,10 +471,298 @@ def parse_range(value, size):
     return start, min(end, size - 1)
 
 
-class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
-    """Serve the allowlisted index, project pages and three artifacts."""
+class UploadError(RuntimeError):
+    """Raised when an upload request is unacceptable."""
 
-    server_version = "yt-serve/1.0"
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+class MultipartReader:
+    """Stream one multipart/form-data body into fields and files on disk."""
+
+    def __init__(self, stream, boundary, max_total_bytes, max_file_bytes, content_length=None):
+        self.stream = stream
+        self.delimiter = b"--" + boundary
+        self.max_total_bytes = max_total_bytes
+        self.max_file_bytes = max_file_bytes
+        self.content_length = content_length
+        self.buffer = b""
+        self.consumed = 0
+        self.finished = False
+
+    def _read_more(self):
+        if self.content_length is not None and self.consumed >= self.content_length:
+            return False
+        want = UPLOAD_CHUNK
+        if self.content_length is not None:
+            want = min(want, self.content_length - self.consumed)
+        chunk = self.stream.read1(want) if hasattr(self.stream, "read1") else self.stream.read(want)
+        if not chunk:
+            return False
+        self.consumed += len(chunk)
+        if self.consumed > self.max_total_bytes:
+            raise UploadError(413, "request body too large")
+        self.buffer += chunk
+        return True
+
+    def _find(self, marker):
+        return self.buffer.find(marker)
+
+    def _consume_headers(self):
+        while True:
+            end = self.buffer.find(b"\r\n\r\n")
+            if end >= 0:
+                raw = self.buffer[:end]
+                self.buffer = self.buffer[end + 4:]
+                return raw
+            if not self._read_more():
+                raise UploadError(400, "truncated multipart headers")
+
+    def _read_part(self, writer=None, limit=None):
+        marker = b"\r\n" + self.delimiter
+        written = 0
+        while True:
+            at = self._find(marker)
+            if at >= 0:
+                payload, self.buffer = self.buffer[:at], self.buffer[at:]
+                if writer is not None and payload:
+                    writer(payload)
+                    written += len(payload)
+                return written
+            keep = len(marker) - 1
+            payload = self.buffer[:-keep] if len(self.buffer) > keep else b""
+            if payload:
+                self.buffer = self.buffer[-keep:]
+                if writer is not None:
+                    writer(payload)
+                written += len(payload)
+                if limit is not None and written > limit:
+                    raise UploadError(413, "file too large")
+            if not self._read_more():
+                raise UploadError(400, "truncated multipart part")
+
+    def _next_part(self):
+        """Consume up to and including the CRLF after a boundary; False at the end."""
+        while True:
+            if self.buffer.startswith(b"\r\n"):
+                self.buffer = self.buffer[2:]
+                continue
+            if self.buffer.startswith(self.delimiter):
+                rest = self.buffer[len(self.delimiter):]
+                if rest.startswith(b"--"):
+                    self.buffer = rest[2:]
+                    self.finished = True
+                    return False
+                if rest.startswith(b"\r\n"):
+                    self.buffer = rest[2:]
+                    return True
+                if not self._read_more():
+                    raise UploadError(400, "malformed multipart boundary")
+                continue
+            if not self._read_more():
+                self.finished = True
+                return False
+
+    def parts(self):
+        """Yield ``(name, filename, data)`` per part; file bodies are read by the caller."""
+        while self._next_part():
+            headers_raw = self._consume_headers()
+            name, filename = parse_part_headers(headers_raw)
+            if filename is None:
+                chunks = []
+                self._read_part(writer=chunks.append, limit=BRIEF_MAX_CHARS * 4)
+                yield name, None, b"".join(chunks)
+            else:
+                yield name, filename, None
+
+
+def parse_part_headers(raw):
+    """Return ``(name, filename)`` from one part's header block."""
+    name = None
+    filename = None
+    for line in raw.split(b"\r\n"):
+        if not line.lower().startswith(b"content-disposition:"):
+            continue
+        text = line.decode("utf-8", "replace")
+        for key, value in re.findall(r'(\w+)="([^"]*)"', text):
+            if key == "name":
+                name = value
+            elif key == "filename":
+                filename = value
+    return name, filename
+
+
+def stream_to_file(reader, destination, limit):
+    """Write one multipart file part to ``destination`` atomically; return its size."""
+    temporary = destination.with_name(destination.name + ".part")
+
+    def writer(payload):
+        handle.write(payload)
+
+    written = 0
+    try:
+        with temporary.open("wb") as handle:
+            written = reader._read_part(writer=writer, limit=limit)
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return written
+
+
+def discard_staging(staging):
+    """Remove a staging folder and anything left in it."""
+    try:
+        for child in staging.iterdir():
+            child.unlink()
+        staging.rmdir()
+    except OSError:
+        pass
+
+
+def parse_upload(reader, inbox):
+    """Stream one multipart body into a staging folder under the inbox.
+
+    Returns ``(fields, staged, staging)`` where ``staged`` maps each base name
+    to its staged path. Field order does not matter: the caller moves the files
+    into the project folder once the folder name is known.
+    """
+    staging = Path(inbox) / f".upload-{os.getpid()}-{time.time_ns():x}"
+    staging.mkdir(parents=True, exist_ok=False)
+    fields = {}
+    staged = {}
+    try:
+        for name, filename, data in reader.parts():
+            if filename is None:
+                fields[name] = (data or b"").decode("utf-8", "replace")
+                continue
+            base = Path(filename.replace("\\", "/")).name
+            if not base or Path(base).suffix.lower() not in UPLOAD_EXTENSIONS:
+                raise UploadError(400, f"unsupported file name: {base or filename}")
+            if base in staged:
+                raise UploadError(400, f"duplicate file name: {base}")
+            stream_to_file(reader, staging / base, reader.max_file_bytes)
+            staged[base] = staging / base
+    except UploadError:
+        discard_staging(staging)
+        raise
+    return fields, staged, staging
+
+
+def parse_fields_only(reader):
+    """Return the form fields of a multipart body that must carry no files."""
+    fields = {}
+    for name, filename, data in reader.parts():
+        if filename is None:
+            fields[name] = (data or b"").decode("utf-8", "replace")
+            continue
+        raise UploadError(400, "this form takes no files")
+    return fields
+
+
+def move_into_inbox(staged, inbox, folder):
+    """Move the staged files to ``inbox/folder``; refuse to overwrite anything."""
+    destination_dir = inbox / folder
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    resolved_dir = destination_dir.resolve()
+    if inbox.resolve() not in resolved_dir.parents:
+        raise UploadError(400, "refused: destination outside the inbox")
+    moved = []
+    for base in sorted(staged):
+        target = destination_dir / base
+        if target.exists():
+            raise UploadError(409, f"already exists: {base}")
+        os.replace(staged[base], target)
+        moved.append(base)
+    return moved
+
+
+def write_text_atomic(path, text):
+    """Write a small text file atomically."""
+    path = Path(path)
+    temporary = path.with_name(path.name + ".part")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def read_brief_file(source):
+    """The brief stored next to the uploaded files, or an empty string."""
+    try:
+        return (Path(source) / "brief.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def build_recap_command(python, source, workspace, brief, fields, music_dir):
+    """The recap.py argv for one upload or re-edit."""
+    command = [
+        python,
+        str(REPO_ROOT / "scripts" / "recap.py"),
+        "--source",
+        str(source),
+        "--workspace",
+        str(workspace),
+        "--brief",
+        brief,
+        "--json",
+    ]
+    length = LENGTH_CHOICES.get(fields.get("length") or "auto")
+    if length:
+        command += ["--target-duration-s", str(length)]
+    order = ORDER_CHOICES.get(fields.get("order") or "auto")
+    if order:
+        command += ["--order", order]
+    if (fields.get("audio_clean") or "auto") == "no":
+        command.append("--no-audio-clean")
+    music = fields.get("music") or "auto"
+    if music == "auto":
+        command += ["--music", "auto"]
+    elif music and music != "none":
+        command += ["--music", str(Path(music_dir).expanduser().resolve() / Path(music).name)]
+    ambient = fields.get("ambient_under_music_db") or "auto"
+    if ambient in AMBIENT_CHOICES and ambient != "auto":
+        command += ["--ambient-under-music-db", ambient]
+    feedback = (fields.get("feedback") or "").strip()
+    if feedback:
+        command += ["--feedback", feedback[:BRIEF_MAX_CHARS]]
+    return command
+
+
+def start_recap(command, workspace, source, options):
+    """Spawn the recap in the background, record ``.run.json`` and return the pid."""
+    workspace.mkdir(parents=True, exist_ok=True)
+    with (workspace / "run.log").open("ab") as log:
+        handle = subprocess.Popen(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(REPO_ROOT),
+        )
+    record = {
+        "pid": handle.pid,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "label": "recap",
+        "source": str(source),
+        "options": options,
+        "command": command,
+    }
+    (workspace / ".run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return handle.pid
+
+
+class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
+    """Serve the allowlisted pages and the four finished artifacts."""
+
+    server_version = "yt-serve/2.0"
 
     def do_GET(self):
         self.handle_request(send_body=True)
@@ -234,17 +770,156 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.handle_request(send_body=False)
 
+    def do_POST(self):
+        segments = parse_path(self.path)
+        if segments == ["upload"]:
+            self.handle_upload()
+            return
+        if len(segments) == 2 and segments[1] == "re-edit":
+            self.handle_reedit(segments[0])
+            return
+        self._method_not_allowed()
+
+    def _boundary(self):
+        content_type = self.headers.get("Content-Type") or ""
+        match = re.search(r'boundary="?([^";]+)"?', content_type)
+        if not match or "multipart/form-data" not in content_type:
+            return None
+        return match.group(1).encode("utf-8")
+
+    def _reader(self):
+        boundary = self._boundary()
+        if boundary is None:
+            raise UploadError(400, "expected multipart/form-data")
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.server.max_total_bytes:
+            raise UploadError(413, "request body too large")
+        return MultipartReader(
+            self.rfile,
+            boundary,
+            self.server.max_total_bytes,
+            self.server.max_file_bytes,
+            content_length=length,
+        )
+
+    def handle_upload(self):
+        """Store the uploaded files in the inbox and start the recap."""
+        staging = None
+        try:
+            reader = self._reader()
+            fields, staged, staging = parse_upload(reader, self.server.inbox)
+            if not staged:
+                raise UploadError(400, "no files uploaded")
+            folder = (fields.get("folder") or "").strip()
+            if not FOLDER_RE.match(folder):
+                raise UploadError(400, "invalid folder name")
+            brief = (fields.get("brief") or "").strip()
+            if not brief:
+                raise UploadError(400, "brief is required")
+            if len(brief) > BRIEF_MAX_CHARS:
+                raise UploadError(400, "brief too long")
+            music = fields.get("music") or "auto"
+            if music not in ("auto", "none") and not (
+                (Path(self.server.music_dir).expanduser() / Path(music).name).is_file()
+                and Path(music).suffix.lower() in MUSIC_EXTENSIONS
+            ):
+                raise UploadError(400, "unknown music track")
+            source = self.server.inbox / folder
+            if project_status(self.server.root / folder) == "running":
+                raise UploadError(409, "already running")
+            move_into_inbox(staged, self.server.inbox, folder)
+            write_text_atomic(source / "brief.txt", brief + "\n")
+        except UploadError as exc:
+            if staging is not None:
+                discard_staging(staging)
+            self.send_error_text(exc.status, exc.message)
+            return
+        finally:
+            if staging is not None and staging.exists():
+                discard_staging(staging)
+        self._start_for(fields, source, folder)
+
+    def handle_reedit(self, project):
+        """Re-run only the edit and the render with the form options and feedback."""
+        workspace = self.server.root / project
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        marker = workspace / ".run.json"
+        try:
+            if not marker.is_file():
+                raise UploadError(409, "no recorded source for this project")
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            source = Path(data.get("source") or "")
+            if not source.is_dir():
+                raise UploadError(409, "recorded source is gone")
+            fields = parse_fields_only(self._reader())
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        except (OSError, ValueError):
+            self.send_error_text(409, "unreadable .run.json")
+            return
+        self._start_for(fields, source, project, reedit=True)
+
+    def _start_for(self, fields, source, folder, reedit=False):
+        workspace = self.server.root / folder
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        brief = (fields.get("brief") or "").strip() or read_brief_file(source)
+        if not brief:
+            self.send_error_text(400, "brief is required")
+            return
+        command = build_recap_command(
+            sys.executable, source, workspace, brief, fields, self.server.music_dir
+        )
+        try:
+            start_recap(command, workspace, source, fields)
+        except OSError as exc:
+            self.send_error_text(500, f"could not start the recap: {exc}")
+            return
+        self.send_redirect(f"/{folder}/")
+
+    def send_error_text(self, status, message):
+        body = (message + "\n").encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_redirect(self, location):
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _method_not_allowed(self):
         self.send_response(405)
         self.send_header("Allow", "GET, HEAD")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    do_POST = _method_not_allowed
     do_PUT = _method_not_allowed
     do_DELETE = _method_not_allowed
     do_PATCH = _method_not_allowed
     do_OPTIONS = _method_not_allowed
+
+    def collect_entries(self):
+        """Return one list entry per project with its status and artifacts."""
+        root = self.server.root
+        entries = []
+        for name in discover_projects(root):
+            directory = root / name
+            entries.append(
+                {
+                    "name": name,
+                    "status": project_status(directory),
+                    "artifacts": existing_artifacts(directory),
+                }
+            )
+        return entries
 
     def handle_request(self, send_body):
         """Route one request against the allowlist and write the response."""
@@ -254,28 +929,29 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_not_found()
             return
         if not segments:
-            projects = [
-                {"name": name, "root": str(root)} for name in discover_projects(root)
-            ]
-            self.send_html(render_index(projects), send_body)
+            self.send_html(render_index(self.collect_entries()), send_body)
             return
-        project = segments[0]
-        directory = root / project
+        if segments == ["upload"]:
+            self.send_html(render_upload(list_music_tracks(self.server.music_dir)), send_body)
+            return
         if len(segments) == 1:
-            if not directory.is_dir():
+            directory = root / segments[0]
+            if not directory.is_dir() or not is_project(directory):
                 self.send_not_found()
                 return
-            artifacts = existing_artifacts(directory)
-            if not artifacts:
-                self.send_not_found()
-                return
-            self.send_html(render_project(project, artifacts), send_body)
+            self.send_html(
+                render_project(
+                    segments[0], directory, parse_tab(self.path), list_music_tracks(self.server.music_dir)
+                ),
+                send_body,
+            )
             return
         if len(segments) == 2:
             artifact = segments[1]
             if artifact not in SERVED_FILES:
                 self.send_not_found()
                 return
+            directory = root / segments[0]
             target = directory / artifact
             if not directory.is_dir() or not target.is_file():
                 self.send_not_found()
@@ -289,6 +965,14 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def send_not_implemented(self):
+        body = b"Upload is not wired yet: the next task connects the POST handler.\n"
+        self.send_response(501)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def send_html(self, text, send_body):
         data = text.encode("utf-8")
@@ -336,21 +1020,34 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
 
 
 class WorkspaceServer(http.server.ThreadingHTTPServer):
-    """Threading HTTP server that knows the workspace root."""
+    """Threading HTTP server that knows the workspace root, inbox and limits."""
 
     daemon_threads = True
 
-    def __init__(self, address, root):
+    def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes):
         self.root = Path(root)
+        self.music_dir = music_dir
+        self.inbox = inbox
+        self.max_file_bytes = max_file_bytes
+        self.max_total_bytes = max_total_bytes
         super().__init__(address, WorkspaceHandler)
 
 
-def build_server(root, bind, port):
+def build_server(root, bind, port, music_dir=DEFAULT_MUSIC_DIR, inbox=DEFAULT_INBOX,
+                 max_file_bytes=None, max_total_bytes=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
-    return WorkspaceServer((bind, port), root)
+    return WorkspaceServer(
+        (bind, port),
+        root,
+        music_dir,
+        Path(inbox).expanduser().resolve(),
+        max_file_bytes if max_file_bytes is not None else DEFAULT_MAX_UPLOAD_MB * 1024 * 1024,
+        max_total_bytes if max_total_bytes is not None else DEFAULT_MAX_TOTAL_MB * 1024 * 1024,
+    )
 
 
-def build_summary(root, bind, port, projects, status, started):
+def build_summary(root, bind, port, projects, status, started, music_dir=DEFAULT_MUSIC_DIR,
+                  inbox=DEFAULT_INBOX):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -362,6 +1059,7 @@ def build_summary(root, bind, port, projects, status, started):
             {
                 "name": name,
                 "url": f"{base}/{name}/",
+                "status": project_status(directory),
                 "preview": f"{base}/{name}/recap_720p.mp4"
                 if "recap_720p.mp4" in artifacts
                 else None,
@@ -371,6 +1069,7 @@ def build_summary(root, bind, port, projects, status, started):
                 "shotlog": f"{base}/{name}/shotlog.html"
                 if "shotlog.html" in artifacts
                 else None,
+                "why": f"{base}/{name}/explain.html" if "explain.html" in artifacts else None,
             }
         )
     return {
@@ -381,6 +1080,8 @@ def build_summary(root, bind, port, projects, status, started):
         "port": port,
         "url": f"{base}/",
         "projects": entries,
+        "music_tracks": len(list_music_tracks(music_dir)),
+        "inbox": str(Path(inbox).expanduser().resolve()),
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -395,10 +1096,15 @@ def print_human(summary):
     for project in summary["projects"]:
         marks = [
             label
-            for key, label in (("preview", "recap"), ("final", "final"), ("shotlog", "shotlog"))
+            for key, label in (
+                ("preview", "recap"),
+                ("final", "final"),
+                ("why", "why"),
+                ("shotlog", "shotlog"),
+            )
             if project[key]
         ]
-        print(f"  {project['name']}  {' '.join(marks)}")
+        print(f"  {project['name']}  {project['status']}  {' '.join(marks)}")
 
 
 def resolve_root(value):
@@ -427,8 +1133,17 @@ def main(argv=None):
     try:
         root = resolve_root(args.workspaces)
         bind = resolve_bind(args.bind)
+        inbox = Path(args.inbox).expanduser().resolve()
         try:
-            server = build_server(root, bind, args.port)
+            server = build_server(
+                root,
+                bind,
+                args.port,
+                args.music_dir,
+                inbox,
+                args.max_upload_mb * 1024 * 1024,
+                args.max_total_mb * 1024 * 1024,
+            )
         except OSError as exc:
             raise ServeError(f"could not bind {bind}:{args.port}: {exc}") from exc
     except ServeError as exc:
@@ -438,7 +1153,8 @@ def main(argv=None):
     port = server.server_address[1]
     projects = discover_projects(root)
     summary = build_summary(
-        root, bind, port, projects, "check" if args.check else "serving", started
+        root, bind, port, projects, "check" if args.check else "serving", started,
+        args.music_dir, inbox,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from common.decisions import build_decisions
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -65,6 +66,7 @@ PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
 BEAT_SNAP_FRACTION = 0.5
 SNAP_MIN_SLOT_S = 0.5
+DEFAULT_IMPORTANT_MAX_S = 6.0
 
 
 class DirectorError(RuntimeError):
@@ -94,22 +96,56 @@ def build_parser():
     parser.add_argument("--target-duration-s", type=float, default=90.0, help="target edit length in seconds")
     parser.add_argument("--order", choices=["chronological", "score"], default="chronological")
     parser.add_argument("--pacing", choices=["calm-to-energy", "uniform"], default="calm-to-energy")
-    parser.add_argument("--min-slot-s", type=float, default=2.0, help="drop windows shorter than this")
-    parser.add_argument("--max-slot-s", type=float, default=12.0, help="cap a slot at this many seconds")
+    parser.add_argument(
+        "--min-slot-s",
+        type=float,
+        default=None,
+        help="drop windows shorter than this (default: from the pacing table)",
+    )
+    parser.add_argument(
+        "--max-slot-s",
+        type=float,
+        default=None,
+        help="cap a slot at this many seconds (default: from the pacing table)",
+    )
     parser.add_argument(
         "--important-max-s",
         type=float,
-        default=6.0,
-        help="longest a hero or semantic-move slot may be (default 6.0)",
+        default=None,
+        help=(
+            "longest a hero or semantic-move slot may be "
+            "(default: from the pacing table, 6.0 s ceiling)"
+        ),
     )
-    parser.add_argument("--calm-slot-s", type=float, default=6.0, help="target length of the opening slots in calm-to-energy")
-    parser.add_argument("--energy-slot-s", type=float, default=2.5, help="target length of the closing slots in calm-to-energy")
+    parser.add_argument(
+        "--calm-slot-s",
+        type=float,
+        default=None,
+        help="target length of the opening slots in calm-to-energy (default: from the pacing table)",
+    )
+    parser.add_argument(
+        "--energy-slot-s",
+        type=float,
+        default=None,
+        help="target length of the closing slots in calm-to-energy (default: from the pacing table)",
+    )
     parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
     parser.add_argument(
         "--beats",
         default=None,
         help="beat grid JSON from beats.py; snap every cut to the nearest beat and join with hard cuts",
+    )
+    parser.add_argument(
+        "--music",
+        default=None,
+        help="music track to record in edit.json audio.music (the render mixes it under the ambient bus)",
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=None,
+        help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
     )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -477,15 +513,27 @@ def score_candidate(candidate, pacing):
 
 def dedupe_candidates(candidates):
     kept = []
+    dropped = []
     ordered = sorted(
         candidates,
         key=lambda item: (-item["score"], 0 if item.get("phrase") else 1, item["in_s"]),
     )
     for candidate in ordered:
-        if any(overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0 for other in kept):
+        clash = next(
+            (
+                other
+                for other in kept
+                if overlap_seconds(candidate["in_s"], candidate["out_s"], other["in_s"], other["out_s"]) > 0
+            ),
+            None,
+        )
+        if clash is not None:
+            dropped.append(
+                (candidate, f"overlapping window of {slot_label(clash)}, lower score")
+            )
             continue
         kept.append(candidate)
-    return kept
+    return kept, dropped
 
 
 def landing_pairs(quality):
@@ -637,6 +685,41 @@ def merge_contiguous(slots):
     return merged
 
 
+PACING_ANCHORS = (
+    (20.0, 1.5, 2.0, 2.5),
+    (90.0, 2.0, 3.6, 5.0),
+    (180.0, 2.5, 5.0, 6.0),
+)
+
+
+def pacing_table(target_duration_s):
+    """Slot pacing for a brief's target duration: per-shot min/target/max, hero cap, slot count.
+
+    Linear interpolation between the anchors, clamped outside them. ``hero_max``
+    keeps hero and semantic-move slots the longest while shrinking with the
+    target, under the ``DEFAULT_IMPORTANT_MAX_S`` ceiling.
+    """
+    t = clamp(float(target_duration_s), PACING_ANCHORS[0][0], PACING_ANCHORS[-1][0])
+    low, high = (
+        (PACING_ANCHORS[0], PACING_ANCHORS[1])
+        if t <= PACING_ANCHORS[1][0]
+        else (PACING_ANCHORS[1], PACING_ANCHORS[2])
+    )
+    fraction = (t - low[0]) / (high[0] - low[0])
+    slot_min = round(low[1] + (high[1] - low[1]) * fraction, 2)
+    slot_target = round(low[2] + (high[2] - low[2]) * fraction, 2)
+    slot_max = round(low[3] + (high[3] - low[3]) * fraction, 2)
+    hero_max = round(min(DEFAULT_IMPORTANT_MAX_S, slot_target * 1.75), 2)
+    n_slots = int(clamp(round(t / slot_target), 4, 32))
+    return {
+        "slot_min": slot_min,
+        "slot_target": slot_target,
+        "slot_max": slot_max,
+        "hero_max": hero_max,
+        "n_slots": n_slots,
+    }
+
+
 def slot_targets(n_slots, pacing, target_duration_s, calm_slot_s, energy_slot_s, min_slot_s, max_slot_s):
     """Per-slot target lengths from the pacing, clamped to the min/max."""
     if pacing == "calm-to-energy":
@@ -648,7 +731,7 @@ def slot_targets(n_slots, pacing, target_duration_s, calm_slot_s, energy_slot_s,
                 for index in range(n_slots)
             ]
     else:
-        raw = [target_duration_s / n_slots] * n_slots
+        raw = [pacing_table(target_duration_s)["slot_target"]] * n_slots
     return [clamp(target, min_slot_s, max_slot_s) for target in raw]
 
 
@@ -757,6 +840,7 @@ def make_photo_slot(candidate, duration_s):
         "content_offset": candidate["content_offset"],
         "segment": candidate["segment"],
         "shot_key": candidate.get("shot_key"),
+        "landing_hold_key": candidate.get("landing_hold_key"),
         "similar_to": candidate.get("similar_to") or [],
         "description": candidate.get("description"),
         "shot_reason": candidate.get("shot_reason"),
@@ -816,6 +900,7 @@ def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=No
         "content_offset": candidate["content_offset"],
         "segment": candidate["segment"],
         "shot_key": candidate.get("shot_key"),
+        "landing_hold_key": candidate.get("landing_hold_key"),
         "similar_to": candidate.get("similar_to") or [],
         "description": candidate.get("description"),
         "shot_reason": candidate.get("shot_reason"),
@@ -871,8 +956,12 @@ def snap_warning(cut_number, end, target):
     return f"cut {cut_number}: not snapped to a beat (nearest {abs(end - target):.1f} s away)"
 
 
-def absorb_out(slot, delta):
-    """Move a slot's end by ``delta`` within its window; False when it cannot."""
+def absorb_out(slot, delta, slack=0.0):
+    """Move a slot's end by ``delta`` within its window; False when it cannot.
+
+    ``slack`` lets a hero or semantic-move slot nudge its cut by up to half a
+    beat past its window so the cut still lands on the music.
+    """
     if slot.get("media_type") == "photo":
         target = float(slot["duration_s"]) + delta
         if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
@@ -880,39 +969,42 @@ def absorb_out(slot, delta):
         slot["duration_s"] = round(target, 3)
         slot["out_s"] = slot["duration_s"]
         return True
-    if slot.get("important"):
-        return False
     low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
     if slot.get("landing_floor_s") is not None:
         low = max(low, float(slot["landing_floor_s"]))
     high = float(slot.get("window_out_s", slot["out_s"]))
     target = float(slot["out_s"]) + delta
+    if slack:
+        low -= slack
+        high += slack
     if not (low - 1e-9 <= target <= high + 1e-9):
         return False
     slot["out_s"] = round(target, 3)
     return True
 
 
-def absorb_length(slot, delta):
+def absorb_length(slot, delta, slack=0.0):
     """Change a slot's on-screen length by ``delta``, from its end or its head.
 
     The end first (cheapest and exact); when the end is pinned the head moves
     instead, never before the window's handle-in. False when neither fits.
     """
     if slot.get("media_type") == "photo":
-        return absorb_out(slot, delta)
-    if slot.get("important"):
-        return False
+        return absorb_out(slot, delta, slack)
     low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
     if slot.get("landing_floor_s") is not None:
         low = max(low, float(slot["landing_floor_s"]))
     high = float(slot.get("window_out_s", slot["out_s"]))
+    window_in = float(slot.get("window_in_s", slot["in_s"]))
     end_target = float(slot["out_s"]) + delta
+    head_target = float(slot["in_s"]) - delta
+    if slack:
+        low -= slack
+        high += slack
+        window_in -= slack
     if low - 1e-9 <= end_target <= high + 1e-9:
         slot["out_s"] = round(end_target, 3)
         return True
-    window_in = float(slot.get("window_in_s", slot["in_s"]))
-    head_target = float(slot["in_s"]) - delta
     if head_target < window_in - 1e-9:
         return False
     if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
@@ -921,18 +1013,18 @@ def absorb_length(slot, delta):
     return True
 
 
-def absorb_head(slot, delta):
+def absorb_head(slot, delta, slack=0.0):
     """Change a slot's length by ``delta`` from its head only; False when it cannot.
 
     The head move keeps the slot's end (and every cut after it) in place, which
     is what the pair absorb needs from the right slot.
     """
     if slot.get("media_type") == "photo":
-        return absorb_out(slot, delta)
-    if slot.get("important"):
-        return False
+        return absorb_out(slot, delta, slack)
     window_in = float(slot.get("window_in_s", slot["in_s"]))
     head_target = float(slot["in_s"]) - delta
+    if slack:
+        window_in -= slack
     if head_target < window_in - 1e-9:
         return False
     if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
@@ -941,7 +1033,7 @@ def absorb_head(slot, delta):
     return True
 
 
-def absorb_pair(left, right, delta):
+def absorb_pair(left, right, delta, slack=0.0):
     """Move the cut between ``left`` and ``right`` by ``delta`` and nothing else.
 
     ``left`` grows by ``delta`` (from its end or its head) and ``right`` gives
@@ -950,9 +1042,9 @@ def absorb_pair(left, right, delta):
     is restored exactly.
     """
     snapshot = {key: left.get(key) for key in ("in_s", "out_s", "duration_s")}
-    if not absorb_length(left, delta):
+    if not absorb_length(left, delta, slack):
         return False
-    if not absorb_head(right, -delta):
+    if not absorb_head(right, -delta, slack):
         left.update(snapshot)
         return False
     return True
@@ -1003,17 +1095,17 @@ def snap_slots(slots, beat_grid, downbeat_at, warnings):
             start = start + timeline_length(slot)
             continue
         delta = target - end
-        if abs(delta) < 1e-9 or absorb_out(slot, delta):
+        if abs(delta) < 1e-9 or absorb_out(slot, delta, tolerance):
             snapped += 1
             start = start + timeline_length(slot)
             continue
         right = slots[index + 1] if index + 1 < len(slots) else None
         if right is None:
-            if absorb_length(slot, delta):
+            if absorb_length(slot, delta, tolerance):
                 snapped += 1
                 start = start + timeline_length(slot)
                 continue
-        elif absorb_pair(slot, right, delta):
+        elif absorb_pair(slot, right, delta, tolerance):
             snapped += 1
             start = start + timeline_length(slot)
             continue
@@ -1186,7 +1278,7 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
     return chosen
 
 
-def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
+def build_record(args, sources, slots, wall_time_s, hard_cuts=False, decisions=None):
     video = []
     video_index = 0
     photo_index = 0
@@ -1210,6 +1302,7 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
                     "transition": transition,
                     "description": slot.get("description"),
                     "capture_time": slot.get("capture_time"),
+                    "shot_key": slot.get("shot_key"),
                 }
             )
             continue
@@ -1227,9 +1320,13 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
                 "role": slot["role"],
                 "motion_label": slot["motion_label"],
                 "description": slot.get("description"),
+                "shot_key": slot.get("shot_key"),
             }
         )
-    return {
+    music = None
+    if args.music:
+        music = {"path": str(Path(args.music).expanduser())}
+    record = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tool": TOOL,
@@ -1243,7 +1340,8 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
         "video": video,
         "audio": {
             "ambience": {"enabled": True, "gain_db": 0, "source": "slot", "file": None},
-            "music": None,
+            "music": music,
+            "ambient_under_music_db": args.ambient_under_music_db,
             "sfx": [],
             "levels": {"target_lufs": None, "true_peak_db": None},
         },
@@ -1251,6 +1349,9 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False):
         "graphics": [],
         "meta": {"tool": TOOL, "wall_time_s": round(wall_time_s, 2), "llm_cost_usd": 0.0},
     }
+    if decisions is not None:
+        record["decisions"] = decisions
+    return record
 
 
 def atomic_write_json(path, data):
@@ -1309,6 +1410,11 @@ def run(args, started):
         raise DirectorError(f"workspace not found: {workspace}")
     out_path = Path(args.out).expanduser().resolve() if args.out else workspace / "edit.json"
     beats_path = Path(args.beats).expanduser().resolve() if args.beats else None
+    if args.music:
+        music_path = Path(args.music).expanduser().resolve()
+        if not music_path.is_file():
+            raise DirectorError(f"music file not found: {args.music}")
+        args.music = str(music_path)
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
     if not args.force and is_up_to_date(out_path, workspace, beats_path):
@@ -1349,6 +1455,11 @@ def run(args, started):
     candidates = []
     skipped_roles = 0
     skipped_ineligible = 0
+    drop_reasons = {}
+    pacing = pacing_table(args.target_duration_s)
+    min_slot_s = first_not_none(args.min_slot_s, pacing["slot_min"])
+    max_slot_s = first_not_none(args.max_slot_s, pacing["slot_max"])
+    important_max_s = first_not_none(args.important_max_s, pacing["hero_max"])
     shotlog = load_shotlog(workspace)
     photos_by_name = {
         photo.get("file") or Path(photo["path"]).name: photo
@@ -1372,7 +1483,7 @@ def run(args, started):
             warnings.append(f"missing motion document for {clip['file']}")
         position = clip_position(moment, first_moment, span_seconds)
         clip_candidates, clip_skipped = build_candidates(
-            clip, moment, position, content_offset, quality, motion, args.min_slot_s,
+            clip, moment, position, content_offset, quality, motion, min_slot_s,
             beats_by_segment=beats_by_segment,
         )
         skipped_roles += clip_skipped
@@ -1401,7 +1512,11 @@ def run(args, started):
                 candidate["similar_to"] = []
             scored.append(candidate)
         scored = build_phrases(scored, quality)
-        candidates.extend(dedupe_candidates(scored))
+        kept, dropped = dedupe_candidates(scored)
+        for candidate, reason in dropped:
+            key = candidate.get("shot_key") or candidate_key(candidate)
+            drop_reasons.setdefault(key, reason)
+        candidates.extend(kept)
 
     clip_timeline = (
         first_moment,
@@ -1423,26 +1538,27 @@ def run(args, started):
     if not candidates:
         raise DirectorError("no usable candidates")
 
-    n_slots = int(clamp(round(args.target_duration_s / 6.0), 4, 24))
     targets = slot_targets(
-        n_slots, args.pacing, args.target_duration_s, args.calm_slot_s, args.energy_slot_s,
-        args.min_slot_s, args.max_slot_s,
+        pacing["n_slots"], args.pacing, args.target_duration_s,
+        first_not_none(args.calm_slot_s, pacing["slot_max"]),
+        first_not_none(args.energy_slot_s, pacing["slot_min"]),
+        min_slot_s, max_slot_s,
     )
 
     if args.order == "chronological":
         slots, used = pick_chronological(
-            candidates, n_slots, targets, total_content, args.max_slot_s, args.min_slot_s, warnings,
-            args.allow_similar, args.important_max_s,
+            candidates, pacing["n_slots"], targets, total_content, max_slot_s, min_slot_s, warnings,
+            args.allow_similar, important_max_s,
         )
     else:
         slots, used = pick_by_score(
-            candidates, n_slots, targets, args.max_slot_s, args.min_slot_s, warnings, args.allow_similar,
-            args.important_max_s,
+            candidates, pacing["n_slots"], targets, max_slot_s, min_slot_s, warnings, args.allow_similar,
+            important_max_s,
         )
 
     slots = fill_to_target(
-        candidates, slots, used, args.target_duration_s, args.max_slot_s, args.min_slot_s, args.order,
-        warnings, targets[-1], args.allow_similar, args.important_max_s,
+        candidates, slots, used, args.target_duration_s, max_slot_s, min_slot_s, args.order,
+        warnings, targets[-1], args.allow_similar, important_max_s,
     )
     slots = merge_contiguous(slots)
 
@@ -1462,6 +1578,22 @@ def run(args, started):
 
     wall_time_s = time.monotonic() - started
     record = build_record(args, sources + photo_sources, slots, wall_time_s, hard_cuts=beat_grid is not None)
+    used_rows = []
+    for slot, item in zip(slots, record["video"]):
+        row = {
+            "id": slot.get("shot_key") or candidate_key(slot),
+            "slot": item["id"],
+            "reason": item["reason"],
+            "score": item.get("score"),
+            "clip": item.get("clip") or item.get("photo"),
+            "window_in_s": slot.get("window_in_s"),
+            "window_out_s": slot.get("window_out_s"),
+        }
+        if slot.get("landing_hold_key"):
+            row["extra_ids"] = [slot["landing_hold_key"]]
+        used_rows.append(row)
+    pool_keys = {candidate.get("shot_key") or candidate_key(candidate) for candidate in candidates}
+    record["decisions"] = build_decisions(shotlog, used_rows, pool_keys, drop_reasons)
     validate_or_raise(record, "edit")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(out_path, record)

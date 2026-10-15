@@ -232,17 +232,17 @@
     {
       "clip": "clipA.mp4",
       "in_s": 0.0,
-      "out_s": 5.0
+      "out_s": 2.09
     },
     {
       "clip": "clipB.mp4",
       "in_s": 0.0,
-      "out_s": 6.0
+      "out_s": 2.09
     },
     {
       "clip": "clipC.mp4",
       "in_s": 0.0,
-      "out_s": 6.0
+      "out_s": 2.09
     }
   ]
 }

@@ -119,10 +119,11 @@ def build_parser():
     parser.add_argument(
         "--ambient-under-music-db",
         type=float,
-        default=DEFAULT_AMBIENT_UNDER_MUSIC_DB,
+        default=None,
         help=(
             "how far the ambient sound sits under the music, in dB; it stays audible,"
-            f" never removed (default: {DEFAULT_AMBIENT_UNDER_MUSIC_DB:g})"
+            " never removed (default: the edit's audio.ambient_under_music_db,"
+            f" else {DEFAULT_AMBIENT_UNDER_MUSIC_DB:g})"
         ),
     )
     parser.add_argument(
@@ -566,7 +567,7 @@ def render(
     wind_hz=DEFAULT_WIND_HZ,
     music=None,
     music_gain_db=None,
-    ambient_under_music_db=DEFAULT_AMBIENT_UNDER_MUSIC_DB,
+    ambient_under_music_db=None,
 ):
     """Render ``edit_path`` to ``out_path`` and return the run summary."""
     started = time.monotonic()
@@ -591,9 +592,14 @@ def render(
     durations = [slot_duration(slot) for slot in slots]
     edit_duration = total_duration(slots, durations, xfade_s)
 
+    ambient_under_db = ambient_under_music_db
+    if ambient_under_db is None:
+        ambient_under_db = audio.get("ambient_under_music_db")
+    if ambient_under_db is None:
+        ambient_under_db = DEFAULT_AMBIENT_UNDER_MUSIC_DB
     music_config = resolve_music(
         audio.get("music"), music, music_gain_db, edit_path.parent,
-        target_lufs=target_lufs, ambient_under_db=ambient_under_music_db,
+        target_lufs=target_lufs, ambient_under_db=ambient_under_db,
     )
     music_duration = None
     music_mtime = None

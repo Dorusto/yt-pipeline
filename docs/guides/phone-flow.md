@@ -5,10 +5,21 @@ date: 2026-10-14
 
 # Phone flow — film on the phone, recap on the LXC, watch on the phone
 
-Film on the phone, Syncthing copies the clips into `~/media/inbox/`, `inbox.py`
-waits until the inbox is quiet, groups the clips per day and runs `recap.py`.
-When a recap finishes, `recap.py` posts an ntfy message with a preview link and
-you open that link in the phone browser over the tailnet.
+Film on the phone, get the clips onto the LXC, open one link and watch the
+recap. **Two ways to get the clips over** — pick one:
+
+1. **The web app (no setup).** Open `http://10.10.1.61:8091/upload` in the
+   phone browser, pick the clips and photos, type the project folder name and
+   the brief, press **Start**. The files stream into `~/media/inbox/<folder>/`
+   and `recap.py` starts in the background; the Projects page shows the
+   status. This is the path the demo uses.
+2. **Syncthing (optional, automatic).** Syncthing copies the camera folder
+   into `~/media/inbox/`; `inbox.py` waits until the inbox is quiet, groups the
+   clips per day and runs `recap.py` per day. Use it when you want the phone
+   to sync by itself without opening a page.
+
+Either way, when a recap finishes `recap.py` posts an ntfy message with a
+preview link and you open that link in the phone browser over the tailnet.
 
 The steps below are Doru's to run on his machines; the repo only ships the tools
 and these instructions.
@@ -17,20 +28,34 @@ and these instructions.
 
 | Phone | LXC `10.10.1.61` |
 |:---|:---|
-| Syncthing (send-only camera folder) | Syncthing (receive-only → `~/media/inbox`) |
+| Browser (Upload page, preview link, Re-edit) | `serve.py` on port 8091 (projects, upload, recap/why/shots) |
 | ntfy app (subscribed to the topic) | ntfy server on port 8090 |
-| Browser (opens the preview link) | `inbox.py` (watches the inbox, runs `recap.py`) |
-|  | `serve.py` on port 8091 (read-only preview) |
+| Syncthing (send-only camera folder) — *optional* | Syncthing (receive-only → `~/media/inbox`) — *optional* |
+|  | `inbox.py` (watches the inbox, runs `recap.py`) — *optional* |
 |  | `recap.py` (analysis → edit → 720p MP4) |
 
-## 1. Phone: install Syncthing
+## 0. LXC: the web app (the only step that is required)
+
+```bash
+cd ~/projects/yt-pipeline
+.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
+```
+
+Keep it running (see the `yt-serve.service` unit in step 4). Then from the
+phone browser: **Upload** → pick files → folder name + brief → **Start**. The
+project appears on **Projects** with a `running` badge and turns `done` when
+the recap is ready. The project page's tabs are **Recap**, **Why?** (why the
+edit looks the way it does) and **Shots** (the contact sheet); **Re-edit**
+re-runs only the edit with your options and a feedback note.
+
+## 1. (Optional) Phone: install Syncthing
 
 Android: *Syncthing-Fork* (F-Droid or Play Store) or the official *Syncthing*
 app. iOS: *Möbius Sync* or *Synctrain*. Open it and note the device ID (you
 paste it on the LXC in step 2). Keep the phone on the same network as the LXC
 while pairing.
 
-## 2. LXC: install Syncthing
+## 2. (Optional) LXC: install Syncthing
 
 Doru runs these on the LXC:
 

@@ -187,12 +187,12 @@
     {
       "clip": "clipA.mp4",
       "in_s": 10.0,
-      "out_s": 12.5
+      "out_s": 12.0
     },
     {
       "clip": "clipB.mp4",
       "in_s": 0.0,
-      "out_s": 2.5
+      "out_s": 2.0
     }
   ]
 }

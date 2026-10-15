@@ -1,6 +1,6 @@
 ---
 name: yt-recap
-description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Add --music FILE to detect the track's beats, cut on them and mix the track as the bed with the ambient sound under it. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone", "fă-mi un recap din clipurile de azi", "recap din clipurile noi", "trimite-mi linkul la recap", "pune muzică pe recap", "recap cu muzică". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
+description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Add --music FILE to detect the track's beats, cut on them and mix the track as the bed with the ambient sound under it; add --music auto to let music_pick.py choose the track from ~/media/music by the brief and the shot tags. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone", "fă-mi un recap din clipurile de azi", "recap din clipurile noi", "trimite-mi linkul la recap", "pune muzică pe recap", "recap cu muzică". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
 compatibility: Run from the repository root with the repo .venv. Needs ffmpeg and ffprobe on the PATH and OPENROUTER_API_KEY in the environment (unless llm_backend is mock). The originals folder is never written to; proxies and every output go under the workspace. Works from Telegram via an assistant (Hermes): the assistant runs the same commands and replies with the preview link built from `--preview-base`.
 ---
 
@@ -26,7 +26,7 @@ Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API k
 
 - `--source` is the folder of original clips (non-recursive, read-only). `--workspace` defaults to `<source parent>/workspace` and must not be inside the source.
 - Give exactly one of `--brief` (inline text) or `--brief-file` (path).
-- Stations run as subprocesses in order: proxy, ingest, motion, quality, describe, similarity, index, router, llm_director, render; with `--final` also render_final (from the originals) and export_kdenlive. With `--music FILE` a `beats` station runs right after ingest.
+- Stations run as subprocesses in order: proxy, ingest, motion, quality, describe, similarity, index, router, llm_director, render; with `--final` also render_final (from the originals) and export_kdenlive. With `--music FILE` a `beats` station runs right after ingest; with `--music auto` a `music_pick` station runs right after index (the shotlog tags exist by then) and writes `beats.json` itself.
 - One progress line per station, e.g. `[ 3/10] quality        skip      0.0s  up to date`. A station whose outputs are up to date is skipped.
 - The recap lands at `~/media/trip/workspace/recap_720p.mp4`.
 
@@ -36,16 +36,19 @@ After a run the workspace holds `recap_720p.mp4` (the recap to watch), `edit.jso
 
 ## Phone flow: serve.py
 
-Serve the finished workspaces over the tailnet so the recap opens on the phone:
+Serve the finished workspaces over the tailnet as a small read-only web app:
 
 ```bash
 .venv/bin/python scripts/serve.py --workspaces ~/media/projects
 ```
 
-- `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `edit.json`; the list is newest folder name first).
+- `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `.run.json`, `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `explain.html`, `edit.json`; the list is newest folder name first).
+- The Projects page (`<base>/`) shows one row per project with a status badge — `running` (a live `.run.json` pid), `failed` (dead pid, no recap yet) or `done` — plus small links to the artifacts that exist (recap / final / why / shots). The top menu links Projects and Upload.
+- Each project page (`<base>/<project>/`) has the tabs Recap / Why? / Shots (`?tab=recap|why|shots`, default recap, works without JS): the Recap tab is the `recap_720p.mp4` player plus a link to `recap_final.mp4` when it exists, Why? embeds `explain.html` and Shots embeds `shotlog.html`.
+- The Upload page (`<base>/upload`) takes clips and photos from the phone browser: files, folder, brief, length, order, audio clean, music, ambient-under-music dB. `POST /upload` streams the files into `--inbox/<folder>/` (allowlisted extensions, `--max-upload-mb`/`--max-total-mb` caps, never overwrites, never outside the inbox), writes `brief.txt` there and starts `recap.py` in the background; the Projects page shows the run status (`running`/`failed`/`done` from `<workspace>/.run.json`). The project page has a **Re-edit** form (the same options plus a `feedback` box) that re-runs only `llm_director` → `render` with `--feedback`.
 - Binds the machine's tailnet IPv4 address by default. `--bind` refuses the wildcard (`0.0.0.0`, `::`, empty) so the server never leaves the tailnet; `127.0.0.1` is local only.
-- `--port N` (default `8091`; `0` picks an ephemeral port). `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup.
-- URL layout: `<base>/` is the index, `<base>/<project>/` is the project page, and the three artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4` and `<base>/<project>/shotlog.html`. Nothing else in a project is served.
+- `--port N` (default `8091`; `0` picks an ephemeral port). `--music-dir DIR` (default `~/media/music`) is the folder whose audio files (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`) are offered on the Upload page. `--inbox DIR` (default `~/media/inbox`) is where uploads land; `--max-upload-mb` (4096) and `--max-total-mb` (20480) cap the upload size. `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup (including `music_tracks` and `inbox`).
+- URL layout: `<base>/` is the Projects page, `<base>/upload` the upload form, `<base>/<project>/` the project page, and the four artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4`, `<base>/<project>/shotlog.html` and `<base>/<project>/explain.html` (videos support HTTP Range). Nothing else in a project is served — proxies, `edit.json`, `.run.json` and every analysis folder stay private.
 
 ## Phone flow: inbox.py
 
@@ -84,8 +87,10 @@ command per clip:
 ## Go further
 
 - `--final` also renders `recap_final.mp4` from the originals and writes `fragments.yaml` + `recap.kdenlive`.
-- `--music FILE` detects the track's beats (`beats.json`), passes `--beats` to the director so cuts snap to the music, and mixes the track under the cleaned ambient bus in both renders. The beats station is skipped when `beats.json` is newer than the music file.
+- `--music FILE` detects the track's beats (`beats.json`), passes `--beats` to the director so cuts snap to the music, and mixes the track under the cleaned ambient bus in both renders. The beats station is skipped when `beats.json` is newer than the music file. `--music auto` picks the track from `--music-dir` (default `~/media/music`) with `scripts/music_pick.py` (brief pace + shot tags + `beats.py` BPM/energy, see `yt-music-pick`) and writes `WORKSPACE/music_choice.json` + `WORKSPACE/beats.json`; the chosen path is what ends up in `edit.json` `audio.music`.
+- `--target-duration-s N` and `--order chronological|score` override what the brief parses; `--music-dir DIR` is the library for `--music auto`.
 - `--budget-usd X` caps the LLM spend for this run (forwarded to describe and llm_director).
+- `--feedback TEXT` (repeatable) sends plain-word feedback against the current edit's short ids (e.g. `--feedback "drop 0071/s2, tunnel longer"`) to the `llm_director` station and re-runs **only** llm_director → render even when they are up to date — the analysis stations keep their normal skip rule. The feedback lines land in `WORKSPACE/feedback.jsonl` (written by `llm_director`, not by recap).
 - `--force` re-runs every station.
 - `--notify` posts a short ntfy message with the preview link after a successful run (a fully skipped run says `Recap ready (cached)`); a failed run never notifies.
 - `--preview-base URL` is the base of the `serve.py` server (e.g. `http://10.10.1.61:8091`); the link is `<base>/<workspace folder name>/recap_720p.mp4`. Without it the message carries the workspace path and the summary's `preview_url` is `null`.
@@ -103,6 +108,7 @@ Setup is Doru's step; see [docs/guides/phone-flow.md](../../../docs/guides/phone
 | "reel din clipurile astea" / "montaj scurt, energic" | same, with a short energetic brief ("about 60 seconds, energetic, fast cuts") |
 | "recap din folderul X, 3 minute, epic" | `scripts/recap.py --source X --brief "about 3 minutes, epic"` |
 | "fă-l mai scurt / mai lent / mai epic" | new brief → `recap.py --brief "..."` on the same workspace (only router → llm_director → render re-run) |
+| "renunță la 0071/s2, tunelul mai lung" | `recap.py --feedback "drop 0071/s2, tunnel longer"` on the same workspace (only llm_director → render re-run) |
 | "unde e recap-ul?" / "trimite-mi linkul" | the `serve.py` URL of the latest project, from `--preview-base` + the workspace folder name |
 | "reia de la capăt" | `recap.py --force` |
 
@@ -110,6 +116,7 @@ Setup is Doru's step; see [docs/guides/phone-flow.md](../../../docs/guides/phone
 
 - Same brief: every station is skipped and the run costs nothing.
 - New brief: only router → llm_director → render re-run; the analysis is cached.
+- `--feedback`: only llm_director → render re-run; the analysis stays cached and the feedback lands in `feedback.jsonl`.
 - New clips in the source folder: proxies and analysis run for the new clips; add `--force` if you want the edit redone, or re-run just the stations you need.
 
 ## Gotchas
