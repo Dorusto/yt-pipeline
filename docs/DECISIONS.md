@@ -1863,3 +1863,19 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** A clip range with no face keeps one still crop on the median salient centre (render cache renamed `_reframe_v2` so old paths are recomputed). After rebuilding cuts, the repair drops any planned slot whose window still cannot give a valid cut, instead of discarding the whole draft. An eligible photo with a minor flaw (e.g. cut_off) is reported as "did not fit the length (minor flaw: …)", not as a defect.
 
 **Consequence:** no camera-style pan on faceless vertical clips (a slow deliberate pan could come back later as a Ken Burns-like option); the model edit survives short-window mistakes.
+
+---
+
+## [2026-10-15] Edit expectations as a test; the model keeps the top heroes (D2-19)
+
+**Context:** On kotor-demo v4 the edit was "by: llm" (repair works) but the model dropped the top heroes 0072/s5 (0.91, the tunnel approach) and 0072/s7b1 (0.95, the bunker mouth). Doru wants his feedback turned into a file agents check, so they iterate without him, and the LLM director to keep the best shots the way the rule director already does.
+
+**Options (expectations):** (A) a new schema for edit expectations; (B) a small hand-written YAML checked by a standalone tool, no schema; (C) encode the checks in pytest fixtures only.
+
+**Options (heroes):** (A) only explain better in the prompts; (B) a blocking `hero_missing` violation plus a repair that swaps the star in, never falling back to rules; (C) force the screenwriter to list every star.
+
+**Decision:** B and B. `eval/kotor-edit.yaml` holds `must_include` items (an `any_of` list of shot keys and a note) and `length_s: {target, tolerance}`; `scripts/eval_edit.py` (standalone, `--help`/`--json`/`--out`, read-only) prints PASS/FAIL per expectation and exits 1 on any fail. `llm_director.validate_edit` raises `hero_missing` when an eligible star (hero or score >= `STAR_MIN_SCORE` 0.85) from the top `STAR_SHARE` (40 %) of the slots is left out of the plan; it is blocking for the reviewer, and `repair_draft` swaps it in for the weakest non-star slot whose length is within a factor of two, never creating a same-take jump cut (`common.moves.is_jump_cut`). `STAR_MIN_SCORE`, `STAR_SHARE` and `is_star` moved from `director.py` to `common/moves.py` so both directors import one value (the "no tool imports another tool" rule). A dropped hero photo stays the non-blocking `hero` warning. Prompts get one line each: keep the top-scored heroes unless the brief excludes them, and say which and why in notes if one is dropped.
+
+**Why not schema (A):** two keys and a length do not need a schema yet; the YAML is the interface and stays safe to commit (shot keys and numbers only, no footage, no paths).
+
+**Consequence:** Doru's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.

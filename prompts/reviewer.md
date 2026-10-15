@@ -48,7 +48,8 @@ no extra keys.
 3. **The story.** Does the plan's structure actually read? Is the best material
    in the edit? Does it open on something that earns attention and end on
    something that lands? Are there dead spots — repeated, weak or too-short
-   shots?
+   shots? Keep the top-scored heroes unless the brief excludes them, and ask
+   which one was dropped and why if one is.
 4. **Duration balance.** No ordinary slot over the slot maximum or under the
    slot minimum stated in the user message; heroes may reach the hero cap; the
    calm part longer slots, the energy part shorter ones.

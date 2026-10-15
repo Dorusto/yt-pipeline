@@ -79,6 +79,9 @@ no extra keys.
 8. **Photos.** A photo slot has no window and no landing: answer with
    `duration_s` between 2.0 and 4.0 s (3.0 is the default). Never give a photo
    `in_s`/`out_s`.
+9. **Keep the top heroes.** The highest-scored heroes and very high-score shots
+   stay in the edit unless the brief excludes them; if you must drop one, say
+   which and why in `notes`.
 
 ## The shot facts you get per planned shot
 
