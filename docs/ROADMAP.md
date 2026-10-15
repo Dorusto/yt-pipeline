@@ -34,6 +34,9 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
 - Running notice readability (Doru): split it into separate lines — "Now: editing (model)" big, "step 10 of 13 · 47 s" small, the bar, then the "previous version stays below" sentence apart.
 
+- Feedback as a test (Doru, v4 review): `eval/kotor-edit.yaml` expectations (must-include shots, intentional moves, length) + `eval_labels.py`-style edit check; then, each checked by it: (a) the LLM director must keep top heroes (0072/s5, s7b1, s7b5 dropped by the model in v4), (b) a selfie orbit around a person is not shake/horizon (0091/s1), (c) 9:16 crop still jumps where a face appears only part of the time. D2-19 brief = (a) + the check.
+- D3: per-shot buttons on the Shots tab ("must be in" / "wrong label") write to the expectations file.
+
 **Later, decided 2026-10-15 (nothing implemented yet):**
 - D3: installable on the phone as a PWA (manifest + small service worker in `serve.py`), served over HTTPS with `tailscale serve` (`https://<name>.ts.net`); no Astro for the app — the UI stack for D3 is still chosen by a DECISIONS entry.
 - After the pipeline clip is published (the clip is the launch): self-hosting community release — Docker image + `docker-compose.yml` (footage, projects, music volumes, one API key), model choice OpenRouter or local (Ollama/vLLM), login or a clear "behind Tailscale / an authenticating proxy" rule, licence (MIT or AGPL), README with screenshots, CasaOS/Unraid/Umbrel templates, r/selfhosted post, Immich album → recap integration. Docs site can be Astro Starlight.
