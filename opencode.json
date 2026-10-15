@@ -4,8 +4,22 @@
     "openrouter": {
       "models": {
         "xiaomi/mimo-v2.6-pro": {},
-        "deepseek/deepseek-v4.1-flash": {},
-        "z-ai/glm-5.3-flash": {}
+        "deepseek/deepseek-v4.1-flash": {
+          "options": {
+            "provider": {
+              "allow_fallbacks": true,
+              "sort": "throughput"
+            }
+          }
+        },
+        "z-ai/glm-5.3-flash": {
+          "options": {
+            "provider": {
+              "allow_fallbacks": true,
+              "sort": "throughput"
+            }
+          }
+        }
       }
     }
   },

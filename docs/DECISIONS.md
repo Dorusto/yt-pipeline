@@ -1724,3 +1724,13 @@ cuts the number of model images by three quarters — so it ships as the default
 and the old path stays behind `--frame-mode legacy` for the next bake-off
 (frames vs mosaic vs native video input, P1). Frame times at real events also
 found more content beats (15 vs 12), which is what the long-take split needs.
+
+---
+
+## [2026-10-15] Coder empty replies were upstream rate limits: provider fallback + wait-and-retry
+
+**Context:** the empty coder replies of D2-6, D2-7 and D2-8 (DeepSeek V4.1 Flash and GLM 5.3 Flash alike) were OpenRouter `429 rate-limited upstream` errors from the provider serving the model (found in `~/.local/share/opencode/log/`). The architect then did the coder's work on the more expensive model: $9.78 on the night of 2026-10-15. Credit was not the cause (balance fine).
+
+**Options:** (A) provider routing in `opencode.json` — `allow_fallbacks: true`, `sort: "throughput"` so OpenRouter prefers fast providers and moves on when one is busy; (B) wait and retry once before the architect takes over; (C) bring-your-own-key at the model vendor for private rate limits (another account and bill).
+
+**Decision:** A + B now (no cost). C only if 429s continue. GLM 5.3 Flash stays the coder; compare takeovers after the next phase.
