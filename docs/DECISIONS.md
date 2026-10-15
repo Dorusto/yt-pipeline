@@ -1853,3 +1853,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** a second agent stack (Docker runtime, new config) for a guard opencode mostly has; revisit if B still lets loops through.
 
 **Consequence:** a run that loops is stopped within about 15 minutes of crossing a limit; budgets are enforced from outside the agent.
+
+---
+
+## [2026-10-15] Still vertical crop without a face; repair drops cuts that cannot be valid (D2-17)
+
+**Context:** On kotor-demo v3 the 9:16 version shook on clips with no person: the saliency centre followed waves and wake. The model's edit was again replaced by the rules because two planned shots had windows shorter than the slot minimum, so no rebuilt cut could pass.
+
+**Decision:** A clip range with no face keeps one still crop on the median salient centre (render cache renamed `_reframe_v2` so old paths are recomputed). After rebuilding cuts, the repair drops any planned slot whose window still cannot give a valid cut, instead of discarding the whole draft. An eligible photo with a minor flaw (e.g. cut_off) is reported as "did not fit the length (minor flaw: …)", not as a defect.
+
+**Consequence:** no camera-style pan on faceless vertical clips (a slow deliberate pan could come back later as a Ken Burns-like option); the model edit survives short-window mistakes.

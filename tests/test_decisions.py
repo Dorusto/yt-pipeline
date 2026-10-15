@@ -162,3 +162,10 @@ def test_director_without_music_keeps_audio_empty(tmp_path):
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["audio"]["music"] is None
     assert record["audio"]["ambient_under_music_db"] is None
+
+
+def test_an_eligible_photo_with_a_minor_flaw_is_not_called_a_defect():
+    from common.decisions import _reject_reason
+
+    photo = {"media_type": "photo", "eligible": True, "defects": ["cut_off"], "score": 0.6}
+    assert _reject_reason(photo, True, 0.5) == "did not fit the length (minor flaw: cut_off)"

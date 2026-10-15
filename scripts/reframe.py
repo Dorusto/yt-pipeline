@@ -339,6 +339,22 @@ def fallback_target(previous_gray, gray, current_centre, width, height):
     return target, "saliency", confidence
 
 
+def steady_targets(targets, width, height):
+    """One fixed centre for a range with no face: the median of the salient centres, else the middle.
+
+    Without a face the saliency centre wanders with the waves and the wake; on a
+    moving camera that reads as shake, so the crop stays still instead.
+    """
+    known = [target for target in targets if target is not None]
+    if known:
+        xs = sorted(target[0] for target in known)
+        ys = sorted(target[1] for target in known)
+        centre = (xs[len(xs) // 2], ys[len(ys) // 2])
+    else:
+        centre = (width / 2.0, height / 2.0)
+    return [centre for _ in targets]
+
+
 def read_frame_near(capture, t_s, fps):
     """Read the frame at t_s, stepping one frame back when the seek lands past the end."""
     step = 1.0 / fps if fps and fps > 0 else 0.04
@@ -440,6 +456,8 @@ def analyse(video_path, start_s, end_s, aspect, sample_fps, model_path, smooth_s
         warnings.append(f"{held} sample(s) held the last crop centre")
     if not any(source == "face" for source in sources):
         warnings.append("no face detected in range")
+        targets = steady_targets(targets, width, height)
+        warnings.append("no face: static crop on the median salient centre (no wandering)")
     centres = smooth_path(targets, times, width, smooth_s, max_speed)
     points = crop_points(times, centres, sources, confidences, crop_w, crop_h, width, height)
     return {

@@ -2048,3 +2048,24 @@ def test_help_lists_speed_ramp_and_the_prompts_describe_the_peak_rule():
     editor = (ROOT / "prompts" / "editor.md").read_text(encoding="utf-8")
     assert "peak_s" in editor and "centre" in editor.lower()
     assert "tail" not in editor.lower().replace("detail", "")
+
+
+def test_repair_drops_a_slot_whose_window_is_too_short_for_any_valid_cut():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 1.2),
+    }
+    plan = {"slot_plan": [
+        {"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": False},
+        {"id": "v2", "shot_key": "0002/s1", "target_s": 5.0, "why": "b", "keep_whole": False},
+    ]}
+    record = {"video": [
+        {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 7.5, "out_s": 12.5},
+        {"id": "v2", "clip": "clip_0002_x.mp4", "in_s": 0.0, "out_s": 1.2},
+    ]}
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "length" for item in violations)
+    notes = llm_director.repair_draft(record, plan, facts, {}, violations)
+    assert [slot["id"] for slot in record["video"]] == ["v1"]
+    assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+    assert any("cannot give a valid cut" in note for note in notes)

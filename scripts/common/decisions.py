@@ -27,14 +27,16 @@ def _reject_reason(shot, in_pool, used_floor, used_ids=()):
         if other in used_ids:
             return f"near-duplicate of {other}"
     defects = list(shot.get("defects") or [])
-    if defects:
+    minor_photo_flaw = shot.get("media_type") == "photo" and shot.get("eligible", True)
+    if defects and not minor_photo_flaw:
         return f"defect: {', '.join(defects)}"
+    note = f" (minor flaw: {', '.join(defects)})" if defects and minor_photo_flaw else ""
     score = shot.get("score")
     if used_floor is not None and score is not None and score < used_floor:
-        return "low score"
+        return "low score" + note
     if in_pool:
-        return "did not fit the length"
-    return "low score"
+        return "did not fit the length" + note
+    return "low score" + note
 
 
 def build_decisions(shotlog, used_rows, pool_keys=None, drop_reasons=None):

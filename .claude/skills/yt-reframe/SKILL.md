@@ -44,6 +44,10 @@ saliency); there is no model call and no spend.
    salient centre.
 4. **hold** — when the saliency is flat or would jump more than 0.35 frame
    widths, the window keeps the last good centre instead of chasing the wake.
+5. **no face in the whole range** — the window does not move at all: it stays on
+   the median of the salient centres (else the middle), because a wandering
+   crop on a moving camera reads as shake. `render.py` caches these paths as
+   `<stem>_reframe_v2.json`, so older wandering paths are recomputed.
 
 ## What the output means
 
