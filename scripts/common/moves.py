@@ -26,10 +26,17 @@ from common.peak import centre_window
 MIDDLE_SPEED_MAX = 1.2
 MIDDLE_SPEED_SCHEMA_MAX = 1.25
 EXCEPTION_SHARE = 0.15
+STAR_SHARE = 0.4
+STAR_MIN_SCORE = 0.85
 MOVE_ROLES = {"move", "transition_in", "transition_out"}
 STATIC_LABELS = {"static", "minor_motion"}
 MIN_GAIN_S = 0.05
 EPSILON = 1e-9
+
+
+def is_star(candidate):
+    """True for a shot the edit should not lose to time coverage: a hero or a very high score."""
+    return bool(candidate.get("hero")) or float(candidate.get("score") or 0.0) >= STAR_MIN_SCORE
 
 
 def middle_speed_of(slot):

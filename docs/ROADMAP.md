@@ -26,6 +26,8 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 **D2-13 … D2-18 (2026-10-15):** versions + honest run state, smooth Ken Burns, exact length, heroes first, the model's edit repaired not discarded, Shots marks, best photo of a burst, still 9:16 crop without a face, explain thumbnails on moved workspaces, agent loop guards, running station + progress bar, Re-edit always makes a new edit — reports `D2-13`, `D2-14`, `D2-15`.
 
+**D2-19 (2026-10-15):** edit expectations as a test (`eval/kotor-edit.yaml` + `scripts/eval_edit.py` + `yt-eval-edit` skill) and the LLM director keeps the top stars (`hero_missing` violation, repair swaps one in for the weakest non-star of a compatible length; `STAR_*` shared in `common/moves.py`) — see [`reports/D2-19-REPORT.md`](reports/D2-19-REPORT.md). Real kotor-demo re-edit passes `eval_edit.py` 3/3 with `meta.director.by: llm`.
+
 **Next (open from 2026-10-15):**
 - Watchdog spend cap per agent run (spend since the run started), not per day; then set it back to 2 USD per run (cron is at 3.8 USD/day today).
 - Architect: switch back to `master` at the end of a run (D2-18 left the LXC checkout on its branch).
@@ -34,7 +36,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
 - Running notice readability (Doru): split it into separate lines — "Now: editing (model)" big, "step 10 of 13 · 47 s" small, the bar, then the "previous version stays below" sentence apart.
 
-- Feedback as a test (Doru, v4 review): `eval/kotor-edit.yaml` expectations (must-include shots, intentional moves, length) + `eval_labels.py`-style edit check; then, each checked by it: (a) the LLM director must keep top heroes (0072/s5, s7b1, s7b5 dropped by the model in v4), (b) understand intent before disqualifying: before a segment is penalised or made ineligible for a defect (shake, horizon, blur, …), check from context whether the "defect" is deliberate (e.g. a person held centred while the camera orbits = a planned move, not shake) — a general check using the vision verdict and subject-stability signals that can override geometry defects, never a per-shot rule; 0091/s1 is only the first test case, DECISIONS entry when designed, (c) 9:16 crop still jumps where a face appears only part of the time. D2-19 brief = (a) + the check.
+- Feedback as a test (Doru, v4 review): `eval/kotor-edit.yaml` expectations (must-include shots, intentional moves, length) + `eval_labels.py`-style edit check; then, each checked by it: (a) DONE in D2-19 — the LLM director must keep top heroes (0072/s5, s7b1, s7b5 dropped by the model in v4), (b) understand intent before disqualifying: before a segment is penalised or made ineligible for a defect (shake, horizon, blur, …), check from context whether the "defect" is deliberate (e.g. a person held centred while the camera orbits = a planned move, not shake) — a general check using the vision verdict and subject-stability signals that can override geometry defects, never a per-shot rule; 0091/s1 is only the first test case, DECISIONS entry when designed, (c) 9:16 crop still jumps where a face appears only part of the time.
 - D3: per-shot buttons on the Shots tab ("must be in" / "wrong label") write to the expectations file.
 
 **Later, decided 2026-10-15 (nothing implemented yet):**

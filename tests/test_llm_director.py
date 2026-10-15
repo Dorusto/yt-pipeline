@@ -549,6 +549,164 @@ def test_repair_rebuilds_a_bad_cut_from_its_shot():
     assert any("v9" in note for note in notes)
 
 
+def star_facts():
+    return {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0002/s1": fact(
+            "0002/s1", "clip_0002_x.mp4", 0.0, 12.0,
+            keep_whole=True, score=0.95, hero=True, role="move", motion_label="travel_forward",
+        ),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 12.0, score=0.2),
+        "0004/s1": fact("0004/s1", "clip_0004_x.mp4", 0.0, 12.0, score=0.25),
+    }
+
+
+def star_plan(shot_keys):
+    return {
+        "brief": {"target_duration_s": 60.0},
+        "slot_plan": [
+            {"id": f"v{index + 1}", "shot_key": key, "target_s": 4.0, "why": "a", "keep_whole": False}
+            for index, key in enumerate(shot_keys)
+        ],
+    }
+
+
+def star_record(pairs):
+    return {
+        "video": [
+            {"id": sid, "clip": clip, "in_s": 0.0, "out_s": 4.0, "score": 0.3}
+            for sid, clip in pairs
+        ]
+    }
+
+
+def test_required_star_keys_keeps_top_share():
+    facts = star_facts()
+    assert llm_director.required_star_keys(facts, 3) == ["0002/s1"]
+    assert llm_director.required_star_keys(facts, 10)[0] == "0002/s1"
+
+
+def test_hero_missing_when_top_star_left_out():
+    facts = star_facts()
+    plan = star_plan(["0001/s1", "0003/s1", "0004/s1"])
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0003_x.mp4"),
+        ("v3", "clip_0004_x.mp4"),
+    ])
+    violations = llm_director.validate_edit(record, plan, facts)
+    missing = [item for item in violations if item["rule"] == "hero_missing"]
+    assert [item["slot"] for item in missing] == ["0002/s1"]
+    assert any(item["rule"] == "hero_missing" for item in llm_director.blocking(violations))
+
+
+def test_hero_missing_not_fired_when_star_is_planned():
+    facts = star_facts()
+    plan = star_plan(["0001/s1", "0002/s1", "0003/s1"])
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0002_x.mp4"),
+        ("v3", "clip_0003_x.mp4"),
+    ])
+    record["video"][1]["in_s"] = 0.0
+    record["video"][1]["out_s"] = 4.0
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert [item for item in violations if item["rule"] == "hero_missing"] == []
+
+
+def test_hero_photo_stays_non_blocking():
+    facts = {
+        "photo_01/p1": fact(
+            "photo_01/p1", "photo_01.jpg", 0.0, 0.04, score=0.95, hero=True, media_type="photo"
+        ),
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+    }
+    plan = star_plan(["0001/s1"])
+    record = star_record([("v1", "clip_0001_x.mp4")])
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert [item for item in violations if item["rule"] == "hero_missing"] == []
+    hero_items = [item for item in violations if item["rule"] == "hero"]
+    assert [item["slot"] for item in hero_items] == ["photo_01/p1"]
+    assert not any(item["rule"] == "hero_missing" for item in llm_director.blocking(violations))
+    assert all(item["rule"] != "hero" for item in llm_director.blocking(violations))
+
+
+def test_repair_swaps_missing_star_in():
+    facts = star_facts()
+    plan = star_plan(["0001/s1", "0003/s1", "0004/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0003_x.mp4"),
+        ("v3", "clip_0004_x.mp4"),
+    ])
+    violations = llm_director.validate_edit(record, plan, facts)
+    notes = llm_director.repair_draft(record, plan, facts, {}, violations)
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert "0002/s1" in used
+    assert "0003/s1" not in used
+    assert any("swapped 0002/s1 in for 0003/s1" in note for note in notes)
+    assert [item for item in llm_director.validate_edit(record, plan, facts) if item["rule"] == "hero_missing"] == []
+    assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+
+
+def test_repair_star_swap_skips_a_jump_cut_victim():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0002/s1": fact(
+            "0002/s1", "clip_0001_x.mp4", 8.0, 14.0,
+            keep_whole=True, score=0.95, hero=True, role="move", motion_label="travel_forward",
+        ),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 12.0, score=0.15),
+    }
+    plan = star_plan(["0001/s1", "0003/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0003_x.mp4"),
+    ])
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert [item["rule"] for item in violations if item["rule"] == "hero_missing"] == ["hero_missing"]
+    assert llm_director.pick_swap_victim(record, plan, facts, facts["0002/s1"], 6.0, 1.0, 5.0) == "v1"
+    notes = llm_director.repair_draft(record, plan, facts, {}, violations)
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert "0002/s1" in used
+    assert "0003/s1" in used
+    assert any("swapped 0002/s1 in for 0001/s1" in note for note in notes)
+    assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+
+
+def test_synthesised_slot_keeps_shot_key():
+    facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3)}
+    plan = star_plan(["0001/s1"])
+    record = {"video": []}
+    llm_director.ensure_all_planned_slots(record, plan, facts, {}, 6.0)
+    assert record["video"][0]["shot_key"] == "0001/s1"
+
+
+def test_fill_to_target_adds_slots_until_the_brief_length():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.5),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 20.0, score=0.4),
+        "0004/s1": fact("0004/s1", "clip_0004_x.mp4", 0.0, 20.0, score=0.2),
+        "0005/s1": fact("0005/s1", "clip_0005_x.mp4", 0.0, 20.0, score=0.1),
+    }
+    plan = star_plan(["0001/s1"])
+    plan["brief"]["target_duration_s"] = 12.0
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 8.0, "out_s": 11.0, "shot_key": "0001/s1", "score": 0.3},
+        ]
+    }
+    notes = llm_director.fill_to_target(record, plan, facts, {}, 6.0, [])
+    used = [row.get("shot_key") for row in plan.get("slot_plan") or []]
+    assert "0002/s1" in used
+    assert any("added 0002/s1" in note for note in notes)
+    total = sum(llm_director.slot_duration(row) for row in record["video"])
+    assert total >= 12.0 - llm_director.TARGET_SLACK_S
+
+
 def test_validator_catches_rule_break(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(
@@ -850,8 +1008,8 @@ def test_validator_catches_keep_whole_and_length():
     assert any(item["rule"] == "length" for item in violations)
 
 
-def fact(key, clip, window_in, window_out, keep_whole=False, similar_to=None):
-    return {
+def fact(key, clip, window_in, window_out, keep_whole=False, similar_to=None, score=0.5, hero=False, role="hold", motion_label="static", media_type=None):
+    row = {
         "shot_key": key,
         "clip": clip,
         "window_in_s": window_in,
@@ -860,13 +1018,16 @@ def fact(key, clip, window_in, window_out, keep_whole=False, similar_to=None):
         "landing_hold_key": None,
         "keep_whole": keep_whole,
         "target_s": 5.0,
-        "score": 0.5,
+        "score": score,
         "summary": None,
-        "role": "hold",
-        "motion_label": "static",
-        "hero": False,
+        "role": role,
+        "motion_label": motion_label,
+        "hero": hero,
         "similar_to": similar_to or [],
     }
+    if media_type is not None:
+        row["media_type"] = media_type
+    return row
 
 
 def test_print_human_with_baseline(capsys):
