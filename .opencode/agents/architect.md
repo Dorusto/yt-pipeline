@@ -31,6 +31,7 @@ Read `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, the D-phase status in `docs
 
 ## Guards (D2-16)
 
+- If the prompt names a task file that does not exist (`.opencode/tasks/` is git-ignored, so a brief written elsewhere is not on this machine), do nothing else: notify `Blocked: brief <path> not found` and end the run. Never improvise a task from its file name.
 - First command of every run: create or check out the task branch. Never edit on `master`.
 - Commit on the branch after every finished step (a passing test, a fixed bug), even mid-task, with a `wip:` message if needed. The watchdog stops a run that makes no commit for too long, and a commit keeps the work when it does.
 - The OpenRouter budget in a brief is a hard limit: check it with `python scripts/agent_watchdog.py --repo . --json --dry-run` (`spend_today_usd`) before every expensive step (a vision run, a director run, a coder round). Stop and notify when the next step would cross it.
