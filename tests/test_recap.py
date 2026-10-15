@@ -53,7 +53,9 @@ class Recorder:
 
     def touch(self, path, content=""):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
         stamp = self.tick()
         os.utime(path, (stamp, stamp))
 
@@ -82,7 +84,7 @@ class Recorder:
         elif name == "router":
             self.touch(ws / "route.json", json.dumps({"brief": {"text": brief_text}}))
         elif name == "llm_director":
-            self.touch(ws / "edit.json", json.dumps({"brief": {"text": brief_text}}))
+            self.touch(ws / "edit.json", json.dumps({"brief": {"text": brief_text}, "made": self.clock}))
         elif name == "render":
             self.touch(ws / "recap_720p.mp4", "video")
         elif name == "render_final":
@@ -715,3 +717,51 @@ def test_changing_the_speed_ramp_setting_redoes_the_edit(tmp_path):
     assert recap.is_up_to_date("llm_director", ctx) is True
     ctx.speed_ramp = True
     assert recap.is_up_to_date("llm_director", ctx) is False
+
+
+def test_a_failed_vertical_render_does_not_stop_the_other_renders(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder(fail_at="render_vertical")
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--format", "both", "--final", "--json"]) == 1
+    assert recorder.calls[-4:] == ["render_vertical", "render_final", "render_final_vertical", "export_kdenlive"]
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "failed"
+    assert (workspace / "recap_720p.mp4").is_file()
+
+
+def test_each_new_edit_is_kept_as_a_version(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(recap, "execute", Recorder())
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["version"] == "v001"
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["version"] is None
+    monkeypatch.setattr(recap, "execute", Recorder())
+    assert run_recap(source, workspace, extra=["--feedback", "tunnel longer", "--json"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["version"] == "v002"
+    meta = json.loads((workspace / "versions" / "v002" / "version.json").read_text(encoding="utf-8"))
+    assert meta["feedback"] == ["tunnel longer"]
+    assert meta["status"] == "done"
+    assert (workspace / "versions" / "v001" / "recap_720p.mp4").is_file()
+
+
+def test_a_failed_render_keeps_the_new_edit_without_a_video(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(recap, "execute", Recorder())
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    capsys.readouterr()
+    later = Recorder(fail_at="render")
+    later.clock += 10000.0
+    monkeypatch.setattr(recap, "execute", later)
+    assert run_recap(source, workspace, extra=["--feedback", "shorter", "--json"]) == 1
+    summary = json.loads(capsys.readouterr().out)
+    kept = workspace / "versions" / summary["version"]
+    assert (kept / "edit.json").is_file()
+    assert not (kept / "recap_720p.mp4").exists()
+    assert json.loads((kept / "version.json").read_text(encoding="utf-8"))["failed_at"] == "render"

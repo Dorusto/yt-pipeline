@@ -1197,3 +1197,31 @@ def test_help_lists_the_format_flag(capsys):
         render.main(["--help"])
     output = capsys.readouterr().out
     assert "--format" in output and "9x16" in output
+
+
+def test_photo_with_a_stale_sources_path_falls_back_to_the_media_dir(tmp_path):
+    media = tmp_path / "proxy"
+    media.mkdir()
+    (media / "still.jpg").write_bytes(b"jpeg")
+    sources = [{"file": "still.jpg", "path": "/gone/old/proxy/still.jpg", "media_type": "photo"}]
+    path, origin = render.resolve_photo("still.jpg", sources, media, None)
+    assert path == media / "still.jpg"
+    assert origin == "sources"
+
+
+def test_pan_stays_inside_the_zoomed_frame():
+    for move in ("pan_left", "pan_right"):
+        for focus in (0.0, 0.3, 0.5, 0.9, 1.0):
+            for amount in (0.04, 0.08, 0.3):
+                start, end = render.pan_span(move, amount, focus)
+                low = 1 / (2 * (1 + amount))
+                assert low - 1e-9 <= min(start, end)
+                assert max(start, end) <= 1 - low + 1e-9
+                assert abs(end - start) > 0
+
+
+def test_ken_burns_works_on_an_enlarged_frame_with_eased_motion():
+    chain = render.zoompan_for("zoom_in", 0.08, 0.5, 0.5, 100, 1280, 720)
+    assert chain.startswith("scale=iw*4:ih*4")
+    assert "(3-2*(on/99))" in chain
+    assert render.zoompan_upscale(3840) == 2

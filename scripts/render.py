@@ -283,16 +283,20 @@ def resolve_photo(photo, sources, media_dir, originals_dir):
         candidate = Path(originals_dir).expanduser() / photo
         if candidate.is_file():
             return candidate, "originals"
-    for source in sources:
-        if source.get("file") == photo and source.get("media_type") == "photo":
-            return Path(source["path"]), "sources"
-    for source in sources:
-        if source.get("file") == photo:
-            return Path(source["path"]), "sources"
+    matches = [source for source in sources if source.get("file") == photo]
+    matches.sort(key=lambda source: source.get("media_type") != "photo")
+    fallback = None
+    for source in matches:
+        path = Path(source["path"])
+        if path.is_file():
+            return path, "sources"
+        fallback = fallback or path
     if media_dir is not None:
         candidate = Path(media_dir).expanduser() / photo
         if candidate.is_file():
             return candidate, "sources"
+    if fallback is not None:
+        return fallback, "sources"
     return None, None
 
 
@@ -437,21 +441,45 @@ def build_music_chain(music_index, ambient_label, edit_duration, music_duration,
     return parts, "amixed"
 
 
+ZOOMPAN_MAX_WIDTH = 8000
+ZOOMPAN_MAX_FACTOR = 4
+
+
+def zoompan_upscale(width):
+    """How much to enlarge the composed frame before ``zoompan`` so its whole-pixel crop steps vanish."""
+    return max(1, min(ZOOMPAN_MAX_FACTOR, ZOOMPAN_MAX_WIDTH // max(1, width)))
+
+
+def pan_span(move, amount, focus_x):
+    """Start and end centre of a pan, kept inside the zoomed frame so it never stalls at an edge.
+
+    The pan travels ``amount`` of the frame width, or the whole room the zoom
+    leaves when that is less, and ends on ``focus_x`` when there is room.
+    """
+    zoom = 1 + amount
+    low = 1 / (2 * zoom)
+    high = 1 - low
+    travel = min(amount, high - low)
+    if move == "pan_right":
+        end = min(max(focus_x, low + travel), high)
+        return end - travel, end
+    end = min(max(focus_x, low), high - travel)
+    return end + travel, end
+
+
 def zoompan_for(move, amount, focus_x, focus_y, frames, width, height):
     """The ``zoompan`` filter of one Ken Burns move over ``frames`` frames."""
     span = max(1, frames - 1)
-    progress = f"on/{span}"
+    linear = f"(on/{span})"
+    progress = f"({linear}*{linear}*(3-2*{linear}))"
     if move == "zoom_out":
         zoom = f"1+{fmt(amount)}*(1-{progress})"
         centre_x = fmt(focus_x)
         centre_y = fmt(focus_y)
-    elif move == "pan_left":
+    elif move in ("pan_left", "pan_right"):
         zoom = fmt(1 + amount)
-        centre_x = f"{fmt(focus_x)}+{fmt(amount)}*(1-{progress})"
-        centre_y = fmt(focus_y)
-    elif move == "pan_right":
-        zoom = fmt(1 + amount)
-        centre_x = f"{fmt(focus_x)}-{fmt(amount)}*(1-{progress})"
+        start_x, end_x = pan_span(move, amount, focus_x)
+        centre_x = f"{fmt(start_x)}+{fmt(end_x - start_x)}*{progress}"
         centre_y = fmt(focus_y)
     else:
         zoom = f"1+{fmt(amount)}*{progress}"
@@ -459,7 +487,9 @@ def zoompan_for(move, amount, focus_x, focus_y, frames, width, height):
         centre_y = fmt(focus_y)
     x_expr = f"clip(({centre_x})*iw-iw/(2*zoom),0,iw-iw/zoom)"
     y_expr = f"clip(({centre_y})*ih-ih/(2*zoom),0,ih-ih/zoom)"
+    factor = zoompan_upscale(width)
     return (
+        f"scale=iw*{factor}:ih*{factor}:flags=bicubic,format=yuv444p,"
         f"zoompan=z='{zoom}':x='{x_expr}':y='{y_expr}':"
         f"d={frames}:s={width}x{height}:fps={FPS}"
     )

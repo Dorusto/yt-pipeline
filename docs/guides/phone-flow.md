@@ -46,7 +46,8 @@ phone browser: **Upload** → pick files → folder name + brief → **Start**. 
 project appears on **Projects** with a `running` badge and turns `done` when
 the recap is ready. The project page's tabs are **Recap**, **Why?** (why the
 edit looks the way it does) and **Shots** (the contact sheet); **Re-edit**
-re-runs only the edit with your options and a feedback note.
+re-runs only the edit with your options and a feedback note, and keeps the
+earlier versions (chips v1, v2, … and **Compare with** on the Recap tab).
 
 ## 1. (Optional) Phone: install Syncthing
 

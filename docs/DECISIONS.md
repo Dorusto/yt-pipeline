@@ -1801,3 +1801,15 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Golden changes (intentional):** nine fixtures changed only in `expected_slots`: windows that started at the head of the window are now centred on the peak, which is the window middle in the fixtures (for example hero 13.75-16.25); `phrase_move_strong` is 7.25-10.75 (ramp off, hero cap 3.5 s); in `photo_slots` the first photo now sorts before the video because the video slot's chronological key moved later.
 
 **Consequence:** D2-11 behaviour is reproduced exactly with `--speed-ramp` when no peak is known; with a peak, ramped cuts are also peak-centred. A peak from the 1 s motion signal is coarse (about +-0.5 s).
+
+---
+
+## [2026-10-15] Kept versions, honest run state, smooth Ken Burns, exact length (D2-13)
+
+**Context:** Doru's re-edit on the moved kotor-demo workspace failed at `render_vertical` (the photo path still pointed at the old `/tmp` folder). The page then showed the new strip over the old video and stayed `running`. He also asked to keep old edits next to new ones, for smooth photo zooms and for a typed length.
+
+**Options (versions):** (A) git-like history of `edit.json` only; (B) one folder per version with the edit, the renders made from it and a small `version.json`; (C) suffix files in the workspace root.
+
+**Decision:** B, in `scripts/common/versions.py`, called by `recap.py` after a run whose edit or render stations ran. Renders are hard-linked (they are replaced atomically by `render.py`), small files copied; a render older than `edit.json` is never kept with it. The first versioned run keeps the existing recap as v1. `serve.py` shows the newest version with a video, chips per version and a compare view. Photos resolve like clips: a stale `sources[]` path falls back to `<workspace>/proxy`. Render stations no longer stop each other. `serve.py` reaps its child (a zombie pid read as `running`) and reads progress and failure from `run.log` after a start marker. Ken Burns: the frame is enlarged up to 4x (max 8000 px wide) in yuv444 before `zoompan`, motion is smoothstep-eased, and pans stay inside the zoomed frame (before, half of a pan was clamped still and the rest moved in 2 px steps: 51 of 99 frames stood still; now 5, at the eased ends). "All good shots" now really sends `--target-duration-s 0` (the form value was dropped before).
+
+**Consequence:** each version costs only its JSON (videos are links). Versions are never deleted by the tools.

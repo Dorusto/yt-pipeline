@@ -121,6 +121,12 @@ finished recap, the explanation and the contact sheet.
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
   It re-runs only the edit and the render — the analysis is reused. The
   feedback is appended to `feedback.jsonl` in the workspace.
+- **Versions.** Every re-edit is kept: the Recap tab has a row of chips
+  (v1, v2, …) and **Compare with** shows two versions one under the other,
+  each with its own strip and the feedback that asked for it. While a run is
+  going the page shows the last finished version, the step it is on, and
+  refreshes by itself; a failed run says where it failed and why.
+- **Length** takes a preset or an exact number of seconds (the box wins).
 
 `--music auto` picks the track from `~/media/music` by the brief's pace and
 the shot tags, using the BPM and energy `beats.py` measures for every track
