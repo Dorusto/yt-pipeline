@@ -32,6 +32,11 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 - Progress bar colour: theme the `<progress>` element (Chrome on Android ignores `accent-color` there).
 - Check v4 of kotor-demo: Why? should say "Edited by the model" (D2-17 repair).
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
+- Running notice readability (Doru): split it into separate lines — "Now: editing (model)" big, "step 10 of 13 · 47 s" small, the bar, then the "previous version stays below" sentence apart.
+
+**Later, decided 2026-10-15 (nothing implemented yet):**
+- D3: installable on the phone as a PWA (manifest + small service worker in `serve.py`), served over HTTPS with `tailscale serve` (`https://<name>.ts.net`); no Astro for the app — the UI stack for D3 is still chosen by a DECISIONS entry.
+- After the pipeline clip is published (the clip is the launch): self-hosting community release — Docker image + `docker-compose.yml` (footage, projects, music volumes, one API key), model choice OpenRouter or local (Ollama/vLLM), login or a clear "behind Tailscale / an authenticating proxy" rule, licence (MIT or AGPL), README with screenshots, CasaOS/Unraid/Umbrel templates, r/selfhosted post, Immich album → recap integration. Docs site can be Astro Starlight.
 
 **Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
