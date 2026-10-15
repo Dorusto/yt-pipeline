@@ -10,8 +10,9 @@ Usage:
 subprocesses in order (proxy, ingest, motion, quality, describe, similarity,
 index, router, llm_director, render, and with ``--final`` the final render and
 the Kdenlive export), skips stations whose outputs are already up to date,
-prints one progress line per station and a ``--json`` summary with the wall time
-and the total LLM cost. It imports no other tool and calls no model itself.
+prints a start line and one progress line per station and a ``--json`` summary
+with the wall time and the total LLM cost. It imports no other tool and calls
+no model itself.
 Originals are read-only; everything is written under the workspace.
 """
 
@@ -781,6 +782,11 @@ def print_progress(ctx, index, total, name, status, wall_time_s, detail):
     print(line, file=stream)
 
 
+def print_start(ctx, index, total, name):
+    stream = sys.stderr if ctx.json_mode else sys.stdout
+    print(f"[{index:2d}/{total:2d}] {name:<15} start", file=stream, flush=True)
+
+
 def print_failure(name, result):
     code = result.get("returncode")
     if code is None:
@@ -845,6 +851,7 @@ def run(ctx):
             )
             print_progress(ctx, index, total, name, "skip", 0.0, "up to date")
             continue
+        print_start(ctx, index, total, name)
         result = execute(station, station["argv"], ctx)
         if name == "music_pick" and result["status"] != "FAIL" and not resolve_auto_music(ctx):
             result = {

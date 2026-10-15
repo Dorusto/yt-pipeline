@@ -264,6 +264,59 @@ def test_progress_lines_format(tmp_path, monkeypatch, capsys):
     assert re.search(r"^\[\s*\d+/\d+\]", captured.err, re.M)
 
 
+def test_start_line_before_each_running_station(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace) == 0
+    lines = capsys.readouterr().out.splitlines()
+    for name in recorder.calls:
+        starts = [
+            index
+            for index, line in enumerate(lines)
+            if re.match(rf"^\[\s*\d+/\d+\] {re.escape(name)}\s+start$", line)
+        ]
+        finishes = [
+            index
+            for index, line in enumerate(lines)
+            if re.match(rf"^\[\s*\d+/\d+\] {re.escape(name)}\s+(done|FAIL)\s", line)
+        ]
+        assert len(starts) == 1, name
+        assert len(finishes) == 1, name
+        assert starts[0] < finishes[0], name
+
+
+def test_no_start_line_for_skipped_stations(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    capsys.readouterr()
+    assert run_recap(source, workspace) == 0
+    lines = capsys.readouterr().out.splitlines()
+    start_pattern = re.compile(r"^\[\s*\d+/\d+\] \S+\s+start$")
+    assert not [line for line in lines if start_pattern.match(line)]
+    skips = [line for line in lines if re.match(r"^\[\s*\d+/\d+\] \S+\s+skip\s", line)]
+    assert len(skips) == 11
+
+
+def test_start_line_format(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace) == 0
+    pattern = re.compile(r"^\[\s*\d+/\d+\] \S+\s+start$")
+    start_lines = [
+        line for line in capsys.readouterr().out.splitlines() if line.endswith(" start")
+    ]
+    assert start_lines
+    assert all(pattern.match(line) for line in start_lines)
+    assert len(start_lines) == len(recorder.calls)
+
+
 def test_real_execute_parses_child_json(tmp_path):
     source = make_source(tmp_path, names=("clip.mp4",))
     workspace = tmp_path / "workspace"

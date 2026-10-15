@@ -103,6 +103,20 @@ PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
 LENGTH_MIN_S = 5
 LENGTH_MAX_S = 3600
 LOG_TAIL_BYTES = 262144
+STATION_PLAIN_NAMES = {
+    "proxy": "making proxies",
+    "motion": "measuring camera motion",
+    "quality": "checking quality",
+    "describe": "describing shots (vision model)",
+    "similarity": "finding look-alike shots",
+    "index": "ranking shots",
+    "router": "reading the brief",
+    "music_pick": "choosing music",
+    "llm_director": "editing (model)",
+    "explain": "writing the explanation",
+    "render": "rendering 16:9",
+    "render_vertical": "rendering 9:16",
+}
 
 
 SHOTS_OVERLAY_STYLE = """
@@ -322,14 +336,31 @@ def last_run_lines(directory):
 
 
 def run_report(directory):
-    """What the latest run did: its outcome, progress and the error, read from run.log."""
+    """What the latest run did: outcome, progress, the station running now and the error."""
     lines = last_run_lines(directory)
-    report = {"outcome": None, "done": 0, "total": 0, "last": None, "failed_at": None, "error": None}
+    report = {
+        "outcome": None,
+        "done": 0,
+        "total": 0,
+        "last": None,
+        "failed_at": None,
+        "error": None,
+        "current": None,
+        "current_step": 0,
+        "elapsed": None,
+    }
     for line in lines:
         match = PROGRESS_RE.match(line)
         if match:
-            report["done"], report["total"] = int(match.group(1)), int(match.group(2))
+            report["total"] = int(match.group(2))
+            if match.group(4) == "start":
+                report["current"] = match.group(3)
+                report["current_step"] = int(match.group(1))
+                continue
+            report["done"] = int(match.group(1))
             report["last"] = match.group(3)
+            report["current"] = None
+            report["current_step"] = 0
             if match.group(4) == "FAIL" and report["failed_at"] is None:
                 report["failed_at"] = match.group(3)
             continue
@@ -342,7 +373,17 @@ def run_report(directory):
             if isinstance(data, dict):
                 report["outcome"] = data.get("status")
     report["error"] = failure_text(lines)
+    if report["current"] is not None:
+        report["elapsed"] = run_log_age(directory)
     return report
+
+
+def run_log_age(directory):
+    """Seconds since run.log was last written, or None when it cannot be read."""
+    try:
+        return time.time() - (Path(directory) / "run.log").stat().st_mtime
+    except OSError:
+        return None
 
 
 def failure_text(lines):
@@ -481,6 +522,7 @@ textarea{resize:vertical}
 border-left:4px solid var(--busy)}
 .notice.failed{border-left-color:var(--left)}
 .notice code{overflow-wrap:anywhere;font-size:.85rem;color:var(--haze)}
+progress{width:100%;height:10px;accent-color:var(--sea);border-radius:999px;display:block;margin:8px 0 0}
 .versions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px;color:var(--haze);font-size:.9rem}
 .versions a{min-height:36px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;
 padding:0 12px;border-radius:999px;background:var(--deck);color:var(--stone);text-decoration:none}
@@ -732,19 +774,34 @@ def pick_version(versions, wanted):
     return versions[-1] if versions else None
 
 
+def running_step_text(report):
+    """The step sentence of the running notice: the station running now or the count so far."""
+    current = report.get("current")
+    if current:
+        name = html_escape(STATION_PLAIN_NAMES.get(current, current))
+        step = report.get("current_step") or 0
+        elapsed = report.get("elapsed")
+        if elapsed is None:
+            return f"Now: {name} (step {step} of {report['total']})"
+        return f"Now: {name} (step {step} of {report['total']}, {round(elapsed)}s)"
+    if report["total"]:
+        return (
+            f"{report['done']} of {report['total']} steps done"
+            f" (last: {html_escape(report['last'])})"
+        )
+    return "starting"
+
+
 def render_run_notice(status, report):
     """The banner about the run in progress or the run that failed; empty otherwise."""
     if status == "running":
+        bar = ""
         if report["total"]:
-            step = (
-                f"{report['done']} of {report['total']} steps done"
-                f" (last: {html_escape(report['last'])})"
-            )
-        else:
-            step = "starting"
+            bar = f'<progress max="{report["total"]}" value="{report["done"]}"></progress>'
         return (
-            f'<div class="notice"><strong>Making a new edit</strong> \u2014 {step}. '
-            "The previous version stays below until the new one is ready; this page refreshes by itself.</div>"
+            f'<div class="notice"><strong>Making a new edit</strong> \u2014 {running_step_text(report)}. '
+            "The previous version stays below until the new one is ready; this page refreshes by itself."
+            f"{bar}</div>"
         )
     if status == "failed":
         where = html_escape(report["failed_at"] or "an unknown step")

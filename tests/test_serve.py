@@ -966,6 +966,82 @@ def test_running_project_shows_progress_and_refreshes(tmp_path, monkeypatch):
     assert 'http-equiv="refresh"' in page
 
 
+def test_run_report_reports_the_running_station(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    log = project / "run.log"
+    log.write_text(
+        f"{serve.RUN_MARKER} 2026-10-15 11:00:00 ===\n[ 3/11] quality         start\n",
+        encoding="utf-8",
+    )
+    stamp = time.time() - 30
+    os.utime(log, (stamp, stamp))
+    report = serve.run_report(project)
+    assert report["current"] == "quality"
+    assert report["current_step"] == 3
+    assert report["total"] == 11
+    assert isinstance(report["elapsed"], float)
+    assert 20 < report["elapsed"] < 90
+    log.write_text(
+        f"{serve.RUN_MARKER} 2026-10-15 11:00:00 ===\n"
+        "[ 3/11] quality         start\n"
+        "[ 3/11] quality         done      2.0s  written\n",
+        encoding="utf-8",
+    )
+    report = serve.run_report(project)
+    assert report["current"] is None
+    assert report["current_step"] == 0
+    assert report["elapsed"] is None
+    assert report["done"] == 3
+    assert report["last"] == "quality"
+
+
+def test_run_notice_shows_the_current_station_and_progress(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    (project / "run.log").write_text(
+        f"{serve.RUN_MARKER} 2026-10-15 11:00:00 ===\n[ 3/11] quality         start\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    page = serve.render_project("2026-10-14", project, "recap")
+    assert "Now: checking quality" in page
+    assert "(step 3 of 11" in page
+    assert '<progress max="11"' in page
+    notice = serve.render_run_notice(
+        "running",
+        {
+            "outcome": None,
+            "done": 2,
+            "total": 11,
+            "last": "ingest",
+            "failed_at": None,
+            "error": None,
+            "current": "quality",
+            "current_step": 3,
+            "elapsed": None,
+        },
+    )
+    assert "Now: checking quality (step 3 of 11)" in notice
+    assert '<progress max="11" value="2">' in notice
+    notice = serve.render_run_notice(
+        "running",
+        {
+            "outcome": None,
+            "done": 11,
+            "total": 13,
+            "last": "explain",
+            "failed_at": None,
+            "error": None,
+            "current": "render_final",
+            "current_step": 12,
+            "elapsed": 5.0,
+        },
+    )
+    assert "Now: render_final (step 12 of 13, 5s)" in notice
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="zombie state is checked on Linux")
 def test_a_finished_child_that_was_not_reaped_is_not_running():
     import subprocess
