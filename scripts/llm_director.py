@@ -37,9 +37,12 @@ from common.llm import BudgetExceeded, LLMError, make_client
 from common.moves import (
     EXCEPTION_SHARE,
     SAME_TAKE_MIN_GAP_S,
+    STAR_MIN_SCORE,
+    STAR_SHARE,
     apply_move_policy,
     is_jump_cut,
     is_moving,
+    is_star,
     middle_speed_of,
     screen_factor,
     slot_screen_length,
@@ -1095,6 +1098,22 @@ def is_trimmed_cut(in_s, out_s, fact):
     return (out_s - in_s) < (float(fact["window_out_s"]) - float(fact["window_in_s"])) - TOLERANCE_S
 
 
+def required_star_keys(facts_by_key, n_slots):
+    """The top stars an edit must keep: heroes or scores >= STAR_MIN_SCORE, best first.
+
+    At most ``STAR_SHARE`` of the slots' worth of stars, at least one. Photos
+    keep their own non-blocking ``hero`` rule and are never required here.
+    """
+    stars = [
+        (key, fact)
+        for key, fact in facts_by_key.items()
+        if fact.get("media_type") != "photo" and is_star(fact)
+    ]
+    stars.sort(key=lambda item: (-float(item[1].get("score") or 0.0), item[0]))
+    budget = max(1, round(STAR_SHARE * max(int(n_slots), 1)))
+    return [key for key, _ in stars[:budget]]
+
+
 def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_MAX_S):
     pacing = plan_pacing(plan)
     slot_min_s = pacing["slot_min"]
@@ -1119,6 +1138,19 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
             continue
         if key not in used_keys:
             violations.append(violation(key, "hero", "eligible hero photo is missing from the plan"))
+    star_budget_source = len(slots) or len(plan.get("slot_plan") or [])
+    for key in required_star_keys(facts_by_key, star_budget_source):
+        if key in used_keys:
+            continue
+        fact = facts_by_key[key]
+        score = fact.get("score")
+        violations.append(
+            violation(
+                key,
+                "hero_missing",
+                f"top star {key} (score {score}) is left out of the plan",
+            )
+        )
     for slot in slots:
         fact = slot_fact(slot, plan_by_id, facts_by_key)
         if fact is None:
@@ -1783,6 +1815,160 @@ REBUILT_RULES = {"window", "keep_whole", "peak", "length", "landing", "photo_len
 NON_BLOCKING_RULES = {"hero"}
 
 
+def swap_length_for(fact, victim_length, important_max_s, slot_min_s, slot_max_s):
+    """On-screen length of the star's slot when it replaces a victim of ``victim_length`` seconds."""
+    window = float(fact["window_out_s"]) - float(fact["window_in_s"])
+    if keeps_whole(fact):
+        return min(window, float(important_max_s))
+    return clamp(float(victim_length), float(slot_min_s), min(float(slot_max_s), window))
+
+
+def length_compatible(fact, victim_length, important_max_s, slot_min_s, slot_max_s):
+    """True when the star can replace the victim without moving the edit's length far.
+
+    A compatible replacement is within a factor of two of the victim's on-screen
+    length: a hero may be longer than the ordinary slot it replaces, but never
+    so much that the edit's duration drifts.
+    """
+    star_length = swap_length_for(fact, victim_length, important_max_s, slot_min_s, slot_max_s)
+    if star_length <= 0:
+        return False
+    victim_length = float(victim_length)
+    return 0.5 * victim_length - TOLERANCE_S <= star_length <= 2.0 * victim_length + TOLERANCE_S
+
+
+def star_slot_cut(fact, victim_length, important_max_s, slot_min_s, slot_max_s):
+    """The ``(in_s, out_s)`` of the star's replacement cut, centred on its peak."""
+    length = swap_length_for(fact, victim_length, important_max_s, slot_min_s, slot_max_s)
+    return expected_cut(fact, length)
+
+
+def star_would_jump_cut(slots, index, star_fact, victim_length, important_max_s, slot_min_s, slot_max_s, plan_by_id, facts_by_key):
+    """True when the star's replacement cut would jump-cut a neighbour of the victim."""
+    in_s, out_s = star_slot_cut(star_fact, victim_length, important_max_s, slot_min_s, slot_max_s)
+    replacement = {"clip": star_fact["clip"], "in_s": in_s, "out_s": out_s}
+    star_moving = is_moving(star_fact.get("role"), star_fact.get("motion_label"))
+    if index > 0:
+        previous = slots[index - 1]
+        previous_fact = slot_fact(previous, plan_by_id, facts_by_key) or {}
+        if previous.get("clip") is not None and is_jump_cut(
+            previous,
+            replacement,
+            is_moving(previous_fact.get("role"), previous_fact.get("motion_label")),
+            star_moving,
+        ):
+            return True
+    if index + 1 < len(slots):
+        following = slots[index + 1]
+        following_fact = slot_fact(following, plan_by_id, facts_by_key) or {}
+        if following.get("clip") is not None and is_jump_cut(
+            replacement,
+            following,
+            star_moving,
+            is_moving(following_fact.get("role"), following_fact.get("motion_label")),
+        ):
+            return True
+    return False
+
+
+def pick_swap_victim(record, plan, facts_by_key, star_fact, important_max_s, slot_min_s, slot_max_s):
+    """The id of the weakest non-star slot the star can replace without a jump cut."""
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    slots = record.get("video") or []
+    star_key = star_fact.get("shot_key")
+    best = None
+    for index, slot in enumerate(slots):
+        plan_slot = plan_by_id.get(slot.get("id"))
+        if plan_slot is None:
+            continue
+        key = plan_slot.get("shot_key") or slot.get("shot_key")
+        if key is None or key == star_key:
+            continue
+        victim_fact = facts_by_key.get(key) or {}
+        if is_star(victim_fact) or victim_fact.get("media_type") == "photo" or slot.get("kind") == "photo":
+            continue
+        victim_length = slot_duration(slot)
+        if not length_compatible(star_fact, victim_length, important_max_s, slot_min_s, slot_max_s):
+            continue
+        if star_would_jump_cut(
+            slots, index, star_fact, victim_length, important_max_s, slot_min_s, slot_max_s, plan_by_id, facts_by_key
+        ):
+            continue
+        score = float(victim_fact.get("score") or slot.get("score") or 0.0)
+        drift = abs(swap_length_for(star_fact, victim_length, important_max_s, slot_min_s, slot_max_s) - victim_length)
+        candidate = (score, drift, slot.get("id"))
+        if best is None or candidate < best:
+            best = candidate
+    return None if best is None else best[2]
+
+
+def swap_star_in(record, plan, facts_by_key, shotlog_by_key, star_key, victim_id, important_max_s, slot_min_s, slot_max_s, notes):
+    """Replace the victim plan slot with the star, rebuilt from its shot fact."""
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    plan_slot = plan_by_id.get(victim_id)
+    if plan_slot is None:
+        return
+    star_fact = facts_by_key[star_key]
+    victim_slot = next((row for row in record.get("video") or [] if row.get("id") == victim_id), None)
+    victim_length = slot_duration(victim_slot) if victim_slot is not None else float(star_fact.get("target_s") or slot_min_s)
+    length = swap_length_for(star_fact, victim_length, important_max_s, slot_min_s, slot_max_s)
+    victim_key = plan_slot.get("shot_key") or (victim_slot or {}).get("shot_key")
+    plan_slot["shot_key"] = star_key
+    plan_slot["target_s"] = round(float(length), 3)
+    plan_slot["keep_whole"] = bool(star_fact.get("keep_whole"))
+    plan_slot["why"] = f"swapped in for {victim_key} (top star left out)"
+    record["video"] = [row for row in record.get("video") or [] if row.get("id") != victim_id]
+    ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+    notes.append(f"repaired: swapped {star_key} in for {victim_key} (top star left out)")
+
+
+def drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
+    """Drop the weaker shot of every same-take jump-cut pair until none is left."""
+    for _ in range(len(plan.get("slot_plan") or [])):
+        pairs = [
+            item for item in validate_edit(record, plan, facts_by_key, important_max_s)
+            if item.get("rule") == "same_take"
+        ]
+        if not pairs:
+            break
+        plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+        weaker = weaker_of_pair(record, pairs[0].get("slot"), plan_by_id, shotlog_by_key)
+        if weaker is None:
+            break
+        drop_from_plan(plan, {weaker}, "jump cut with its neighbour from the same take", notes)
+        planned = {row["id"] for row in plan.get("slot_plan") or []}
+        record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
+        ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+
+
+def repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
+    """Swap every missing top star in for the weakest non-star slot of a compatible length."""
+    pacing = plan_pacing(plan)
+    slot_min_s = pacing["slot_min"]
+    slot_max_s = pacing["slot_max"]
+    for _ in range(len(facts_by_key) + 1):
+        missing = [
+            item.get("slot")
+            for item in validate_edit(record, plan, facts_by_key, important_max_s)
+            if item.get("rule") == "hero_missing"
+        ]
+        if not missing:
+            break
+        star_key = missing[0]
+        star_fact = facts_by_key.get(star_key)
+        if star_fact is None:
+            break
+        victim_id = pick_swap_victim(
+            record, plan, facts_by_key, star_fact, important_max_s, slot_min_s, slot_max_s
+        )
+        if victim_id is None:
+            break
+        swap_star_in(
+            record, plan, facts_by_key, shotlog_by_key, star_key, victim_id,
+            important_max_s, slot_min_s, slot_max_s, notes,
+        )
+
+
 def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S):
     """Fix a draft's mechanical violations from the shot facts instead of discarding the draft.
 
@@ -1790,8 +1976,10 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
     planned again as its own slot leaves the plan, and a slot whose cut breaks
     a window, length, peak, keep-whole or landing rule is rebuilt from its shot
     fact the way the editor spec defines it. Second pass: of two same-take
-    slots that would jump-cut, the lower-scoring one leaves the plan. Returns
-    the plain-word notes of what changed.
+    slots that would jump-cut, the lower-scoring one leaves the plan. Third
+    pass: a missing top star is swapped in for the weakest non-star slot of a
+    compatible length that does not jump-cut its neighbours. Returns the
+    plain-word notes of what changed.
     """
     notes = []
     plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
@@ -1832,21 +2020,9 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
-    for _ in range(len(plan.get("slot_plan") or [])):
-        pairs = [
-            item for item in validate_edit(record, plan, facts_by_key, important_max_s)
-            if item.get("rule") == "same_take"
-        ]
-        if not pairs:
-            break
-        plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
-        weaker = weaker_of_pair(record, pairs[0].get("slot"), plan_by_id, shotlog_by_key)
-        if weaker is None:
-            break
-        drop_from_plan(plan, {weaker}, "jump cut with its neighbour from the same take", notes)
-        planned = {row["id"] for row in plan.get("slot_plan") or []}
-        record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
-        ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+    drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     return notes
 
 

@@ -25,9 +25,12 @@ from pathlib import Path
 
 from common.decisions import build_decisions
 from common.moves import (
+    STAR_MIN_SCORE,
+    STAR_SHARE,
     apply_move_policy,
     is_jump_cut,
     is_moving,
+    is_star,
     middle_speed_of,
     screen_factor,
     slot_screen_length,
@@ -1243,15 +1246,6 @@ def candidate_overlaps_bucket(candidate, bucket_start, bucket_end):
     if candidate.get("media_type") == "photo":
         return bucket_start - 0.01 <= start <= bucket_end
     return overlap_seconds(start, end, bucket_start, bucket_end) > 0
-
-
-STAR_SHARE = 0.4
-STAR_MIN_SCORE = 0.85
-
-
-def is_star(candidate):
-    """A shot the edit should not lose to time coverage: a hero, or a very high score."""
-    return bool(candidate.get("hero")) or float(candidate.get("score") or 0.0) >= STAR_MIN_SCORE
 
 
 def place_chronological(candidate, duration_s, chosen, max_slot_s, min_slot_s, warnings, important_max_s):

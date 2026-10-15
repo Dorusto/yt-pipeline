@@ -1,0 +1,16 @@
+# Edit expectations for the Kotor demo workspace, written from Doru's review
+# of v4 (2026-10-15): the model dropped the top heroes 0072/s5 and 0072/s7b1.
+# Used by scripts/eval_edit.py against <workspace>/edit.json. No footage, no
+# paths: only short shot keys and numbers, so the file is safe to commit.
+
+must_include:
+  - any_of: ["0072/s5"]
+    note: "the tunnel approach is the strongest long take of the day (0.91) and must be in the edit"
+  - any_of: ["0072/s7b1", "0072/s7b5"]
+    note: >-
+      one of the cave-exit heroes: s7b1 (run toward the bunker mouth, 0.95)
+      or s7b5 (blinding exit into daylight, 0.97)
+
+length_s:
+  target: 60
+  tolerance: 3
