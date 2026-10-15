@@ -177,14 +177,14 @@
   },
   "expected_slots": [
     {
-      "clip": "clipA.mp4",
-      "in_s": 0.0,
-      "out_s": 2.0
-    },
-    {
       "kind": "photo",
       "photo": "still_0002_a.jpg",
       "duration_s": 2.0
+    },
+    {
+      "clip": "clipA.mp4",
+      "in_s": 29.0,
+      "out_s": 31.0
     },
     {
       "kind": "photo",

@@ -90,7 +90,7 @@ def test_photo_is_clamped_to_slot_max():
 
 def test_long_move_is_extended_to_the_whole_window_with_a_ramp():
     slots = [video_slot("a", 2.0, 5.6, window=(0.0, 6.2), important=True)]
-    warnings = apply_move_policy(slots, PACING)
+    warnings = apply_move_policy(slots, PACING, speed_ramp=True)
     assert slots[0]["in_s"] == 0.0 and slots[0]["out_s"] == 6.2
     assert 1.0 < slots[0]["middle_speed"] <= MIDDLE_SPEED_MAX
     assert slot_screen_length(slots[0]) <= PACING["hero_max"] + 1e-6
@@ -107,7 +107,7 @@ def test_move_that_fits_the_hero_cap_at_real_time_needs_no_ramp():
 
 def test_move_longer_than_the_ramp_can_save_keeps_the_end_and_caps_the_speed():
     slots = [video_slot("a", 14.0, 20.0, window=(0.0, 20.0), important=True)]
-    apply_move_policy(slots, PACING)
+    apply_move_policy(slots, PACING, speed_ramp=True)
     assert slots[0]["middle_speed"] == MIDDLE_SPEED_MAX
     assert slots[0]["out_s"] == 20.0
     assert slot_screen_length(slots[0]) == pytest.approx(PACING["hero_max"], abs=0.01)
@@ -169,7 +169,7 @@ def test_zero_share_disables_exceptions():
 def test_ordinary_move_keeps_its_on_screen_budget_and_gains_source_from_the_ramp():
     slots = [video_slot("a", 0.0, 3.0, window=(0.0, 12.0), score=0.1), video_slot("h", 0.0, 3.0, role="hold", label="static")]
     slots += [video_slot(f"m{index}", 0.0, 3.0, window=(0.0, 12.0), score=0.9) for index in range(10)]
-    apply_move_policy(slots, PACING)
+    apply_move_policy(slots, PACING, speed_ramp=True)
     ordinary = slots[0]
     assert slot_screen_length(ordinary) == pytest.approx(3.0, abs=0.01)
     assert ordinary["out_s"] - ordinary["in_s"] > 3.0
@@ -201,3 +201,86 @@ def test_policy_is_idempotent():
 
 def test_empty_slots_return_no_warnings():
     assert apply_move_policy([], PACING) == []
+
+
+def peak_slot(name, in_s, out_s, window, peak, **extra):
+    return video_slot(name, in_s, out_s, window=window, peak_s=peak, **extra)
+
+
+def test_speed_ramp_is_off_by_default_and_never_sets_middle_speed():
+    slots = [peak_slot("a", 2.0, 5.6, (0.0, 20.0), 10.0, important=True)]
+    apply_move_policy(slots, PACING)
+    assert "middle_speed" not in slots[0]
+    assert slot_screen_length(slots[0]) == pytest.approx(PACING["hero_max"], abs=0.01)
+
+
+def test_ramp_off_keeps_the_length_policy_for_every_kind_of_slot():
+    slots = [
+        peak_slot(f"m{index}", 0.0, 3.0, (0.0, 12.0), 6.0, important=True, score=0.9 - index * 0.01)
+        for index in range(14)
+    ]
+    slots.append(video_slot("h", 0.0, 8.0, role="hold", label="static", peak_s=4.0))
+    slots.append(photo_slot("p", 6.0))
+    apply_move_policy(slots, PACING)
+    assert all("middle_speed" not in slot for slot in slots)
+    long_slots = [slot for slot in slots if slot_screen_length(slot) > PACING["slot_max"] + 1e-6]
+    assert len(long_slots) == 2
+    assert all(slot_screen_length(slot) <= PACING["hero_max"] + 1e-6 for slot in long_slots)
+    assert slot_screen_length(slots[-2]) == pytest.approx(PACING["slot_max"])
+    assert slots[-1]["duration_s"] == PACING["slot_max"]
+
+
+def test_a_long_move_is_cut_around_its_peak_not_its_start_or_end():
+    slots = [peak_slot("a", 0.0, 20.0, (0.0, 20.0), 9.0, important=True)]
+    apply_move_policy(slots, PACING)
+    assert slots[0]["in_s"] == pytest.approx(6.0) and slots[0]["out_s"] == pytest.approx(12.0)
+
+
+def test_peak_close_to_an_edge_keeps_the_cut_inside_the_window():
+    early = [peak_slot("a", 0.0, 20.0, (0.0, 20.0), 0.5, important=True)]
+    late = [peak_slot("a", 0.0, 20.0, (0.0, 20.0), 19.8, important=True)]
+    apply_move_policy(early, PACING)
+    apply_move_policy(late, PACING)
+    assert early[0]["in_s"] == 0.0 and early[0]["out_s"] == pytest.approx(6.0)
+    assert late[0]["out_s"] == 20.0 and late[0]["in_s"] == pytest.approx(14.0)
+
+
+def test_ramp_on_cuts_more_of_the_move_still_centred_on_the_peak():
+    slots = [peak_slot("a", 0.0, 20.0, (0.0, 20.0), 9.0, important=True)]
+    apply_move_policy(slots, PACING, speed_ramp=True)
+    slot = slots[0]
+    assert slot["middle_speed"] == MIDDLE_SPEED_MAX
+    assert slot_screen_length(slot) == pytest.approx(PACING["hero_max"], abs=0.01)
+    assert (slot["in_s"] + slot["out_s"]) / 2 == pytest.approx(9.0, abs=0.01)
+    assert slot["out_s"] - slot["in_s"] > PACING["hero_max"]
+
+
+def test_landing_floor_still_wins_over_the_peak_in_the_policy():
+    slot = peak_slot("a", 4.0, 10.75, (0.0, 20.0), 2.0, landing_floor_s=10.75)
+    apply_move_policy([slot], {"slot_max": 3.0, "hero_max": 3.0})
+    assert slot["out_s"] >= 10.75 - 1e-9
+    assert slot["out_s"] - slot["in_s"] <= 3.0 + 1e-9
+
+
+def test_static_hold_is_trimmed_around_its_peak_inside_the_candidate_window():
+    slots = [video_slot("a", 0.0, 9.0, window=(0.0, 20.0), role="hold", label="static", peak_s=10.0)]
+    apply_move_policy(slots, PACING)
+    assert slots[0]["in_s"] == pytest.approx(7.5) and slots[0]["out_s"] == pytest.approx(12.5)
+
+
+def test_static_hold_trim_stays_clear_of_another_slot_of_the_same_take():
+    slots = [
+        video_slot("a", 0.0, 9.0, window=(0.0, 20.0), role="hold", label="static", peak_s=10.0, clip="take.mp4"),
+        video_slot("b", 9.5, 12.0, window=(0.0, 20.0), role="hold", label="static", peak_s=11.0, clip="take.mp4"),
+    ]
+    apply_move_policy(slots, PACING)
+    assert slots[0]["out_s"] <= slots[1]["in_s"] + 1e-9
+
+
+def test_a_slot_without_a_peak_keeps_the_legacy_anchoring():
+    important = [video_slot("a", 14.0, 20.0, window=(0.0, 20.0), important=True)]
+    ordinary = [video_slot("a", 0.0, 3.0, window=(0.0, 20.0), score=0.5)]
+    apply_move_policy(important, PACING)
+    apply_move_policy(ordinary, PACING)
+    assert important[0]["out_s"] == 20.0
+    assert ordinary[0]["in_s"] == 0.0

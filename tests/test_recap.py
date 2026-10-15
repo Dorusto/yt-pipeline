@@ -675,3 +675,43 @@ def test_feedback_reruns_the_vertical_render_too(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--format", "both", "--feedback", "drop 0071/s2", "--json"]) == 0
     assert "render_vertical" in recorder.calls
+
+
+def test_speed_ramp_is_off_by_default_in_the_director_argv(tmp_path):
+    ctx = make_context(tmp_path)
+    assert ctx.speed_ramp is False
+    assert "--speed-ramp" not in recap.director_args(ctx)
+    assert all("--speed-ramp" not in command for command in stations_of(ctx)["llm_director"])
+
+
+def test_speed_ramp_reaches_the_llm_director_station(tmp_path):
+    ctx = make_context(tmp_path)
+    ctx.speed_ramp = True
+    assert "--speed-ramp" in recap.director_args(ctx)
+    assert any("--speed-ramp" in command for command in stations_of(ctx)["llm_director"])
+
+
+def test_speed_ramp_flag_is_parsed_and_listed_in_help(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    seen = {}
+
+    def spy(ctx):
+        seen["ramp"] = ctx.speed_ramp
+        return {"status": "ok", "stations": [], "outputs": {}}
+
+    monkeypatch.setattr(recap, "run", spy)
+    assert run_recap(source, workspace, extra=["--speed-ramp", "--json"]) in (0, 1)
+    assert seen["ramp"] is True
+    assert "--speed-ramp" in recap.build_parser().format_help()
+
+
+def test_changing_the_speed_ramp_setting_redoes_the_edit(tmp_path):
+    ctx = make_context(tmp_path)
+    edit = ctx.workspace / "edit.json"
+    edit.write_text(json.dumps({"brief": {"text": "brief"}, "meta": {"speed_ramp": False}}), encoding="utf-8")
+    (ctx.workspace / "shotlog.json").write_text("{}", encoding="utf-8")
+    os.utime(edit, (edit.stat().st_mtime + 5, edit.stat().st_mtime + 5))
+    assert recap.is_up_to_date("llm_director", ctx) is True
+    ctx.speed_ramp = True
+    assert recap.is_up_to_date("llm_director", ctx) is False

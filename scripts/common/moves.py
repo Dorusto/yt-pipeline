@@ -2,10 +2,16 @@
 
 A static shot respects the pacing table's ``slot_max``. A camera move (pan,
 tilt, orbit, tracking, reveal, ...) keeps as much of the move as the length
-rule allows: the middle half of its source window may play up to
-``MIDDLE_SPEED_MAX`` times faster, and a small share of the slots (at most
-15 % rounded, at least one) may run past ``slot_max`` on screen, up to the
-hero cap. The first and last quarters of a slot always play in real time.
+rule allows, and a small share of the slots (at most 15 % rounded, at least
+one) may run past ``slot_max`` on screen, up to the hero cap. Playback is real
+time by default. The optional speed ramp (``speed_ramp=True``) lets the middle
+half of a move's source window play up to ``MIDDLE_SPEED_MAX`` times faster so
+more of the move fits; the first and last quarters always play in real time.
+
+When a window has to be shortened, the part kept is centred on the slot's
+``peak_s`` (see ``common/peak.py``), inside the free part of its window and
+never ending before a landing floor. A slot without ``peak_s`` keeps the
+legacy anchoring: the end for important shots and landings, else the start.
 
 ``edit.json`` stores the ramp as the optional slot field ``middle_speed``; the
 on-screen length of a slot is ``0.25 L + 0.5 L / s + 0.25 L`` for a source
@@ -14,6 +20,8 @@ through :func:`slot_screen_length`.
 """
 
 import math
+
+from common.peak import centre_window
 
 MIDDLE_SPEED_MAX = 1.2
 MIDDLE_SPEED_SCHEMA_MAX = 1.25
@@ -96,30 +104,49 @@ def _free_range(slots, index):
     return low, high
 
 
-def _fit(slot, low, high, budget):
+def _place(slot, low, high, length):
+    """The ``(in_s, out_s)`` of a ``length``-second cut inside ``[low, high]``.
+
+    Centred on the slot's ``peak_s`` when it has one (a landing floor still
+    forces the end), else anchored at the end for important shots and landings
+    and at the start for ordinary moves.
+    """
+    floor = slot.get("landing_floor_s")
+    peak = slot.get("peak_s")
+    if peak is not None:
+        return centre_window(low, high, length, peak, min_out_s=floor)
+    if slot.get("important") or floor is not None:
+        return high - length, high
+    return low, low + length
+
+
+def _fit(slot, low, high, budget, speed_ramp):
     """The ``(in_s, out_s, middle_speed)`` that keeps most of ``[low, high]`` within ``budget`` on screen."""
     span = high - low
     if span <= EPSILON:
         return float(slot["in_s"]), float(slot["out_s"]), 1.0
     if span <= budget + EPSILON:
         return low, high, 1.0
-    if span <= source_length_for(budget) + EPSILON:
+    top_speed = MIDDLE_SPEED_MAX if speed_ramp else 1.0
+    if speed_ramp and span <= source_length_for(budget, top_speed) + EPSILON:
         needed = 0.5 / (budget / span - 0.5)
         speed = min(MIDDLE_SPEED_MAX, math.ceil(needed * 100 - 1e-9) / 100)
         return low, high, max(1.0, speed)
-    length = math.floor(source_length_for(budget) * 1000 + 1e-6) / 1000
-    floor = slot.get("landing_floor_s")
-    if slot.get("important") or floor is not None:
-        return high - length, high, MIDDLE_SPEED_MAX
-    return low, low + length, MIDDLE_SPEED_MAX
+    length = math.floor(source_length_for(budget, top_speed) * 1000 + 1e-6) / 1000
+    in_s, out_s = _place(slot, low, high, length)
+    return in_s, out_s, top_speed
 
 
-def _clamp_static(slot, slot_max):
-    """Trim a non-move video slot to ``slot_max`` of source at real time."""
+def _clamp_static(slot, slot_max, low, high):
+    """Trim a non-move video slot to ``slot_max`` of source at real time, around its peak."""
     in_s = float(slot["in_s"])
     out_s = float(slot["out_s"])
     if out_s - in_s > slot_max + EPSILON:
-        if slot.get("important"):
+        if slot.get("peak_s") is not None:
+            in_s, out_s = centre_window(
+                min(low, in_s), max(high, out_s), slot_max, slot["peak_s"], slot.get("landing_floor_s")
+            )
+        elif slot.get("important"):
             in_s = out_s - slot_max
         else:
             out_s = in_s + slot_max
@@ -134,14 +161,16 @@ def _apply(slot, in_s, out_s, speed):
     _set_speed(slot, speed)
 
 
-def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE):
+def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE, speed_ramp=False):
     """Apply the move-versus-static length policy to ``slots`` in place; return warnings.
 
     ``slots`` are internal slot dicts with ``in_s``/``out_s``, the candidate
     window ``window_in_s``/``window_out_s``, ``role``, ``motion_label``,
     ``important``, ``score`` and ``clip`` (photos carry ``duration_s``). A move
-    keeps as much of its window as fits its on-screen budget, using
-    ``middle_speed`` up to 1.2 only when that lets more of the move in. At most
+    keeps as much of its window as fits its on-screen budget, centred on its
+    ``peak_s`` when it has one; with ``speed_ramp`` it may also use
+    ``middle_speed`` up to 1.2 when that lets more of the move in, without it
+    every ``middle_speed`` stays 1.0. At most
     ``exception_share * len(slots)`` rounded (minimum 1; none when the share is 0) moves, the best by score
     among those that want more than ``slot_max``, may run up to ``hero_max`` on
     screen. Every other slot, every static or hold slot and every photo stays
@@ -160,7 +189,7 @@ def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE):
         if not is_move_slot(slot):
             continue
         low, high = _free_range(slots, index)
-        in_s, out_s, speed = _fit(slot, low, high, hero_max)
+        in_s, out_s, speed = _fit(slot, low, high, hero_max, speed_ramp)
         if screen_length(out_s - in_s, speed) > slot_max + MIN_GAIN_S:
             wanting.append((float(slot.get("score") or 0.0), -index, index))
     wanting.sort(reverse=True)
@@ -175,12 +204,13 @@ def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE):
             slot["max_screen_s"] = slot_max
             continue
         if not is_move_slot(slot):
-            _clamp_static(slot, slot_max)
+            low, high = _free_range(slots, index)
+            _clamp_static(slot, slot_max, low, high)
             slot["max_screen_s"] = slot_max
             continue
         low, high = _free_range(slots, index)
         if index in exceptions:
-            in_s, out_s, speed = _fit(slot, low, high, hero_max)
+            in_s, out_s, speed = _fit(slot, low, high, hero_max, speed_ramp)
             _apply(slot, in_s, out_s, speed)
             slot["max_screen_s"] = hero_max
             warnings.append(
@@ -190,7 +220,7 @@ def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE):
             )
             continue
         budget = min(slot_screen_length(slot), slot_max)
-        in_s, out_s, speed = _fit(slot, low, high, budget)
+        in_s, out_s, speed = _fit(slot, low, high, budget, speed_ramp)
         _apply(slot, in_s, out_s, speed)
         slot["max_screen_s"] = slot_max
     return warnings

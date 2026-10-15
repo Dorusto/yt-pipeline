@@ -102,6 +102,20 @@
           "default": 1.0,
           "description": "speed ramp of a camera-move slot: the middle half of the source window (in_s..out_s) plays at this rate, the first and last quarters at real time; on-screen length is 0.25L + 0.5L/middle_speed + 0.25L for a source window of L seconds; 1.0 (the default) is no ramp"
         },
+        "peak_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "the best moment of the shot in the source clip, in seconds: the vision model's peak_s, else the second of maximum scene activity, else the middle of the candidate window; a trimmed cut is centred on it"
+        },
+        "peak_source": {
+          "type": "string",
+          "enum": ["vision", "motion", "middle"],
+          "description": "where peak_s came from"
+        },
+        "centred": {
+          "type": "boolean",
+          "description": "true when the cut was trimmed out of a longer candidate window and holds peak_s"
+        },
         "role": {
           "type": [
             "string",
@@ -617,6 +631,10 @@
         "llm_cost_usd": {
           "type": "number",
           "minimum": 0
+        },
+        "speed_ramp": {
+          "type": "boolean",
+          "description": "true when the optional middle speed ramp was allowed for this edit (default off)"
         }
       }
     }

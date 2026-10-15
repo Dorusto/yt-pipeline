@@ -853,3 +853,19 @@ def test_check_summary_lists_the_vertical_preview(tmp_path):
     (root / "2026-10-14" / "recap_720p_9x16.mp4").write_bytes(b"x")
     summary = serve.build_summary(root, "127.0.0.1", 8080, ["2026-10-14"], "ok", 0.0)
     assert summary["projects"][0]["vertical"].endswith("/2026-10-14/recap_720p_9x16.mp4")
+
+
+def test_upload_and_reedit_forms_have_the_speed_ramp_select():
+    page = serve.render_upload([])
+    assert '<select name="speed_ramp">' in page
+    assert "Speed ramp" in page and "Auto (off)" in page and ">on<" in page and ">off<" in page
+    assert '<select name="speed_ramp">' in serve.render_reedit("2026-10-14", [])
+
+
+@pytest.mark.parametrize(
+    "value,expected", [("on", True), ("off", False), ("auto", False), (None, False), ("junk", False)]
+)
+def test_speed_ramp_field_becomes_the_recap_argv(tmp_path, value, expected):
+    fields = {} if value is None else {"speed_ramp": value}
+    command = serve.build_recap_command("python", tmp_path / "in", tmp_path / "ws", "brief", fields, tmp_path / "music")
+    assert ("--speed-ramp" in command) is expected

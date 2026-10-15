@@ -587,6 +587,14 @@ def option_fields(music_tracks):
                 default="auto",
             ),
         ),
+        (
+            "Speed ramp",
+            render_select(
+                "speed_ramp",
+                [("auto", "Auto (off)"), ("off", "off"), ("on", "on")],
+                default="auto",
+            ),
+        ),
         ("Music", render_select("music", music_options, default="auto")),
         (
             "Ambient under the music (dB)",
@@ -957,6 +965,8 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
     frame_format = FORMAT_CHOICES.get(fields.get("format") or "auto")
     if frame_format:
         command += ["--format", frame_format]
+    if (fields.get("speed_ramp") or "auto") == "on":
+        command.append("--speed-ramp")
     music = fields.get("music") or "auto"
     if music == "auto":
         command += ["--music", "auto"]

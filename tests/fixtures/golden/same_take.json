@@ -231,18 +231,18 @@
   "expected_slots": [
     {
       "clip": "clipA.mp4",
-      "in_s": 0.0,
-      "out_s": 2.09
+      "in_s": 1.46,
+      "out_s": 3.54
     },
     {
       "clip": "clipB.mp4",
-      "in_s": 0.0,
-      "out_s": 2.09
+      "in_s": 28.95,
+      "out_s": 31.05
     },
     {
       "clip": "clipC.mp4",
-      "in_s": 0.0,
-      "out_s": 2.09
+      "in_s": 28.95,
+      "out_s": 31.05
     }
   ]
 }

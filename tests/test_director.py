@@ -193,9 +193,9 @@ def write_edit(tmp_path, *extra):
 
 def shotlog_shot(
     key, clip, segment_id, start, end, eligible, score, description, reason,
-    similar_to=None, hero=None, role="hold", motion_label="static", semantic_motion=None,
+    similar_to=None, hero=None, role="hold", motion_label="static", semantic_motion=None, peak_s=None,
 ):
-    return {
+    shot = {
         "key": key,
         "clip": clip,
         "segment_id": segment_id,
@@ -215,6 +215,9 @@ def shotlog_shot(
         "hero": hero,
         "semantic_motion": semantic_motion,
     }
+    if peak_s is not None:
+        shot["peak_s"] = peak_s
+    return shot
 
 
 def write_shotlog(root, shots):
@@ -499,8 +502,12 @@ def test_move_slot_uses_handle_window(tmp_path):
     move_slots = [slot for slot in record["video"] if slot["role"] == "move"]
     assert move_slots
     assert move_slots[0]["clip"] == "clipB.mp4"
-    assert move_slots[0]["in_s"] == 1.0
-    assert move_slots[0]["out_s"] <= 59.0
+    assert move_slots[0]["in_s"] >= 1.0
+    assert move_slots[0]["out_s"] <= 58.0
+    assert move_slots[0]["peak_s"] == 29.5
+    assert move_slots[0]["peak_source"] == "middle"
+    assert move_slots[0]["centred"] is True
+    assert abs((move_slots[0]["in_s"] + move_slots[0]["out_s"]) / 2 - 29.5) < 0.01
 
 
 def test_chronological_order(tmp_path):
@@ -667,7 +674,7 @@ def test_calm_to_energy_targets_non_increasing_and_bounded(tmp_path):
 
 def test_uniform_pacing_slots_share_target(tmp_path):
     _, _, _, record = write_edit(tmp_path, "--pacing", "uniform")
-    ordinary = [slot for slot in record["video"] if not slot.get("middle_speed")]
+    ordinary = [slot for slot in record["video"] if slot["role"] != "move"]
     lengths = [round(slot_screen_length(slot), 2) for slot in ordinary]
     assert len(lengths) >= 3
     assert all(length == lengths[0] for length in lengths)
@@ -700,7 +707,7 @@ def test_phrase_cut_inside_hold(tmp_path):
     assert all(slot["out_s"] >= 10.75 for slot in windows)
 
 
-def test_phrase_trimmed_from_head(tmp_path):
+def test_phrase_landing_wins_over_a_peak_far_from_the_landing(tmp_path):
     workspace = phrase_workspace(tmp_path / "ws")
     summary, record = run_phrase_edit(workspace, tmp_path / "edit.json")
     windows = crossing_slots(record)
@@ -708,9 +715,26 @@ def test_phrase_trimmed_from_head(tmp_path):
     slot = windows[0]
     assert round(slot["out_s"] - slot["in_s"], 2) == PHRASE_SLOT
     assert slot["out_s"] >= 10.75
-    assert slot["in_s"] > 0.0
-    assert slot["in_s"] >= 0.0
-    assert any("phrase trimmed from the head" in warning for warning in summary["warnings"])
+    assert slot["in_s"] > slot["peak_s"]
+    assert slot["centred"] is False
+    assert any("after its best moment" in warning for warning in summary["warnings"])
+
+
+def test_phrase_with_the_peak_near_the_landing_is_centred_on_it(tmp_path):
+    workspace = phrase_workspace(tmp_path / "ws")
+    shots = json.loads((workspace / "shotlog.json").read_text(encoding="utf-8"))
+    for shot in shots["shots"]:
+        if shot["key"] == "clipA/s1":
+            shot["peak_s"] = 9.3
+    write_json(workspace / "shotlog.json", shots)
+    summary, record = run_phrase_edit(workspace, tmp_path / "edit.json")
+    slot = crossing_slots(record)[0]
+    assert slot["peak_s"] == 9.3
+    assert slot["peak_source"] == "vision"
+    assert slot["in_s"] <= 9.3 <= slot["out_s"]
+    assert slot["out_s"] >= 10.75
+    assert slot["centred"] is True
+    assert not any("after its best moment" in warning for warning in summary["warnings"])
 
 
 def test_phrase_never_exceeds_target(tmp_path):
@@ -759,9 +783,12 @@ def test_move_without_landing_keeps_handle_window(tmp_path):
     _, record = run_edit(workspace, tmp_path / "edit.json")
     move_slots = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
     assert len(move_slots) == 1
-    assert move_slots[0]["in_s"] == 0.0
-    assert move_slots[0]["out_s"] > 2.64
-    assert move_slots[0]["middle_speed"] <= 1.2
+    assert move_slots[0]["in_s"] >= 0.0
+    assert move_slots[0]["out_s"] <= 10.0
+    assert move_slots[0]["out_s"] - move_slots[0]["in_s"] > 2.64
+    assert move_slots[0]["peak_s"] == 5.0
+    assert move_slots[0]["in_s"] <= 5.0 <= move_slots[0]["out_s"]
+    assert "middle_speed" not in move_slots[0]
 
 
 def test_same_take_windows_never_adjacent(tmp_path):
@@ -792,7 +819,7 @@ def test_contiguous_same_take_windows_merge(tmp_path):
     clip_a = [slot for slot in record["video"] if slot["clip"] == "clipA.mp4"]
     assert len(clip_a) == 1
     assert clip_a[0]["in_s"] == 0.0
-    assert clip_a[0]["out_s"] == 2.64
+    assert clip_a[0]["out_s"] == 2.5
 
 
 def test_json_summary_has_required_keys(tmp_path):
@@ -912,26 +939,58 @@ def test_hero_keeps_whole_window_up_to_cap(tmp_path):
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
     assert round(slot_screen_length(slot), 2) == 3.5
-    assert slot["middle_speed"] <= 1.2
+    assert "middle_speed" not in slot
+    assert slot["in_s"] == 1.25 and slot["out_s"] == 4.75
+    assert slot["centred"] is True
 
 
-def test_hero_window_longer_than_cap_keeps_tail(tmp_path):
-    workspace = build_important_workspace(
-        tmp_path / "ws",
+def long_hero_workspace(root, peak_s=None):
+    return build_important_workspace(
+        root,
         [segment("s1", 0.0, 20.0, "move", motion_label="pan_right")],
         [move("m1", 0.0, 20.0, "pan_right", "regular", "no_shaking", 0.0, 20.0, 0.0, 20.0)],
         [
             shotlog_shot(
                 "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 20.0, True, 0.9, "hero move",
-                "interest 90 · hero", hero=True, role="move", motion_label="pan_right",
+                "interest 90 · hero", hero=True, role="move", motion_label="pan_right", peak_s=peak_s,
             )
         ],
     )
+
+
+def test_hero_window_longer_than_cap_is_centred_on_the_peak(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws", peak_s=14.0)
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
     assert round(slot_screen_length(slot), 2) == 3.5
+    assert "middle_speed" not in slot
+    assert slot["in_s"] == 12.25 and slot["out_s"] == 15.75
+    assert slot["peak_s"] == 14.0 and slot["peak_source"] == "vision" and slot["centred"] is True
+
+
+def test_hero_window_with_speed_ramp_keeps_more_of_the_move_around_the_peak(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws", peak_s=14.0)
+    _, record = run_important_edit(workspace, tmp_path / "edit.json", "--speed-ramp")
+    slot = record["video"][0]
+    assert round(slot_screen_length(slot), 2) == 3.5
     assert slot["middle_speed"] == 1.2
-    assert slot["out_s"] == 20.0
+    assert slot["in_s"] < 14.0 < slot["out_s"]
+    assert abs((slot["in_s"] + slot["out_s"]) / 2 - 14.0) < 0.01
+    assert record["meta"]["speed_ramp"] is True
+
+
+def test_peak_near_the_window_edge_is_clamped_inside_the_window(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws", peak_s=19.5)
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert slot["out_s"] == 20.0 and slot["in_s"] == 16.5
+    assert slot["centred"] is True
+
+
+def test_default_edit_has_no_middle_speed_anywhere(tmp_path):
+    _, _, _, record = write_edit(tmp_path)
+    assert all("middle_speed" not in slot for slot in record["video"])
+    assert record["meta"]["speed_ramp"] is False
 
 
 def test_semantic_move_without_hero_keeps_window(tmp_path):
@@ -1140,22 +1199,13 @@ def test_window_ends_at_the_steady_motion_end():
 
 
 def test_important_cap_defaults_to_the_pacing_hero_max(tmp_path):
-    workspace = build_important_workspace(
-        tmp_path / "ws",
-        [segment("s1", 0.0, 20.0, "move", motion_label="pan_right")],
-        [move("m1", 0.0, 20.0, "pan_right", "regular", "no_shaking", 0.0, 20.0, 0.0, 20.0)],
-        [
-            shotlog_shot(
-                "0001/s1", "clip_0001_x.mp4", "s1", 0.0, 20.0, True, 0.9, "hero move",
-                "interest 90 · hero", hero=True, role="move", motion_label="pan_right",
-            )
-        ],
-    )
+    workspace = long_hero_workspace(tmp_path / "ws")
     _, record = run_important_edit(workspace, tmp_path / "edit.json")
     slot = record["video"][0]
     assert round(slot_screen_length(slot), 2) == 3.5
-    assert slot["middle_speed"] == 1.2
-    assert slot["out_s"] == 20.0
+    assert "middle_speed" not in slot
+    assert slot["peak_source"] == "middle"
+    assert slot["in_s"] == 8.25 and slot["out_s"] == 11.75
 
 
 def test_prompts_state_the_hero_cap_without_hardcoding_it():
@@ -1170,7 +1220,7 @@ def test_prompts_state_the_hero_cap_without_hardcoding_it():
     reviewer = (ROOT / "prompts" / "reviewer.md").read_text(encoding="utf-8")
     assert "hero cap" in reviewer
     assert "up to 6 s" not in reviewer
-    assert "ends where the steady motion ends" in reviewer
+    assert "centred on the shot's `peak_s`" in reviewer
     screenwriter = (ROOT / "prompts" / "screenwriter.md").read_text(encoding="utf-8")
     assert "hero cap" in screenwriter
     assert "1.5" in screenwriter
@@ -1805,3 +1855,99 @@ def test_beat_snap_keeps_ramped_cuts_on_beats_and_slots_within_their_cap(tmp_pat
     assert holds
     assert all(slot_screen_length(slot) <= POLICY_SLOT_MAX_90 + 1e-6 for slot in holds)
     assert summary["beat_snap"]["unsnapped"] == 0
+
+
+def activity_rows(values):
+    return [{"t_s": index + 0.5, "activity": value} for index, value in enumerate(values)]
+
+
+def set_scene_activity(workspace, values):
+    path = workspace / "motion" / "clip_0001_x.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["scene_activity"] = activity_rows(values)
+    write_json(path, data)
+
+
+SPIKE_AT_15 = [0.002] * 15 + [0.004, 0.015, 0.004] + [0.002] * 2
+
+
+def test_motion_peak_centres_the_cut_when_the_shotlog_has_no_vision_peak(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws")
+    set_scene_activity(workspace, SPIKE_AT_15)
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert slot["peak_source"] == "motion"
+    assert slot["peak_s"] == 16.5
+    assert slot["in_s"] <= 16.5 <= slot["out_s"]
+    assert slot["centred"] is True
+    assert abs((slot["in_s"] + slot["out_s"]) / 2 - 16.5) < 0.01
+
+
+def test_vision_peak_has_priority_over_the_motion_peak(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws", peak_s=4.0)
+    set_scene_activity(workspace, SPIKE_AT_15)
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    slot = record["video"][0]
+    assert slot["peak_source"] == "vision" and slot["peak_s"] == 4.0
+    assert slot["in_s"] <= 4.0 <= slot["out_s"]
+
+
+def test_flat_scene_activity_falls_back_to_the_middle(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws")
+    set_scene_activity(workspace, [0.002] * 20)
+    _, record = run_important_edit(workspace, tmp_path / "edit.json")
+    assert record["video"][0]["peak_source"] == "middle"
+    assert record["video"][0]["peak_s"] == 10.0
+
+
+def test_a_long_move_is_cut_around_its_peak_with_the_ramp_off_and_every_slot_at_normal_speed(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    shots = []
+    for clip, name, start, end in (("clipB.mp4", "clipB/s1", 1.0, 58.0),):
+        shots.append(
+            shotlog_shot(
+                name, clip, "s1", start, end, True, 0.9, "long push", "interest 90 · pan_right",
+                role="move", motion_label="pan_right", peak_s=40.0,
+            )
+        )
+    write_shotlog(workspace, shots)
+    result = run_director("--workspace", workspace, "--out", tmp_path / "edit.json", "--target-duration-s", TARGET, "--json")
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    slot = next(item for item in record["video"] if item["clip"] == "clipB.mp4")
+    assert slot["peak_s"] == 40.0 and slot["peak_source"] == "vision"
+    assert slot["in_s"] <= 40.0 <= slot["out_s"]
+    assert slot["out_s"] - slot["in_s"] > 2.0
+    assert all("middle_speed" not in item for item in record["video"])
+    assert record["meta"]["speed_ramp"] is False
+
+
+def test_speed_ramp_flag_brings_the_ramp_back_on_a_long_move(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws", peak_s=14.0)
+    _, off = run_important_edit(workspace, tmp_path / "off.json")
+    _, on = run_important_edit(workspace, tmp_path / "on.json", "--speed-ramp")
+    assert "middle_speed" not in off["video"][0]
+    assert on["video"][0]["middle_speed"] == 1.2
+    on_length = on["video"][0]["out_s"] - on["video"][0]["in_s"]
+    off_length = off["video"][0]["out_s"] - off["video"][0]["in_s"]
+    assert on_length > off_length
+
+
+def test_changing_the_speed_ramp_rewrites_an_up_to_date_edit(tmp_path):
+    workspace = long_hero_workspace(tmp_path / "ws", peak_s=14.0)
+    out = tmp_path / "edit.json"
+    first = run_director("--workspace", workspace, "--out", out, "--target-duration-s", IMPORTANT_TARGET, "--json")
+    assert json.loads(first.stdout)["status"] == "written"
+    again = run_director("--workspace", workspace, "--out", out, "--target-duration-s", IMPORTANT_TARGET, "--json")
+    assert json.loads(again.stdout)["status"] == "skipped"
+    ramped = run_director(
+        "--workspace", workspace, "--out", out, "--target-duration-s", IMPORTANT_TARGET, "--speed-ramp", "--json"
+    )
+    assert json.loads(ramped.stdout)["status"] == "written"
+    assert json.loads(out.read_text(encoding="utf-8"))["meta"]["speed_ramp"] is True
+
+
+def test_help_lists_speed_ramp():
+    result = run_director("--help")
+    assert result.returncode == 0
+    assert "--speed-ramp" in result.stdout

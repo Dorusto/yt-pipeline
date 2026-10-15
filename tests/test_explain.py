@@ -408,3 +408,26 @@ def test_explain_shows_the_middle_speed_ramp_on_the_slot(tmp_path):
     assert result.returncode == 0, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert "middle at 1.20x" in html
+
+
+def test_explain_says_where_a_centred_cut_is_centred_and_from_what(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    first = edit["video"][0]
+    first.update({"peak_s": 12.4, "peak_source": "vision", "centred": True})
+    write_json(workspace / "edit.json", edit)
+    result = run_tool(workspace, "--force")
+    assert result.returncode == 0, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "centred on the best moment at 12.4 s (from vision)" in html
+
+
+def test_explain_stays_quiet_when_the_cut_was_not_trimmed_around_a_peak(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    edit["video"][0].update({"peak_s": 12.4, "peak_source": "motion", "centred": False})
+    write_json(workspace / "edit.json", edit)
+    result = run_tool(workspace, "--force")
+    assert result.returncode == 0, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "centred on the best moment" not in html
