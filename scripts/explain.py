@@ -207,7 +207,7 @@ def _html_document(workspace_path, edit, plan, shotlog):
     decisions = _sorted_decisions(edit.get("decisions") or [])
     used_by_slot, by_id = _decision_maps(decisions)
     shotlog_by_key = _shotlog_windows(shotlog)
-    sources = _source_paths(edit.get("sources") or [])
+    sources = _source_paths(edit.get("sources") or [], workspace_path)
     used = sum(1 for row in decisions if row.get("status") == "used")
     sections = [
         _brief_section(edit.get("brief") or {}, edit.get("audio") or {}),
@@ -490,12 +490,18 @@ def _shotlog_windows(shotlog):
     return windows
 
 
-def _source_paths(sources):
+def _source_paths(sources, workspace_path=None):
+    """Clip name -> readable path; a recorded path that is gone falls back to ``<workspace>/proxy``."""
+    proxy_dir = Path(workspace_path) / "proxy" if workspace_path is not None else None
     paths = {}
     for source in sources:
         name = source.get("file")
         path = source.get("path")
-        if name and path:
+        if not name:
+            continue
+        if (not path or not Path(path).exists()) and proxy_dir is not None and (proxy_dir / str(name)).is_file():
+            path = str(proxy_dir / str(name))
+        if path:
             paths[str(name)] = str(path)
     return paths
 

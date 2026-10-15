@@ -442,3 +442,12 @@ def test_rule_fallback_is_said_and_the_plan_marked_unused():
     assert "same_take" in html
     assert "not used" in explain._plan_section({"logline": "x"}, used_plan=False)
     assert explain._director_section(None) == ""
+
+
+def test_thumbnails_read_the_workspace_proxy_when_the_recorded_path_is_gone(tmp_path):
+    import explain
+
+    (tmp_path / "proxy").mkdir()
+    (tmp_path / "proxy" / "a.mp4").write_bytes(b"x")
+    paths = explain._source_paths([{"file": "a.mp4", "path": "/gone/a.mp4"}], tmp_path)
+    assert paths["a.mp4"] == str(tmp_path / "proxy" / "a.mp4")
