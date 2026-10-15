@@ -59,7 +59,9 @@ class Context:
         target_duration_s=None,
         order=None,
         no_audio_clean=False,
+        frame_format="16x9",
     ):
+        self.frame_format = frame_format
         self.source = source
         self.workspace = workspace
         self.brief_text = brief_text
@@ -86,7 +88,7 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--music MUSIC] [--feedback TEXT] [--force] [--notify]"
+            " [--music MUSIC] [--format {16x9,9x16,both}] [--feedback TEXT] [--force] [--notify]"
             " [--preview-base PREVIEW_BASE] [--json]"
         ),
         description=(
@@ -154,6 +156,16 @@ def build_parser():
         "--no-audio-clean",
         action="store_true",
         help="keep the raw ambient mix (no wind high-pass, denoise or loudnorm)",
+    )
+    parser.add_argument(
+        "--format",
+        dest="frame_format",
+        choices=["16x9", "9x16", "both"],
+        default="16x9",
+        help=(
+            "16x9 (default), 9x16 (recap_720p_9x16.mp4, 720x1280, a moving crop that follows"
+            " the subject) or both"
+        ),
     )
     parser.add_argument(
         "--feedback",
@@ -315,8 +327,12 @@ def is_up_to_date(name, ctx):
         )
     if name == "render":
         return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
+    if name == "render_vertical":
+        return is_newer(ws / VERTICAL_PREVIEW_NAME, ws / "edit.json")
     if name == "render_final":
         return is_newer(ws / "recap_final.mp4", ws / "edit.json")
+    if name == "render_final_vertical":
+        return is_newer(ws / VERTICAL_FINAL_NAME, ws / "edit.json")
     if name == "export_kdenlive":
         return is_newer(ws / "recap.kdenlive", ws / "edit.json")
     return False
@@ -332,6 +348,8 @@ def station_command(ctx, script, args, force=False, budget=False):
     return command
 
 
+VERTICAL_PREVIEW_NAME = "recap_720p_9x16.mp4"
+VERTICAL_FINAL_NAME = "recap_final_9x16.mp4"
 MUSIC_TOKEN = "@music@"
 DEFAULT_MUSIC_DIR = "~/media/music"
 MUSIC_CHOICE_NAME = "music_choice.json"
@@ -489,18 +507,32 @@ def build_stations(ctx):
                 )
             ],
         },
-        {
-            "name": "render",
-            "argv": [
-                station_command(
-                    ctx,
-                    "render.py",
-                    render_args(ctx, ws / "recap_720p.mp4"),
-                    force=force,
-                )
-            ],
-        },
     ]
+    if ctx.frame_format in ("16x9", "both"):
+        stations.append(
+            {
+                "name": "render",
+                "argv": [
+                    station_command(
+                        ctx, "render.py", render_args(ctx, ws / "recap_720p.mp4"), force=force
+                    )
+                ],
+            }
+        )
+    if ctx.frame_format in ("9x16", "both"):
+        stations.append(
+            {
+                "name": "render_vertical",
+                "argv": [
+                    station_command(
+                        ctx,
+                        "render.py",
+                        render_args(ctx, ws / VERTICAL_PREVIEW_NAME) + ["--format", "9x16"],
+                        force=force,
+                    )
+                ],
+            }
+        )
     if ctx.music == "auto":
         pick_args = [
             "--library",
@@ -536,20 +568,36 @@ def build_stations(ctx):
             },
         )
     if ctx.final:
-        stations.append(
-            {
-                "name": "render_final",
-                "argv": [
-                    station_command(
-                        ctx,
-                        "render.py",
-                        render_args(ctx, ws / "recap_final.mp4")
-                        + ["--originals-dir", str(src)],
-                        force=force,
-                    )
-                ],
-            }
-        )
+        if ctx.frame_format in ("16x9", "both"):
+            stations.append(
+                {
+                    "name": "render_final",
+                    "argv": [
+                        station_command(
+                            ctx,
+                            "render.py",
+                            render_args(ctx, ws / "recap_final.mp4")
+                            + ["--originals-dir", str(src)],
+                            force=force,
+                        )
+                    ],
+                }
+            )
+        if ctx.frame_format in ("9x16", "both"):
+            stations.append(
+                {
+                    "name": "render_final_vertical",
+                    "argv": [
+                        station_command(
+                            ctx,
+                            "render.py",
+                            render_args(ctx, ws / VERTICAL_FINAL_NAME)
+                            + ["--originals-dir", str(src), "--format", "9x16"],
+                            force=force,
+                        )
+                    ],
+                }
+            )
         kdenlive_args = [str(ws / "fragments.yaml")]
         if shutil.which("melt") is None:
             kdenlive_args.append("--skip-melt")
@@ -745,7 +793,7 @@ def run(ctx):
     failed_name = None
     for index, station in enumerate(stations, start=1):
         name = station["name"]
-        rerun = name in ("llm_director", "render") and ctx.feedback
+        rerun = name in ("llm_director", "render", "render_vertical") and ctx.feedback
         if not ctx.force and not rerun and is_up_to_date(name, ctx):
             if name == "music_pick" and not resolve_auto_music(ctx):
                 failed_name = name
@@ -798,7 +846,15 @@ def run(ctx):
     llm_cost_usd = round(sum(entry["llm_cost_usd"] for entry in entries), 8)
     outputs = {
         "preview": str(ctx.workspace / "recap_720p.mp4"),
+        "preview_vertical": (
+            str(ctx.workspace / VERTICAL_PREVIEW_NAME) if ctx.frame_format != "16x9" else None
+        ),
         "final": str(ctx.workspace / "recap_final.mp4") if ctx.final else None,
+        "final_vertical": (
+            str(ctx.workspace / VERTICAL_FINAL_NAME)
+            if ctx.final and ctx.frame_format != "16x9"
+            else None
+        ),
         "kdenlive": str(ctx.workspace / "recap.kdenlive") if ctx.final else None,
     }
     summary = {
@@ -917,6 +973,7 @@ def main(argv=None):
         target_duration_s=args.target_duration_s,
         order=args.order,
         no_audio_clean=args.no_audio_clean,
+        frame_format=args.frame_format,
     )
     summary = run(ctx)
     if args.json:

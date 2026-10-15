@@ -83,6 +83,8 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Phone flow: the web app (`serve.py` Upload) is the primary path — files stream into `~/media/inbox/<folder>/` and `recap.py` starts in the background; Syncthing (phone send-only camera folder → LXC receive-only `~/media/inbox` plus `inbox.py`) is the optional automatic path. Steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14 / 2026-10-15
 - The web Upload endpoint streams into `inbox/<folder>/` (allowlisted extensions, per-file and per-request size caps, atomic `.part` writes, never overwrites, never outside the inbox) and starts `recap.py` in the background; the run is recorded in `<workspace>/.run.json` (`pid`, `source`, `options`) which is what Re-edit and the status badge read. — 2026-10-15
 
+- Vertical 9:16 (D2-11): `render.py`/`recap.py --format 16x9|9x16|both` (default 16x9); a video slot's crop follows that clip's `reframe.py` path (subprocess per clip, cached in `<workspace>/reframe/`, rescaled to the rendered file, centred crop plus a warning when reframe fails); photos keep Ken Burns (landscape photos cropped around the subject position); preview 720x1280, final 1080x1920; both formats have the same duration; `serve.py` serves `recap_720p_9x16.mp4` and `recap_final_9x16.mp4`. — 2026-10-15
+
 ## Photos and music (D2-6)
 
 - Photos are first-class candidates: ingest scans stills next to the videos (JPEG/HEIC, EXIF capture time via Pillow + pillow-heif), describe covers each photo with one frame, similarity dedups bursts, index writes them to the shotlog with `media_type: "photo"`. — 2026-10-14

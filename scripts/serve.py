@@ -8,11 +8,11 @@ Usage:
 ``--workspaces`` is a folder whose direct subfolders are project workspaces. The
 Projects page lists, in descending folder-name order, every direct child
 directory that holds at least one of ``.run.json``, ``recap_720p.mp4``,
-``recap_final.mp4``, ``shotlog.html``, ``explain.html`` or ``edit.json``, with a
+``recap_720p_9x16.mp4``, ``recap_final.mp4``, ``shotlog.html``, ``explain.html`` or ``edit.json``, with a
 running/failed/done status badge. Each project page has the Recap / Why? / Shots
 tabs (recap player, ``explain.html``, ``shotlog.html``) and a Re-edit form;
 ``/upload`` takes clips and photos from a phone browser into the inbox and
-starts ``recap.py`` in the background. Only the four finished artifacts are ever
+starts ``recap.py`` in the background. Only the finished artifacts (both recap formats, final, explain, shots) are ever
 served; proxies, ``edit.json``, ``.run.json``, ``source/`` symlinks and every
 other file stay private. The address is a single host, never the wildcard, so
 the server is reachable over the tailnet only. The tool writes inside a
@@ -56,21 +56,37 @@ AMBIENT_CHOICES = {"auto", "6", "8", "12", "16", "20"}
 DETECTED_ARTIFACTS = (
     ".run.json",
     "recap_720p.mp4",
+    "recap_720p_9x16.mp4",
     "recap_final.mp4",
+    "recap_final_9x16.mp4",
     "shotlog.html",
     "explain.html",
     "edit.json",
 )
-SERVED_FILES = ("recap_720p.mp4", "recap_final.mp4", "shotlog.html", "explain.html")
+VERTICAL_PREVIEW = "recap_720p_9x16.mp4"
+VERTICAL_FINAL = "recap_final_9x16.mp4"
+FORMAT_CHOICES = {"auto": None, "16x9": "16x9", "9x16": "9x16", "both": "both"}
+SERVED_FILES = (
+    "recap_720p.mp4",
+    VERTICAL_PREVIEW,
+    "recap_final.mp4",
+    VERTICAL_FINAL,
+    "shotlog.html",
+    "explain.html",
+)
 CONTENT_TYPES = {
     "recap_720p.mp4": "video/mp4",
+    VERTICAL_PREVIEW: "video/mp4",
     "recap_final.mp4": "video/mp4",
+    VERTICAL_FINAL: "video/mp4",
     "shotlog.html": "text/html; charset=utf-8",
     "explain.html": "text/html; charset=utf-8",
 }
 ARTIFACT_LABELS = (
     ("recap_720p.mp4", "recap"),
+    (VERTICAL_PREVIEW, "vertical"),
     ("recap_final.mp4", "final"),
+    (VERTICAL_FINAL, "final vertical"),
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
@@ -214,7 +230,7 @@ def project_status(directory):
 
         if psutil.pid_exists(pid):
             return "running"
-        if not (directory / "recap_720p.mp4").is_file():
+        if not (directory / "recap_720p.mp4").is_file() and not (directory / VERTICAL_PREVIEW).is_file():
             return "failed"
     return "done"
 
@@ -289,6 +305,7 @@ border-radius:var(--radius-l);width:fit-content;max-width:100%}
 border-radius:10px;color:var(--haze);text-decoration:none}
 .tabs a.active{background:var(--stone);color:var(--water)}
 video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-l)}
+video.vertical{aspect-ratio:9/16;max-width:360px;margin-top:14px}
 .strip{margin:14px 0 4px}
 .strip-track{display:flex;gap:3px;height:56px}
 .strip-track button{flex:var(--w) 1 0;min-width:10px;border:0;border-radius:var(--radius-s);
@@ -463,13 +480,19 @@ def render_strip(summary):
 def render_recap_panel(directory):
     """Return the Recap tab panel: the player with the edit strip, or a placeholder line."""
     parts = []
-    if (Path(directory) / "recap_720p.mp4").is_file():
+    has_wide = (Path(directory) / "recap_720p.mp4").is_file()
+    has_vertical = (Path(directory) / VERTICAL_PREVIEW).is_file()
+    if has_wide:
         parts.append('<video controls preload="metadata" src="recap_720p.mp4"></video>')
+    if has_vertical:
+        parts.append(f'<video class="vertical" controls preload="metadata" src="{VERTICAL_PREVIEW}"></video>')
+    if has_wide or has_vertical:
         parts.append(render_strip(edit_summary(directory)))
     else:
         parts.append('<p class="empty">No recap yet. It appears here when the render finishes.</p>')
-    if (Path(directory) / "recap_final.mp4").is_file():
-        parts.append('<a class="download" href="recap_final.mp4">Download the full-quality recap_final.mp4</a>')
+    for final_name in ("recap_final.mp4", VERTICAL_FINAL):
+        if (Path(directory) / final_name).is_file():
+            parts.append(f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>')
     return "\n".join(parts)
 
 
@@ -555,6 +578,14 @@ def option_fields(music_tracks):
         (
             "Clean the sound",
             render_select("audio_clean", [("auto", "Auto"), ("yes", "yes"), ("no", "no")], default="auto"),
+        ),
+        (
+            "Format",
+            render_select(
+                "format",
+                [("auto", "Auto (16:9)"), ("16x9", "16:9"), ("9x16", "9:16"), ("both", "both")],
+                default="auto",
+            ),
         ),
         ("Music", render_select("music", music_options, default="auto")),
         (
@@ -923,6 +954,9 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
         command += ["--order", order]
     if (fields.get("audio_clean") or "auto") == "no":
         command.append("--no-audio-clean")
+    frame_format = FORMAT_CHOICES.get(fields.get("format") or "auto")
+    if frame_format:
+        command += ["--format", frame_format]
     music = fields.get("music") or "auto"
     if music == "auto":
         command += ["--music", "auto"]
@@ -1264,6 +1298,9 @@ def build_summary(root, bind, port, projects, status, started, music_dir=DEFAULT
                 "status": project_status(directory),
                 "preview": f"{base}/{name}/recap_720p.mp4"
                 if "recap_720p.mp4" in artifacts
+                else None,
+                "vertical": f"{base}/{name}/{VERTICAL_PREVIEW}"
+                if VERTICAL_PREVIEW in artifacts
                 else None,
                 "final": f"{base}/{name}/recap_final.mp4"
                 if "recap_final.mp4" in artifacts

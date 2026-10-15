@@ -1036,3 +1036,164 @@ def test_slot_with_middle_speed_builds_three_trims_and_atempo(tmp_path):
     assert "atempo=1.2" in graph
     assert graph.count("concat=n=3") == 2
     assert render.slot_duration(slot) == pytest.approx(0.25 * 4 + 0.5 * 4 / 1.2 + 0.25 * 4)
+
+
+def make_moving_square_clip(path, duration=3.0, size="640x360"):
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", f"color=c=0x303030:size={size}:rate=25:duration={duration}",
+            "-f", "lavfi", "-i", f"color=c=red:size=60x60:rate=25:duration={duration}",
+            "-f", "lavfi", "-i", f"sine=f=330:duration={duration}",
+            "-filter_complex", "[0:v][1:v]overlay=x='30+150*t':y=150[v]",
+            "-map", "[v]", "-map", "2:a",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def write_following_path(cache, clip, duration=3.0, size=(640, 360)):
+    crop_w, crop_h = 202, 360
+    points = []
+    for index in range(int(duration * 4) + 1):
+        t_s = index / 4
+        centre = 60 + 150 * t_s
+        x = int(min(size[0] - crop_w, max(0, round(centre - crop_w / 2))))
+        points.append({"t_s": t_s, "x": x, "y": 0, "source": "track", "confidence": 0.9})
+    record = {
+        "file": clip.name, "path": str(clip), "width": size[0], "height": size[1],
+        "crop_w": crop_w, "crop_h": crop_h, "points": points,
+    }
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(record), encoding="utf-8")
+
+
+def red_centre_x(frame_png):
+    array = frame_array(frame_png)
+    mask = (array[:, :, 0] > 180) & (array[:, :, 1] < 80) & (array[:, :, 2] < 80)
+    columns = np.where(mask.any(axis=0))[0]
+    return None if columns.size == 0 else float(columns.mean())
+
+
+def test_vertical_render_is_720x1280_and_follows_the_subject(tmp_path, capsys):
+    clip = tmp_path / "mover.mp4"
+    make_moving_square_clip(clip)
+    edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
+    write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip)
+    out = tmp_path / "recap_720p_9x16.mp4"
+    code = render.main(["--edit", str(edit), "--out", str(out), "--format", "9x16", "--no-audio-clean", "--json"])
+    assert code == 0, capsys.readouterr().err
+    summary = json.loads(capsys.readouterr().out)
+    assert (summary["width"], summary["height"]) == (720, 1280)
+    assert summary["format"] == "9x16"
+    assert video_size(out) == (720, 1280)
+    assert abs(float(probe(out)["format"]["duration"]) - 3.0) <= 0.1
+    for moment in (0.3, 1.5, 2.7):
+        x = red_centre_x(extract_frame(out, moment, tmp_path / f"f{moment}.png"))
+        assert x is not None, f"subject lost at {moment}s"
+        assert abs(x - 360) < 130, f"subject off centre at {moment}s: {x}"
+
+
+def test_vertical_render_with_a_middle_speed_ramp_keeps_the_crop(tmp_path, capsys):
+    clip = tmp_path / "mover.mp4"
+    make_moving_square_clip(clip, duration=4.0)
+    edit = make_ramp_edit(tmp_path, clip, 0.0, 4.0, 1.2)
+    write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip, duration=4.0)
+    out = tmp_path / "ramp_9x16.mp4"
+    code = render.main(["--edit", str(edit), "--out", str(out), "--format", "9x16", "--no-audio-clean", "--json"])
+    assert code == 0, capsys.readouterr().err
+    expected = 0.25 * 4 + 0.5 * 4 / 1.2 + 0.25 * 4
+    assert abs(float(probe(out)["format"]["duration"]) - expected) <= 0.1
+    assert video_size(out) == (720, 1280)
+
+
+def test_reframe_is_called_once_per_clip_and_cached(tmp_path):
+    clip = tmp_path / "mover.mp4"
+    make_moving_square_clip(clip)
+    calls = []
+
+    def runner(command):
+        calls.append(command)
+        write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip)
+        return None
+
+    edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
+    for _ in range(2):
+        summary = render.render(
+            edit, tmp_path / "v.mp4", None, None, None, None, 0.3, True,
+            audio_clean=False, frame_format="9x16", reframe_runner=runner,
+        )
+    assert summary["status"] == "written"
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[1].endswith("reframe.py")
+    assert command[command.index("--video") + 1] == str(clip)
+    assert command[command.index("--out") + 1] == str(tmp_path / "reframe" / "mover_reframe.json")
+    assert "--json" in command
+
+
+def test_reframe_failure_falls_back_to_a_centred_crop_with_a_warning(tmp_path):
+    clip = tmp_path / "mover.mp4"
+    make_moving_square_clip(clip)
+    edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
+    summary = render.render(
+        edit, tmp_path / "v.mp4", None, None, None, None, 0.3, True,
+        audio_clean=False, frame_format="9x16", reframe_runner=lambda command: "model download failed",
+    )
+    assert video_size(tmp_path / "v.mp4") == (720, 1280)
+    assert any("reframe failed for mover.mp4" in warning for warning in summary["warnings"])
+
+
+def test_format_both_writes_the_16x9_and_the_vertical_file(tmp_path, capsys):
+    clip = tmp_path / "mover.mp4"
+    make_moving_square_clip(clip)
+    edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
+    write_following_path(tmp_path / "reframe" / "mover_reframe.json", clip)
+    out = tmp_path / "recap_720p.mp4"
+    code = render.main(["--edit", str(edit), "--out", str(out), "--format", "both", "--no-audio-clean", "--json"])
+    assert code == 0, capsys.readouterr().err
+    summary = json.loads(capsys.readouterr().out)
+    vertical_out = tmp_path / "recap_720p_9x16.mp4"
+    assert video_size(out) == (1280, 720)
+    assert video_size(vertical_out) == (720, 1280)
+    assert summary["vertical"]["out"] == str(vertical_out)
+    assert abs(float(probe(out)["format"]["duration"]) - float(probe(vertical_out)["format"]["duration"])) <= 0.05
+
+
+def test_default_format_is_16x9_and_unchanged(tmp_path, capsys):
+    clip = tmp_path / "mover.mp4"
+    make_moving_square_clip(clip)
+    edit = make_ramp_edit(tmp_path, clip, 0.0, 3.0, None)
+    out = tmp_path / "wide.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--no-audio-clean", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["format"] == "16x9"
+    assert video_size(out) == (1280, 720)
+    assert not (tmp_path / "reframe").exists()
+
+
+def test_landscape_photo_in_a_vertical_frame_is_cropped_toward_the_subject(tmp_path, capsys):
+    photo = tmp_path / "wide.jpg"
+    array = np.zeros((360, 640, 3), dtype="uint8")
+    array[:, :] = (40, 40, 40)
+    array[150:210, 520:580] = (255, 0, 0)
+    Image.fromarray(array, "RGB").save(photo)
+    slot = photo_slot("p0", photo.name, duration_s=3.0)
+    slot["ken_burns"] = {"move": "zoom_in", "amount": 0.05, "focus_x": 0.86, "focus_y": 0.5}
+    edit = make_photo_edit(tmp_path, [slot], [photo_source(photo)])
+    out = tmp_path / "photo_9x16.mp4"
+    assert render.main(["--edit", str(edit), "--out", str(out), "--format", "9x16", "--json"]) == 0
+    capsys.readouterr()
+    assert video_size(out) == (720, 1280)
+    x = red_centre_x(extract_frame(out, 0.5, tmp_path / "p.png"))
+    assert x is not None and abs(x - 360) < 160
+
+
+def test_help_lists_the_format_flag(capsys):
+    with pytest.raises(SystemExit):
+        render.main(["--help"])
+    output = capsys.readouterr().out
+    assert "--format" in output and "9x16" in output

@@ -793,3 +793,63 @@ def test_edit_summary_uses_the_ramped_on_screen_length(tmp_path):
     assert summary["blocks"][0]["end"] == pytest.approx(ramped)
     assert summary["blocks"][1]["start"] == pytest.approx(ramped)
     assert summary["total"] == pytest.approx(ramped + 2.0)
+
+
+def test_vertical_recap_is_served_and_shown_on_the_recap_tab(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "recap_720p_9x16.mp4").write_bytes(bytes(range(50)))
+    (project / "recap_final_9x16.mp4").write_bytes(bytes(range(20)))
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/2026-10-14/recap_720p_9x16.mp4")
+        assert status == 200 and headers["Content-Type"] == "video/mp4"
+        assert body == bytes(range(50))
+        status, _, body = request(server, "GET", "/2026-10-14/recap_final_9x16.mp4")
+        assert status == 200 and body == bytes(range(20))
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        page = body.decode("utf-8")
+        assert 'src="recap_720p_9x16.mp4"' in page and 'class="vertical"' in page
+        assert 'src="recap_720p.mp4"' in page
+        status, _, _ = request(server, "GET", "/2026-10-14/edit.json")
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_vertical_only_project_shows_the_player_and_is_not_failed(tmp_path):
+    root = tmp_path / "projects"
+    project = root / "vert"
+    project.mkdir(parents=True)
+    (project / "recap_720p_9x16.mp4").write_bytes(b"x")
+    (project / ".run.json").write_text(json.dumps({"pid": 2 ** 22 + 12345}), encoding="utf-8")
+    assert serve.project_status(project) == "done"
+    assert 'src="recap_720p_9x16.mp4"' in serve.render_recap_panel(project)
+    assert serve.existing_artifacts(project) == ["recap_720p_9x16.mp4"]
+
+
+def test_upload_and_reedit_forms_have_the_format_select(tmp_path):
+    page = serve.render_upload([])
+    assert '<select name="format">' in page
+    assert "Auto (16:9)" in page and ">9:16<" in page and ">both<" in page
+    assert '<select name="format">' in serve.render_reedit("2026-10-14", [])
+
+
+@pytest.mark.parametrize(
+    "value,expected", [("9x16", "9x16"), ("both", "both"), ("16x9", "16x9"), ("auto", None), (None, None), ("junk", None)]
+)
+def test_format_field_becomes_the_recap_argv(tmp_path, value, expected):
+    fields = {} if value is None else {"format": value}
+    command = serve.build_recap_command("python", tmp_path / "in", tmp_path / "ws", "brief", fields, tmp_path / "music")
+    if expected is None:
+        assert "--format" not in command
+    else:
+        assert command[command.index("--format") + 1] == expected
+
+
+def test_check_summary_lists_the_vertical_preview(tmp_path):
+    root = make_root(tmp_path)
+    (root / "2026-10-14" / "recap_720p_9x16.mp4").write_bytes(b"x")
+    summary = serve.build_summary(root, "127.0.0.1", 8080, ["2026-10-14"], "ok", 0.0)
+    assert summary["projects"][0]["vertical"].endswith("/2026-10-14/recap_720p_9x16.mp4")

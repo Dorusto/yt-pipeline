@@ -609,3 +609,69 @@ def test_resolve_argv_substitutes_inside_nested_commands(tmp_path):
     nested = [["python", "render.py", "--music", recap.MUSIC_TOKEN]]
     resolved = recap.resolve_argv(nested, ctx)
     assert resolved == [["python", "render.py", "--music", str(track)]]
+
+
+def stations_of(ctx):
+    return {station["name"]: station["argv"] for station in recap.build_stations(ctx)}
+
+
+def test_default_format_has_no_vertical_station(tmp_path):
+    ctx = make_context(tmp_path, final=True)
+    names = list(stations_of(ctx))
+    assert "render_vertical" not in names and "render_final_vertical" not in names
+    assert all("--format" not in command for command in stations_of(ctx)["render"])
+
+
+def test_format_both_adds_the_vertical_render_after_the_wide_one(tmp_path):
+    ctx = make_context(tmp_path)
+    ctx.frame_format = "both"
+    stations = stations_of(ctx)
+    names = list(stations)
+    assert names.index("render_vertical") == names.index("render") + 1
+    command = stations["render_vertical"][0]
+    assert command[command.index("--out") + 1] == str(ctx.workspace / "recap_720p_9x16.mp4")
+    assert command[command.index("--format") + 1] == "9x16"
+    assert "--format" not in stations["render"][0]
+
+
+def test_format_9x16_replaces_the_wide_render(tmp_path):
+    ctx = make_context(tmp_path, final=True)
+    ctx.frame_format = "9x16"
+    names = list(stations_of(ctx))
+    assert "render" not in names and "render_final" not in names
+    assert "render_vertical" in names and "render_final_vertical" in names
+    final = stations_of(ctx)["render_final_vertical"][0]
+    assert final[final.index("--out") + 1] == str(ctx.workspace / "recap_final_9x16.mp4")
+    assert "--originals-dir" in final and final[final.index("--format") + 1] == "9x16"
+
+
+def test_vertical_station_skip_rule_follows_its_own_file(tmp_path):
+    ctx = make_context(tmp_path)
+    ctx.frame_format = "both"
+    edit = ctx.workspace / "edit.json"
+    edit.write_text("{}", encoding="utf-8")
+    assert recap.is_up_to_date("render_vertical", ctx) is False
+    out = ctx.workspace / "recap_720p_9x16.mp4"
+    out.write_bytes(b"x")
+    os.utime(out, (edit.stat().st_mtime + 5, edit.stat().st_mtime + 5))
+    assert recap.is_up_to_date("render_vertical", ctx) is True
+
+
+def test_format_flag_reaches_the_context_and_the_outputs(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--format", "both", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert recorder.calls[-2:] == ["render", "render_vertical"]
+    assert summary["outputs"]["preview_vertical"] == str(workspace / "recap_720p_9x16.mp4")
+
+
+def test_feedback_reruns_the_vertical_render_too(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--format", "both", "--feedback", "drop 0071/s2", "--json"]) == 0
+    assert "render_vertical" in recorder.calls

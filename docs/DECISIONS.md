@@ -1771,3 +1771,15 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Golden changes (intentional):** `hero_present` hero hold `26.5-30.0` becomes `27.5-30.0` (static hero clamped from 3.5 s to `slot_max` 2.5 s); `phrase_move_strong` clipA `8.75-10.75` becomes `6.932-10.75` (the move is the one exception: 3.5 s on screen, middle at 1.2x). Director tests that measured source length now measure on-screen length.
 
 **Consequence / open point:** an ordinary move only gains the ~9 % of source the ramp buys inside its pacing length; letting every move grow to `slot_max` would keep more of each move but lengthen a 90 s edit by about a fifth. Doru can change that budget in one line (`apply_move_policy`).
+
+---
+
+## [2026-10-15] Vertical 9:16 recap from the same edit (D2-11 part 2)
+
+**Context:** Doru wants a Shorts/Reels version of a recap without a second edit.
+
+**Options:** (A) a second edit for vertical; (B) the same `edit.json`, each slot cropped with a moving window from `reframe.py`; (C) a fixed centre crop.
+
+**Decision:** B. `render.py --format 16x9|9x16|both` and `recap.py --format` (stations `render_vertical`, `render_final_vertical`). `reframe.py` runs as a subprocess once per source clip (on its proxy, path rescaled to the rendered file) and is cached under `<workspace>/reframe/`; the `crop` filter runs on source time before the trim so a `middle_speed` ramp keeps the window on the subject. A failed reframe gives a centred crop and a warning, never a failed render. Photos keep Ken Burns; a landscape photo is cropped to 9:16 around `ken_burns.focus_x`. 720x1280 preview, 1080x1920 final. The web app has a Format select (Auto = 16:9) and shows/serves the vertical files. Same duration as the 16:9 render by construction (same edit, same slot lengths).
+
+**Consequence:** the crop is only as good as reframe's subject tracking; a vertical recap costs one extra render plus one reframe pass per clip (cached).

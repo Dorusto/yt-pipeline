@@ -40,6 +40,7 @@ from common.ambience import (
 from common.ffmpeg_tools import ffmpeg_path
 from common.moves import middle_speed_of, slot_screen_length
 from common.photos import ensure_jpeg, open_photo
+from common import vertical
 from common.schema import SchemaError, validate_or_raise
 
 FPS = 25
@@ -67,6 +68,8 @@ def build_parser():
             "  python scripts/render.py --edit edit.json --out recap_720p.mp4\n"
             "  python scripts/render.py --edit edit.json --out final.mp4"
             " --originals-dir ~/media/yt-test/raw\n"
+            "  python scripts/render.py --edit edit.json --out recap_720p_9x16.mp4 --format 9x16\n"
+            "  python scripts/render.py --edit edit.json --out recap_720p.mp4 --format both\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -91,6 +94,18 @@ def build_parser():
         type=int,
         default=None,
         help="output height (default: native of the first source, else 720)",
+    )
+    parser.add_argument(
+        "--format",
+        dest="frame_format",
+        choices=list(vertical.FORMATS),
+        default="16x9",
+        help=(
+            "16x9 (default), 9x16 or both. 9x16 follows each clip's reframe crop path "
+            "(reframe.py, cached under <workspace>/reframe/) into 720x1280 (1080x1920 with"
+            " --originals-dir); photos use their Ken Burns subject position. With both, --out"
+            " is the 16:9 file and the vertical one is written next to it as <name>_9x16.mp4"
+        ),
     )
     parser.add_argument(
         "--xfade-s",
@@ -422,19 +437,8 @@ def build_music_chain(music_index, ambient_label, edit_duration, music_duration,
     return parts, "amixed"
 
 
-def photo_filters(index, slot, duration, width, height, photo_size):
-    """The filter chain for one photo slot: frame, Ken Burns move, output label.
-
-    A photo whose aspect differs from the frame (or that is portrait) sits on a
-    blurred cover-scaled copy of itself, never on black bars. The Ken Burns move
-    runs with ``zoompan`` over the composed frame for exactly ``duration``.
-    """
-    burns = slot.get("ken_burns") or {}
-    move = burns.get("move", "zoom_in")
-    amount = float(burns.get("amount", 0.08))
-    focus_x = float(burns.get("focus_x", 0.5))
-    focus_y = float(burns.get("focus_y", 0.5))
-    frames = max(1, math.ceil(duration * FPS))
+def zoompan_for(move, amount, focus_x, focus_y, frames, width, height):
+    """The ``zoompan`` filter of one Ken Burns move over ``frames`` frames."""
     span = max(1, frames - 1)
     progress = f"on/{span}"
     if move == "zoom_out":
@@ -455,14 +459,38 @@ def photo_filters(index, slot, duration, width, height, photo_size):
         centre_y = fmt(focus_y)
     x_expr = f"clip(({centre_x})*iw-iw/(2*zoom),0,iw-iw/zoom)"
     y_expr = f"clip(({centre_y})*ih-ih/(2*zoom),0,ih-ih/zoom)"
-    zoompan = (
+    return (
         f"zoompan=z='{zoom}':x='{x_expr}':y='{y_expr}':"
         f"d={frames}:s={width}x{height}:fps={FPS}"
     )
+
+
+def photo_filters(index, slot, duration, width, height, photo_size):
+    """The filter chain for one photo slot: frame, Ken Burns move, output label.
+
+    A photo whose aspect differs from the frame (or that is portrait) sits on a
+    blurred cover-scaled copy of itself, never on black bars. The Ken Burns move
+    runs with ``zoompan`` over the composed frame for exactly ``duration``.
+    """
+    burns = slot.get("ken_burns") or {}
+    move = burns.get("move", "zoom_in")
+    amount = float(burns.get("amount", 0.08))
+    focus_x = float(burns.get("focus_x", 0.5))
+    focus_y = float(burns.get("focus_y", 0.5))
+    frames = max(1, math.ceil(duration * FPS))
+    zoompan = zoompan_for(move, amount, focus_x, focus_y, frames, width, height)
     photo_width, photo_height = photo_size
     frame_aspect = width / height
     photo_aspect = photo_width / photo_height
-    if photo_height > photo_width or abs(photo_aspect - frame_aspect) > 0.01:
+    precrop = ""
+    if height > width and photo_aspect > frame_aspect + 0.01:
+        window_w = max(2, int(photo_height * frame_aspect) // 2 * 2)
+        left = int(min(photo_width - window_w, max(0, focus_x * photo_width - window_w / 2)))
+        precrop = f"crop={window_w}:{photo_height}:{left}:0,"
+        focus_x = (focus_x * photo_width - left) / window_w
+        photo_width, photo_aspect = window_w, frame_aspect
+        zoompan = zoompan_for(move, amount, focus_x, focus_y, frames, width, height)
+    if not precrop and (photo_height > photo_width or abs(photo_aspect - frame_aspect) > 0.01):
         return [
             f"[{index}:v]split=2[pbg{index}][pfg{index}]",
             f"[pbg{index}]scale={width}:{height}:force_original_aspect_ratio=increase,"
@@ -471,7 +499,7 @@ def photo_filters(index, slot, duration, width, height, photo_size):
             f"[pbgb{index}][pfgs{index}]overlay=(W-w)/2:(H-h)/2,setsar=1,{zoompan}[v{index}]",
         ]
     return [
-        f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"[{index}:v]{precrop}scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},setsar=1,{zoompan}[v{index}]"
     ]
 
@@ -484,11 +512,16 @@ def ramp_quarters(slot):
     return in_s, in_s + length / 4, in_s + 3 * length / 4, out_s
 
 
-def ramp_video_filters(index, slot, speed, width, height):
-    """Three trims joined: head quarter and tail quarter in real time, middle half at ``speed``."""
+def ramp_video_filters(index, slot, speed, width, height, crop=None):
+    """Three trims joined: head quarter and tail quarter in real time, middle half at ``speed``.
+
+    ``crop`` is an optional ``crop`` filter applied to the source before it is split.
+    """
     start, first, second, end = ramp_quarters(slot)
-    return [
-        f"[{index}:v]split=3[rh{index}][rm{index}][rt{index}]",
+    head = [f"[{index}:v]{crop}[rc{index}]"] if crop else []
+    source = f"rc{index}" if crop else f"{index}:v"
+    return head + [
+        f"[{source}]split=3[rh{index}][rm{index}][rt{index}]",
         f"[rh{index}]trim=start={fmt(start)}:end={fmt(first)},setpts=PTS-STARTPTS,fps={FPS}[rhs{index}]",
         f"[rm{index}]trim=start={fmt(first)}:end={fmt(second)},setpts=(PTS-STARTPTS)/{fmt(speed)},"
         f"fps={FPS}[rms{index}]",
@@ -514,15 +547,18 @@ def ramp_audio_filters(index, slot, speed):
     ]
 
 
-def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings, clean_chain=None, photo_sizes=None):
+def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings, clean_chain=None, photo_sizes=None, crops=None):
     """Build the ``filter_complex`` graph and return it with the final labels.
 
     ``clean_chain`` is the ambient cleanup filter list (wind high-pass, RNNoise
     or afftdn, loudnorm); it runs on the mixed ambient bus before the output.
     ``photo_sizes`` holds the oriented ``(width, height)`` of each photo slot.
+    ``crops`` holds, per slot, the moving ``crop`` filter of the vertical render
+    (None for a photo or a 16:9 render); it runs on the source before the trim.
     """
     parts = []
     sizes = photo_sizes or [None] * len(slots)
+    crops = crops or [None] * len(slots)
     for index, slot in enumerate(slots):
         is_photo = slot.get("kind") == "photo"
         if is_photo:
@@ -532,10 +568,11 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
             end = fmt(slot["out_s"])
             ramp = middle_speed_of(slot)
             if ramp > 1.0:
-                parts.extend(ramp_video_filters(index, slot, ramp, width, height))
+                parts.extend(ramp_video_filters(index, slot, ramp, width, height, crops[index]))
             else:
+                crop_prefix = f"{crops[index]}," if crops[index] else ""
                 parts.append(
-                    f"[{index}:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
+                    f"[{index}:v]{crop_prefix}trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
                     f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                     f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{index}]"
                 )
@@ -588,6 +625,61 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
     return ";".join(parts), current_v, current_a
 
 
+def run_reframe(command):
+    """Run ``reframe.py``; return an error text, or None when it succeeded."""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+    except OSError as exc:
+        return f"could not run reframe.py: {exc}"
+    if result.returncode != 0:
+        lines = (result.stderr or "").strip().splitlines()
+        return lines[-1] if lines else "reframe.py failed"
+    return None
+
+
+def crop_cache_is_fresh(cache, video):
+    return cache.is_file() and cache.stat().st_mtime >= Path(video).stat().st_mtime
+
+
+def slot_crop_filters(slots, clip_paths, sources, media_dir, workspace, warnings, reframe_runner=None):
+    """The moving ``crop`` filter of every video slot for the vertical render.
+
+    Each source clip is analysed once with ``reframe.py`` (on its proxy when one
+    exists) and the crop path is cached under ``<workspace>/reframe/``; the path
+    is rescaled to the file that is rendered. A clip whose analysis fails gets a
+    centred crop and a warning.
+    """
+    runner = reframe_runner or run_reframe
+    cache_dir = Path(workspace) / "reframe"
+    script = Path(__file__).resolve().parent / "reframe.py"
+    paths_by_clip = {}
+    sizes = {}
+    filters = []
+    for slot, clip_path in zip(slots, clip_paths):
+        if slot.get("kind") == "photo":
+            filters.append(None)
+            continue
+        key = (slot["clip"], str(clip_path))
+        if key not in paths_by_clip:
+            native = sizes.get(clip_path)
+            if native is None:
+                native = sizes[clip_path] = probe_native_size(clip_path)
+            analysed, _ = resolve_clip(slot["clip"], sources, media_dir, None)
+            analysed = analysed or clip_path
+            cache = cache_dir / vertical.cached_path_name(analysed)
+            if not crop_cache_is_fresh(cache, analysed):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                error = runner(vertical.reframe_command(sys.executable, script, analysed, cache))
+                if error:
+                    warnings.append(f"reframe failed for {slot['clip']}, centred crop used: {error}")
+            path = vertical.load_crop_path(cache, native[0], native[1])
+            if path is None:
+                path = vertical.centred_path(native[0], native[1])
+            paths_by_clip[key] = path
+        filters.append(vertical.crop_filter(paths_by_clip[key], float(slot["in_s"]), float(slot["out_s"])))
+    return filters
+
+
 def collect_warnings(document, ambience):
     warnings = []
     audio = document.get("audio") or {}
@@ -619,8 +711,13 @@ def render(
     music=None,
     music_gain_db=None,
     ambient_under_music_db=None,
+    frame_format="16x9",
+    reframe_runner=None,
 ):
-    """Render ``edit_path`` to ``out_path`` and return the run summary."""
+    """Render ``edit_path`` to ``out_path`` and return the run summary.
+
+    ``frame_format`` is ``16x9`` or ``9x16`` (``both`` is handled by :func:`main`).
+    """
     started = time.monotonic()
     edit_path = Path(edit_path).expanduser()
     out_path = Path(out_path).expanduser()
@@ -697,6 +794,15 @@ def render(
         "denoiser": clean_denoiser,
         "filters": list(clean_applied),
     }
+    is_vertical = frame_format == "9x16"
+    if is_vertical:
+        default_frame = (
+            vertical.VERTICAL_FINAL_FRAME if originals_dir is not None else vertical.VERTICAL_PREVIEW_FRAME
+        )
+        if width is None:
+            width = default_frame[0]
+        if height is None:
+            height = default_frame[1]
     source = "originals" if originals_dir is not None else "sources"
     originals_label = (
         str(Path(originals_dir).expanduser()) if originals_dir is not None else None
@@ -716,6 +822,7 @@ def render(
                 "slots": len(slots),
                 "width": size[0] if size else width,
                 "height": size[1] if size else height,
+                "format": frame_format,
                 "warnings": warnings,
                 "originals_dir": originals_label,
                 "source": source,
@@ -776,9 +883,14 @@ def render(
     else:
         has_audio = [False] * len(slots)
 
+    crops = None
+    if is_vertical:
+        crops = slot_crop_filters(
+            slots, clip_paths, sources, media_dir, edit_path.parent, warnings, reframe_runner
+        )
     filter_complex, final_v, final_a = build_filter_graph(
         slots, durations, has_audio, ambience_enabled, width, height, xfade_s, warnings,
-        clean_chain=clean_chain, photo_sizes=photo_sizes,
+        clean_chain=clean_chain, photo_sizes=photo_sizes, crops=crops,
     )
     if music_config is not None:
         music_parts, final_a = build_music_chain(
@@ -846,6 +958,7 @@ def render(
         "slots": len(slots),
         "width": width,
         "height": height,
+        "format": frame_format,
         "warnings": warnings,
         "originals_dir": originals_label,
         "source": source,
@@ -859,24 +972,37 @@ def render(
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary = render(
-            args.edit,
-            args.out,
-            args.media_dir,
-            args.originals_dir,
-            args.width,
-            args.height,
-            args.xfade_s,
-            args.force,
-            audio_clean=not args.no_audio_clean,
-            denoiser=args.denoiser,
-            model=args.model,
-            target_lufs=args.target_lufs,
-            wind_hz=args.wind_hz,
-            music=args.music,
-            music_gain_db=args.music_gain_db,
-            ambient_under_music_db=args.ambient_under_music_db,
-        )
+        summaries = []
+        for frame_format in vertical.formats_to_render(args.frame_format):
+            out = args.out
+            width, height = args.width, args.height
+            if frame_format == "9x16" and args.frame_format == "both":
+                out = vertical.vertical_out_path(args.out)
+                width, height = None, None
+            summaries.append(
+                render(
+                    args.edit,
+                    out,
+                    args.media_dir,
+                    args.originals_dir,
+                    width,
+                    height,
+                    args.xfade_s,
+                    args.force,
+                    audio_clean=not args.no_audio_clean,
+                    denoiser=args.denoiser,
+                    model=args.model,
+                    target_lufs=args.target_lufs,
+                    wind_hz=args.wind_hz,
+                    music=args.music,
+                    music_gain_db=args.music_gain_db,
+                    ambient_under_music_db=args.ambient_under_music_db,
+                    frame_format=frame_format,
+                )
+            )
+        summary = dict(summaries[0])
+        if len(summaries) > 1:
+            summary["vertical"] = summaries[1]
     except (RenderError, SchemaError, AmbienceError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
@@ -902,6 +1028,10 @@ def main(argv=None):
             )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
+        for extra in summaries[1:]:
+            print(f"vertical: {extra['out']} {extra['width']}x{extra['height']} {extra['duration_s']}s")
+            for warning in extra["warnings"]:
+                print(f"warning: {warning}")
     return 0
 
 
