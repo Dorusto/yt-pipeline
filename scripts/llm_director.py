@@ -1659,6 +1659,18 @@ def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_
     return summary
 
 
+def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False):
+    """Length policy, then grow back to the brief length, then police the added slots."""
+    beat_snap = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
+    fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [])
+    for note in fill_notes:
+        if note not in warnings:
+            warnings.append(note)
+    if fill_notes:
+        beat_snap = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
+    return beat_snap
+
+
 def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings, caps=None):
     """Snap a record's cuts to the grid; a cut that starts a new plan beat snaps to a downbeat."""
     slots = record.get("video") or []
@@ -2711,7 +2723,7 @@ def _run_loop(
             for note in repair_draft(record, plan, facts, shotlog, leftover, effective_important_max_s):
                 if note not in warnings:
                     warnings.append(note)
-        beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
+        beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
             write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings))
@@ -2746,7 +2758,7 @@ def _run_loop(
 
     if not violations and record.get("video"):
         warnings.append("reviewer did not approve; keeping the last valid draft")
-        beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
+        beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
             write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings))
