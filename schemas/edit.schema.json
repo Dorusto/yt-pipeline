@@ -95,6 +95,13 @@
           "default": 1.0,
           "description": "playback rate of the slot; 1.0 is real time"
         },
+        "middle_speed": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 1.25,
+          "default": 1.0,
+          "description": "speed ramp of a camera-move slot: the middle half of the source window (in_s..out_s) plays at this rate, the first and last quarters at real time; on-screen length is 0.25L + 0.5L/middle_speed + 0.25L for a source window of L seconds; 1.0 (the default) is no ramp"
+        },
         "role": {
           "type": [
             "string",

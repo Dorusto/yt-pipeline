@@ -105,12 +105,14 @@ finished recap, the explanation and the contact sheet.
 - **Upload** takes clips and photos straight from the phone browser: the files,
   a project folder name, the brief and an options form where **every field
   defaults to Auto** (length 30 s / 60 s / 90 s / 3 min, order chronological /
-  best first, audio clean-up, music none / a track / auto from
-  `~/media/music`, ambient level under the music). **Start** streams the files
+  best first, audio clean-up, format Auto (16:9) / 16:9 / 9:16 / both, music none / a track / auto from
+  `~/media/music`, ambient level under the music). For a vertical version pick
+  **Format: 9:16** (or **both**): the recap is cut to 720x1280 with a window
+  that follows the subject (`recap_720p_9x16.mp4`). **Start** streams the files
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
   never outside the inbox) and starts `recap.py` in the background; the status
   shows on Projects.
-- **A project page** has the tabs **Recap** (the player), **Why?**
+- **A project page** has the tabs **Recap** (the player, and the vertical 9:16 player when the format was 9:16 or both), **Why?**
   (`explain.html` — the brief, the screenwriter plan in words, the timeline
   with a thumbnail per shot and the cut versus the candidate window, and every
   candidate used or rejected with the reason, by short id like `0071/s2`) and

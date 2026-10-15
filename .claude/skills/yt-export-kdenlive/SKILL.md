@@ -64,3 +64,4 @@ The `--json` output is a single object with `status` (`written` or `skipped`), `
 
 - Sources are read-only. Write `--out` and `--kdenlive-out` into the project workspace, never into the footage folder.
 - The edit list is the single source of truth (`schemas/edit.schema.json`); this tool is one adapter that reads it. For the analysis stages that feed the director see `docs/VISION.md` and the `yt-ingest`, `yt-motion`, `yt-quality`, `yt-index`, `yt-director` skills.
+- A slot with `middle_speed` (speed ramp of a camera move) is exported at real time, because Kdenlive fragments cannot express the ramp: the summary carries a warning naming the slots, and the project runs longer than the render.

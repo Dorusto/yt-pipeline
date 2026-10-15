@@ -227,3 +227,17 @@ def test_shot_plan_requires_why():
     data = load("shot_plan_valid.json")
     del data["slot_plan"][0]["why"]
     assert any("why" in e for e in schema.validate(data, "shot_plan"))
+
+
+def test_edit_middle_speed_is_optional_and_bounded():
+    data = load("edit_valid.json")
+    video = next(item for item in data["video"] if item.get("kind") != "photo")
+    assert "middle_speed" not in video
+    video["middle_speed"] = 1.2
+    assert schema.validate(data, "edit") == []
+    video["middle_speed"] = 1.25
+    assert schema.validate(data, "edit") == []
+    video["middle_speed"] = 1.3
+    assert any("middle_speed" in e or "video/0" in e for e in schema.validate(data, "edit"))
+    video["middle_speed"] = 0.9
+    assert any("middle_speed" in e or "video/0" in e for e in schema.validate(data, "edit"))

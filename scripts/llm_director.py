@@ -19,6 +19,7 @@ read-only; outputs are written atomically.
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -32,6 +33,7 @@ from common.config import ConfigError, load_config
 from common.decisions import build_decisions
 from common.pacing import estimate_all_good
 from common.llm import BudgetExceeded, LLMError, make_client
+from common.moves import EXCEPTION_SHARE, apply_move_policy, middle_speed_of, screen_factor, slot_screen_length
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -510,6 +512,11 @@ def default_target_s(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max
     if is_important(candidate):
         return round(min(window, important_max_s), 3)
     return round(clamp(window, slot_min_s, slot_max_s), 3)
+
+
+def keeps_whole(fact):
+    """True when the shot keeps its window up to the hero cap: a hero or semantic move, never a static hold."""
+    return bool(fact.get("keep_whole")) and fact.get("motion_label") not in NON_MOVE_MOTION_LABELS
 
 
 def make_fact(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
@@ -1043,6 +1050,7 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
     slot_min_s = pacing["slot_min"]
     slot_max_s = pacing["slot_max"]
     violations = []
+    long_moves = []
     plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
     slots = record.get("video") or []
     video_ids = {slot.get("id") for slot in slots}
@@ -1113,7 +1121,8 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
                     f"the landing hold {fact['landing_hold_key']} is planned again as its own slot",
                 )
             )
-        if fact.get("keep_whole"):
+        duration = slot_duration(slot)
+        if keeps_whole(fact):
             expected_in = max(fact["window_in_s"], fact["window_out_s"] - important_max_s)
             if abs(out_s - fact["window_out_s"]) > TOLERANCE_S or in_s > expected_in + TOLERANCE_S:
                 violations.append(
@@ -1124,15 +1133,28 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
                     )
                 )
         else:
-            duration = out_s - in_s
+            is_move = fact.get("role") in MOVE_ROLES and fact.get("motion_label") not in NON_MOVE_MOTION_LABELS
             if duration < slot_min_s - TOLERANCE_S or duration > slot_max_s + TOLERANCE_S:
-                violations.append(
-                    violation(
-                        slot["id"],
-                        "length",
-                        f"{duration:.2f}s is outside {slot_min_s:.1f}-{slot_max_s:.1f}s",
+                if is_move and slot_max_s < duration <= max(important_max_s, slot_max_s) + TOLERANCE_S:
+                    long_moves.append(slot["id"])
+                else:
+                    violations.append(
+                        violation(
+                            slot["id"],
+                            "length",
+                            f"{duration:.2f}s is outside {slot_min_s:.1f}-{slot_max_s:.1f}s",
+                        )
                     )
-                )
+    allowed_long = max(1, math.ceil(round(EXCEPTION_SHARE * len(slots), 9)))
+    for slot_id in long_moves[allowed_long:]:
+        violations.append(
+            violation(
+                slot_id,
+                "length",
+                f"more than {allowed_long} slots run past {slot_max_s:.1f}s on screen "
+                f"(at most {EXCEPTION_SHARE:.0%} of the slots, minimum one)",
+            )
+        )
     for first, second in zip(slots, slots[1:]):
         if first.get("clip") is None or second.get("clip") is None:
             continue
@@ -1218,7 +1240,7 @@ def slot_duration(slot):
     """The on-screen length of an edit.json slot, video or photo."""
     if slot.get("kind") == "photo":
         return slot.get("duration_s") or 0.0
-    return slot["out_s"] - slot["in_s"]
+    return slot_screen_length(slot)
 
 
 def load_beats(path):
@@ -1257,23 +1279,39 @@ def snap_warning(cut_number, end, target):
     return f"cut {cut_number}: not snapped to a beat (nearest {abs(end - target):.1f} s away)"
 
 
-def slot_bounds(slot, fact):
-    """The range a snap may move this slot's end within: photo length or video window."""
+def slot_bounds(slot, fact, cap=None):
+    """The range a snap may move this slot's end within: photo length or video window.
+
+    ``cap`` is the longest on-screen length the move policy allows the slot.
+    """
     if fact is not None and fact.get("media_type") == "photo":
-        return {"photo": True, "important": False}
+        return {"photo": True, "important": False, "cap": cap}
     if slot.get("kind") == "photo":
-        return {"photo": True, "important": False}
+        return {"photo": True, "important": False, "cap": cap}
     low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
     high = float(slot["out_s"])
     important = False
     window_in = float(slot["in_s"])
     if fact is not None:
         high = float(fact.get("window_out_s", slot["out_s"]))
-        important = bool(fact.get("keep_whole"))
+        important = keeps_whole(fact)
         window_in = float(fact.get("window_in_s", slot["in_s"]))
         if fact.get("landing_at_s") is not None:
             low = max(low, float(fact["landing_at_s"]) + LANDING_FLOOR_S)
-    return {"photo": False, "important": important, "low": low, "high": high, "window_in": window_in}
+    return {"photo": False, "important": important, "low": low, "high": high, "window_in": window_in, "cap": cap}
+
+
+def over_cap(slot, bounds, delta):
+    """True when lengthening the slot on screen by ``delta`` would pass its policy cap."""
+    cap = bounds.get("cap")
+    if cap is None or delta <= 0:
+        return False
+    return slot_duration(slot) + delta > float(cap) + 1e-9
+
+
+def source_delta(slot, delta):
+    """The source-time change that moves the slot's on-screen length by ``delta``."""
+    return delta / screen_factor(middle_speed_of(slot))
 
 
 def _relaxed(bounds, slack):
@@ -1294,6 +1332,8 @@ def absorb_out(slot, bounds, delta, slack=0.0):
     ``slack`` lets a hero or semantic-move slot nudge its cut by up to half a
     beat past its window so the cut still lands on the music.
     """
+    if over_cap(slot, bounds, delta):
+        return False
     if bounds.get("photo"):
         target = float(slot["duration_s"]) + delta
         if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
@@ -1301,7 +1341,7 @@ def absorb_out(slot, bounds, delta, slack=0.0):
         slot["duration_s"] = round(target, 3)
         return True
     low, high, _ = _relaxed(bounds, slack)
-    target = float(slot["out_s"]) + delta
+    target = float(slot["out_s"]) + source_delta(slot, delta)
     if not (low - 1e-9 <= target <= high + 1e-9):
         return False
     slot["out_s"] = round(target, 3)
@@ -1319,7 +1359,7 @@ def absorb_length(slot, bounds, delta, slack=0.0):
     if bounds.get("photo"):
         return False
     low, high, window_in = _relaxed(bounds, slack)
-    head_target = float(slot["in_s"]) - delta
+    head_target = float(slot["in_s"]) - source_delta(slot, delta)
     if head_target < window_in - 1e-9:
         return False
     if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
@@ -1336,8 +1376,10 @@ def absorb_head(slot, bounds, delta, slack=0.0):
     """
     if bounds.get("photo"):
         return absorb_out(slot, bounds, delta, slack)
+    if over_cap(slot, bounds, delta):
+        return False
     _, _, window_in = _relaxed(bounds, slack)
-    head_target = float(slot["in_s"]) - delta
+    head_target = float(slot["in_s"]) - source_delta(slot, delta)
     if head_target < window_in - 1e-9:
         return False
     if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
@@ -1362,13 +1404,14 @@ def absorb_pair(left, left_bounds, right, right_bounds, delta, slack=0.0):
     return True
 
 
-def snap_photo(slot, start, times):
+def snap_photo(slot, start, times, cap=None):
     """Put a photo's end on a beat that keeps its length in 2-4 s; False when none fits."""
     current = float(slot["duration_s"])
+    longest = min(PHOTO_MAX_S, float(cap)) if cap is not None else PHOTO_MAX_S
     fitting = [
         moment
         for moment in times
-        if PHOTO_MIN_S - 1e-9 <= moment - start <= PHOTO_MAX_S + 1e-9
+        if PHOTO_MIN_S - 1e-9 <= moment - start <= longest + 1e-9
     ]
     if not fitting:
         return False
@@ -1391,13 +1434,19 @@ def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
         end = start + slot_duration(slot)
         times = downbeat_s if downbeat_at[index] else beat_s
         target = nearest_beat(end, times)
-        if target is None or abs(end - target) > tolerance:
+        reach = tolerance
+        cap = bounds[index].get("cap")
+        if target is not None and cap is not None and target - start > float(cap) + 1e-9:
+            within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
+            target = max(within) if within else None
+            reach = 2 * tolerance
+        if target is None or abs(end - target) > reach:
             warnings.append(snap_warning(index + 1, end, target))
             unsnapped += 1
             start = end
             continue
         if bounds[index].get("photo"):
-            if not snap_photo(slot, start, times):
+            if not snap_photo(slot, start, times, bounds[index].get("cap")):
                 warnings.append(snap_warning(index + 1, end, target))
                 unsnapped += 1
                 start = end
@@ -1424,7 +1473,64 @@ def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
     return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
 
 
-def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings):
+def apply_length_policy(record, plan, facts_by_key, pacing, important_max_s, warnings):
+    """Apply the move-versus-static length policy to a record's slots; return the cap per slot id.
+
+    A camera move keeps as much of its window as fits (middle half up to 1.2x),
+    at most 15 % of the slots (rounded) may run past ``slot_max`` on screen, and
+    static shots, holds and photos stay within ``slot_max``. Slots gain
+    ``middle_speed`` when ramped; the caps keep beat snapping inside the rule.
+    """
+    plan_by_id = {slot.get("id"): slot for slot in plan.get("slot_plan") or []}
+    slots = record.get("video") or []
+    working = []
+    for slot in slots:
+        if slot.get("kind") == "photo":
+            working.append({"kind": "photo", "duration_s": float(slot["duration_s"]), "id": slot.get("id")})
+            continue
+        fact = facts_by_key.get((plan_by_id.get(slot.get("id")) or {}).get("shot_key")) or {}
+        landing = fact.get("landing_at_s")
+        working.append(
+            {
+                "id": slot.get("id"),
+                "clip": slot.get("clip"),
+                "in_s": float(slot["in_s"]),
+                "out_s": float(slot["out_s"]),
+                "window_in_s": fact.get("window_in_s", slot["in_s"]),
+                "window_out_s": fact.get("window_out_s", slot["out_s"]),
+                "landing_floor_s": float(landing) + LANDING_FLOOR_S if landing is not None else None,
+                "role": slot.get("role"),
+                "motion_label": slot.get("motion_label"),
+                "important": keeps_whole(fact),
+                "score": slot.get("score"),
+                "shot_key": slot.get("shot_key"),
+            }
+        )
+    warnings.extend(apply_move_policy(working, {"slot_max": pacing["slot_max"], "hero_max": important_max_s}))
+    caps = {}
+    for slot, item in zip(slots, working):
+        caps[slot.get("id")] = item.get("max_screen_s")
+        if slot.get("kind") == "photo":
+            slot["duration_s"] = item["duration_s"]
+            continue
+        slot["in_s"] = item["in_s"]
+        slot["out_s"] = item["out_s"]
+        if item.get("middle_speed"):
+            slot["middle_speed"] = item["middle_speed"]
+        else:
+            slot.pop("middle_speed", None)
+    return caps
+
+
+def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s):
+    """Run the length policy, then snap to the beat grid when there is one; return the snap summary."""
+    caps = apply_length_policy(record, plan, facts_by_key, plan_pacing(plan), important_max_s, warnings)
+    if beat_grid is None:
+        return None
+    return apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings, caps)
+
+
+def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings, caps=None):
     """Snap a record's cuts to the grid; a cut that starts a new plan beat snaps to a downbeat."""
     slots = record.get("video") or []
     plan_by_id = {slot.get("id"): slot for slot in plan.get("slot_plan") or []}
@@ -1440,7 +1546,7 @@ def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings):
     for slot in slots:
         plan_slot = plan_by_id.get(slot.get("id")) or {}
         fact = facts_by_key.get(plan_slot.get("shot_key"))
-        bounds.append(slot_bounds(slot, fact))
+        bounds.append(slot_bounds(slot, fact, (caps or {}).get(slot.get("id"))))
     return snap_slots(slots, bounds, beat_grid, downbeat_at, warnings)
 
 
@@ -1448,7 +1554,7 @@ def default_window(fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
     """The cut window the editor spec asks for when the model gave none."""
     window_in = fact["window_in_s"]
     window_out = fact["window_out_s"]
-    if fact.get("keep_whole"):
+    if keeps_whole(fact):
         return max(window_in, window_out - important_max_s), window_out
     target = plan_slot.get("target_s")
     if target is None:
@@ -1462,7 +1568,7 @@ def default_window(fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
 def normalise_window(in_s, out_s, fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
     """Apply the editor spec's length rules when the answer is out of policy."""
     notes = []
-    if fact.get("keep_whole"):
+    if keeps_whole(fact):
         window_in = fact["window_in_s"]
         window_out = fact["window_out_s"]
         expected_in = max(window_in, window_out - important_max_s)
@@ -2042,7 +2148,7 @@ def _run_loop(
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
 
     if approved:
-        beat_snap = apply_beat_snap(record, plan, facts, beat_grid, warnings) if beat_grid is not None else None
+        beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s)
         attach_decisions(record, facts, shotlog, drop_reasons)
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]
@@ -2060,7 +2166,7 @@ def _run_loop(
 
     if not violations:
         warnings.append("reviewer did not approve; keeping the last valid draft")
-        beat_snap = apply_beat_snap(record, plan, facts, beat_grid, warnings) if beat_grid is not None else None
+        beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s)
         attach_decisions(record, facts, shotlog, drop_reasons)
         write_edit(out_path, record, started, state.cost_usd)
         slots = record["video"]

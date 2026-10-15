@@ -41,3 +41,4 @@ The page is a single self-contained file (no external CSS/JS/CDN, no JavaScript 
 
 - This is the explanation adapter of D2: it reads what the directors wrote (`edit.json`, optionally `shot_plan.json` and `shotlog.json`) and renders it; it never changes the edit, the shotlog or the schemas.
 - The short ids (`0071/s2`) are the same keys the shotlog, `decisions[]` and the id feedback use, so a rejected row can be traced back to its shot.
+- A slot with `middle_speed` shows `middle at 1.20x` on its cut line; the cut times are source times, the on-screen length is `0.25L + 0.5L/s + 0.25L`.

@@ -1750,3 +1750,36 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 **Context:** Doru wants to say the length he wants and be told how long the edit would be with every good shot in it.
 
 **Decision:** `scripts/common/pacing.estimate_all_good(shotlog)` counts every eligible, non-suppressed, non-duplicate shot with score ≥ 0.5 at the length a long cut gives it (static hold 4 s, move 5 s, hero/semantic move 6 s, photo 3 s, capped by its window). The project page shows "All good shots would make about N (M shots)". `--target-duration-s 0` (web: Length → All good shots) sets the target to that estimate and uses the long-cut pacing (the 180 s anchor) in both directors. A workspace moved to another folder still finds its proxies (index thumbnails, render) through `<workspace>/proxy/`.
+
+---
+
+## [2026-10-15] Shot length policy: static shots keep the time limit, camera moves keep the move (middle ramp up to 1.2x)
+
+**Context:** Doru's rule: static shots must respect the time limit; for a pivot, pan or orbit keep as much of the move as possible, the middle may be sped up, at most 1.2x; the seconds rule must hold for 80-90 % of the shots. Until now hero and semantic-move slots kept the last `hero_max` seconds of their window and everything else was capped at `slot_max`, so a static hero hold ran to 6 s and a pan was cut wherever its pacing target ended.
+
+**Options:** (A) a global speed-up of the whole slot (changes the look of the whole move, audio pitch/tempo audible); (B) a ramp: head and tail quarters in real time, middle half at `s` (the speed change sits in the part of a move where it is least visible); (C) no speed change, only longer moves (breaks the seconds rule more often).
+
+**Decision:** B. `edit.json` video slots get the optional `middle_speed` (1.0-1.25, default 1.0): the middle half of the source window plays at that rate; on-screen length is `0.25L + 0.5L/s + 0.25L` (`common/moves.py`, used by both directors, render, serve, explain, export). `common/moves.apply_move_policy` runs in both directors after slot selection and before the beat snap:
+- a *move* = role `move`/`transition_in`/`transition_out` or important, never when the label is `static`/`minor_motion`;
+- a move keeps as much of its candidate window as its on-screen budget allows (never outside the window, never overlapping another slot of the same take, a landing phrase keeps its end); `middle_speed` is used (at most 1.2) only when it lets more of the move in;
+- the budget of an ordinary move is its pacing length (capped at `slot_max`), so the edit's total length does not grow; at most `15 % (rounded)` of the slots (minimum 1), the best scores among the moves that want more than `slot_max`, may run up to `hero_max` on screen and are reported as `exception:` warnings;
+- every other slot, every static or hold slot (a static hero included) and every photo is clamped to `slot_max`;
+- the beat snap works in on-screen time (a ramped slot's source moves by `delta / (0.5 + 0.5/s)`), never lengthens a slot past its cap (a cut whose nearest beat would break the cap goes to the beat before it) and keeps head/tail quarters in real time.
+
+The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/s`, ambient audio `atempo=s` on the middle) and is unchanged for `middle_speed` 1. Kdenlive cannot express the ramp: the fragments stay real time and the export warns. The LLM validator accepts windows that start earlier than `window_out - hero cap` and a move longer than `slot_max` (up to the hero cap) on at most 15 % of the slots; a static hero hold is a static shot, not `keep_whole`.
+
+**Golden changes (intentional):** `hero_present` hero hold `26.5-30.0` becomes `27.5-30.0` (static hero clamped from 3.5 s to `slot_max` 2.5 s); `phrase_move_strong` clipA `8.75-10.75` becomes `6.932-10.75` (the move is the one exception: 3.5 s on screen, middle at 1.2x). Director tests that measured source length now measure on-screen length.
+
+**Consequence / open point:** an ordinary move only gains the ~9 % of source the ramp buys inside its pacing length; letting every move grow to `slot_max` would keep more of each move but lengthen a 90 s edit by about a fifth. Doru can change that budget in one line (`apply_move_policy`).
+
+---
+
+## [2026-10-15] Vertical 9:16 recap from the same edit (D2-11 part 2)
+
+**Context:** Doru wants a Shorts/Reels version of a recap without a second edit.
+
+**Options:** (A) a second edit for vertical; (B) the same `edit.json`, each slot cropped with a moving window from `reframe.py`; (C) a fixed centre crop.
+
+**Decision:** B. `render.py --format 16x9|9x16|both` and `recap.py --format` (stations `render_vertical`, `render_final_vertical`). `reframe.py` runs as a subprocess once per source clip (on its proxy, path rescaled to the rendered file) and is cached under `<workspace>/reframe/`; the `crop` filter runs on source time before the trim so a `middle_speed` ramp keeps the window on the subject. A failed reframe gives a centred crop and a warning, never a failed render. Photos keep Ken Burns; a landscape photo is cropped to 9:16 around `ken_burns.focus_x`. 720x1280 preview, 1080x1920 final. The web app has a Format select (Auto = 16:9) and shows/serves the vertical files. Same duration as the 16:9 render by construction (same edit, same slot lengths).
+
+**Consequence:** the crop is only as good as reframe's subject tracking; a vertical recap costs one extra render plus one reframe pass per clip (cached).

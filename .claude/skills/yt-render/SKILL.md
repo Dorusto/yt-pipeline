@@ -28,6 +28,14 @@ The output adapter: turn an `edit.json` edit list into an MP4, either a preview-
 - The MP4 is encoded to `<out>.tmp.mp4`, probed, then moved into place with `os.replace`. A failed encode leaves no file at `--out`.
 - On any error (unreadable or invalid edit, unresolvable clip or photo, `--out` inside the originals folder, ffmpeg failure, write failure) it prints one `[error] ...` line to stderr and exits 1.
 
+## Speed ramp (`middle_speed`)
+
+A video slot with `middle_speed` above 1 (schema range 1.0-1.25, the directors write at most 1.2) is built from three trims of the same source window: the first quarter at real time, the middle half through `setpts=(PTS-STARTPTS)/s`, the last quarter at real time, joined with `concat`; the slot's ambient audio is cut the same way with `atempo=s` on the middle part, so it stays continuous. The on-screen length is `0.25L + 0.5L/s + 0.25L` (`common.moves.slot_screen_length`), and crossfade offsets and the music length use it. A slot without `middle_speed` (or 1.0) renders exactly as before, one trim.
+
+## Vertical 9:16 (`--format`)
+
+`--format 16x9` (default, nothing changes), `9x16` or `both`. For `9x16` each video slot gets a moving `crop` that follows its clip's reframe path: `scripts/reframe.py` runs once per source clip as a subprocess (on the proxy when one exists; the path is rescaled to the file that is rendered) and the crop path is cached as `<workspace>/reframe/<clip stem>_reframe.json` (reused while newer than the clip). The crop runs on source time before the trim, so a `middle_speed` ramp keeps the window on the subject. If reframe fails for a clip (for example the YuNet model cannot download) that clip gets a centred crop and a warning; the render still finishes. Photo slots keep the Ken Burns move: a portrait photo sits on the blurred background, a landscape photo is cropped to 9:16 around its `ken_burns.focus_x` subject position. Output is 720x1280 for a preview and 1080x1920 with `--originals-dir`; `--width/--height` override. With `both`, `--out` is the 16:9 file and the vertical one is written next to it as `<name>_9x16.mp4`; the JSON summary gets `format` and, for `both`, a `vertical` object. Both formats have the same duration.
+
 ## Photo slots
 
 A photo slot holds a still for its `duration_s` (2–4 s) with a slow Ken Burns move. The render:

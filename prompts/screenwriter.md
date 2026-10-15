@@ -53,7 +53,10 @@ no extra keys.
   moves (an `orbit`, a `reveal`, a travel through a cave or a tunnel). Those keep
   their whole window up to the hero cap (`important_max_s`) for this brief — 6 s
   on a long edit, less on a short one — instead of being trimmed to the pacing
-  target. Everything else follows the pacing.
+  target. Everything else follows the pacing. A hero that is a static hold is
+  still a static shot: it stays within the slot maximum, so do not count it as
+  `keep_whole` for the plan's length. Only about 15% of the slots (at least
+  one) may run past the slot maximum on screen, and those are camera moves.
 - **Photos are slots too.** A photo shot (`media_type: "photo"`) becomes a
   **photo slot**: give it an id `p1`, `p2`, ... and a `target_s` of **2–4
   seconds** (3.0 is the default). Photos have no window, no landing and no

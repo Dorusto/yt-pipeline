@@ -24,6 +24,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common.decisions import build_decisions
+from common.moves import (
+    apply_move_policy,
+    middle_speed_of,
+    screen_factor,
+    slot_screen_length,
+)
 from common.pacing import estimate_all_good
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
@@ -949,7 +955,20 @@ def timeline_length(slot):
     """The on-screen length of an internal slot, photo or video."""
     if slot.get("media_type") == "photo":
         return float(slot["duration_s"])
-    return float(slot["out_s"]) - float(slot["in_s"])
+    return slot_screen_length(slot)
+
+
+def over_cap(slot, delta):
+    """True when lengthening the slot on screen by ``delta`` would pass its ``max_screen_s``."""
+    cap = slot.get("max_screen_s")
+    if cap is None or delta <= 0:
+        return False
+    return timeline_length(slot) + delta > float(cap) + 1e-9
+
+
+def source_delta(slot, delta):
+    """The source-time change that moves the slot's on-screen length by ``delta``."""
+    return delta / screen_factor(middle_speed_of(slot))
 
 
 def snap_warning(cut_number, end, target):
@@ -964,6 +983,8 @@ def absorb_out(slot, delta, slack=0.0):
     ``slack`` lets a hero or semantic-move slot nudge its cut by up to half a
     beat past its window so the cut still lands on the music.
     """
+    if over_cap(slot, delta):
+        return False
     if slot.get("media_type") == "photo":
         target = float(slot["duration_s"]) + delta
         if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
@@ -975,7 +996,7 @@ def absorb_out(slot, delta, slack=0.0):
     if slot.get("landing_floor_s") is not None:
         low = max(low, float(slot["landing_floor_s"]))
     high = float(slot.get("window_out_s", slot["out_s"]))
-    target = float(slot["out_s"]) + delta
+    target = float(slot["out_s"]) + source_delta(slot, delta)
     if slack:
         low -= slack
         high += slack
@@ -993,13 +1014,16 @@ def absorb_length(slot, delta, slack=0.0):
     """
     if slot.get("media_type") == "photo":
         return absorb_out(slot, delta, slack)
+    if over_cap(slot, delta):
+        return False
+    shift = source_delta(slot, delta)
     low = float(slot["in_s"]) + SNAP_MIN_SLOT_S
     if slot.get("landing_floor_s") is not None:
         low = max(low, float(slot["landing_floor_s"]))
     high = float(slot.get("window_out_s", slot["out_s"]))
     window_in = float(slot.get("window_in_s", slot["in_s"]))
-    end_target = float(slot["out_s"]) + delta
-    head_target = float(slot["in_s"]) - delta
+    end_target = float(slot["out_s"]) + shift
+    head_target = float(slot["in_s"]) - shift
     if slack:
         low -= slack
         high += slack
@@ -1023,8 +1047,10 @@ def absorb_head(slot, delta, slack=0.0):
     """
     if slot.get("media_type") == "photo":
         return absorb_out(slot, delta, slack)
+    if over_cap(slot, delta):
+        return False
     window_in = float(slot.get("window_in_s", slot["in_s"]))
-    head_target = float(slot["in_s"]) - delta
+    head_target = float(slot["in_s"]) - source_delta(slot, delta)
     if slack:
         window_in -= slack
     if head_target < window_in - 1e-9:
@@ -1055,10 +1081,11 @@ def absorb_pair(left, right, delta, slack=0.0):
 def snap_photo(slot, start, times):
     """Put a photo's end on a beat that keeps its length in 2-4 s; False when none fits."""
     current = float(slot["duration_s"])
+    longest = min(PHOTO_MAX_S, float(slot.get("max_screen_s") or PHOTO_MAX_S))
     fitting = [
         moment
         for moment in times
-        if PHOTO_MIN_S - 1e-9 <= moment - start <= PHOTO_MAX_S + 1e-9
+        if PHOTO_MIN_S - 1e-9 <= moment - start <= longest + 1e-9
     ]
     if not fitting:
         return False, start + current
@@ -1081,7 +1108,13 @@ def snap_slots(slots, beat_grid, downbeat_at, warnings):
         end = start + length
         times = downbeat_s if downbeat_at[index] else beat_s
         target = nearest_beat(end, times)
-        if target is None or abs(end - target) > tolerance:
+        reach = tolerance
+        cap = slot.get("max_screen_s")
+        if target is not None and cap is not None and target - start > float(cap) + 1e-9:
+            within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
+            target = max(within) if within else None
+            reach = 2 * tolerance
+        if target is None or abs(end - target) > reach:
             warnings.append(snap_warning(index + 1, end, target))
             unsnapped += 1
             start = end
@@ -1325,6 +1358,8 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False, decisions=N
                 "shot_key": slot.get("shot_key"),
             }
         )
+        if middle_speed_of(slot) > 1.0:
+            video[-1]["middle_speed"] = middle_speed_of(slot)
     music = None
     if args.music:
         music = {"path": str(Path(args.music).expanduser())}
@@ -1392,7 +1427,7 @@ def slot_duration(slot):
     """The on-screen length of an edit.json slot, video or photo."""
     if slot.get("kind") == "photo":
         return slot.get("duration_s") or 0.0
-    return slot["out_s"] - slot["in_s"]
+    return slot_screen_length(slot)
 
 
 def photo_source(name, photos_by_name):
@@ -1576,6 +1611,8 @@ def run(args, started):
     if not slots:
         raise DirectorError("no usable candidates")
 
+    warnings.extend(apply_move_policy(slots, {"slot_max": max_slot_s, "hero_max": important_max_s}))
+
     beat_snap = None
     if beat_grid is not None:
         beat_snap = snap_slots(slots, beat_grid, [False] * len(slots), warnings)
@@ -1605,7 +1642,7 @@ def run(args, started):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(out_path, record)
 
-    total = sum(slot["out_s"] - slot["in_s"] for slot in slots)
+    total = sum(timeline_length(slot) for slot in slots)
     summary = {
         "status": "written",
         "out": str(out_path),
@@ -1629,8 +1666,9 @@ def print_human(summary, record):
                     f"{slot['score']:.2f}  {slot['reason']}"
                 )
             else:
+                ramp = f"  middle {slot['middle_speed']:.2f}x" if slot.get("middle_speed") else ""
                 print(
-                    f"{slot['id']}  {slot['clip']}  {slot['in_s']:.2f}-{slot['out_s']:.2f}  "
+                    f"{slot['id']}  {slot['clip']}  {slot['in_s']:.2f}-{slot['out_s']:.2f}{ramp}  "
                     f"{slot['score']:.2f}  {slot['reason']}"
                 )
     print(f"total {summary['total_duration_s']:.1f}s of target {summary['target_duration_s']:.1f}s")

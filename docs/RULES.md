@@ -12,7 +12,9 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Two slots from one take need a different take between them unless they are source-contiguous (±0.5 s); contiguous neighbours merge into one slot. — 2026-10-13
 - One candidate (segment or content beat) contributes at most one slot; a long take may contribute several beats as long as a different take sits between them (e.g. 0072 tunnel approach and exit). Within one candidate a higher-scoring blocked window replaces the conflicting slot (`same-take upgrade`). — 2026-10-13 / 2026-10-14
 - No two visually similar segments in one edit unless the brief asks for it; never back to back, even with `--allow-similar`. — 2026-10-13
-- Hero shots and complete semantic moves (orbit, reveal, tracking, pov, travel) keep their whole steady range up to the cap; pacing shortening applies only to ordinary shots. — 2026-10-13
+- Hero shots and complete semantic moves (orbit, reveal, tracking, pov, travel) keep their whole steady range up to the cap; pacing shortening applies only to ordinary shots; a static hero hold is a static shot (see the length policy below). — 2026-10-13 / 2026-10-15
+- Length policy (D2-11): static shots, holds and photos stay within `slot_max`; a camera move (role move/transition_in/transition_out or important, label not static/minor_motion) keeps as much of its window as fits, its middle half may play up to 1.2x (`middle_speed`, head and tail quarters real time), at most 15 % of the slots, rounded (minimum 1, best scores first) may run past `slot_max` on screen, up to `hero_max`; the policy runs before the beat snap and the snap never breaks a slot's cap. — 2026-10-15
+- On-screen length of a slot is `0.25L + 0.5L/s + 0.25L` (`common/moves.slot_screen_length`); every tool that needs a slot's length uses it; Kdenlive export stays real time and warns. — 2026-10-15
 - An edit must not miss an eligible hero when one exists (golden invariant, tested on fixtures). — 2026-10-13 / 2026-10-14
 - Important-shot cap: default 6 s (was 8 s); the window ends where the steady motion ends, never on aimless movement after it. — 2026-10-14
 - Ordinary slot length comes from the brief's pacing (calm vs energetic) with a min/max; cut inside the steady range. — 2026-10-13
@@ -41,7 +43,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Similarity: MobileNetV2 ONNX through `cv2.dnn` (hist backend offline); "similar" starts at 0.90 and stays a flag. — 2026-10-13
 - Eval scoring: interval overlap (full credit exact, 0.5 geometric look-alike), horizon tolerance 5°, events one-to-one F1 within ±3 s. — 2026-10-13
 - `describe`: frames at OpenCV scene changes and motion phase boundaries, tiled 6-9 per mosaic image with burned-in timestamps (one image per group, `--frame-mode legacy` keeps the fixed-position separate frames), timestamps + motion label in the facts, `long: yes|no` keys the beats, one-line summary (≤ 12 words) + tags, retry once on unparseable output, `max_tokens` 8000 for reasoning models. — 2026-10-13 / 2026-10-15
-- Render: 720p preview from proxies, final from the originals at native size (`--originals-dir`), crossfade 0.3 s, frame-inclusive Kdenlive `out` (`out_s - 1/fps`). — 2026-10-13
+- Render: 720p preview from proxies, final from the originals at native size (`--originals-dir`), crossfade 0.3 s, frame-inclusive Kdenlive `out` (`out_s - 1/fps`); a slot with `middle_speed` renders as three trims (middle `setpts`/`atempo`), byte-for-byte as before when it is 1. — 2026-10-13 / 2026-10-15
 
 ## Model routing
 
@@ -80,6 +82,8 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - `inbox.py` waits for the inbox to be quiet (`--quiet-minutes`, default 5) and re-invokes `recap.py` on a new clip, a changed brief or `--force`; the station skip rule stays the only caching. — 2026-10-14
 - Phone flow: the web app (`serve.py` Upload) is the primary path — files stream into `~/media/inbox/<folder>/` and `recap.py` starts in the background; Syncthing (phone send-only camera folder → LXC receive-only `~/media/inbox` plus `inbox.py`) is the optional automatic path. Steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14 / 2026-10-15
 - The web Upload endpoint streams into `inbox/<folder>/` (allowlisted extensions, per-file and per-request size caps, atomic `.part` writes, never overwrites, never outside the inbox) and starts `recap.py` in the background; the run is recorded in `<workspace>/.run.json` (`pid`, `source`, `options`) which is what Re-edit and the status badge read. — 2026-10-15
+
+- Vertical 9:16 (D2-11): `render.py`/`recap.py --format 16x9|9x16|both` (default 16x9); a video slot's crop follows that clip's `reframe.py` path (subprocess per clip, cached in `<workspace>/reframe/`, rescaled to the rendered file, centred crop plus a warning when reframe fails); photos keep Ken Burns (landscape photos cropped around the subject position); preview 720x1280, final 1080x1920; both formats have the same duration; `serve.py` serves `recap_720p_9x16.mp4` and `recap_final_9x16.mp4`. — 2026-10-15
 
 ## Photos and music (D2-6)
 
