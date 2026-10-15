@@ -43,7 +43,8 @@ Read `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, the D-phase status in `docs
 5. If it fails, send back specific fixes. After 3 failed rounds, do the task yourself and note it in the phase report.
    - Never repeat the same command or tool call more than twice. If a tool fails, returns nothing useful, or returns the same result twice, stop, send `python scripts/notify.py "<task id>: <tool> keeps failing" --title Blocked` and end the run. Placeholder commands such as `echo ok` are not progress.
    - You cannot look at images or frame strips yourself. For visual checks run `scripts/describe.py` (vision model) or measure frames with a script, and read the text it prints.
-   - When the same task fails its audit a second time, or the coder returns an empty or truncated reply twice in a row, first send `python scripts/notify.py "<task id>: <what keeps failing>" --title Struggling` and then continue. One notification per task.
+   - An empty coder reply is usually an upstream rate limit (OpenRouter `429 rate-limited upstream`), not a bad brief: wait about 60 s (`sleep 60`) and send the same brief once more before doing anything else.
+   - When the same task fails its audit a second time, or the coder returns an empty or truncated reply twice in a row after that wait, first send `python scripts/notify.py "<task id>: <what keeps failing>" --title Struggling` and then continue. One notification per task.
 6. When it passes, commit on the phase branch (`d<phase>-<slug>`), conventional commit message, following the commit-time rule in CLAUDE.md. Push the branch. Never push to master; open a pull request at the end of the phase.
 
 ## Keep these yourself
