@@ -868,6 +868,10 @@ def _clip_path_map(workspace_path, quality_files):
         path = record.get("path")
         if name and path:
             paths[name] = path
+    proxy_dir = Path(workspace_path) / "proxy"
+    for name, path in list(paths.items()):
+        if not Path(path).exists() and (proxy_dir / name).is_file():
+            paths[name] = str(proxy_dir / name)
     return paths
 
 

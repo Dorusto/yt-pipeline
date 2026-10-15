@@ -30,6 +30,7 @@ from pathlib import Path
 
 from common.config import ConfigError, load_config
 from common.decisions import build_decisions
+from common.pacing import estimate_all_good
 from common.llm import BudgetExceeded, LLMError, make_client
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
@@ -44,6 +45,7 @@ MAX_ROUNDS = 3
 MIN_SLOT_S = 1.0
 MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
+LONG_CUT_PACING_S = 180.0
 DEFAULT_TARGET_S = 90.0
 XFADE_S = 0.3
 TOLERANCE_S = 0.05
@@ -1921,6 +1923,10 @@ def _run_loop(
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
     hints = parse_brief(brief_text)
+    all_good = target_duration_s is not None and target_duration_s <= 0
+    if all_good:
+        estimate = estimate_all_good(load_json(workspace_path / "shotlog.json"))
+        target_duration_s = max(20.0, estimate["seconds"])
     if target_duration_s is not None:
         hints["target_duration_s"] = target_duration_s
     if order is not None:
@@ -1944,7 +1950,7 @@ def _run_loop(
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
 
     drop_reasons = {}
-    pacing = run_pacing(hints.get("target_duration_s"))
+    pacing = run_pacing(LONG_CUT_PACING_S if all_good else hints.get("target_duration_s"))
     effective_important_max_s = important_max_s if important_max_s is not None else pacing["hero_max"]
     facts, clips, fact_warnings = build_shot_facts(
         workspace_path, shotlog, effective_important_max_s, drop_reasons, pacing["slot_min"], pacing["slot_max"],

@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common.decisions import build_decisions
+from common.pacing import estimate_all_good
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -67,6 +68,7 @@ PHOTO_DEFAULT_S = 3.0
 BEAT_SNAP_FRACTION = 0.5
 SNAP_MIN_SLOT_S = 0.5
 DEFAULT_IMPORTANT_MAX_S = 6.0
+LONG_CUT_PACING_S = 180.0
 
 
 class DirectorError(RuntimeError):
@@ -1456,7 +1458,12 @@ def run(args, started):
     skipped_roles = 0
     skipped_ineligible = 0
     drop_reasons = {}
-    pacing = pacing_table(args.target_duration_s)
+    all_good = args.target_duration_s is not None and args.target_duration_s <= 0
+    if all_good:
+        estimate = estimate_all_good(load_json(Path(args.workspace).expanduser() / "shotlog.json"))
+        args.target_duration_s = max(20.0, estimate["seconds"])
+        warnings.append(f"length set to all good shots: {estimate['shots']} shots, about {args.target_duration_s:.0f} s")
+    pacing = pacing_table(LONG_CUT_PACING_S if all_good else args.target_duration_s)
     min_slot_s = first_not_none(args.min_slot_s, pacing["slot_min"])
     max_slot_s = first_not_none(args.max_slot_s, pacing["slot_max"])
     important_max_s = first_not_none(args.important_max_s, pacing["hero_max"])

@@ -510,7 +510,7 @@ def build_stations(ctx):
             "--workspace",
             str(ws),
         ]
-        if ctx.target_duration_s is not None:
+        if ctx.target_duration_s:
             pick_args += ["--target-duration-s", str(ctx.target_duration_s)]
         index_at = next(i for i, station in enumerate(stations) if station["name"] == "index")
         stations.insert(

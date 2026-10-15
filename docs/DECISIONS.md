@@ -1742,3 +1742,11 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 **Context:** Doru's first look at the D2-7 web app on the phone: works, but looks like a test page, and the demo clip will show it.
 
 **Decision:** one palette across `serve.py`, `explain.html` and `shotlog.html` (Kotor at night: deep water background, limestone text, sea-teal accent; green used / red left out / amber running), a serif for names and titles with the system sans for the interface, no web fonts (the app stays offline and private), 44 px touch targets. The memorable element is the edit strip under the player: the edit as proportional blocks (clip vs photo), tap a block to jump there, the current block lights up while playing. Plain labels: "New recap", "Clean the sound", "in the edit as v3" / "left out". Projects are ordered by last activity, not by name.
+
+---
+
+## [2026-10-15] Length "All good shots" and the estimate on the project page
+
+**Context:** Doru wants to say the length he wants and be told how long the edit would be with every good shot in it.
+
+**Decision:** `scripts/common/pacing.estimate_all_good(shotlog)` counts every eligible, non-suppressed, non-duplicate shot with score ≥ 0.5 at the length a long cut gives it (static hold 4 s, move 5 s, hero/semantic move 6 s, photo 3 s, capped by its window). The project page shows "All good shots would make about N (M shots)". `--target-duration-s 0` (web: Length → All good shots) sets the target to that estimate and uses the long-cut pacing (the 180 s anchor) in both directors. A workspace moved to another folder still finds its proxies (index thumbnails, render) through `<workspace>/proxy/`.

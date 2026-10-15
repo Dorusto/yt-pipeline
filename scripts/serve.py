@@ -32,6 +32,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
+from common.pacing import estimate_all_good
+
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORT = 8091
@@ -47,7 +49,7 @@ UPLOAD_EXTENSIONS = {
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
     ".jpg", ".jpeg", ".heic", ".heif", ".png",
 }
-LENGTH_CHOICES = {"auto": None, "30s": 30, "60s": 60, "90s": 90, "3min": 180}
+LENGTH_CHOICES = {"auto": None, "30s": 30, "60s": 60, "90s": 90, "3min": 180, "all": 0}
 ORDER_CHOICES = {"auto": None, "chronological": "chronological", "best": "score"}
 AMBIENT_CHOICES = {"auto", "6", "8", "12", "16", "20"}
 DETECTED_ARTIFACTS = (
@@ -263,7 +265,7 @@ display:inline-flex;align-items:center}
 .bar a.nav.on{color:var(--stone)}
 h1{font-family:ui-serif,Georgia,"Times New Roman",serif;font-weight:500;
 font-size:2rem;line-height:1.15;margin:20px 0 6px;overflow-wrap:anywhere}
-.lede{color:var(--haze);margin:0 0 18px}
+.lede{color:var(--haze);margin:0 0 18px;display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center}
 .num{font-variant-numeric:tabular-nums}
 .projects{list-style:none;margin:8px 0 0;padding:0}
 .projects li{border-top:1px solid var(--rope)}
@@ -291,7 +293,7 @@ video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:v
 .strip-track button{flex:var(--w) 1 0;min-width:10px;border:0;border-radius:var(--radius-s);
 padding:0 6px;font:inherit;font-size:.75rem;color:var(--water);cursor:pointer;
 background:var(--sea);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
-text-align:left;opacity:.72;transition:opacity .15s}
+text-align:center;opacity:.72;transition:opacity .15s}
 .strip-track button.photo{background:repeating-linear-gradient(135deg,var(--stone) 0 6px,#d9d0bd 6px 12px)}
 .strip-track button.now{opacity:1;box-shadow:inset 0 -4px 0 var(--water)}
 .strip-legend{display:flex;gap:16px;margin-top:8px;color:var(--haze);font-size:.85rem}
@@ -379,6 +381,24 @@ def edit_summary(directory):
     return {"blocks": blocks, "total": start, "shots": len(blocks), "photos": photos}
 
 
+def all_good_estimate(directory):
+    """How long an edit with every good shot would be, from shotlog.json; None when absent."""
+    try:
+        shotlog = json.loads((Path(directory) / "shotlog.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return estimate_all_good(shotlog if isinstance(shotlog, dict) else {})
+
+
+def format_length(seconds):
+    """Seconds as '45 s' or '3 min 20 s'."""
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes, rest = divmod(seconds, 60)
+    return f"{minutes} min {rest} s" if rest else f"{minutes} min"
+
+
 def describe_summary(summary):
     """One plain line about an edit: length, shots, photos."""
     if not summary:
@@ -419,13 +439,14 @@ def render_strip(summary):
     if not summary:
         return ""
     buttons = []
-    for block in summary["blocks"]:
+    for number, block in enumerate(summary["blocks"], start=1):
         width = max(0.4, block["end"] - block["start"])
         label = html_escape(block["label"])
         buttons.append(
             f'<button type="button" class="{block["kind"]}" style="--w:{width:.2f}" '
             f'data-t="{block["start"]:.2f}" data-e="{block["end"]:.2f}" '
-            f'title="{label} at {block["start"]:.1f} s">{label}</button>'
+            f'title="{number}: {label} at {block["start"]:.1f} s" '
+            f'aria-label="Shot {number}, {label}, at {block["start"]:.1f} s">{number}</button>'
         )
     return (
         '<div class="strip" aria-label="Edit timeline">'
@@ -480,6 +501,12 @@ def render_project(name, directory, tab, music_tracks=()):
     }
     status = project_status(directory)
     lede = f'<span class="state badge-{status}">{status}</span>'
+    estimate = all_good_estimate(directory)
+    if estimate and estimate["shots"]:
+        lede += (
+            f' <span class="facts num">All good shots would make about '
+            f'{format_length(estimate["seconds"])} ({estimate["shots"]} shots)</span>'
+        )
     body = (
         f"<h1>{html_escape(name)}</h1>"
         f'<p class="lede">{lede}</p>'
@@ -510,7 +537,7 @@ def option_fields(music_tracks):
             "Length",
             render_select(
                 "length",
-                [("auto", "Auto"), ("30s", "30s"), ("60s", "60s"), ("90s", "90s"), ("3min", "3min")],
+                [("auto", "Auto"), ("30s", "30s"), ("60s", "60s"), ("90s", "90s"), ("3min", "3 min"), ("all", "All good shots")],
                 default="auto",
             ),
         ),
