@@ -600,3 +600,12 @@ def test_resolve_auto_music_reads_the_choice(tmp_path):
     )
     assert recap.resolve_auto_music(ctx) is True
     assert ctx.music == track.resolve()
+
+
+def test_resolve_argv_substitutes_inside_nested_commands(tmp_path):
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"")
+    ctx = make_context(tmp_path, music=track)
+    nested = [["python", "render.py", "--music", recap.MUSIC_TOKEN]]
+    resolved = recap.resolve_argv(nested, ctx)
+    assert resolved == [["python", "render.py", "--music", str(track)]]
