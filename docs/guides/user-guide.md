@@ -106,7 +106,7 @@ finished recap, the explanation and the contact sheet.
   a project folder name, the brief and an options form where **every field
   defaults to Auto** (length 30 s / 60 s / 90 s / 3 min, order chronological /
   best first, audio clean-up, format Auto (16:9) / 16:9 / 9:16 / both, music none / a track / auto from
-  `~/media/music`, ambient level under the music). For a vertical version pick
+  `~/media/music`, ambient level under the music, speed ramp Auto (off) / off / on). Clips play at normal speed unless **Speed ramp: on**, which lets the middle of long camera moves play up to 1.2x. When a long move has to be shortened, the cut is centred on its best moment (the model's pick, else the busiest second, else the middle). For a vertical version pick
   **Format: 9:16** (or **both**): the recap is cut to 720x1280 with a window
   that follows the subject (`recap_720p_9x16.mp4`). **Start** streams the files
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
