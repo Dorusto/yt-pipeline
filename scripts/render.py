@@ -241,13 +241,18 @@ def resolve_clip(clip, sources, media_dir, originals_dir):
         candidate = Path(originals_dir).expanduser() / clip
         if candidate.is_file():
             return candidate, "originals"
+    fallback = None
     for source in sources:
         if source.get("file") == clip:
-            return Path(source["path"]), "sources"
+            fallback = Path(source["path"])
+            if fallback.is_file():
+                return fallback, "sources"
     if media_dir is not None:
         candidate = Path(media_dir).expanduser() / clip
         if candidate.is_file():
             return candidate, "sources"
+    if fallback is not None:
+        return fallback, "sources"
     return None, None
 
 
@@ -674,6 +679,8 @@ def render(
                 "llm_cost_usd": 0.0,
             }
 
+    if media_dir is None and (edit_path.parent / "proxy").is_dir():
+        media_dir = edit_path.parent / "proxy"
     clip_paths = []
     photo_sizes = []
     missing = []
