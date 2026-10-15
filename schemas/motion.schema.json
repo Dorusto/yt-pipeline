@@ -287,6 +287,15 @@
             "maximum": 1,
             "description": "homography-fit residual score: 0 means pure rotation explains the flow field, 1 means strong translation with depth parallax; separates pan from truck and supports orbit_candidate"
           },
+          "subject_ratio": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "centre mean over periphery mean of the residual motion over the steady rows; null when either count is 0 or the periphery mean is 0. Below 0.7 the subject is held centred (selfie, orbit)"
+          },
+          "subject_centred": {
+            "type": "boolean",
+            "description": "true when the centre of frame moves with the camera and the periphery does not (subject_ratio <= 0.7): a selfie or a held subject, not camera shake"
+          },
           "label_geometric": {
             "type": ["string", "null"],
             "description": "the raw CameraBench geometric label, kept as a secondary field when label is a semantic upgrade such as travel_forward or travel_backward"
