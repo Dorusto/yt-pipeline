@@ -37,6 +37,7 @@ from pathlib import Path
 
 import cv2
 
+from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
 
@@ -62,6 +63,7 @@ PHOTO_END_S = 0.04
 PHOTO_LABEL_SCORE = 0.7
 PHOTO_CONFIDENCE = 0.7
 BURST_WINDOW_S = 30.0
+BURST_SHARPNESS_FLOOR = 0.7
 HOOK_WORDS = 8
 THUMBNAIL_WIDTH = 320
 THUMBNAIL_QUALITY = 70
@@ -367,6 +369,9 @@ def _build_photo_shot(
     fusion_vision = vision_score if vision_score is not None else NO_VISION_PRIOR
     score = _fused_score(fusion_vision, labels, weight_vision, weight_labels)
     semantic_motion = (vision.get("semantic_motion") if vision else None) or "none"
+    flaws = [str(flaw) for flaw in (describe_segment.get("photo_flaws") or [])] if _is_described(describe_segment) else []
+    blocked = any(flaw in BLOCKING_PHOTO_FLAWS for flaw in flaws)
+    sharp = describe_segment.get("sharpness") if _is_described(describe_segment) else None
     return {
         "key": key,
         "clip": describe_record.get("file", ""),
@@ -379,7 +384,8 @@ def _build_photo_shot(
         "media_type": "photo",
         "capture_time": photo.get("creation_time") if photo else None,
         "subject_position": _subject_position(describe_segment),
-        "eligible": True,
+        "sharpness": float(sharp) if isinstance(sharp, (int, float)) and not isinstance(sharp, bool) else None,
+        "eligible": not blocked,
         "role": "hold",
         "role_source": "geometry",
         "motion_label": "static",
@@ -398,9 +404,9 @@ def _build_photo_shot(
         "score": score,
         "scores": {"vision": vision_score, "labels": labels},
         "hook": _hook(vision, "hold", "static"),
-        "reason": _reason(vision, "static", "geometry", "hold", [], True),
+        "reason": _reason(vision, "static", "geometry", "hold", [{"name": flaw} for flaw in flaws], not blocked),
         "similar_to": list(similarity_map.get(key, [])),
-        "defects": [],
+        "defects": flaws,
         "suppressed_by": None,
     }
 
@@ -614,7 +620,7 @@ def _apply_burst_suppression(shots):
     for component in _connected_components(neighbours):
         if len(component) < 2:
             continue
-        winner_key = min(component, key=lambda key: (-by_key[key]["score"], key))
+        winner_key = min(component, key=lambda key: _burst_rank(by_key, component, key))
         for key in component:
             if key == winner_key:
                 continue
@@ -624,6 +630,18 @@ def _apply_burst_suppression(shots):
             shot["score"] = 0.0
             shot["scores"]["labels"] = 0.0
             shot["scores"]["vision"] = None
+
+
+def _burst_rank(by_key, component, key):
+    """Sort key of a burst member: no spoiling flaw first, then score weighted by relative sharpness."""
+    shot = by_key[key]
+    blocked = any(flaw in BLOCKING_PHOTO_FLAWS for flaw in shot.get("defects") or [])
+    values = [by_key[other].get("sharpness") for other in component]
+    values = [value for value in values if isinstance(value, (int, float)) and value > 0]
+    factor = 1.0
+    if values and isinstance(shot.get("sharpness"), (int, float)):
+        factor = BURST_SHARPNESS_FLOOR + (1 - BURST_SHARPNESS_FLOOR) * shot["sharpness"] / max(values)
+    return (blocked, -float(shot.get("score") or 0.0) * factor, key)
 
 
 def _connected_components(neighbours):

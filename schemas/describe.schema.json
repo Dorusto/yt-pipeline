@@ -408,6 +408,31 @@
               }
             },
             "additionalProperties": false
+          },
+          "photo_flaws": {
+            "type": "array",
+            "description": "photos only: what spoils the photo, from a fixed list (burst photos are compared by it)",
+            "items": {
+              "enum": [
+                "eyes_closed",
+                "blur",
+                "motion_blur",
+                "tilted",
+                "overexposed",
+                "underexposed",
+                "obstructed",
+                "cut_off"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "sharpness": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "photos only: variance of the Laplacian on a 1000 px wide grey copy; higher is sharper, comparable within a burst"
           }
         },
         "additionalProperties": true,

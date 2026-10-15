@@ -1041,3 +1041,55 @@ def test_beats_take_their_own_peak_or_the_segment_peak_when_it_falls_inside(tmp_
     data, _ = build(tmp_path, segments=[segment], describe_segments=[described])
     assert [shot["peak_s"] for shot in data["shots"]] == [41.0, 90.0, None]
     assert validate(data, "shotlog") == []
+
+
+def test_photo_burst_prefers_open_eyes_over_a_higher_score(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(10, 20, 30))
+    second = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg", color=(200, 180, 160))
+    write_photo_ingest(tmp_path, [
+        photo_record(first, "2026-10-12T11:42:00+00:00"),
+        photo_record(second, "2026-10-12T11:42:03+00:00"),
+    ])
+    closed = described_photo_segment(interest=90)
+    closed["photo_flaws"] = ["eyes_closed"]
+    opened = described_photo_segment(interest=60)
+    opened["photo_flaws"] = []
+    write_photo_describe(tmp_path, first, closed)
+    write_photo_describe(tmp_path, second, opened)
+    write_similarity(tmp_path, [{"a": "0068/p1", "b": "0069/p1", "similarity": 0.95}])
+    index.run(str(tmp_path), no_html=True)
+    data = read_shotlog(tmp_path)
+    assert find(data, "0069/p1")["eligible"] is True
+    assert find(data, "0068/p1")["suppressed_by"] == "0069/p1"
+
+
+def test_photo_burst_prefers_the_sharper_of_equal_photos(tmp_path):
+    first = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(10, 20, 30))
+    second = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg", color=(200, 180, 160))
+    write_photo_ingest(tmp_path, [
+        photo_record(first, "2026-10-12T11:42:00+00:00"),
+        photo_record(second, "2026-10-12T11:42:03+00:00"),
+    ])
+    soft = described_photo_segment(interest=62)
+    soft["sharpness"] = 20.0
+    crisp = described_photo_segment(interest=60)
+    crisp["sharpness"] = 200.0
+    write_photo_describe(tmp_path, first, soft)
+    write_photo_describe(tmp_path, second, crisp)
+    write_similarity(tmp_path, [{"a": "0068/p1", "b": "0069/p1", "similarity": 0.95}])
+    index.run(str(tmp_path), no_html=True)
+    data = read_shotlog(tmp_path)
+    assert find(data, "0068/p1")["suppressed_by"] == "0069/p1"
+
+
+def test_a_lone_photo_with_closed_eyes_is_not_eligible(tmp_path):
+    only = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg", color=(10, 20, 30))
+    write_photo_ingest(tmp_path, [photo_record(only, "2026-10-12T11:42:00+00:00")])
+    closed = described_photo_segment(interest=90)
+    closed["photo_flaws"] = ["eyes_closed"]
+    write_photo_describe(tmp_path, only, closed)
+    write_similarity(tmp_path, [])
+    index.run(str(tmp_path), no_html=True)
+    shot = find(read_shotlog(tmp_path), "0068/p1")
+    assert shot["eligible"] is False
+    assert shot["defects"] == ["eyes_closed"]

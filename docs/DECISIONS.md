@@ -1827,3 +1827,15 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not C:** coverage of the day still matters for a recap; stars-first keeps both.
 
 **Consequence:** a strong stretch (tunnel, cave) can hold several slots; the 8 s / 0.85 / 40 % numbers are first guesses to tune on real footage.
+
+---
+
+## [2026-10-15] Best photo of a burst: no closed eyes, no blur (D2-15)
+
+**Context:** Doru takes several photos of one moment; the edit should keep the one where nobody blinks and nothing is blurred. The burst winner was the highest score only.
+
+**Options:** (A) OpenCV only: Haar eye cascades (not shipped with OpenCV 5) or YuNet landmarks (no eye openness) plus Laplacian blur; (B) ask the vision model, which already sees every photo, for a fixed list of flaws, plus a measured Laplacian sharpness; (C) a dedicated blink model (new dependency and download).
+
+**Decision:** B. `describe` asks for `photo_flaws` (eyes_closed, blur, motion_blur, tilted, overexposed, underexposed, obstructed, cut_off) and stores a measured `sharpness`; `index` picks the burst winner without a spoiling flaw first, then by score weighted 0.7-1.0 by relative sharpness, and makes a lone photo with a spoiling flaw ineligible. Old photo descriptions are redone once (cents). Photo paths fall back to `<workspace>/proxy` like clips.
+
+**Consequence:** eye judgement is only as good as the vision model; sharpness is relative inside a burst, never an absolute threshold (a clear sky is "soft").

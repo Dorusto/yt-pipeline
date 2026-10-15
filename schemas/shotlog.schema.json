@@ -385,6 +385,13 @@
               }
             },
             "additionalProperties": false
+          },
+          "sharpness": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "photos only: Laplacian sharpness from describe; ranks the members of a burst"
           }
         },
         "additionalProperties": true
