@@ -20,6 +20,7 @@ from common.ffmpeg_tools import available_video_encoders, pick_video_encoder, vi
 CROP_W = 608
 CROP_H = 1080
 SRC_W = 1920
+REFRAME_SCRIPT = Path(__file__).resolve().parent / "reframe.py"
 
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "shorts_config.yaml"
@@ -114,40 +115,85 @@ def parse_time(t: str) -> float:
     return int(h) * 3600 + int(m) * 60 + float(s)
 
 
-def detect_face_offset(video_path: str, start: float, end: float) -> int:
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    x_centers = []
-    total_frames = 0
+def fixed_crop_filter(x_offset: int) -> str:
+    return f"crop={CROP_W}:{CROP_H}:{x_offset}:0"
 
-    cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
 
-    t = start
-    while t < end:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
-        ret, frame = cap.read()
-        if not ret:
-            break
-        total_frames += 1
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
-        if len(faces) > 0:
-            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-            x_centers.append(x + w / 2)
-        t += 2.0
+def piecewise_expression(points, key):
+    """ffmpeg expression of a piecewise-linear curve through the points' t_s and key."""
+    if not points:
+        return "0"
+    if len(points) == 1:
+        return f"{float(points[0][key]):.2f}"
+    segments = []
+    for index in range(len(points) - 1):
+        t0 = float(points[index]["t_s"])
+        t1 = float(points[index + 1]["t_s"])
+        v0 = float(points[index][key])
+        v1 = float(points[index + 1][key])
+        if t1 <= t0:
+            continue
+        slope = (v1 - v0) / (t1 - t0)
+        if abs(slope) < 1e-6:
+            expr = f"{v0:.2f}"
+        else:
+            expr = f"{v0:.2f}+(t-{t0:.3f})*{slope:.4f}"
+        segments.append((t1, expr))
+    result = f"{float(points[-1][key]):.2f}"
+    for t1, expr in reversed(segments):
+        result = f"if(lt(t,{t1:.3f}),{expr},{result})"
+    return result
 
-    cap.release()
 
-    print(f"     face detected in {len(x_centers)}/{total_frames} sampled frames")
+def simplify_points(points, max_points=40):
+    """Thin the crop path to at most max_points keyframes, keeping both ends."""
+    if len(points) <= max_points:
+        return list(points)
+    step = (len(points) - 1) / (max_points - 1)
+    picked = [points[int(round(index * step))] for index in range(max_points)]
+    picked[0] = points[0]
+    picked[-1] = points[-1]
+    return picked
 
-    if not x_centers:
-        print("     [warn] no face detected — using center (set x_offset manually in config)")
-        return (SRC_W - CROP_W) // 2
 
-    avg_x = sum(x_centers) / len(x_centers)
-    return max(0, min(int(avg_x - CROP_W / 2), SRC_W - CROP_W))
+def crop_filter_from_path(record) -> str:
+    """Build the ffmpeg crop filter for a reframe crop path record."""
+    points = simplify_points(record.get("points") or [])
+    if not points:
+        raise RuntimeError("crop path has no points")
+    crop_w = int(record["crop_w"])
+    crop_h = int(record["crop_h"])
+    if crop_w != CROP_W or crop_h != CROP_H:
+        raise RuntimeError(f"crop path is {crop_w}x{crop_h}, expected {CROP_W}x{CROP_H}")
+    xs = {int(point["x"]) for point in points}
+    ys = {int(point["y"]) for point in points}
+    x_expr = str(points[0]["x"]) if len(xs) == 1 else f"'{piecewise_expression(points, 'x')}'"
+    y_expr = str(points[0]["y"]) if len(ys) == 1 else f"'{piecewise_expression(points, 'y')}'"
+    return f"crop={crop_w}:{crop_h}:{x_expr}:{y_expr}"
+
+
+def reframe_crop_path(video_path: str, start: float, end: float, out_path) -> dict:
+    """Run scripts/reframe.py for one segment and return its crop path record."""
+    command = [
+        sys.executable,
+        str(REFRAME_SCRIPT),
+        "--video",
+        str(video_path),
+        "--start",
+        str(start),
+        "--end",
+        str(end),
+        "--aspect",
+        "9:16",
+        "--out",
+        str(out_path),
+        "--force",
+        "--json",
+    ]
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"reframe failed: {result.stderr.strip() or 'unknown error'}")
+    return json.loads(Path(out_path).read_text(encoding="utf-8"))
 
 
 def parse_srt_for_alignment(srt_path: str, start: float, end: float) -> list:
@@ -349,7 +395,7 @@ def generate_plain_ass(segments: list, output_path: str) -> None:
 
 
 def render_short(
-    video_path: str, x_offset: int, start: float, end: float,
+    video_path: str, crop_filter: str, start: float, end: float,
     ass_path: str, output_path: str, encoder: str | None = None,
 ) -> str:
     encoder = encoder or pick_video_encoder()
@@ -358,7 +404,7 @@ def render_short(
         return [
             "ffmpeg", "-y",
             "-ss", str(start), "-to", str(end), "-i", video_path,
-            "-vf", f"crop={CROP_W}:{CROP_H}:{x_offset}:0,ass={ass_path}",
+            "-vf", f"{crop_filter},ass={ass_path}",
             *video_encode_args(enc),
             "-c:a", "aac", "-b:a", "192k",
             output_path,
@@ -462,10 +508,25 @@ def main(argv=None) -> int:
         if "x_offset" in seg:
             x_offset = int(seg["x_offset"])
             log(f"  → manual x_offset = {x_offset}px (from config)")
+            crop_filter = fixed_crop_filter(x_offset)
+            crop_path_file = None
         else:
-            log("  → detecting face...")
-            x_offset = detect_face_offset(str(video_path), start, end)
-            log(f"     x_offset = {x_offset}px")
+            log("  → reframe (subject tracking)...")
+            crop_path_file = auto_dir / f"{name}_reframe.json"
+            try:
+                record = reframe_crop_path(str(video_path), start, end, crop_path_file)
+                crop_filter = crop_filter_from_path(record)
+                moving = ":'" in crop_filter
+                log(
+                    f"     crop path → {crop_path_file.name} "
+                    f"({len(record['points'])} points, {'moving' if moving else 'fixed'})"
+                )
+                x_offset = None
+            except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+                log(f"     [warn] {exc} — using centre crop")
+                crop_filter = fixed_crop_filter((SRC_W - CROP_W) // 2)
+                crop_path_file = None
+                x_offset = (SRC_W - CROP_W) // 2
 
         log("  → cuvinte din .srt corectat (fără WhisperX — nu pierde cuvinte)...")
         srt_segments = parse_srt_for_alignment(str(srt_path), start, end)
@@ -478,13 +539,14 @@ def main(argv=None) -> int:
 
         output = shorts_dir / f"Short{i}-{name}.mp4"
         log(f"  → render → {output.name}")
-        used_encoder = render_short(str(video_path), x_offset, start, end, str(ass_path), str(output), encoder)
+        used_encoder = render_short(str(video_path), crop_filter, start, end, str(ass_path), str(output), encoder)
         log(f"  ✓ {output}")
         results.append({
             "name": name,
             "start": seg["start"],
             "end": seg["end"],
             "x_offset": x_offset,
+            "crop_path": str(crop_path_file) if crop_path_file else None,
             "words": len(words),
             "output": str(output),
             "encoder": used_encoder,

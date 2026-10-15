@@ -224,21 +224,33 @@ def _normalize(map_):
     return (map_ - low) / (high - low)
 
 
-def saliency_centre(previous_gray, gray):
-    """Centre of the salient region, or None when the map is flat or unstable."""
-    combined = 0.5 * spectral_saliency(gray) + 0.5 * motion_saliency(previous_gray, gray)
+def saliency_centre(previous_gray, gray, current_centre=None, width=None, height=None):
+    """Centre of the salient region near the current centre, or None when flat or unstable."""
+    combined = 0.35 * spectral_saliency(gray) + 0.65 * motion_saliency(previous_gray, gray)
     band = int(SALIENCY_SIZE * (1.0 - WAKE_BAND))
     combined[band:, :] *= WAKE_WEIGHT
-    peak = float(combined.max())
-    mean = float(combined.mean())
+    window = combined
+    x0 = 0
+    y0 = 0
+    if current_centre is not None and width and height:
+        radius = max(2, int(round(SUBJECT_GATE * SALIENCY_SIZE)))
+        x0 = max(0, int(round(current_centre[0] / width * SALIENCY_SIZE)) - radius)
+        y0 = max(0, int(round(current_centre[1] / height * SALIENCY_SIZE)) - radius)
+        x1 = min(SALIENCY_SIZE, x0 + 2 * radius + 1)
+        y1 = min(SALIENCY_SIZE, y0 + 2 * radius + 1)
+        window = combined[y0:y1, x0:x1]
+        if window.size == 0:
+            return None, 0.0
+    peak = float(window.max())
+    mean = float(window.mean())
     if peak <= 0 or peak < 2.0 * mean:
         return None, 0.0
-    mask = (combined >= SALIENCY_PEAK * peak).astype(np.float32)
+    mask = (window >= SALIENCY_PEAK * peak).astype(np.float32)
     if mask.sum() == 0:
         return None, 0.0
     ys, xs = np.nonzero(mask)
-    cx = float(xs.mean()) / SALIENCY_SIZE
-    cy = float(ys.mean()) / SALIENCY_SIZE
+    cx = (float(xs.mean()) + x0) / SALIENCY_SIZE
+    cy = (float(ys.mean()) + y0) / SALIENCY_SIZE
     confidence = min(1.0, max(0.0, (peak - mean) / max(peak, 1e-6)))
     return (cx, cy), confidence
 
@@ -316,7 +328,7 @@ def clamp_box(box, width, height):
 
 def fallback_target(previous_gray, gray, current_centre, width, height):
     """Saliency centre with the stability gate, or a held centre; returns (centre, source, confidence)."""
-    centre, confidence = saliency_centre(previous_gray, gray)
+    centre, confidence = saliency_centre(previous_gray, gray, current_centre, width, height)
     if centre is None:
         return current_centre, "hold", HOLD_DECAY
     target = (centre[0] * width, centre[1] * height)
