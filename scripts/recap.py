@@ -190,6 +190,11 @@ def build_parser():
         ),
     )
     parser.add_argument(
+        "--new-edit",
+        action="store_true",
+        help="make a new edit even when the brief and the options did not change (re-runs llm_director, explain and the renders)",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="re-run every station",
@@ -530,7 +535,7 @@ def build_stations(ctx):
                     ctx,
                     "llm_director.py",
                     director_args(ctx),
-                    force=force,
+                    force=force or getattr(ctx, "new_edit", False),
                     budget=True,
                 )
             ],
@@ -834,7 +839,9 @@ def run(ctx):
     failed_name = None
     for index, station in enumerate(stations, start=1):
         name = station["name"]
-        rerun = name in ("llm_director", "explain", "render", "render_vertical") and ctx.feedback
+        rerun = name in ("llm_director", "explain", "render", "render_vertical") and (
+            ctx.feedback or getattr(ctx, "new_edit", False)
+        )
         if not ctx.force and not rerun and is_up_to_date(name, ctx):
             if name == "music_pick" and not resolve_auto_music(ctx):
                 failed_name = name
@@ -1046,6 +1053,7 @@ def main(argv=None):
         frame_format=args.frame_format,
         speed_ramp=args.speed_ramp,
     )
+    ctx.new_edit = args.new_edit
     summary = run(ctx)
     if args.json:
         print(json.dumps(summary))

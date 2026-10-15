@@ -1116,3 +1116,10 @@ def test_shots_tab_marks_what_is_in_the_edit(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_the_reedit_button_always_asks_for_a_new_edit(tmp_path):
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"submit": "reedit"}, tmp_path)
+    assert "--new-edit" in command
+    command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"submit": "start"}, tmp_path)
+    assert "--new-edit" not in command
