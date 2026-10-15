@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -80,7 +81,7 @@ def test_render_short_falls_back_to_libx264(monkeypatch, tmp_path):
     monkeypatch.setattr(sg.subprocess, "run", fake_run)
     monkeypatch.setattr(sg, "available_video_encoders", lambda: {"libx264"})
     used = sg.render_short(
-        "v.mp4", 0, 0.0, 1.0, "a.ass", str(tmp_path / "o.mp4"), encoder="h264_nvenc"
+        "v.mp4", sg.fixed_crop_filter(0), 0.0, 1.0, "a.ass", str(tmp_path / "o.mp4"), encoder="h264_nvenc"
     )
     assert used == "libx264"
     assert len(calls) == 2
@@ -93,7 +94,88 @@ def test_render_short_reraises_without_libx264(monkeypatch, tmp_path):
     monkeypatch.setattr(sg.subprocess, "run", fake_run)
     monkeypatch.setattr(sg, "available_video_encoders", lambda: {"h264_nvenc"})
     with pytest.raises(subprocess.CalledProcessError):
-        sg.render_short("v.mp4", 0, 0.0, 1.0, "a.ass", "o.mp4", encoder="h264_nvenc")
+        sg.render_short("v.mp4", sg.fixed_crop_filter(0), 0.0, 1.0, "a.ass", "o.mp4", encoder="h264_nvenc")
+
+
+def test_fixed_crop_filter_is_the_old_shape():
+    assert sg.fixed_crop_filter(800) == "crop=608:1080:800:0"
+
+
+def test_piecewise_expression_is_linear_between_points():
+    points = [
+        {"t_s": 0.0, "x": 100, "y": 0},
+        {"t_s": 1.0, "x": 200, "y": 0},
+        {"t_s": 2.0, "x": 200, "y": 0},
+    ]
+    expr = sg.piecewise_expression(points, "x")
+    assert expr.startswith("if(lt(t,")
+    assert "100.00+(t-0.000)*100.0000" in expr
+    assert expr.count("if(lt(t,") == 2
+    assert expr.endswith(")")
+    assert sg.piecewise_expression([{"t_s": 0.0, "x": 42, "y": 0}], "x") == "42.00"
+
+
+def test_crop_filter_from_path_constant_uses_fixed_crop():
+    record = {
+        "crop_w": 608,
+        "crop_h": 1080,
+        "points": [
+            {"t_s": 0.0, "x": 656, "y": 0, "source": "face", "confidence": 0.9},
+            {"t_s": 1.0, "x": 656, "y": 0, "source": "face", "confidence": 0.9},
+        ],
+    }
+    assert sg.crop_filter_from_path(record) == "crop=608:1080:656:0"
+
+
+def test_crop_filter_from_path_moving_quotes_expression():
+    record = {
+        "crop_w": 608,
+        "crop_h": 1080,
+        "points": [
+            {"t_s": 0.0, "x": 100, "y": 0, "source": "face", "confidence": 0.9},
+            {"t_s": 1.0, "x": 300, "y": 0, "source": "face", "confidence": 0.9},
+        ],
+    }
+    crop = sg.crop_filter_from_path(record)
+    assert crop.startswith("crop=608:1080:'")
+    assert crop.endswith(":0")
+    assert "if(lt(t," in crop
+
+
+def test_crop_filter_from_path_rejects_other_crop_sizes():
+    record = {
+        "crop_w": 405,
+        "crop_h": 720,
+        "points": [{"t_s": 0.0, "x": 0, "y": 0, "source": "face", "confidence": 0.9}],
+    }
+    with pytest.raises(RuntimeError):
+        sg.crop_filter_from_path(record)
+
+
+def test_simplify_points_keeps_the_ends():
+    points = [{"t_s": float(i), "x": i, "y": 0} for i in range(120)]
+    simplified = sg.simplify_points(points, max_points=40)
+    assert len(simplified) == 40
+    assert simplified[0] == points[0]
+    assert simplified[-1] == points[-1]
+
+
+def test_reframe_crop_path_invokes_the_tool(monkeypatch, tmp_path):
+    out = tmp_path / "seg_reframe.json"
+    record = {
+        "crop_w": 608,
+        "crop_h": 1080,
+        "points": [{"t_s": 0.0, "x": 10, "y": 0, "source": "face", "confidence": 0.9}],
+    }
+
+    def fake_run(cmd, check=False, **kwargs):
+        out.write_text(json.dumps(record), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(sg.subprocess, "run", fake_run)
+    loaded = sg.reframe_crop_path("v.mp4", 0.0, 5.0, out)
+    assert loaded["crop_w"] == 608
+    assert out.exists()
 
 
 def test_missing_config_non_interactive_raises(monkeypatch, tmp_path):

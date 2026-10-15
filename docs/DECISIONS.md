@@ -1602,3 +1602,125 @@ through the web endpoint, `--music auto`) found three defects.
 
 Also: `recap.py --no-audio-clean` forwards to both renders (the web app's
 audio-clean-up option).
+
+---
+
+## [2026-10-15] D2-8 reframe stack: YuNet + TrackerMIL + saliency fallback (Haar is gone in OpenCV 5)
+
+**Context:** `scripts/reframe.py` (D2-8, Shorts subject tracking) needs a face
+detector, a tracker between detections and a no-face fallback. The build venv
+runs **OpenCV 5.0.0** (`opencv-python`, CPU), which changes the options: the
+classic `cv2.CascadeClassifier` API and the Haar XML files are **removed**
+(`cv2.data.haarcascades` is empty), so the Haar path in `shorts_generator.py`
+(`detect_face_offset`) is already broken on this venv and could not be kept.
+Measured on Kotor proxy frames (1920x1080, LXC CPU), 2026-10-15.
+
+**Face detector options compared:**
+- **YuNet via `cv2.FaceDetectorYN`** — OpenCV Zoo `face_detection_yunet_2026may.onnx`
+  (dynamic input shape, the zoo's default for OpenCV 5.x) and `..._2023mar.onnx`
+  (fixed shape): **MIT** (model directory LICENSE), **224 KB / 227 KB**,
+  ~28–74 ms per 1080p frame on this CPU, 5 landmarks + score, faces ~10x10 to
+  300x300 px. Both models give identical boxes on the test frames; 2026may is
+  the forward-compatible one (symbolic H/W dims for the OpenCV 5 ONNX engine).
+- **Haar cascade** (`cv2.CascadeClassifier`, BSD-3, ~900 KB XML, ships with
+  OpenCV 4.x) — **not available in OpenCV 5.0.0** (API and XML files removed);
+  frontal-only and weaker on profile faces anyway.
+- **SCRFD / RetinaFace / YOLO-face ONNX via `cv2.dnn`** — Apache-2.0/MIT, 2–30 MB,
+  more decode code, no accuracy need for a crop path; rejected.
+
+**Tracker options compared** (between detections every 8 frames = 0.32 s, scored
+by IoU against per-frame YuNet boxes on 0091 orbit, 75 frames):
+- **`cv2.TrackerMIL`** (OpenCV 5 main, no model download, Apache-2.0): **IoU 0.942**.
+- **Linear interpolation between detections** (no tracker): **IoU 0.946**.
+- **`cv2.TrackerVit` + `object_tracking_vittrack_2023sep.onnx`** (OpenCV Zoo,
+  Apache-2.0, **698 KB**): **IoU 0.897**.
+
+**No-face fallback options compared** (0083 locked-off shot, other boat enters
+and approaches; 0081 people + cave):
+- **Saliency map** — spectral residual (numpy FFT) centroid: x 0.20–0.36 / y 0.68–0.96
+  on 0083 (lands on the wake, not the boat); motion-blob centroid jumps
+  0.04 → 0.91 (wake + moving-camera parallax dominate). Free and always runs,
+  but weak on boat footage — usable only behind a stability gate (hold the last
+  good centre instead of chasing the wake).
+- **Object detector** — OpenCV Zoo `object_detection_nanodet_2022nov.onnx`
+  (NanoDet-m-plus-1.5x, **3.6 MB**, Apache-2.0, COCO incl. `boat`/`person`):
+  **does not run on this OpenCV 5.0.0 pip build** (`reshape2_layer` assert in the
+  new DNN graph engine; the wheel is built `WITH_ONNXRUNTIME=OFF`, so
+  `OPENCV_FORCE_DNN_ENGINE=4` cannot fall back either). YOLOX (35.8 MB) is the
+  heavier cousin with the same engine risk. Kept as the P1 upgrade.
+
+**Decision:**
+- **Detector: YuNet** `face_detection_yunet_2026may.onnx` via `cv2.FaceDetectorYN`,
+  downloaded once to `~/.cache/yt-pipeline/models/` (never into git), MIT.
+- **Tracker: `cv2.TrackerMIL`** between detections (zero download, measured at
+  parity with plain interpolation, and it keeps following through short
+  detection gaps where interpolation would freeze). Re-init on every detection;
+  subject choice by continuity (nearest to the previous subject), never "largest
+  face", so the crop never jumps between people. VitTrack is the upgrade path if
+  MIL drifts on fast subjects.
+- **No-face fallback: saliency map** (spectral residual + frame-difference
+  motion, scene band with the bottom wake band down-weighted) with a stability
+  gate: when the saliency is flat or jumps, hold the last good crop centre.
+  The object detector stays the P1 backlog row until OpenCV 5's DNN engine (or
+  an ONNX Runtime build) loads NanoDet.
+- Crop path JSON carries `x`,`y` = crop window top-left in source pixels per
+  timestamp, any aspect (`9:16` default); `x_offset` in `shorts_config.yaml`
+  still overrides with a fixed crop.
+
+**Rationale:** OpenCV-first (the D2-8 backlog principle): the detector, the
+tracker and the fallback are all free CPU measurements, one 224 KB MIT model
+download, no new dependencies; the measured numbers above are the pick, not
+taste. Haar had to go anyway on OpenCV 5.
+
+---
+
+## [2026-10-15] D2-8 describe mosaic: event frame times, one image per group, legacy behind a flag
+
+**Context:** the D2-8 PART 1 backlog row: tile 6-9 frames of a segment into one
+mosaic image with their timestamps, pick the frames at OpenCV scene changes and
+motion phase boundaries instead of fixed 20/50/80 %, send one mosaic per segment
+(more on a long take) instead of separate frames, and keep the old path behind a
+flag. Measured old vs new on the Kotor eval set
+(`eval/ground_truth_boat_2026-10-12.yaml`, 6 clips, 6.92 min of footage,
+`z-ai/glm-5.3-flash` vision, 2026-10-15).
+
+**Decision:**
+- **Frame times** (`--frame-mode mosaic`, the default): candidates are the
+  segment's two edge anchors (`start+0.05`, `end-0.05`), the motion phase
+  boundaries from `motion/<stem>.json` and the OpenCV scene changes measured on
+  the segment (grayscale frame difference every 0.5 s, peak over
+  `max(3 x median, 8)`, merged within 1 s). Target count: 6 frames up to 20 s,
+  else `min(24, max(6, ceil(span / 5)))`; events win over the even fill, times
+  are deduped below 0.25 s.
+- **Mosaic**: tiles 480 px wide with the timestamp burned in (`12.4s`), grid 3
+  columns (2 when a group has <= 4 tiles), black canvas, JPEG 85; the tiles are
+  split into consecutive groups of at most 9 (`ceil(N/9)` groups, sizes as even
+  as possible) and **each group is one model image**. The facts block lists every
+  tile timestamp and a `long: yes|no` line that keys the beats rule (the old
+  "more than three frames" trigger no longer works now that short segments carry
+  6 tiles).
+- **`--frame-mode legacy`** keeps the old path exactly: fixed interior times
+  (three frames, or one every ~5 s capped at 24), one image per frame, the old
+  facts block. It is the A/B baseline, not the default.
+
+**Measured A/B (6 GT clips, `describe --force` then `index` then
+`eval_labels.py --labels shotlog`):**
+
+| | legacy (old) | mosaic (new) |
+|---|---|---|
+| move score | 0.678 | **0.681** |
+| role score | 0.996 | 0.996 |
+| horizon score | 0.970 | 0.970 |
+| events F1 | 0.667 | 0.667 |
+| model images sent | 134 | **35** (−74 %) |
+| frames shown to the model | 134 | **216** (+61 %) |
+| content beats found | 12 | **15** |
+| vision cost | 0.03643 USD | **0.03098 USD** (−15 %) |
+| **vision cost per minute of footage** | **0.00526 USD/min** | **0.00447 USD/min** |
+
+**Rationale:** the mosaic is not worse on any eval component (move is a hair
+better, the rest identical), shows 61 % more frames for 15 % less money and
+cuts the number of model images by three quarters — so it ships as the default
+and the old path stays behind `--frame-mode legacy` for the next bake-off
+(frames vs mosaic vs native video input, P1). Frame times at real events also
+found more content beats (15 vs 12), which is what the long-take split needs.

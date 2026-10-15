@@ -69,6 +69,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `analyze_srt.py` | `_RO.srt` + `video.mp4` | `video_metadata.txt` + `shorts_candidates.txt` |
 | `analyze_srt.py --shorts-config` | config yaml | `{name}_metadata.txt` in `shorts/` |
 | `shorts_generator.py` | `video.mp4` + config | `Short{N}-{name}.mp4` + karaoke ASS |
+| `reframe.py` | `video.mp4` | crop path JSON (time -> x, y) for a moving reframe |
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
 | `notify.py` | message | POST to the project's ntfy topic |
@@ -84,7 +85,7 @@ Shared building blocks for the AI Director track (see `docs/VISION.md`). Indepen
 - `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `__init__.py`.
 - `config.yaml` — project-wide AI Director config: OpenRouter model id per role, per-job `llm_budget_usd`, `llm_backend`, optional `spend_ledger`. Copy from the committed `config.yaml.example`; `config.yaml` is git-ignored and holds no secrets (API keys stay in `OPENROUTER_API_KEY`).
 - `scripts/common/llm.py` — OpenRouter client with `llm_budget_usd` spend tracking against a per-project ledger file (`<workspace>/llm_spend.json`), role-to-model resolution and a mock backend for offline tests and dry runs. An OpenRouter response without `usage.cost` raises `MissingUsageCost` instead of counting as free.
-- `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`; `ingest.schema.json`, `motion.schema.json` and `quality.schema.json` describe the D1a analysis outputs.
+- `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`; `ingest.schema.json`, `motion.schema.json` and `quality.schema.json` describe the D1a analysis outputs; `reframe.schema.json` describes the crop path written by `reframe.py`.
 - `tests/` — pytest suite with tiny offline fixtures. Runs on a CPU-only machine (no GPU, no torch/whisperx).
 - `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`).
 
@@ -227,7 +228,7 @@ segments:
   - name: "Hook"
     start: "00:00:00"
     end:   "00:00:54"
-    # no x_offset → auto face detection
+    # no x_offset → moving crop that follows the subject (reframe.py)
 
   - name: "Delegarea"
     start: "00:05:06"
