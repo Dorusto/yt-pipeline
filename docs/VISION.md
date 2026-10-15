@@ -28,6 +28,16 @@ Both share one core: **analyze once → index → many edits from different brie
 7. **One tool for every kind of video.** Vacation, tutorial, presentation and talking-head use the same stations; a router picks which stations run and with which settings from the brief and the detected content type.
 8. **Private by default.** The web editor and every service it calls are reachable only inside the tailnet (Tailscale); nothing is exposed to the public internet. Footage leaves the homelab only as frames sent to the configured vision model, and private projects can switch that to the local model.
 
+### Product principles from review (Doru, D2 reviews, 2026-10)
+
+1. **The best shots make the edit.** A top-scored hero left out is a bug, not a taste call: the rule director gives heroes the first slots and the model's draft is repaired to keep them (DECISIONS D2-14, D2-19).
+2. **Feedback becomes a test.** What Doru says about an edit is written as expectations (`eval/*.yaml`, checked by `eval_edit.py`) so agents iterate against it without him; later the per-shot buttons on the Shots tab write the same file (D2-19, D3).
+3. **Understand intent before disqualifying.** Before a segment is penalised or made ineligible for a defect (shake, horizon, blur …), the pipeline checks from context whether the "defect" is deliberate — a person held centred while the camera orbits is a planned move. One general mechanism using the vision verdict and subject stability, never a rule for one shot (ROADMAP *Next*).
+4. **Every decision is explained.** The Why? tab says who made the edit (model or rules) and gives every shot that was left out a reason; the Shots tab marks used and left-out shots (D2-14).
+5. **Nothing is lost on a re-edit.** Each re-edit is kept as a version that can be played and compared with an earlier one (D2-13).
+6. **The app shows what it is doing.** A running project shows the current station, a progress bar and a plain-language failure, never a stale "running" (D2-13, D2-18).
+7. **Later, not now:** an installable PWA over `tailscale serve`, then a release for the self-hosting community (Docker). Astro was considered and rejected for the app (ROADMAP *Later*).
+
 ## 3. Architecture
 
 ```
