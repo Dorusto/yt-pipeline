@@ -34,7 +34,16 @@ from common.decisions import build_decisions
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
-from common.moves import EXCEPTION_SHARE, apply_move_policy, middle_speed_of, screen_factor, slot_screen_length
+from common.moves import (
+    EXCEPTION_SHARE,
+    SAME_TAKE_MIN_GAP_S,
+    apply_move_policy,
+    is_jump_cut,
+    is_moving,
+    middle_speed_of,
+    screen_factor,
+    slot_screen_length,
+)
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -1211,12 +1220,20 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
     for first, second in zip(slots, slots[1:]):
         if first.get("clip") is None or second.get("clip") is None:
             continue
-        if first["clip"] == second["clip"] and not source_contiguous(first, second):
+        first_fact = slot_fact(first, plan_by_id, facts_by_key) or {}
+        second_fact = slot_fact(second, plan_by_id, facts_by_key) or {}
+        if is_jump_cut(
+            first,
+            second,
+            is_moving(first_fact.get("role"), first_fact.get("motion_label")),
+            is_moving(second_fact.get("role"), second_fact.get("motion_label")),
+        ):
             violations.append(
                 violation(
                     second["id"],
                     "same_take",
-                    f"same take as {first['id']} without a different take between them",
+                    f"same take as {first['id']} without a different take between them "
+                    f"(allowed only for two camera moves at least {SAME_TAKE_MIN_GAP_S:.0f}s apart)",
                 )
             )
     for first, second in zip(slots, slots[1:]):
@@ -1762,6 +1779,98 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
     }
 
 
+REBUILT_RULES = {"window", "keep_whole", "peak", "length", "landing", "photo_length"}
+NON_BLOCKING_RULES = {"hero"}
+
+
+def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S):
+    """Fix a draft's mechanical violations from the shot facts instead of discarding the draft.
+
+    First pass: slots that are not in the plan are dropped, a landing hold
+    planned again as its own slot leaves the plan, and a slot whose cut breaks
+    a window, length, peak, keep-whole or landing rule is rebuilt from its shot
+    fact the way the editor spec defines it. Second pass: of two same-take
+    slots that would jump-cut, the lower-scoring one leaves the plan. Returns
+    the plain-word notes of what changed.
+    """
+    notes = []
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    rebuild = set()
+    drop_keys = set()
+    for item in violations:
+        slot_id = item.get("slot")
+        rule = item.get("rule")
+        if rule == "landing" and "planned again" in (item.get("message") or ""):
+            slot = next((row for row in record.get("video") or [] if row.get("id") == slot_id), None)
+            fact = slot_fact(slot, plan_by_id, facts_by_key) if slot else None
+            if fact and fact.get("landing_hold_key"):
+                drop_keys.add(fact["landing_hold_key"])
+                continue
+        if rule in REBUILT_RULES and slot_id in plan_by_id:
+            rebuild.add(slot_id)
+    drop_from_plan(plan, drop_keys, "landing hold planned as its own slot", notes)
+    planned = {row["id"] for row in plan.get("slot_plan") or []}
+    kept = []
+    for slot in record.get("video") or []:
+        if slot.get("id") not in planned:
+            notes.append(f"repaired: dropped {slot.get('id')}, it is not in the plan")
+            continue
+        if slot.get("id") in rebuild:
+            notes.append(f"repaired: {slot['id']} cut rebuilt from its shot")
+            continue
+        kept.append(slot)
+    record["video"] = kept
+    ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+    for _ in range(len(plan.get("slot_plan") or [])):
+        pairs = [
+            item for item in validate_edit(record, plan, facts_by_key, important_max_s)
+            if item.get("rule") == "same_take"
+        ]
+        if not pairs:
+            break
+        plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+        weaker = weaker_of_pair(record, pairs[0].get("slot"), plan_by_id, shotlog_by_key)
+        if weaker is None:
+            break
+        drop_from_plan(plan, {weaker}, "jump cut with its neighbour from the same take", notes)
+        planned = {row["id"] for row in plan.get("slot_plan") or []}
+        record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
+        ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+    return notes
+
+
+def drop_from_plan(plan, keys, why, notes):
+    keys = {key for key in keys if key}
+    if not keys:
+        return
+    plan["slot_plan"] = [row for row in plan.get("slot_plan") or [] if row.get("shot_key") not in keys]
+    notes.extend(f"repaired: dropped {key} from the plan ({why})" for key in sorted(keys))
+
+
+def weaker_of_pair(record, slot_id, plan_by_id, shotlog_by_key):
+    """The shot key of the lower-scoring slot of a same-take pair ending at ``slot_id``."""
+    video = record.get("video") or []
+    index = next((position for position, slot in enumerate(video) if slot.get("id") == slot_id), None)
+    if index is None or index == 0:
+        return None
+    pair = [video[index - 1], video[index]]
+
+    def score(slot):
+        key = (plan_by_id.get(slot.get("id")) or {}).get("shot_key")
+        return float((shotlog_by_key.get(key) or {}).get("score") or slot.get("score") or 0.0), key
+
+    return min((score(slot) for slot in pair), key=lambda item: item[0])[1]
+
+
+def blocking(violations):
+    """The violations that make a draft unusable; a missing hero photo is only a warning."""
+    return [item for item in violations if item.get("rule") not in NON_BLOCKING_RULES]
+
+
+def violation_note(item):
+    return f"violation {item.get('slot')}: {item.get('rule')}: {item.get('message')}"
+
+
 def ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s=DEFAULT_IMPORTANT_MAX_S):
     """Put every plan slot back in plan order, synthesising any the editor dropped."""
     pacing = plan_pacing(plan)
@@ -1859,13 +1968,27 @@ def attach_decisions(record, facts_by_key, shotlog_by_key, drop_reasons=None):
     record["decisions"] = build_decisions(shotlog_by_key, used_rows, set(facts_by_key), drop_reasons)
 
 
-def write_edit(path, record, started, cost_usd):
+DIRECTOR_NOTES_MAX = 20
+
+
+def director_info(by, approved, warnings):
+    """``meta.director``: who made the edit, whether the reviewer approved it, and the notes."""
+    return {
+        "by": by,
+        "approved": approved,
+        "notes": [str(note)[:300] for note in warnings][:DIRECTOR_NOTES_MAX],
+    }
+
+
+def write_edit(path, record, started, cost_usd, director=None):
     record["meta"] = {
         "tool": TOOL,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(cost_usd, 8),
         "speed_ramp": bool((record.get("meta") or {}).get("speed_ramp", False)),
     }
+    if director is not None:
+        record["meta"]["director"] = director
     validate_or_raise(record, "edit")
     atomic_write_json(path, record)
 
@@ -1993,6 +2116,9 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
 def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False):
     try:
         data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db, speed_ramp)
+        data.setdefault("meta", {})["director"] = director_info("rules", approved, warnings)
+        validate_or_raise(data, "edit")
+        atomic_write_json(out_path, data)
     except LLMDirectorError as exc:
         warnings.append(str(exc))
         return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates), 1
@@ -2239,7 +2365,7 @@ def _run_loop(
     if approved:
         beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
-        write_edit(out_path, record, started, state.cost_usd)
+        write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
@@ -2252,19 +2378,30 @@ def _run_loop(
                 warnings.append(note)
         if added:
             violations = validate_edit(record, plan, facts, effective_important_max_s)
+    if blocking(violations):
+        for note in repair_draft(record, plan, facts, shotlog, violations, effective_important_max_s):
+            if note not in warnings:
+                warnings.append(note)
+        violations = validate_edit(record, plan, facts, effective_important_max_s)
+        if record.get("video"):
+            write_plan(plan_path, plan, started, state.cost_usd)
+    for item in violations:
+        if item.get("rule") in NON_BLOCKING_RULES and violation_note(item) not in warnings:
+            warnings.append(violation_note(item))
+    violations = blocking(violations)
 
-    if not violations:
+    if not violations and record.get("video"):
         warnings.append("reviewer did not approve; keeping the last valid draft")
         beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
-        write_edit(out_path, record, started, state.cost_usd)
+        write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap), 0
 
     warnings.append("reviewer did not approve and the draft still has violations")
     for item in violations:
-        note = f"violation {item.get('id')}: {item.get('rule')}: {item.get('message')}"
+        note = violation_note(item)
         if note not in warnings:
             warnings.append(note)
     if fallback_rules:

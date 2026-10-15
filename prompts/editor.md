@@ -60,8 +60,10 @@ no extra keys.
    the cut still ends at or after the floor, so the best moment may end up near
    the head or outside the cut.
 5. **No two slots from the same take back to back** unless their windows touch
-   (within 0.5 s). Two slots from one take need a different take's slot between
-   them. When two planned slots are from the same take and their windows touch,
+   (within 0.5 s), or both are camera moves (role move/transition, motion not
+   static) cut forward in time at least 8 s apart — then the cut reads as a
+   time jump (the boat's run into a tunnel, then its exit). Otherwise two slots
+   from one take need a different take's slot between them. When two planned slots are from the same take and their windows touch,
    cut them exactly contiguous: `out_s` of the first equals `in_s` of the second.
 6. **Centre a trimmed cut on the best moment.** Each shot fact carries `peak_s`,
    the best moment of the shot (from the vision model, else the scene activity,

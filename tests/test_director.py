@@ -389,7 +389,7 @@ def build_upgrade_workspace(root):
         root,
         [
             shotlog_shot("0001/s1", "clip_0001_x.mp4", "s1", 0.0, 5.0, True, 0.5, "weak", "interest 50 · static by geometry · hold · clean"),
-            shotlog_shot("0001/s2", "clip_0001_x.mp4", "s2", 80.0, 85.0, True, 0.9, "strong", "interest 90 · static by geometry · hold · clean"),
+            shotlog_shot("0001/s2", "clip_0001_x.mp4", "s2", 80.0, 85.0, True, 0.8, "strong", "interest 80 · static by geometry · hold · clean"),
             shotlog_shot("0002/s1", "clip_0002_x.mp4", "s1", 0.0, 60.0, True, 0.3, "b", "interest 30 · static by geometry · hold · clean"),
             shotlog_shot("0003/s1", "clip_0003_x.mp4", "s1", 0.0, 60.0, True, 0.3, "c", "interest 30 · static by geometry · hold · clean"),
             shotlog_shot("0004/s1", "clip_0004_x.mp4", "s1", 0.0, 60.0, True, 0.3, "d", "interest 30 · static by geometry · hold · clean"),
@@ -1951,3 +1951,59 @@ def test_help_lists_speed_ramp():
     result = run_director("--help")
     assert result.returncode == 0
     assert "--speed-ramp" in result.stdout
+
+
+def build_star_workspace(root):
+    clips = [{"file": "clip_0001_x.mp4", "path": "/media/clip_0001_x.mp4", "duration_s": 120.0,
+              "creation_time": "2026-01-01T10:00:00"}]
+    for number in range(2, 8):
+        clips.append({"file": f"clip_000{number}_x.mp4", "path": f"/media/clip_000{number}_x.mp4",
+                      "duration_s": 60.0, "creation_time": f"2026-01-01T1{number}:00:00"})
+    write_json(root / "ingest.json", {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips})
+    write_json(
+        root / "quality" / "clip_0001_x.json",
+        quality_doc("clip_0001_x.mp4", 120.0, [
+            segment("s1", 0.0, 6.0, "move", motion_label="travel_forward"),
+            segment("s2", 40.0, 46.0, "move", motion_label="travel_forward"),
+            segment("s3", 80.0, 86.0, "move", motion_label="travel_forward"),
+        ]),
+    )
+    shots = [
+        shotlog_shot("0001/s1", "clip_0001_x.mp4", "s1", 0.0, 6.0, True, 0.95, "tunnel in", "interest 90", hero=True, role="move", motion_label="travel_forward"),
+        shotlog_shot("0001/s2", "clip_0001_x.mp4", "s2", 40.0, 46.0, True, 0.93, "tunnel", "interest 90", hero=True, role="move", motion_label="travel_forward"),
+        shotlog_shot("0001/s3", "clip_0001_x.mp4", "s3", 80.0, 86.0, True, 0.91, "tunnel out", "interest 90", hero=True, role="move", motion_label="travel_forward"),
+    ]
+    for number in range(2, 8):
+        name = f"clip_000{number}_x"
+        write_json(root / "quality" / f"{name}.json",
+                   quality_doc(f"{name}.mp4", 60.0, [segment("s1", 0.0, 60.0, "hold", motion_label="static")]))
+        shots.append(shotlog_shot(f"000{number}/s1", f"{name}.mp4", "s1", 0.0, 60.0, True, 0.4, "water", "interest 40"))
+    write_shotlog(root, shots)
+    return root
+
+
+def test_chronological_edit_keeps_every_hero_of_a_strong_stretch(tmp_path):
+    workspace = build_star_workspace(tmp_path / "ws")
+    _, record = run_edit(workspace, tmp_path / "edit.json", "--order", "chronological")
+    hero_slots = [slot for slot in record["video"] if slot["clip"] == "clip_0001_x.mp4"]
+    assert len(hero_slots) == 3
+    starts = [slot["in_s"] for slot in hero_slots]
+    assert starts == sorted(starts)
+    assert record["video"][0]["clip"] == "clip_0001_x.mp4"
+
+
+def test_static_framings_of_one_take_still_never_jump_cut(tmp_path):
+    workspace = build_star_workspace(tmp_path / "ws")
+    shotlog_path = workspace / "shotlog.json"
+    data = json.loads(shotlog_path.read_text(encoding="utf-8"))
+    for shot in data["shots"]:
+        shot["role"], shot["motion_label"] = "hold", "static"
+    shotlog_path.write_text(json.dumps(data), encoding="utf-8")
+    for name in ("clip_0001_x",):
+        doc = json.loads((workspace / "quality" / f"{name}.json").read_text(encoding="utf-8"))
+        for seg in doc["segments"]:
+            seg["role"], seg["motion_label"] = "hold", "static"
+        (workspace / "quality" / f"{name}.json").write_text(json.dumps(doc), encoding="utf-8")
+    _, record = run_edit(workspace, tmp_path / "edit.json", "--order", "chronological")
+    clips = [slot["clip"] for slot in record["video"]]
+    assert all(first != second for first, second in zip(clips, clips[1:]))

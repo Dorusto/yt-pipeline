@@ -26,6 +26,8 @@ from pathlib import Path
 from common.decisions import build_decisions
 from common.moves import (
     apply_move_policy,
+    is_jump_cut,
+    is_moving,
     middle_speed_of,
     screen_factor,
     slot_screen_length,
@@ -621,9 +623,21 @@ def neighbours_at(chosen, insert_at):
 
 
 def same_take_conflict(slot, chosen, insert_at):
-    """The same-clip neighbour that would make the insert a jump cut, or None."""
+    """The same-clip neighbour that would make the insert a jump cut, or None.
+
+    Two camera moves of one take far enough apart are an ellipsis, not a jump
+    cut (``common.moves.is_jump_cut``).
+    """
     for neighbour in neighbours_at(chosen, insert_at):
-        if neighbour["clip"] == slot["clip"] and not source_contiguous(neighbour, slot):
+        if neighbour.get("clip") != slot.get("clip"):
+            continue
+        first, second = sorted((neighbour, slot), key=lambda item: float(item["in_s"]))
+        if is_jump_cut(
+            first,
+            second,
+            is_moving(first.get("role"), first.get("motion_label")),
+            is_moving(second.get("role"), second.get("motion_label")),
+        ):
             return neighbour
     return None
 
@@ -1231,21 +1245,80 @@ def candidate_overlaps_bucket(candidate, bucket_start, bucket_end):
     return overlap_seconds(start, end, bucket_start, bucket_end) > 0
 
 
+STAR_SHARE = 0.4
+STAR_MIN_SCORE = 0.85
+
+
+def is_star(candidate):
+    """A shot the edit should not lose to time coverage: a hero, or a very high score."""
+    return bool(candidate.get("hero")) or float(candidate.get("score") or 0.0) >= STAR_MIN_SCORE
+
+
+def place_chronological(candidate, duration_s, chosen, max_slot_s, min_slot_s, warnings, important_max_s):
+    """Cut ``candidate`` into a slot and insert it in content order; False when it does not fit."""
+    slot = make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings, important_max_s)
+    if slot is None:
+        return False
+    insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
+    insert_at, removed, upgraded = resolve_same_take(
+        slot, chosen, insert_at, warnings,
+        lambda current: content_insert_index(current, slot["content_offset"] + slot["in_s"]),
+    )
+    if insert_at is None:
+        return False
+    if not upgraded:
+        insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
+    chosen.insert(insert_at, slot)
+    return True
+
+
 def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s, min_slot_s, warnings, allow_similar, important_max_s):
+    """Stars first, then time coverage, laid out in content order.
+
+    Up to ``STAR_SHARE`` of the slots go to the best heroes and very high
+    scores wherever they are in the day, so a strong stretch of footage keeps
+    more than one shot. The remaining slots split the content timeline into
+    equal buckets and take the best shot of every bucket no star covers.
+    """
     bucket_width = max(1e-9, total_content) / n_slots
     chosen = []
     used = set()
+    covered = set()
+
+    def bucket_of(candidate):
+        start = candidate["content_offset"] + candidate["in_s"]
+        return min(n_slots - 1, max(0, int(start // bucket_width)))
+
+    ranked = sorted(candidates, key=lambda item: (-item["score"], item["in_s"]))
+    star_slots = max(1, round(STAR_SHARE * n_slots))
+    for candidate in ranked:
+        if len(chosen) >= star_slots:
+            break
+        if not is_star(candidate):
+            break
+        insert_at = content_insert_index(chosen, candidate["content_offset"] + candidate["in_s"])
+        if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
+            warn_similar(warnings, candidate)
+            continue
+        used.add(id(candidate))
+        bucket = bucket_of(candidate)
+        if place_chronological(candidate, durations[bucket], chosen, max_slot_s, min_slot_s, warnings, important_max_s):
+            covered.add(bucket)
+
     for index in range(n_slots):
+        if len(chosen) >= n_slots:
+            break
+        if index in covered:
+            continue
         bucket_start = index * bucket_width
         bucket_end = (index + 1) * bucket_width
         best = None
-        for candidate in sorted(candidates, key=lambda item: (-item["score"], item["in_s"])):
+        for candidate in ranked:
             if id(candidate) in used:
                 continue
-            candidate_start = candidate["content_offset"] + candidate["in_s"]
             if not candidate_overlaps_bucket(candidate, bucket_start, bucket_end):
                 continue
-            insert_at = content_insert_index(chosen, candidate_start)
+            insert_at = content_insert_index(chosen, candidate["content_offset"] + candidate["in_s"])
             if candidate_conflicts(candidate, chosen, allow_similar, insert_at):
                 warn_similar(warnings, candidate)
                 continue
@@ -1255,21 +1328,8 @@ def pick_chronological(candidates, n_slots, durations, total_content, max_slot_s
             warnings.append(f"bucket {index + 1}: no candidate")
             continue
         used.add(id(best))
-        insert_at = content_insert_index(chosen, best["content_offset"] + best["in_s"])
-        slot = make_slot(best, durations[index], max_slot_s, min_slot_s, chosen, warnings, important_max_s)
-        if slot is None:
+        if not place_chronological(best, durations[index], chosen, max_slot_s, min_slot_s, warnings, important_max_s):
             warnings.append(f"bucket {index + 1}: candidate dropped by overlap guard")
-            continue
-        insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
-        insert_at, removed, upgraded = resolve_same_take(
-            slot, chosen, insert_at, warnings,
-            lambda current: content_insert_index(current, slot["content_offset"] + slot["in_s"]),
-        )
-        if insert_at is None:
-            continue
-        if not upgraded:
-            insert_at = content_insert_index(chosen, slot["content_offset"] + slot["in_s"])
-        chosen.insert(insert_at, slot)
     return chosen, used
 
 

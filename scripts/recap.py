@@ -347,6 +347,8 @@ def is_up_to_date(name, ctx):
             and recorded_speed_ramp_matches(path, ctx.speed_ramp)
             and is_newer(path, ws / "shotlog.json")
         )
+    if name == "explain":
+        return is_newer(ws / "explain.html", ws / "edit.json")
     if name == "render":
         return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
     if name == "render_vertical":
@@ -533,6 +535,12 @@ def build_stations(ctx):
             ],
         },
     ]
+    stations.append(
+        {
+            "name": "explain",
+            "argv": [station_command(ctx, "explain.py", ["--workspace", str(ws)], force=force)],
+        }
+    )
     if ctx.frame_format in ("16x9", "both"):
         stations.append(
             {
@@ -731,7 +739,7 @@ def execute(station, argv, ctx):
         status_value = data.get("status")
         if isinstance(status_value, str):
             child_status = status_value
-    detail = child_status if child_status in ("written", "skipped") else "ok"
+    detail = child_status if child_status in ("written", "skipped", "fallback") else "ok"
     return {
         "status": "done",
         "wall_time_s": wall_time_s,
@@ -820,7 +828,7 @@ def run(ctx):
     failed_name = None
     for index, station in enumerate(stations, start=1):
         name = station["name"]
-        rerun = name in ("llm_director", "render", "render_vertical") and ctx.feedback
+        rerun = name in ("llm_director", "explain", "render", "render_vertical") and ctx.feedback
         if not ctx.force and not rerun and is_up_to_date(name, ctx):
             if name == "music_pick" and not resolve_auto_music(ctx):
                 failed_name = name

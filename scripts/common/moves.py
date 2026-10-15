@@ -224,3 +224,36 @@ def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE, speed_ramp
         _apply(slot, in_s, out_s, speed)
         slot["max_screen_s"] = slot_max
     return warnings
+
+
+SAME_TAKE_CONTIGUOUS_S = 0.5
+SAME_TAKE_MIN_GAP_S = 8.0
+
+
+def is_moving(role, motion_label):
+    """True for a camera move: a move role with a label that is not static."""
+    return role in MOVE_ROLES and motion_label not in STATIC_LABELS
+
+
+def same_take_gap(first, second):
+    """Seconds of source skipped between two cuts of one take; 0 when they overlap or go back."""
+    gap = float(second["in_s"]) - float(first["out_s"])
+    return max(0.0, gap)
+
+
+def is_jump_cut(first, second, first_moving, second_moving):
+    """True when cutting from ``first`` to ``second`` reads as a jump cut.
+
+    Two cuts of the same take are fine when they touch in source time (one
+    continuous shot) or when both are camera moves at least
+    ``SAME_TAKE_MIN_GAP_S`` apart, forward in time: the moving camera has
+    reached a different place, so the cut reads as an ellipsis (a boat's run
+    into a tunnel, then its exit). Static framings of one take always jump.
+    """
+    if first.get("clip") is None or first.get("clip") != second.get("clip"):
+        return False
+    if abs(float(first["out_s"]) - float(second["in_s"])) <= SAME_TAKE_CONTIGUOUS_S:
+        return False
+    if not (first_moving and second_moving):
+        return True
+    return same_take_gap(first, second) < SAME_TAKE_MIN_GAP_S

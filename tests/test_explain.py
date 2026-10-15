@@ -431,3 +431,14 @@ def test_explain_stays_quiet_when_the_cut_was_not_trimmed_around_a_peak(tmp_path
     assert result.returncode == 0, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert "centred on the best moment" not in html
+
+
+def test_rule_fallback_is_said_and_the_plan_marked_unused():
+    import explain
+
+    director = {"by": "rules", "approved": False, "notes": ["violation v7: same_take: same take as v6"]}
+    html = explain._director_section(director)
+    assert "rule-based director" in html
+    assert "same_take" in html
+    assert "not used" in explain._plan_section({"logline": "x"}, used_plan=False)
+    assert explain._director_section(None) == ""
