@@ -634,6 +634,7 @@ def test_hero_photo_stays_non_blocking():
 def test_repair_swaps_missing_star_in():
     facts = star_facts()
     plan = star_plan(["0001/s1", "0003/s1", "0004/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
     record = star_record([
         ("v1", "clip_0001_x.mp4"),
         ("v2", "clip_0003_x.mp4"),
@@ -659,6 +660,7 @@ def test_repair_star_swap_skips_a_jump_cut_victim():
         "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 12.0, score=0.15),
     }
     plan = star_plan(["0001/s1", "0003/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
     record = star_record([
         ("v1", "clip_0001_x.mp4"),
         ("v2", "clip_0003_x.mp4"),
@@ -672,6 +674,37 @@ def test_repair_star_swap_skips_a_jump_cut_victim():
     assert "0003/s1" in used
     assert any("swapped 0002/s1 in for 0001/s1" in note for note in notes)
     assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+
+
+def test_synthesised_slot_keeps_shot_key():
+    facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3)}
+    plan = star_plan(["0001/s1"])
+    record = {"video": []}
+    llm_director.ensure_all_planned_slots(record, plan, facts, {}, 6.0)
+    assert record["video"][0]["shot_key"] == "0001/s1"
+
+
+def test_fill_to_target_adds_slots_until_the_brief_length():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.5),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 20.0, score=0.4),
+        "0004/s1": fact("0004/s1", "clip_0004_x.mp4", 0.0, 20.0, score=0.2),
+        "0005/s1": fact("0005/s1", "clip_0005_x.mp4", 0.0, 20.0, score=0.1),
+    }
+    plan = star_plan(["0001/s1"])
+    plan["brief"]["target_duration_s"] = 12.0
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 8.0, "out_s": 11.0, "shot_key": "0001/s1", "score": 0.3},
+        ]
+    }
+    notes = llm_director.fill_to_target(record, plan, facts, {}, 6.0, [])
+    used = [row.get("shot_key") for row in plan.get("slot_plan") or []]
+    assert "0002/s1" in used
+    assert any("added 0002/s1" in note for note in notes)
+    total = sum(llm_director.slot_duration(row) for row in record["video"])
+    assert total >= 12.0 - llm_director.TARGET_SLACK_S
 
 
 def test_validator_catches_rule_break(tmp_path):

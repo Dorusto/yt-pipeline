@@ -1826,15 +1826,20 @@ def swap_length_for(fact, victim_length, important_max_s, slot_min_s, slot_max_s
 def length_compatible(fact, victim_length, important_max_s, slot_min_s, slot_max_s):
     """True when the star can replace the victim without moving the edit's length far.
 
-    A compatible replacement is within a factor of two of the victim's on-screen
-    length: a hero may be longer than the ordinary slot it replaces, but never
-    so much that the edit's duration drifts.
+    A hero (``keep_whole``) may take its whole window up to the hero cap even
+    when the victim is shorter — that is how the edit grows back to the brief
+    length. An ordinary star stays within a factor of two of the victim, and
+    nothing replaces a much longer slot with a much shorter shot.
     """
     star_length = swap_length_for(fact, victim_length, important_max_s, slot_min_s, slot_max_s)
     if star_length <= 0:
         return False
     victim_length = float(victim_length)
-    return 0.5 * victim_length - TOLERANCE_S <= star_length <= 2.0 * victim_length + TOLERANCE_S
+    if star_length < 0.5 * victim_length - TOLERANCE_S:
+        return False
+    if keeps_whole(fact):
+        return star_length <= float(important_max_s) + TOLERANCE_S
+    return star_length <= 2.0 * victim_length + TOLERANCE_S
 
 
 def star_slot_cut(fact, victim_length, important_max_s, slot_min_s, slot_max_s):
@@ -1969,6 +1974,151 @@ def repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_m
         )
 
 
+TARGET_SLACK_S = 3.0
+
+
+def edit_order_key(fact):
+    """Chronological sort key of a shot: the clip's 4-digit counter, then its window start."""
+    counter = clip_counter(fact.get("clip") or fact.get("photo") or "")
+    return (counter, float(fact.get("window_in_s") or 0.0))
+
+
+def next_slot_id(plan):
+    """A free plan slot id like ``v13``."""
+    used = {row.get("id") for row in plan.get("slot_plan") or []}
+    index = 1
+    while f"v{index}" in used:
+        index += 1
+    return f"v{index}"
+
+
+def plan_insert_index(plan, facts_by_key, new_fact):
+    """The plan position that keeps the slots in chronological order."""
+    new_key = edit_order_key(new_fact)
+    index = 0
+    for row in plan.get("slot_plan") or []:
+        fact = facts_by_key.get(row.get("shot_key"))
+        if fact is None:
+            index += 1
+            continue
+        if edit_order_key(fact) > new_key:
+            break
+        index += 1
+    return index
+
+
+def fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
+    """Add unused strong shots as slots until the edit reaches the brief's target length.
+
+    The screenwriter may plan fewer slots than the duration needs; this pass
+    grows the edit with the best unused cuttable shots in chronological order,
+    never creating a same-take jump cut or an adjacent similar pair. It is a
+    repair of the draft the model wrote, not a fallback to the rule director.
+    """
+    brief = plan.get("brief") if isinstance(plan, dict) else None
+    target = brief.get("target_duration_s") if isinstance(brief, dict) else None
+    if not target:
+        return notes
+    pacing = plan_pacing(plan)
+    slot_min_s = pacing["slot_min"]
+    slot_max_s = pacing["slot_max"]
+    used_keys = {row.get("shot_key") for row in plan.get("slot_plan") or []}
+    ranked = sorted(
+        (
+            (key, fact) for key, fact in facts_by_key.items()
+            if key not in used_keys and fact.get("media_type") != "photo"
+        ),
+        key=lambda item: (-float(item[1].get("score") or 0.0), item[0]),
+    )
+    for key, fact in ranked:
+        total = sum(slot_duration(row) for row in record.get("video") or [])
+        if total >= float(target) - TARGET_SLACK_S:
+            break
+        length = swap_length_for(fact, slot_max_s, important_max_s, slot_min_s, slot_max_s)
+        if length < slot_min_s - TOLERANCE_S and not keeps_whole(fact):
+            continue
+        in_s, out_s = star_slot_cut(fact, slot_max_s, important_max_s, slot_min_s, slot_max_s)
+        if out_s <= in_s:
+            continue
+        sid = next_slot_id(plan)
+        new_slot = {
+            "id": sid,
+            "clip": fact["clip"],
+            "in_s": in_s,
+            "out_s": out_s,
+            "score": float(fact.get("score") or 0.0),
+            "reason": f"added to reach the brief length ({key})",
+            "transition": {"type": "crossfade", "duration_s": XFADE_S},
+            "speed": 1.0,
+            "role": fact.get("role"),
+            "motion_label": fact.get("motion_label"),
+            "description": fact.get("summary"),
+            "shot_key": key,
+        }
+        insert_at = plan_insert_index(plan, facts_by_key, fact)
+        if _fill_conflicts(record, plan, facts_by_key, new_slot, insert_at):
+            continue
+        beat = None
+        if insert_at > 0:
+            beat = (plan.get("slot_plan") or [])[insert_at - 1].get("beat")
+        elif plan.get("slot_plan"):
+            beat = plan["slot_plan"][0].get("beat")
+        plan["slot_plan"].insert(
+            insert_at,
+            {
+                "id": sid,
+                "beat": beat,
+                "shot_key": key,
+                "target_s": round(float(length), 3),
+                "why": new_slot["reason"],
+                "keep_whole": bool(fact.get("keep_whole")),
+            },
+        )
+        record["video"].insert(insert_at, new_slot)
+        record["video"][0]["transition"] = {"type": "cut", "duration_s": 0}
+        notes.append(f"repaired: added {key} to reach the brief length")
+        used_keys.add(key)
+    return notes
+
+
+def _fill_conflicts(record, plan, facts_by_key, new_slot, insert_at):
+    """True when the new slot would jump-cut or sit next to a similar shot."""
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    slots = record.get("video") or []
+    fact = facts_by_key.get(new_slot.get("shot_key")) or {}
+    new_moving = is_moving(fact.get("role"), fact.get("motion_label"))
+    neighbours = []
+    if insert_at > 0 and insert_at - 1 < len(slots):
+        neighbours.append(slots[insert_at - 1])
+    if insert_at < len(slots):
+        neighbours.append(slots[insert_at])
+    for neighbour in neighbours:
+        neighbour_fact = slot_fact(neighbour, plan_by_id, facts_by_key) or {}
+        if neighbour.get("clip") is not None and (
+            is_jump_cut(
+                neighbour,
+                new_slot,
+                is_moving(neighbour_fact.get("role"), neighbour_fact.get("motion_label")),
+                new_moving,
+            )
+            or is_jump_cut(
+                new_slot,
+                neighbour,
+                new_moving,
+                is_moving(neighbour_fact.get("role"), neighbour_fact.get("motion_label")),
+            )
+        ):
+            return True
+        if shots_similar(
+            fact.get("shot_key"),
+            fact.get("similar_to"),
+            neighbour_fact.get("shot_key"),
+            neighbour_fact.get("similar_to"),
+        ):
+            return True
+    return False
+
+
 def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S):
     """Fix a draft's mechanical violations from the shot facts instead of discarding the draft.
 
@@ -2022,6 +2172,8 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
     drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     return notes
 
@@ -2095,6 +2247,7 @@ def ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, importa
                     "role": shot.get("role") or fact.get("role"),
                     "motion_label": shot.get("motion_label") or fact.get("motion_label"),
                     "description": shot.get("description"),
+                    "shot_key": plan_slot.get("shot_key") or fact.get("shot_key"),
                 }
             added.append(sid)
         video.append(slot)
@@ -2550,6 +2703,14 @@ def _run_loop(
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
 
     if approved:
+        for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, []):
+            if note not in warnings:
+                warnings.append(note)
+        leftover = validate_edit(record, plan, facts, effective_important_max_s)
+        if blocking(leftover):
+            for note in repair_draft(record, plan, facts, shotlog, leftover, effective_important_max_s):
+                if note not in warnings:
+                    warnings.append(note)
         beat_snap = finalize_lengths(record, plan, facts, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
