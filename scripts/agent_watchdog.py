@@ -79,6 +79,48 @@ def agent_running():
     return False
 
 
+def stop_agent(timeout=10.0):
+    """Terminate every opencode process (kill after ``timeout`` s); return how many were stopped."""
+    names = {"opencode", "opencode.exe"} if IS_WINDOWS else {"opencode"}
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    targets = []
+    for process in psutil.process_iter(["name"]):
+        try:
+            name = process.info.get("name")
+        except psutil.Error:
+            continue
+        if name and name.lower() in names:
+            targets.append(process)
+    for process in targets:
+        try:
+            process.terminate()
+        except psutil.Error:
+            pass
+    _, alive = psutil.wait_procs(targets, timeout=timeout)
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.Error:
+            pass
+    return len(targets)
+
+
+def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_commit_hours):
+    """Why the agent must be stopped now, or None. Both limits are off unless set."""
+    if not running:
+        return None
+    if kill_over_usd is not None and daily_usd is not None and daily_usd > kill_over_usd:
+        return f"spend today ${daily_usd:.2f} is over the hard cap ${kill_over_usd:.2f}"
+    if kill_no_commit_hours is not None and last_commit > 0:
+        hours = (now - last_commit) / 3600
+        if hours > kill_no_commit_hours:
+            return f"no commit for {hours:.1f} h (hard limit {kill_no_commit_hours:.1f} h)"
+    return None
+
+
 def _agent_running_fallback():
     if IS_WINDOWS:
         return _tasklist_finds_agent()
@@ -208,6 +250,10 @@ def build_parser():
     parser.add_argument("--stall-hours", type=float, default=2.0, help="hours without changes = stalled (default 2)")
     parser.add_argument("--no-commit-hours", type=float, default=1.5,
                         help="hours without a commit while the agent runs = probably looping (default 1.5)")
+    parser.add_argument("--kill-over-usd", type=float, default=None,
+                        help="stop the agent when today's spend passes this many USD (default off)")
+    parser.add_argument("--kill-no-commit-hours", type=float, default=None,
+                        help="stop the agent after this many hours without a commit (default off)")
     parser.add_argument("--key-file", default=DEFAULT_KEY_FILE, help="file holding the OpenRouter key")
     parser.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="where alerts already sent are remembered")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -244,6 +290,13 @@ def main(argv=None):
         check_no_progress(running, last_commit, now, args.no_commit_hours * 3600, state),
     ) if m]
 
+    reason = kill_reason(running, daily_usd, args.kill_over_usd, last_commit, now, args.kill_no_commit_hours)
+    stopped = 0
+    if reason:
+        if not args.dry_run:
+            stopped = stop_agent()
+        alerts.append(f"Stopped the agent: {reason}. Its changes stay in the working tree.")
+
     sent = 0
     if not args.dry_run:
         for message in alerts:
@@ -260,6 +313,8 @@ def main(argv=None):
         "hours_since_commit": round((now - last_commit) / 3600, 2) if last_commit else None,
         "spend_today_usd": daily_usd,
         "alerts": alerts,
+        "kill_reason": reason,
+        "stopped": stopped,
         "sent": sent,
         "dry_run": args.dry_run,
         "errors": errors,

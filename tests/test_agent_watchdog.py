@@ -202,3 +202,39 @@ def test_last_commit_time_uses_ref_mtime(tmp_path):
     ref.write_text("abc\n")
     os.utime(ref, (5000, 5000))
     assert watchdog.last_commit_time(tmp_path) == 5000
+
+
+def test_kill_reason_is_off_by_default():
+    assert watchdog.kill_reason(True, 9.0, None, 1.0, 100000.0, None) is None
+
+
+def test_kill_reason_spend_cap():
+    reason = watchdog.kill_reason(True, 2.5, 2.0, 0.0, 0.0, None)
+    assert "hard cap" in reason
+    assert watchdog.kill_reason(False, 2.5, 2.0, 0.0, 0.0, None) is None
+    assert watchdog.kill_reason(True, None, 2.0, 0.0, 0.0, None) is None
+
+
+def test_kill_reason_no_commit_limit():
+    now = 10 * 3600.0
+    assert "no commit" in watchdog.kill_reason(True, 0.1, None, now - 3 * 3600, now, 2.0)
+    assert watchdog.kill_reason(True, 0.1, None, now - 1 * 3600, now, 2.0) is None
+
+
+def test_main_stops_the_agent_over_the_cap(tmp_path, monkeypatch, capsys):
+    import json
+
+    stopped = []
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 3.0)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "stop_agent", lambda: stopped.append(1) or 1)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    watchdog.main(["--repo", str(repo), "--kill-over-usd", "2", "--state-file", str(tmp_path / "s.json"),
+                         "--watch", str(repo), "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert stopped == [1]
+    assert summary["stopped"] == 1
+    assert any(alert.startswith("Stopped the agent") for alert in summary["alerts"])

@@ -3,6 +3,7 @@ description: Plans and audits AI Director work in yt-pipeline. Splits a phase in
 mode: primary
 model: openrouter/xiaomi/mimo-v2.6-pro
 temperature: 0.2
+steps: 150
 permission:
   task:
     "*": deny
@@ -27,6 +28,14 @@ Talk to Doru in Romanian. Everything written to the repo is in English.
 ## Before any work
 
 Read `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, the D-phase status in `docs/ROADMAP.md`, and the last 10 `docs/DECISIONS.md` entries. Open older `docs/DECISIONS.md` entries only when they relate to what you are about to touch.
+
+## Guards (D2-16)
+
+- First command of every run: create or check out the task branch. Never edit on `master`.
+- Commit on the branch after every finished step (a passing test, a fixed bug), even mid-task, with a `wip:` message if needed. The watchdog stops a run that makes no commit for too long, and a commit keeps the work when it does.
+- The OpenRouter budget in a brief is a hard limit: check it with `python scripts/agent_watchdog.py --repo . --json --dry-run` (`spend_today_usd`) before every expensive step (a vision run, a director run, a coder round). Stop and notify when the next step would cross it.
+- Reading the same file or function more than twice without changing anything is a loop: write down what you know, decide, or notify and stop.
+- You have at most 150 steps per run (opencode `steps`); spend them on work, not on re-reading.
 
 ## Loop for each task
 

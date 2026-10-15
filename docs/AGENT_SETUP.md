@@ -117,7 +117,7 @@ Two project agents ship in `.opencode/agents/`, used to build the AI Director (s
 | `architect` | primary (Tab to select) | `xiaomi/mimo-v2.6-pro` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
 | `coder` | subagent | `deepseek/deepseek-v4.1-flash` | implements one brief, never commits |
 
-`opencode.json` in the repo root registers the three OpenRouter models and the shared permissions. To swap a model, change the `model:` line in the agent file. `z-ai/glm-5.3-flash` is the fallback coder.
+`opencode.json` in the repo root registers the three OpenRouter models and the shared permissions. Loop guards (D2-16): `steps: 150` for the architect and `steps: 80` for the coder (at the limit opencode makes the agent stop and summarise what is left), `doom_loop: deny` (an unattended run cannot answer an "agent seems stuck" prompt, so the repeat is refused instead of hanging), and the watchdog's hard stops below. To swap a model, change the `model:` line in the agent file. `z-ai/glm-5.3-flash` is the fallback coder.
 
 To run the pipeline itself, the default `build` agent is enough: it already loads the skills.
 
@@ -152,8 +152,10 @@ The server URL comes from `NTFY_URL` and defaults to `http://10.10.1.61:8090/ope
 ```bash
 git -C ~/projects/yt-pipeline worktree add --detach ~/yt-watchdog origin/master
 mkdir -p ~/.cache/yt-pipeline
-( crontab -l 2>/dev/null; echo '*/30 * * * * cd ~/yt-watchdog/scripts && python3 agent_watchdog.py --repo ~/projects/yt-pipeline >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
+( crontab -l 2>/dev/null; echo '*/15 * * * * cd ~/yt-watchdog/scripts && python3 agent_watchdog.py --repo ~/projects/yt-pipeline --kill-over-usd 2 --kill-no-commit-hours 1.5 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
 ```
+
+`--kill-over-usd X` stops every `opencode` process when today's OpenRouter spend passes X dollars; `--kill-no-commit-hours H` stops it after H hours without a commit. Both are off unless given. The agent's uncommitted changes stay in the working tree; save them on a branch before starting another run.
 
 Update it later with `git -C ~/yt-watchdog checkout --detach origin/master` after a `git fetch`.
 

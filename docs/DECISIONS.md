@@ -1839,3 +1839,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** B. `describe` asks for `photo_flaws` (eyes_closed, blur, motion_blur, tilted, overexposed, underexposed, obstructed, cut_off) and stores a measured `sharpness`; `index` picks the burst winner without a spoiling flaw first, then by score weighted 0.7-1.0 by relative sharpness, and makes a lone photo with a spoiling flaw ineligible. Old photo descriptions are redone once (cents). Photo paths fall back to `<workspace>/proxy` like clips.
 
 **Consequence:** eye judgement is only as good as the vision model; sharpness is relative inside a burst, never an absolute threshold (a clear sky is "soft").
+
+---
+
+## [2026-10-15] Loop guards for the build agents (D2-16)
+
+**Context:** The D2-16 architect ran almost 3 hours, spent about $3 against a $1.50 brief budget, re-read the same code and produced an 18-line fix (a good one). It edited on master and never committed, so the watchdog could only warn.
+
+**Options:** (A) switch to OpenHands for its stuck detector (repeats of action/observation x4, action/error x3, monologue x3, ping-pong x6); (B) use opencode's own guards plus a watchdog that can stop the run; (C) only stricter briefs.
+
+**Decision:** B. opencode `steps` (architect 150, coder 80: at the cap the agent must stop and summarise), `doom_loop: deny` (unattended runs cannot answer the prompt), watchdog `--kill-over-usd` and `--kill-no-commit-hours` (cron every 15 min, 2 USD, 1.5 h), and architect rules: branch first, commit every finished step, check spend before expensive steps, re-reading twice without change is a loop.
+
+**Why not A:** a second agent stack (Docker runtime, new config) for a guard opencode mostly has; revisit if B still lets loops through.
+
+**Consequence:** a run that loops is stopped within about 15 minutes of crossing a limit; budgets are enforced from outside the agent.
