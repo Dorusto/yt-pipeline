@@ -1619,6 +1619,97 @@ def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
     assert stats["unsnapped"] == 0
 
 
+def test_absorb_pair_rollback_restores_a_video_slot_exactly():
+    left = {"id": "v5", "clip": "x.mp4", "in_s": 6.535, "out_s": 10.465, "speed": 1.0}
+    right = {"id": "v6", "clip": "x.mp4", "in_s": 20.0, "out_s": 20.9, "speed": 1.0}
+    moved = llm_director.absorb_pair(
+        left,
+        {"low": 6.0, "high": 12.0, "window_in": 6.0},
+        right,
+        {"low": 20.0, "high": 21.0, "window_in": 20.0},
+        1.0,
+    )
+    assert moved is False
+    assert left == {"id": "v5", "clip": "x.mp4", "in_s": 6.535, "out_s": 10.465, "speed": 1.0}
+    assert "duration_s" not in left
+
+
+def test_absorb_pair_rollback_restores_a_photo_slot_exactly():
+    left = {"id": "p1", "kind": "photo", "photo": "p.jpg", "duration_s": 3.0}
+    right = {"id": "v6", "clip": "x.mp4", "in_s": 20.0, "out_s": 20.4, "speed": 1.0}
+    moved = llm_director.absorb_pair(
+        left,
+        {"photo": True, "important": False, "cap": None},
+        right,
+        {"low": 20.0, "high": 21.0, "window_in": 20.0},
+        0.5,
+    )
+    assert moved is False
+    assert left == {"id": "p1", "kind": "photo", "photo": "p.jpg", "duration_s": 3.0}
+    assert "in_s" not in left and "out_s" not in left
+
+
+def pollute_first_video_slot(monkeypatch):
+    original = llm_director.attach_decisions
+
+    def polluted(record, *args, **kwargs):
+        original(record, *args, **kwargs)
+        record["video"][0]["duration_s"] = None
+
+    monkeypatch.setattr(llm_director, "attach_decisions", polluted)
+
+
+def test_schema_failure_at_write_falls_back_to_rules(tmp_path, monkeypatch):
+    workspace = build_workspace(tmp_path / "ws")
+    pollute_first_video_slot(monkeypatch)
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["status"] == "fallback"
+    assert summary["fallback"] == "rules"
+    record = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert validate(record, "edit") == []
+    assert record["meta"]["director"]["by"] == "rules"
+    assert any(
+        "duration_s" in warning and "not valid under any of the given schemas" in warning
+        for warning in summary["warnings"]
+    )
+    assert any(note.startswith("edit:") and "duration_s" in note for note in record["meta"]["director"]["notes"])
+
+
+def test_schema_failure_on_a_kept_draft_falls_back_to_rules(tmp_path, monkeypatch):
+    workspace = build_workspace(tmp_path / "ws")
+    pollute_first_video_slot(monkeypatch)
+    client = StubClient(
+        [
+            plan_answer(),
+            editor_answer(),
+            reviewer_not_approved(),
+            editor_answer(),
+            reviewer_not_approved(),
+        ]
+    )
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    assert code == 0
+    assert summary["status"] == "fallback"
+    assert summary["fallback"] == "rules"
+    record = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert validate(record, "edit") == []
+    assert record["meta"]["director"]["by"] == "rules"
+    assert any("duration_s" in note for note in record["meta"]["director"]["notes"])
+
+
+def test_schema_failure_without_fallback_errors(tmp_path, monkeypatch):
+    workspace = build_workspace(tmp_path / "ws")
+    pollute_first_video_slot(monkeypatch)
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
+    assert code == 1
+    assert summary["status"] == "error"
+    assert any("duration_s" in warning for warning in summary["warnings"])
+    assert not (workspace / "edit.json").exists()
+
+
 def write_previous_edit(workspace):
     write_json(
         workspace / "edit.json",
