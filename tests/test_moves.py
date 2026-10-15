@@ -133,7 +133,7 @@ def over_slot_max(slots):
     return [slot for slot in slots if slot_screen_length(slot) > PACING["slot_max"] + 1e-6]
 
 
-def test_exception_share_is_ceil_of_fifteen_percent_with_a_minimum_of_one():
+def test_exception_share_is_fifteen_percent_rounded_with_a_minimum_of_one():
     def run(count):
         slots = [
             video_slot(f"m{index}", 0.0, 3.0, window=(0.0, 12.0), important=True, score=0.9 - index * 0.01)
@@ -144,8 +144,9 @@ def test_exception_share_is_ceil_of_fifteen_percent_with_a_minimum_of_one():
 
     assert len(run(1)) == 1
     assert len(run(4)) == 1
-    assert len(run(7)) == 2
-    assert len(run(20)) == math.ceil(0.15 * 20)
+    assert len(run(7)) == 1
+    assert len(run(14)) == 2
+    assert len(run(20)) == 3
 
 
 def test_exceptions_go_to_the_best_scores():

@@ -11,7 +11,7 @@
 
 - Real YuNet face detection: the model cannot download here (HTTP 403). The e2e crop paths came from reframe's real saliency/tracking code with a no-face stub detector; face-following on real footage is unverified.
 - Real VLM descriptions (mock backend), MobileNet similarity (hist backend used), real Dolomites footage, the web app on a phone.
-- With few slots `ceil(15 %)` allows more than 15 % (7 slots -> 2 = 28 %; 12 slots -> 2 = 16.7 %); the 80-90 % rule holds from about 14 slots up.
+- With few slots `15 % (rounded)` allows more than 15 % (7 slots -> 2 = 28 %; 12 slots -> 2 = 16.7 %); the 80-90 % rule holds from about 14 slots up.
 - The synthetic target was 60 s but only about 38 s of edit came out (little distinct material); lengths below the target are a footage limit, not a policy effect.
 
 ## Doru, check this
@@ -21,3 +21,7 @@
 - Web app: Upload -> Format 9:16, then the Recap tab shows the vertical player.
 - Kdenlive export of a ramped slot stays real time (warning in the export summary).
 - Decide whether ordinary moves may grow to `slot_max` (one line in `apply_move_policy`).
+
+## Reviewer changes (Claude)
+
+- Exception count is 15 % of the slots **rounded** (minimum 1), not ceil: with 7 slots ceil gave 2 (28.6 %), against Doru's 80–90 % rule; rounding gives 1 (14 %), 14 slots → 2, 20 → 3.

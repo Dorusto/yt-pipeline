@@ -4,7 +4,7 @@ A static shot respects the pacing table's ``slot_max``. A camera move (pan,
 tilt, orbit, tracking, reveal, ...) keeps as much of the move as the length
 rule allows: the middle half of its source window may play up to
 ``MIDDLE_SPEED_MAX`` times faster, and a small share of the slots (at most
-``ceil(15%)``, at least one) may run past ``slot_max`` on screen, up to the
+15 % rounded, at least one) may run past ``slot_max`` on screen, up to the
 hero cap. The first and last quarters of a slot always play in real time.
 
 ``edit.json`` stores the ramp as the optional slot field ``middle_speed``; the
@@ -142,7 +142,7 @@ def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE):
     ``important``, ``score`` and ``clip`` (photos carry ``duration_s``). A move
     keeps as much of its window as fits its on-screen budget, using
     ``middle_speed`` up to 1.2 only when that lets more of the move in. At most
-    ``ceil(exception_share * len(slots))`` (minimum 1; none when the share is 0) moves, the best by score
+    ``exception_share * len(slots)`` rounded (minimum 1; none when the share is 0) moves, the best by score
     among those that want more than ``slot_max``, may run up to ``hero_max`` on
     screen. Every other slot, every static or hold slot and every photo stays
     within ``slot_max``. Each slot gets ``max_screen_s``, the cap beat snapping
@@ -153,7 +153,7 @@ def apply_move_policy(slots, pacing, exception_share=EXCEPTION_SHARE):
         return warnings
     slot_max = float(pacing["slot_max"])
     hero_max = max(float(pacing["hero_max"]), slot_max)
-    allowed = max(1, math.ceil(round(exception_share * len(slots), 9))) if exception_share > 0 else 0
+    allowed = max(1, int(exception_share * len(slots) + 0.5)) if exception_share > 0 else 0
 
     wanting = []
     for index, slot in enumerate(slots):

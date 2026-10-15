@@ -1477,7 +1477,7 @@ def apply_length_policy(record, plan, facts_by_key, pacing, important_max_s, war
     """Apply the move-versus-static length policy to a record's slots; return the cap per slot id.
 
     A camera move keeps as much of its window as fits (middle half up to 1.2x),
-    at most ``ceil(15%)`` of the slots may run past ``slot_max`` on screen, and
+    at most 15 % of the slots (rounded) may run past ``slot_max`` on screen, and
     static shots, holds and photos stay within ``slot_max``. Slots gain
     ``middle_speed`` when ramped; the caps keep beat snapping inside the rule.
     """
