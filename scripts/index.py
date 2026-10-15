@@ -54,6 +54,12 @@ STEADINESS_BONUS = {
 }
 DEFECT_WEIGHTS = {"horizon": 0.5}
 DEFAULT_DEFECT_WEIGHT = 1.0
+EXPLAINABLE_DEFECTS = frozenset({"shake", "horizon"})
+SEMANTIC_MOVE_AGREEMENT = {
+    "orbit": frozenset({"orbit_candidate"}),
+    "travel": frozenset({"travel_forward", "travel_backward"}),
+}
+STEADINESS_PENALTIES = frozenset({"unsteady", "very_unsteady"})
 INELIGIBLE_ROLES = {"accidental", "setup", "teardown"}
 NO_VISION_PRIOR = 0.5
 SUPPRESS_OVERLAP_RATIO = 0.5
@@ -292,10 +298,14 @@ def _build_shot(
     role, role_source, motion_label, label_source, confidence = _effective_labels(segment, describe_segment)
     uncertainty = bool(segment.get("uncertain"))
     vision = _vision_fields(describe_segment, beat)
-    steadiness = _steadiness(segment, motion, role)
+    move = _best_overlapping_move(segment, (motion or {}).get("moves") or [])
+    steadiness = _steadiness(move, role)
     defects = list(segment.get("defects") or [])
+    semantic_motion = vision.get("semantic_motion") if vision else None
+    explained = explained_defects([defect.get("name") for defect in defects], move, semantic_motion)
+    intent = _intent_evidence(explained, move, semantic_motion)
     eligible = _is_eligible(role, uncertainty)
-    labels = _label_score(role, confidence, steadiness, defects)
+    labels = _label_score(role, confidence, steadiness, defects, explained)
     vision_score = _vision_score(vision)
     if eligible:
         fusion_vision = vision_score if vision_score is not None else NO_VISION_PRIOR
@@ -347,7 +357,8 @@ def _build_shot(
         "score": score,
         "scores": {"vision": vision_score, "labels": labels},
         "hook": _hook(vision, role, motion_label),
-        "reason": _reason(vision, motion_label, label_source, role, defects, eligible, beat_label),
+        "reason": _reason(vision, motion_label, label_source, role, defects, eligible, beat_label, intent),
+        "intent": intent,
         "similar_to": list(similarity_map.get(key, [])),
         "defects": [defect.get("name") for defect in defects],
         "suppressed_by": None,
@@ -486,8 +497,7 @@ def _vision_score(vision):
     return min(1.0, score)
 
 
-def _steadiness(segment, motion, role):
-    move = _best_overlapping_move(segment, (motion or {}).get("moves") or [])
+def _steadiness(move, role):
     if move is not None:
         return move.get("steadiness")
     return "static" if role == "hold" else None
@@ -508,15 +518,51 @@ def _best_overlapping_move(segment, moves):
     return best
 
 
-def _label_score(role, confidence, steadiness, defects):
+def explained_defects(defect_names, move, semantic_motion):
+    """Motion defects the content explains: a matching semantic move or a held-centred subject."""
+    names = {str(name) for name in (defect_names or [])}
+    explainable = names & EXPLAINABLE_DEFECTS
+    if not explainable or "blur" in names or move is None:
+        return set()
+    label = move.get("label")
+    semantic = (semantic_motion or "").strip().lower() or None
+    by_agreement = bool(semantic and label and label in SEMANTIC_MOVE_AGREEMENT.get(semantic, ()))
+    by_subject = bool(move.get("subject_centred"))
+    if by_agreement or by_subject:
+        return explainable
+    return set()
+
+
+def _intent_evidence(explained, move, semantic_motion):
+    if not explained:
+        return []
+    label = (move or {}).get("label")
+    semantic = (semantic_motion or "").strip().lower() or None
+    by_agreement = bool(semantic and label and label in SEMANTIC_MOVE_AGREEMENT.get(semantic, ()))
+    if by_agreement:
+        because = f"semantic_motion {semantic} matches {label}"
+    else:
+        ratio = (move or {}).get("subject_ratio")
+        if isinstance(ratio, (int, float)) and not isinstance(ratio, bool):
+            because = f"subject centred (ratio {float(ratio):.2f})"
+        else:
+            because = "subject centred"
+    return [{"defect": name, "because": because} for name in sorted(explained)]
+
+
+def _label_score(role, confidence, steadiness, defects, explained=()):
+    explained = set(explained or ())
     score = ROLE_BASE.get(role, 0.0)
     score += 0.25 * float(confidence or 0.0)
-    if steadiness in STEADINESS_BONUS:
+    if steadiness in STEADINESS_BONUS and not (
+        "shake" in explained and steadiness in STEADINESS_PENALTIES
+    ):
         score += STEADINESS_BONUS[steadiness]
-    if defects:
+    remaining = [defect for defect in defects if defect.get("name") not in explained]
+    if remaining:
         penalty = sum(
             float(defect.get("value", 0.0)) * DEFECT_WEIGHTS.get(defect.get("name"), DEFAULT_DEFECT_WEIGHT)
-            for defect in defects
+            for defect in remaining
         )
         score -= min(0.4, penalty)
     else:
@@ -546,7 +592,17 @@ def _hook(vision, role, motion_label):
     return f"{role} · {motion_label}"
 
 
-def _reason(vision, motion_label, label_source, role, defects, eligible, beat_label=None):
+def _intent_note(intent):
+    if not intent:
+        return None
+    names = ",".join(str(item.get("defect")) for item in intent)
+    because = str(intent[0].get("because") or "")
+    words = because.split()
+    short = words[1] if len(words) > 1 and words[0] == "semantic_motion" else "subject centred"
+    return f"intent: {names} ({short})"
+
+
+def _reason(vision, motion_label, label_source, role, defects, eligible, beat_label=None, intent=None):
     parts = []
     if beat_label:
         parts.append(str(beat_label))
@@ -559,6 +615,9 @@ def _reason(vision, motion_label, label_source, role, defects, eligible, beat_la
     parts.append(",".join(defect.get("name") for defect in defects) if defects else "clean")
     if not eligible:
         parts.append("not eligible")
+    note = _intent_note(intent)
+    if note:
+        parts.append(note)
     return " · ".join(parts)
 
 
