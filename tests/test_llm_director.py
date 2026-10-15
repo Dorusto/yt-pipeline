@@ -392,7 +392,7 @@ def editor_answer_out_of_window():
     return json.dumps(
         {
             "slots": [
-                {"id": "v1", "shot_key": "0056/s1", "in_s": 2.0, "out_s": 25.0, "transition": "cut"},
+                {"id": "v1", "shot_key": "0056/s1", "in_s": 18.0, "out_s": 23.0, "transition": "cut"},
                 {"id": "v2", "shot_key": "0057/s1", "in_s": 2.0, "out_s": 8.0, "transition": "crossfade"},
                 {"id": "v3", "shot_key": "0080/s1", "in_s": 12.0, "out_s": 20.0, "transition": "crossfade"},
             ]
@@ -900,8 +900,10 @@ def test_editor_facts_follow_fact_keep_whole(tmp_path):
     record = llm_director.build_edit_record(plan, answer, facts, shotlog, [], {}, 0.0, 0.0, warnings)
     assert record is not None
     slot = record["video"][0]
-    assert slot["in_s"] == pytest.approx(14.0)
-    assert slot["out_s"] == pytest.approx(20.0)
+    assert facts["0080/s1"]["peak_s"] == pytest.approx(10.0)
+    assert facts["0080/s1"]["peak_source"] == "middle"
+    assert slot["in_s"] == pytest.approx(7.0)
+    assert slot["out_s"] == pytest.approx(13.0)
     assert any("fixed v3" in note for note in warnings)
     violations = llm_director.validate_edit(record, plan, facts)
     assert not [item for item in violations if item["rule"] == "keep_whole"]
@@ -940,8 +942,10 @@ def test_missing_last_round_slot_is_synthesised(tmp_path):
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     assert {slot["id"] for slot in edit["video"]} == {"v1", "v2", "v3"}
     slot = next(item for item in edit["video"] if item["id"] == "v3")
-    assert slot["out_s"] == pytest.approx(20.0)
-    assert slot["middle_speed"] == pytest.approx(1.2)
+    assert slot["in_s"] == pytest.approx(7.0)
+    assert slot["out_s"] == pytest.approx(13.0)
+    assert "middle_speed" not in slot
+    assert slot["peak_s"] == pytest.approx(10.0) and slot["centred"] is True
     assert slot_screen_length(slot) == pytest.approx(6.0, abs=0.01)
 
 
@@ -1738,7 +1742,7 @@ def test_length_policy_extends_a_move_ramps_it_and_clamps_a_static_hold():
         ]
     }
     warnings = []
-    caps = llm_director.apply_length_policy(record, plan, facts, POLICY_PACING, 6.0, warnings)
+    caps = llm_director.apply_length_policy(record, plan, facts, POLICY_PACING, 6.0, warnings, speed_ramp=True)
     first, second = record["video"]
     assert first["in_s"] == 0.0 and first["out_s"] == 6.2
     assert 1.0 < first["middle_speed"] <= 1.2
@@ -1762,3 +1766,146 @@ def test_validator_accepts_a_move_longer_than_slot_max_only_within_the_exception
     violations = llm_director.validate_edit({"video": video}, plan, facts)
     length_violations = [item for item in violations if item["rule"] == "length"]
     assert len(length_violations) == 8 - 2
+
+
+def test_facts_carry_the_peak_and_where_it_came_from(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    shotlog = llm_director.load_shotlog(workspace)
+    shotlog["0056/s1"]["peak_s"] = 4.5
+    path = workspace / "motion" / "clip_0057_x.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["scene_activity"] = [{"t_s": index + 0.5, "activity": 0.002} for index in range(20)]
+    data["scene_activity"][12]["activity"] = 0.02
+    path.write_text(json.dumps(data), encoding="utf-8")
+    facts, _, _ = llm_director.build_shot_facts(workspace, shotlog)
+    assert (facts["0056/s1"]["peak_s"], facts["0056/s1"]["peak_source"]) == (4.5, "vision")
+    assert (facts["0057/s1"]["peak_s"], facts["0057/s1"]["peak_source"]) == (12.5, "motion")
+    assert (facts["0080/s1"]["peak_s"], facts["0080/s1"]["peak_source"]) == (10.0, "middle")
+
+
+PEAK_FACT = {**fact("p/s1", "p.mp4", 0.0, 20.0), "peak_s": 14.0, "peak_source": "vision"}
+
+
+def test_expected_cut_is_centred_on_the_peak_inside_the_window():
+    assert llm_director.expected_cut(PEAK_FACT, 4.0) == (12.0, 16.0)
+    assert llm_director.expected_cut({**PEAK_FACT, "peak_s": 1.0}, 4.0) == (0.0, 4.0)
+    assert llm_director.expected_cut({**PEAK_FACT, "peak_s": 19.5}, 4.0) == (16.0, 20.0)
+    landing = {**PEAK_FACT, "peak_s": 2.0, "landing_at_s": 10.0}
+    in_s, out_s = llm_director.expected_cut(landing, 3.0)
+    assert out_s == pytest.approx(10.75) and in_s == pytest.approx(7.75)
+
+
+def peak_edit(in_s, out_s):
+    plan = {"slot_plan": [{"id": "v1", "shot_key": "p/s1", "target_s": 4.0, "why": "a", "keep_whole": False}]}
+    record = {"video": [{"id": "v1", "clip": "p.mp4", "in_s": in_s, "out_s": out_s, "score": 0.5, "shot_key": "p/s1"}]}
+    return plan, record
+
+
+def test_validator_flags_a_trimmed_cut_that_misses_the_peak():
+    plan, record = peak_edit(0.0, 4.0)
+    violations = llm_director.validate_edit(record, plan, {"p/s1": PEAK_FACT})
+    assert [item["rule"] for item in violations] == ["peak"]
+    assert "14.00" in violations[0]["message"]
+
+
+def test_validator_accepts_a_cut_centred_on_the_peak_and_a_whole_window():
+    plan, record = peak_edit(12.0, 16.0)
+    assert llm_director.validate_edit(record, plan, {"p/s1": PEAK_FACT}) == []
+    whole = {**PEAK_FACT, "window_in_s": 0.0, "window_out_s": 4.0, "peak_s": 3.5}
+    plan, record = peak_edit(0.0, 4.0)
+    assert llm_director.validate_edit(record, plan, {"p/s1": whole}) == []
+
+
+def test_validator_wants_a_hero_cut_centred_on_its_peak():
+    hero = {**PEAK_FACT, "keep_whole": True, "role": "move", "motion_label": "pan_right"}
+    plan, record = peak_edit(14.0, 20.0)
+    violations = llm_director.validate_edit(record, plan, {"p/s1": hero}, 6.0)
+    assert [item["rule"] for item in violations] == ["keep_whole"]
+    plan, record = peak_edit(11.0, 17.0)
+    assert llm_director.validate_edit(record, plan, {"p/s1": hero}, 6.0) == []
+
+
+def test_normalise_recentres_a_cut_that_misses_the_peak_and_reports_it():
+    in_s, out_s, notes = llm_director.normalise_window(0.0, 4.0, PEAK_FACT, {"target_s": 4.0}, 6.0, 2.0, 5.0)
+    assert (in_s, out_s) == (12.0, 16.0)
+    assert notes and "best moment" in notes[0]
+    kept = llm_director.normalise_window(12.2, 16.2, PEAK_FACT, {"target_s": 4.0}, 6.0, 2.0, 5.0)
+    assert kept[:2] == (12.2, 16.2) and kept[2] == []
+
+
+def test_normalise_leaves_an_out_of_window_answer_for_the_validator():
+    in_s, out_s, notes = llm_director.normalise_window(18.0, 23.0, PEAK_FACT, {"target_s": 5.0}, 6.0, 2.0, 5.0)
+    assert (in_s, out_s) == (18.0, 23.0) and notes == []
+
+
+def test_default_window_is_centred_on_the_peak():
+    assert llm_director.default_window(PEAK_FACT, {"target_s": 4.0}, 6.0, 2.0, 5.0) == (12.0, 16.0)
+    hero = {**PEAK_FACT, "keep_whole": True, "role": "move", "motion_label": "pan_right"}
+    assert llm_director.default_window(hero, {}, 6.0, 2.0, 5.0) == (11.0, 17.0)
+
+
+def test_policy_without_the_ramp_keeps_a_move_around_its_peak_at_normal_speed():
+    facts = {"m/s1": {**move_fact("m/s1", "m.mp4", 0.0, 20.0), "peak_s": 9.0, "peak_source": "vision"}}
+    plan = policy_plan(["m/s1"])
+    record = {
+        "video": [
+            {"id": "v1", "clip": "m.mp4", "in_s": 0.0, "out_s": 20.0, "score": 0.9, "role": "move", "motion_label": "pan_right", "shot_key": "m/s1"},
+        ]
+    }
+    llm_director.finalize_lengths(record, plan, facts, None, [], 6.0)
+    slot = record["video"][0]
+    assert "middle_speed" not in slot
+    assert slot["in_s"] == pytest.approx(6.0) and slot["out_s"] == pytest.approx(12.0)
+    assert (slot["peak_s"], slot["peak_source"], slot["centred"]) == (9.0, "vision", True)
+    assert record["meta"]["speed_ramp"] is False
+
+
+def test_policy_with_the_ramp_reproduces_the_middle_speed_behaviour():
+    facts = {"m/s1": {**move_fact("m/s1", "m.mp4", 0.0, 20.0), "peak_s": 9.0, "peak_source": "vision"}}
+    plan = policy_plan(["m/s1"])
+    record = {
+        "video": [
+            {"id": "v1", "clip": "m.mp4", "in_s": 0.0, "out_s": 20.0, "score": 0.9, "role": "move", "motion_label": "pan_right", "shot_key": "m/s1"},
+        ]
+    }
+    llm_director.finalize_lengths(record, plan, facts, None, [], 6.0, speed_ramp=True)
+    slot = record["video"][0]
+    assert slot["middle_speed"] == pytest.approx(1.2)
+    assert slot_screen_length(slot) == pytest.approx(6.0, abs=0.01)
+    assert (slot["in_s"] + slot["out_s"]) / 2 == pytest.approx(9.0, abs=0.01)
+    assert record["meta"]["speed_ramp"] is True
+
+
+def test_run_default_has_no_ramp_and_speed_ramp_reaches_the_record(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert all("middle_speed" not in slot for slot in edit["video"])
+    assert edit["meta"]["speed_ramp"] is False
+    assert all("peak_s" in slot and "centred" in slot for slot in edit["video"])
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, speed_ramp=True)
+    assert code == 0 and summary["status"] == "written"
+    ramped = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert ramped["meta"]["speed_ramp"] is True
+
+
+def test_up_to_date_edit_is_redone_when_the_speed_ramp_changes(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=client)
+    again, _ = llm_director.run(workspace, brief=BRIEF, client=StubClient([]))
+    assert again["status"] == "skipped"
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    redone, _ = llm_director.run(workspace, brief=BRIEF, client=client, speed_ramp=True)
+    assert redone["status"] == "written"
+
+
+def test_help_lists_speed_ramp_and_the_prompts_describe_the_peak_rule():
+    result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
+    assert "--speed-ramp" in result.stdout
+    editor = (ROOT / "prompts" / "editor.md").read_text(encoding="utf-8")
+    assert "peak_s" in editor and "centre" in editor.lower()
+    assert "tail" not in editor.lower().replace("detail", "")

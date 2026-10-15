@@ -37,6 +37,7 @@ from pathlib import Path
 
 import cv2
 
+from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
@@ -340,6 +341,7 @@ def _build_shot(
         "semantic_motion": vision.get("semantic_motion") if vision else None,
         "interest": vision.get("interest") if vision else None,
         "hero": vision.get("hero") if vision else None,
+        "peak_s": valid_vision_peak(vision.get("peak_s"), start_s, end_s) if vision else None,
         "score": score,
         "scores": {"vision": vision_score, "labels": labels},
         "hook": _hook(vision, role, motion_label),
@@ -456,8 +458,10 @@ def _vision_fields(describe_segment, beat=None):
         "semantic_motion": describe_segment.get("semantic_motion"),
         "interest": describe_segment.get("interest"),
         "hero": describe_segment.get("hero"),
+        "peak_s": describe_segment.get("peak_s"),
     }
     if beat is not None:
+        fields["peak_s"] = beat.get("peak_s") if beat.get("peak_s") is not None else fields["peak_s"]
         if beat.get("summary") is not None:
             fields["summary"] = beat.get("summary")
         if beat.get("interest") is not None:

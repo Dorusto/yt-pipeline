@@ -1246,3 +1246,84 @@ def test_prompt_file_overrides_photo_prompt(tmp_path):
         prompt_path=custom,
     )
     assert model.calls[0].prompt.startswith("CUSTOM PHOTO PROMPT")
+
+
+class PeakModel:
+    """Returns an answer with a segment peak and beat peaks taken from the constructor."""
+
+    def __init__(self, peak_s, beats=None):
+        self.peak_s = peak_s
+        self.beats = beats or []
+        self.calls = []
+
+    def describe(self, request):
+        self.calls.append(request)
+        text = json.dumps(
+            {
+                "description": "a push through a gate",
+                "summary": "push through a gate",
+                "tags": ["gate"],
+                "subject": "gate",
+                "scenery": "courtyard",
+                "semantic_motion": "none",
+                "interest": 70,
+                "hero": False,
+                "peak_s": self.peak_s,
+                "verdict": None,
+                "beats": self.beats,
+            }
+        )
+        return VisionResponse(text=text, model="mock/vision", prompt_tokens=0, completion_tokens=0, cost_usd=0.0)
+
+    def spend_usd(self):
+        return 0.0
+
+
+def test_peak_inside_the_segment_is_kept(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(tmp_path, "clip", clip, [segment("s1", 1.0, 6.0, "move", motion_label="pan_right")])
+    describe.run(tmp_path, model=PeakModel(3.4), model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    assert data["segments"][0]["peak_s"] == 3.4
+    assert validate(data, "describe") == []
+
+
+@pytest.mark.parametrize("bad", [0.5, 6.5, "3", None, True])
+def test_peak_outside_the_segment_or_invalid_is_dropped(tmp_path, bad):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(tmp_path, "clip", clip, [segment("s1", 1.0, 6.0, "move", motion_label="pan_right")])
+    describe.run(tmp_path, model=PeakModel(bad), model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    assert data["segments"][0]["peak_s"] is None
+    assert validate(data, "describe") == []
+
+
+def test_mock_backend_writes_a_peak_inside_every_described_segment(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(
+        tmp_path,
+        "clip",
+        clip,
+        [segment("s1", 0.0, 4.0, "move", motion_label="pan_right"), segment("s2", 4.0, 8.0, "hold")],
+    )
+    describe.run(tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG)
+    data = read_describe(tmp_path, "clip")
+    for entry in data["segments"]:
+        assert entry["start_s"] <= entry["peak_s"] <= entry["end_s"]
+    assert validate(data, "describe") == []
+
+
+def test_beat_peaks_are_validated_against_their_beat():
+    beats = describe.normalize_beats(
+        [
+            {"start_s": 0.0, "end_s": 10.0, "label": "approach", "peak_s": 6.0},
+            {"start_s": 10.0, "end_s": 20.0, "label": "inside", "peak_s": 3.0},
+            {"start_s": 20.0, "end_s": 30.0, "label": "exit"},
+        ]
+    )
+    assert [beat["peak_s"] for beat in beats] == [6.0, None, None]
+
+
+def test_the_segment_prompt_asks_for_peak_s():
+    text = (ROOT / "prompts" / "describe_segment.md").read_text(encoding="utf-8")
+    assert '"peak_s"' in text and "interesting moment" in text

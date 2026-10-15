@@ -21,11 +21,13 @@ no extra keys:
   "semantic_motion": "orbit | tracking | reveal | travel | none",
   "interest": 0,
   "hero": false,
+  "peak_s": 12.4,
   "verdict": null,
   "beats": []
 }
 
-`interest` is an integer from 0 to 100. `hero` is a boolean. `verdict` is either
+`interest` is an integer from 0 to 100. `hero` is a boolean. `peak_s` is a number
+of seconds (see below). `verdict` is either
 null or an object:
 
 {
@@ -46,7 +48,8 @@ ends, each beat's start is the previous beat's end:
   "label": "approach",
   "summary": "at most 12 words naming this beat",
   "interest": 70,
-  "hero": true
+  "hero": true,
+  "peak_s": 41.0
 }
 
 ## How to read the frames
@@ -96,6 +99,23 @@ ends, each beat's start is the previous beat's end:
 - `travel` — the camera moves through space (forward or backward), the scene
   expands from or contracts toward a vanishing point;
 - `none` — no semantic move applies.
+
+## peak_s
+
+- `peak_s` is the timestamp, in seconds inside the source clip, of the **most
+  interesting moment of the segment**: the instant that, if the editor could keep
+  only a second or two of this shot, would look best. A push through a gate peaks
+  while the camera passes the gate; a boat approaching peaks when it is closest
+  and largest; a reveal peaks when the view opens; a subject entering peaks when
+  it is fully in frame.
+- Read it off the tile timestamps. It may sit between two tiles (interpolate), but
+  it must lie inside the segment: between its start and its end as given in the
+  segment facts. A value outside the segment is thrown away.
+- Judge the scene, not the camera setup: do not pick the first tile or the last
+  tile just because they are first or last. When nothing stands out, name the
+  middle of the segment.
+- On a long segment, give each beat its own `peak_s` inside that beat; the
+  segment's `peak_s` is the best moment of the whole take.
 
 ## summary and tags
 

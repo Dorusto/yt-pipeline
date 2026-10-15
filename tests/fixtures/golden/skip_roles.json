@@ -254,8 +254,8 @@
   "expected_slots": [
     {
       "clip": "clip_0004_x.mp4",
-      "in_s": 0.0,
-      "out_s": 2.09
+      "in_s": 28.95,
+      "out_s": 31.05
     }
   ]
 }

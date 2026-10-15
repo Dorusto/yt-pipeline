@@ -31,6 +31,7 @@ from common.moves import (
     slot_screen_length,
 )
 from common.pacing import estimate_all_good
+from common.peak import centre_window, choose_peak, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -95,6 +96,7 @@ def build_parser():
             "      --target-duration-s 90 --order chronological --pacing calm-to-energy --json\n"
             "  python scripts/director.py --workspace ~/Videos/ws --order score --pacing uniform --force\n"
             "  python scripts/director.py --workspace ~/Videos/ws --important-max-s 6.0 --json\n"
+            "  python scripts/director.py --workspace ~/Videos/ws --speed-ramp --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -154,6 +156,14 @@ def build_parser():
         type=float,
         default=None,
         help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
+    )
+    parser.add_argument(
+        "--speed-ramp",
+        action="store_true",
+        help=(
+            "optional effect: let the middle half of a long camera move play up to 1.2x so more of "
+            "the move fits (default off: every slot plays at normal speed, middle_speed 1.0)"
+        ),
     )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -680,6 +690,8 @@ def merge_contiguous(slots):
                 )
             if slot["score"] > previous["score"]:
                 previous["score"] = slot["score"]
+                previous["peak_s"] = slot.get("peak_s")
+                previous["peak_source"] = slot.get("peak_source")
                 previous["shot_reason"] = slot.get("shot_reason")
                 previous["description"] = slot.get("description")
                 previous["shot_key"] = slot.get("shot_key")
@@ -864,30 +876,38 @@ def make_photo_slot(candidate, duration_s):
     }
 
 
+def candidate_peak(candidate):
+    """The candidate's ``(peak_s, source)``; the middle of its window when none was chosen."""
+    if candidate.get("peak_s") is not None:
+        return candidate["peak_s"], candidate.get("peak_source") or "middle"
+    return choose_peak(candidate["in_s"], candidate["out_s"])
+
+
 def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=None, important_max_s=None):
     if candidate.get("media_type") == "photo":
         return make_photo_slot(candidate, duration_s)
-    in_s = candidate["in_s"]
+    window_in = candidate["in_s"]
+    window_out = candidate["out_s"]
+    peak_s, peak_source = candidate_peak(candidate)
     if important_max_s is not None and is_important(candidate):
-        out_s = candidate["out_s"]
-        in_s = max(candidate["in_s"], out_s - important_max_s)
+        in_s, out_s = centre_window(window_in, window_out, min(window_out - window_in, important_max_s), peak_s)
     elif candidate.get("phrase"):
-        floor = min(candidate["landing_start_s"] + LANDING_FLOOR_S, candidate["out_s"])
-        out_s = clamp(in_s + duration_s, floor, candidate["out_s"])
-        if out_s - in_s > duration_s:
-            in_s = max(candidate["in_s"], out_s - duration_s)
-            if warnings is not None:
-                warnings.append(
-                    f"phrase trimmed from the head: {candidate['clip']} {candidate['segment'].get('id')} "
-                    f"keeps the last {out_s - in_s:.1f}s of the move"
-                )
+        floor = min(candidate["landing_start_s"] + LANDING_FLOOR_S, window_out)
+        length = min(duration_s, window_out - window_in)
+        in_s, out_s = centre_window(window_in, window_out, length, peak_s, min_out_s=floor)
+        if in_s > peak_s and warnings is not None:
+            warnings.append(
+                f"phrase kept through landing: {candidate['clip']} {candidate['segment'].get('id')} "
+                f"cut starts at {in_s:.1f}s, after its best moment at {peak_s:.1f}s"
+            )
         if out_s - in_s > max_slot_s and warnings is not None:
             warnings.append(
                 f"phrase kept through landing: {candidate['clip']} {candidate['segment'].get('id')} "
                 f"is {out_s - in_s:.1f}s (cap {max_slot_s:.1f})"
             )
     else:
-        out_s = min(candidate["out_s"], in_s + duration_s, in_s + max_slot_s)
+        length = min(duration_s, max_slot_s, window_out - window_in)
+        in_s, out_s = centre_window(window_in, window_out, length, peak_s)
     guarded = apply_overlap_guard(candidate, in_s, out_s, chosen, min_slot_s)
     if guarded is None:
         return None
@@ -918,6 +938,8 @@ def make_slot(candidate, duration_s, max_slot_s, min_slot_s, chosen, warnings=No
             float(candidate["landing_start_s"]) + LANDING_FLOOR_S if candidate.get("phrase") else None
         ),
         "important": important_max_s is not None and is_important(candidate),
+        "peak_s": peak_s,
+        "peak_source": peak_source,
     }
 
 
@@ -1313,6 +1335,19 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
     return chosen
 
 
+def mark_centred(slot):
+    """Set ``centred`` on a video slot: its cut was trimmed around its peak."""
+    if slot.get("media_type") == "photo" or slot.get("peak_s") is None:
+        return
+    slot["centred"] = is_centred(
+        slot["in_s"],
+        slot["out_s"],
+        slot.get("window_in_s", slot["in_s"]),
+        slot.get("window_out_s", slot["out_s"]),
+        slot["peak_s"],
+    )
+
+
 def build_record(args, sources, slots, wall_time_s, hard_cuts=False, decisions=None):
     video = []
     video_index = 0
@@ -1360,6 +1395,10 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False, decisions=N
         )
         if middle_speed_of(slot) > 1.0:
             video[-1]["middle_speed"] = middle_speed_of(slot)
+        if slot.get("peak_s") is not None:
+            video[-1]["peak_s"] = round(float(slot["peak_s"]), 3)
+            video[-1]["peak_source"] = slot.get("peak_source") or "middle"
+            video[-1]["centred"] = bool(slot.get("centred"))
     music = None
     if args.music:
         music = {"path": str(Path(args.music).expanduser())}
@@ -1384,7 +1423,12 @@ def build_record(args, sources, slots, wall_time_s, hard_cuts=False, decisions=N
         },
         "captions": [],
         "graphics": [],
-        "meta": {"tool": TOOL, "wall_time_s": round(wall_time_s, 2), "llm_cost_usd": 0.0},
+        "meta": {
+            "tool": TOOL,
+            "wall_time_s": round(wall_time_s, 2),
+            "llm_cost_usd": 0.0,
+            "speed_ramp": bool(getattr(args, "speed_ramp", False)),
+        },
     }
     if decisions is not None:
         record["decisions"] = decisions
@@ -1410,11 +1454,13 @@ def input_paths(workspace, beats_path=None):
     return paths
 
 
-def is_up_to_date(out_path, workspace, beats_path=None):
+def is_up_to_date(out_path, workspace, beats_path=None, speed_ramp=False):
     if not out_path.exists():
         return False
     data = load_json(out_path)
     if data is None or validate(data, "edit"):
+        return False
+    if bool((data.get("meta") or {}).get("speed_ramp", False)) != bool(speed_ramp):
         return False
     out_mtime = out_path.stat().st_mtime
     for path in input_paths(workspace, beats_path):
@@ -1454,7 +1500,7 @@ def run(args, started):
         args.music = str(music_path)
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
-    if not args.force and is_up_to_date(out_path, workspace, beats_path):
+    if not args.force and is_up_to_date(out_path, workspace, beats_path, args.speed_ramp):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
         total = sum(slot_duration(slot) for slot in slots)
@@ -1552,6 +1598,12 @@ def run(args, started):
                 candidate["shot_reason"] = None
                 candidate["shot_key"] = None
                 candidate["similar_to"] = []
+            candidate["peak_s"], candidate["peak_source"] = choose_peak(
+                candidate["in_s"],
+                candidate["out_s"],
+                shot.get("peak_s") if shot is not None else None,
+                (motion or {}).get("scene_activity"),
+            )
             scored.append(candidate)
         scored = build_phrases(scored, quality)
         kept, dropped = dedupe_candidates(scored)
@@ -1611,11 +1663,17 @@ def run(args, started):
     if not slots:
         raise DirectorError("no usable candidates")
 
-    warnings.extend(apply_move_policy(slots, {"slot_max": max_slot_s, "hero_max": important_max_s}))
+    warnings.extend(
+        apply_move_policy(
+            slots, {"slot_max": max_slot_s, "hero_max": important_max_s}, speed_ramp=args.speed_ramp
+        )
+    )
 
     beat_snap = None
     if beat_grid is not None:
         beat_snap = snap_slots(slots, beat_grid, [False] * len(slots), warnings)
+    for slot in slots:
+        mark_centred(slot)
 
     used_photos = [slot["photo"] for slot in slots if slot.get("media_type") == "photo"]
     photo_sources = [photo_source(name, photos_by_name) for name in used_photos]

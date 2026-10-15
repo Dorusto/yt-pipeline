@@ -60,8 +60,10 @@ class Context:
         order=None,
         no_audio_clean=False,
         frame_format="16x9",
+        speed_ramp=False,
     ):
         self.frame_format = frame_format
+        self.speed_ramp = speed_ramp
         self.source = source
         self.workspace = workspace
         self.brief_text = brief_text
@@ -88,7 +90,7 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--music MUSIC] [--format {16x9,9x16,both}] [--feedback TEXT] [--force] [--notify]"
+            " [--music MUSIC] [--format {16x9,9x16,both}] [--speed-ramp] [--feedback TEXT] [--force] [--notify]"
             " [--preview-base PREVIEW_BASE] [--json]"
         ),
         description=(
@@ -165,6 +167,14 @@ def build_parser():
         help=(
             "16x9 (default), 9x16 (recap_720p_9x16.mp4, 720x1280, a moving crop that follows"
             " the subject) or both"
+        ),
+    )
+    parser.add_argument(
+        "--speed-ramp",
+        action="store_true",
+        help=(
+            "optional effect: let the middle half of a long camera move play up to 1.2x so more of the "
+            "move fits (default off: normal speed everywhere)"
         ),
     )
     parser.add_argument(
@@ -253,6 +263,16 @@ def recorded_brief_matches(path, brief_text):
     return brief.get("text") == brief_text
 
 
+def recorded_speed_ramp_matches(path, speed_ramp):
+    """True when the edit at ``path`` was built with the same speed-ramp setting."""
+    data = load_json(path)
+    if not isinstance(data, dict):
+        return False
+    meta = data.get("meta")
+    recorded = bool(meta.get("speed_ramp", False)) if isinstance(meta, dict) else False
+    return recorded == bool(speed_ramp)
+
+
 def directory_files(directory):
     directory = Path(directory)
     if not directory.is_dir():
@@ -322,8 +342,10 @@ def is_up_to_date(name, ctx):
         )
     if name == "llm_director":
         path = ws / "edit.json"
-        return recorded_brief_matches(path, ctx.brief_text) and is_newer(
-            path, ws / "shotlog.json"
+        return (
+            recorded_brief_matches(path, ctx.brief_text)
+            and recorded_speed_ramp_matches(path, ctx.speed_ramp)
+            and is_newer(path, ws / "shotlog.json")
         )
     if name == "render":
         return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
@@ -411,6 +433,8 @@ def director_args(ctx):
         args += ["--beats", str(ctx.workspace / "beats.json"), "--music", music_arg(ctx)]
     if ctx.ambient_under_music_db is not None:
         args += ["--ambient-under-music-db", str(ctx.ambient_under_music_db)]
+    if ctx.speed_ramp:
+        args.append("--speed-ramp")
     return args
 
 
@@ -974,6 +998,7 @@ def main(argv=None):
         order=args.order,
         no_audio_clean=args.no_audio_clean,
         frame_format=args.frame_format,
+        speed_ramp=args.speed_ramp,
     )
     summary = run(ctx)
     if args.json:

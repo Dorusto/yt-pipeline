@@ -41,30 +41,37 @@ no extra keys.
 3. **Hero and semantic moves keep their whole window**, capped at the hero cap
    for this edit (stated in the user message — 6 s on a long edit, less on a
    short one): use `in_s = window_in_s` and `out_s = window_out_s` when the
-   window is within the cap; when it is longer, keep the **tail** (the move
-   must complete), so `out_s = window_out_s` and `in_s = window_out_s - cap`.
+   window is within the cap; when it is longer, keep the part **around the best
+   moment**: a cut of `cap` seconds centred on the shot's `peak_s`, moved back
+   inside the window if it would leave it (rule 6).
    A hero that is a **static hold** (`motion_label` static or minor_motion) is
    a static shot: it follows rule 4 like any ordinary shot, not this one.
-   The tool then applies the **move length policy** on top of your windows: the
-   middle half of a camera move may play up to 1.2x (it writes `middle_speed`
-   itself, never write it), so more of the move fits; at most 15% of the slots
-   (at least one) may run past the slot maximum on screen, the best moves first;
-   every static shot, hold and photo stays within the slot maximum. Give a
+   The tool then applies the **move length policy** on top of your windows: at
+   most 15% of the slots (at least one) may run past the slot maximum on screen,
+   the best moves first; every static shot, hold and photo stays within the slot
+   maximum. Playback is at normal speed; when the edit asks for the optional
+   speed ramp the tool writes `middle_speed` itself, never write it. Give a
    camera move the whole of its window within the hero cap and let the tool
-   trim and ramp it.
+   trim it around its peak.
 4. **Ordinary shots follow the pacing** target of the slot, but never shorter
    than the slot minimum and never longer than the slot maximum stated in the
-   user message. When the shot is a landing phrase
-   (rule 2) and the pacing target is shorter than the floor, keep the floor and
-   trim the **head** instead: `out_s` at the floor, `in_s = out_s - target`.
+   user message. When the window is longer than the slot, cut around the best
+   moment (rule 6). When the shot is a landing phrase (rule 2) the landing wins:
+   the cut still ends at or after the floor, so the best moment may end up near
+   the head or outside the cut.
 5. **No two slots from the same take back to back** unless their windows touch
    (within 0.5 s). Two slots from one take need a different take's slot between
    them. When two planned slots are from the same take and their windows touch,
    cut them exactly contiguous: `out_s` of the first equals `in_s` of the second.
-6. **Cut inside the steady phase**, never inside an acceleration ramp and never
-   on aimless movement after the move: the usable window ends where the steady
-   motion ends, so keep `in_s` at or after `window_in_s` and `out_s` at or
-   before `window_out_s`.
+6. **Centre a trimmed cut on the best moment.** Each shot fact carries `peak_s`,
+   the best moment of the shot (from the vision model, else the scene activity,
+   else the middle of the window). When a cut is shorter than the window, centre
+   it on `peak_s`: `in_s = peak_s - length / 2`, `out_s = peak_s + length / 2`,
+   moved back inside the window when it would leave it. Never keep only the start
+   or only the end of a long move out of habit: a push through a gate looks best
+   while it passes the gate. The window is already the steady phase, never an
+   acceleration ramp or aimless movement after the move, so a cut inside the
+   window is a cut inside the steady phase.
 7. **Length.** The sum of the on-screen lengths (`out_s - in_s`) should reach the brief's target
    duration within about 10%.
 8. **Photos.** A photo slot has no window and no landing: answer with
@@ -73,7 +80,8 @@ no extra keys.
 
 ## The shot facts you get per planned shot
 
-`shot_key`, `clip`, `window_in_s`, `window_out_s`, `landing_at_s` (or null),
+`shot_key`, `clip`, `window_in_s`, `window_out_s`, `peak_s` (the best moment, inside
+the window) with `peak_source` (`vision`, `motion` or `middle`), `landing_at_s` (or null),
 `keep_whole` (the shot's own flag: hero or complete semantic move), `target_s` (from the plan), `score`, `summary`,
 `role`, `motion_label`, `hero`, `similar_to`. A photo fact adds
 `media_type: "photo"`, `photo`, `capture_time`, `subject_position` and `tags`;

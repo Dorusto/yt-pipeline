@@ -378,6 +378,12 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
         if middle_speed_of(slot) > 1.0:
             cut_text += f", middle at {middle_speed_of(slot):.2f}x"
         move_html = ""
+        if slot.get("centred") and _is_number(slot.get("peak_s")):
+            source = escape(str(slot.get("peak_source") or "middle"))
+            move_html = (
+                f'<div class="meta-line">centred on the best moment at '
+                f'{float(slot["peak_s"]):.1f} s (from {source})</div>'
+            )
         data_uri = _thumbnail_data_uri(path, (in_s + out_s) / 2.0)
     if window is not None:
         cut_text += f" of {window[0]:.2f}–{window[1]:.2f} s"

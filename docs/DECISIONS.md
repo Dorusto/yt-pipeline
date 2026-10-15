@@ -1783,3 +1783,21 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** B. `render.py --format 16x9|9x16|both` and `recap.py --format` (stations `render_vertical`, `render_final_vertical`). `reframe.py` runs as a subprocess once per source clip (on its proxy, path rescaled to the rendered file) and is cached under `<workspace>/reframe/`; the `crop` filter runs on source time before the trim so a `middle_speed` ramp keeps the window on the subject. A failed reframe gives a centred crop and a warning, never a failed render. Photos keep Ken Burns; a landscape photo is cropped to 9:16 around `ken_burns.focus_x`. 720x1280 preview, 1080x1920 final. The web app has a Format select (Auto = 16:9) and shows/serves the vertical files. Same duration as the 16:9 render by construction (same edit, same slot lengths).
 
 **Consequence:** the crop is only as good as reframe's subject tracking; a vertical recap costs one extra render plus one reframe pass per clip (cached).
+
+---
+
+## [2026-10-15] Normal speed by default, cuts centred on the best moment (D2-12)
+
+**Context:** D2-11 sped every long move up to 1.2x by default and kept the end of the window for important shots. Doru's corrections: normal speed unless he asks for the ramp, and when a move is longer than its allowed on-screen length keep the part around its best moment (a push through a gate is best at the gate, usually the middle), not the start or the end.
+
+**Options:** (A) keep the ramp default and add a peak only to the trim; (B) ramp optional, peak-centred trim with a layered peak source; (C) peak only from the vision model.
+
+**Decision:** B. The ramp is opt-in: `--speed-ramp` on `director.py`, `llm_director.py` and `recap.py`, and a Speed ramp select (Auto = off / off / on) on the web Upload and Re-edit forms. With the ramp off `apply_move_policy` never sets `middle_speed` but keeps the length policy (static/holds/photos <= `slot_max`, at most 15 % rounded of the slots up to `hero_max`). `meta.speed_ramp` is stored so a changed setting re-runs the edit. The trimmed window is centred on a peak chosen by `common/peak.py`: (a) `peak_s` from describe (new field on segments and beats, validated inside the span, copied by `index.py` into `shotlog.json`), (b) the maximum smoothed `scene_activity` of `motion/` inside the window when it exceeds the clip median by at least 0.001, (c) the window middle. The cut is clamped inside the candidate window and the steady range. The mock vision backend returns a deterministic `peak_s` (35-65 % of the span) so offline runs use path (a); it is not truthful.
+
+**Why:** the vision model sees the subject, the motion signal is free and always available, the middle is a neutral fallback. Priority follows reliability of intent, then availability.
+
+**Landing phrases:** a move followed by its landing hold keeps the landing rule (the cut ends at or after the floor), so the peak can fall outside the cut; the director warns. Choosing the peak over the landing would drop the landing hold and is left to Doru.
+
+**Golden changes (intentional):** nine fixtures changed only in `expected_slots`: windows that started at the head of the window are now centred on the peak, which is the window middle in the fixtures (for example hero 13.75-16.25); `phrase_move_strong` is 7.25-10.75 (ramp off, hero cap 3.5 s); in `photo_slots` the first photo now sorts before the video because the video slot's chronological key moved later.
+
+**Consequence:** D2-11 behaviour is reproduced exactly with `--speed-ramp` when no peak is known; with a peak, ramped cuts are also peak-centred. A peak from the 1 s motion signal is coarse (about +-0.5 s).

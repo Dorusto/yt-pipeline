@@ -234,6 +234,14 @@
             "minimum": 0,
             "maximum": 100
           },
+          "peak_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "the vision model's best moment of the shot (describe peak_s), inside start_s..end_s; null when the model gave none"
+          },
           "hero": {
             "type": [
               "boolean",
