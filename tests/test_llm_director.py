@@ -818,7 +818,7 @@ def test_validator_catches_keep_whole_and_length():
 
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0)}
     plan = {"slot_plan": [{"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": False}]}
-    record = {"video": [{"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 1.0}]}
+    record = {"video": [{"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 0.5}]}
     violations = llm_director.validate_edit(record, plan, facts)
     assert any(item["rule"] == "length" for item in violations)
 
@@ -1096,6 +1096,100 @@ def test_important_cap_defaults_to_six():
     assert llm_director.DEFAULT_IMPORTANT_MAX_S == 6.0
 
 
+def test_pacing_table_at_the_anchors():
+    assert llm_director.pacing_table(20) == {
+        "slot_min": 1.5,
+        "slot_target": 2.0,
+        "slot_max": 2.5,
+        "hero_max": 3.5,
+        "n_slots": 10,
+    }
+    assert llm_director.pacing_table(90) == {
+        "slot_min": 2.0,
+        "slot_target": 3.6,
+        "slot_max": 5.0,
+        "hero_max": 6.0,
+        "n_slots": 25,
+    }
+    assert llm_director.pacing_table(180) == {
+        "slot_min": 2.5,
+        "slot_target": 5.0,
+        "slot_max": 6.0,
+        "hero_max": 6.0,
+        "n_slots": 32,
+    }
+
+
+def test_pacing_table_clamps_outside_the_anchors():
+    assert llm_director.pacing_table(10) == llm_director.pacing_table(20)
+    assert llm_director.pacing_table(240) == llm_director.pacing_table(180)
+
+
+def test_pacing_table_interpolates_between_the_anchors():
+    pacing = llm_director.pacing_table(60)
+    assert 1.5 < pacing["slot_min"] < 2.0
+    assert 2.0 < pacing["slot_target"] < 3.6
+    assert 2.5 < pacing["slot_max"] < 5.0
+    assert 3.5 < pacing["hero_max"] < 6.0
+    assert 10 < pacing["n_slots"] < 25
+
+
+def test_shot_facts_respect_pacing_clamps_for_a_short_brief(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    shotlog = llm_director.load_shotlog(workspace)
+    pacing = llm_director.pacing_table(20)
+    facts, _, _ = llm_director.build_shot_facts(
+        workspace, shotlog, pacing["hero_max"], None, pacing["slot_min"], pacing["slot_max"],
+    )
+    assert facts["0056/s1"]["target_s"] == 2.5
+    assert facts["0057/s1"]["target_s"] == 2.5
+    assert facts["0080/s1"]["target_s"] == 3.5
+    assert facts["0080/s1"]["keep_whole"] is True
+
+
+def short_plan_answer():
+    return json.dumps(
+        {
+            "logline": "a quick recap",
+            "structure": [{"id": "b1", "name": "All", "intent": "the day in brief", "target_s": 20.0}],
+            "slot_plan": [
+                {"id": "v1", "beat": "b1", "shot_key": "0056/s1", "target_s": 1.5, "why": "the wake", "keep_whole": False},
+                {"id": "v2", "beat": "b1", "shot_key": "0057/s1", "target_s": 2.0, "why": "the bay", "keep_whole": False},
+                {"id": "v3", "beat": "b1", "shot_key": "0080/s1", "target_s": 3.5, "why": "the cave", "keep_whole": True},
+            ],
+        }
+    )
+
+
+def short_editor_answer():
+    return json.dumps(
+        {
+            "slots": [
+                {"id": "v1", "shot_key": "0056/s1", "in_s": 0.0, "out_s": 1.5, "transition": "cut"},
+                {"id": "v2", "shot_key": "0057/s1", "in_s": 0.0, "out_s": 2.0, "transition": "crossfade"},
+                {"id": "v3", "shot_key": "0080/s1", "in_s": 16.5, "out_s": 20.0, "transition": "crossfade"},
+            ]
+        }
+    )
+
+
+def test_short_edit_allows_one_and_a_half_second_slots(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([short_plan_answer(), short_editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(
+        workspace, brief="about 20 seconds, chronological, ambient sound only", client=client
+    )
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["approved"] is True
+    assert summary["validator_violations"] == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    lengths = {slot["id"]: round(slot["out_s"] - slot["in_s"], 2) for slot in edit["video"]}
+    assert lengths["v1"] == 1.5
+    assert lengths["v2"] == 2.0
+    assert lengths["v3"] == 3.5
+
+
 def test_photo_fact_shape(tmp_path):
     photo = write_photo(tmp_path / "media" / "photo_01.jpg")
     shot = photo_shot(
@@ -1362,7 +1456,7 @@ def test_beat_snap_uses_downbeats_at_structure_boundaries():
     assert all(slot["transition"] == {"type": "cut", "duration_s": 0} for slot in record["video"][1:])
 
 
-def test_beat_snap_video_window_exhausted_warns():
+def test_beat_snap_video_window_exhausted_moves_within_the_slack():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
     grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
     record = {
@@ -1374,7 +1468,22 @@ def test_beat_snap_video_window_exhausted_warns():
     facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4)}
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
-    assert record["video"][0]["out_s"] == 2.4
+    assert abs(record["video"][0]["out_s"] - 2.5) <= 0.02
+    assert stats["unsnapped"] == 0
+
+
+def test_beat_snap_cut_beyond_the_slack_warns():
+    grid = {"beat_s": [0.0, 5.0, 10.0], "downbeat_s": [0.0, 5.0, 10.0], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.3, "transition": {"type": "cut", "duration_s": 0}},
+        ]
+    }
+    plan = {"slot_plan": [{"id": "v1", "beat": "b1", "shot_key": "a/s1"}]}
+    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.3)}
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert record["video"][0]["out_s"] == 2.3
     assert stats["unsnapped"] == 1
     assert any("not snapped" in warning for warning in warnings)
 
@@ -1449,8 +1558,146 @@ def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
     }
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
-    assert record["video"][0]["out_s"] == 2.9
-    assert abs(record["video"][0]["in_s"] - 0.4) <= 0.02
+    assert abs(record["video"][0]["out_s"] - 3.0) <= 0.02
     assert 2.0 <= record["video"][1]["duration_s"] <= 4.0
     assert not [warning for warning in warnings if "not snapped" in warning]
     assert stats["unsnapped"] == 0
+
+
+def write_previous_edit(workspace):
+    write_json(
+        workspace / "edit.json",
+        {
+            "schema_version": "0.1",
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "tool": "test",
+            "brief": {"text": BRIEF},
+            "sources": [],
+            "video": [
+                {
+                    "id": "v1",
+                    "shot_key": "0071/s2",
+                    "clip": "clip_0071_x.mp4",
+                    "in_s": 4.0,
+                    "out_s": 9.5,
+                    "reason": "the tunnel",
+                },
+                {
+                    "id": "v2",
+                    "shot_key": "0057/s1",
+                    "clip": "clip_0057_x.mp4",
+                    "in_s": 2.0,
+                    "out_s": 8.0,
+                    "reason": "the bay",
+                },
+            ],
+            "decisions": [
+                {"id": "0071/s2", "status": "used", "reason": "the tunnel", "slot": "v1"},
+                {"id": "0072/s3", "status": "rejected", "reason": "low score"},
+            ],
+        },
+    )
+
+
+def feedback_jsonl_rows(workspace):
+    path = workspace / "feedback.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_feedback_block_reaches_screenwriter_and_editor(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    write_previous_edit(workspace)
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(
+        workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2, tunnel longer"]
+    )
+    assert code == 0
+    assert summary["status"] == "written"
+    assert summary["feedback"] == ["drop 0071/s2, tunnel longer"]
+    screenwriter_user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
+    assert "Feedback to apply" in screenwriter_user
+    assert "drop 0071/s2, tunnel longer" in screenwriter_user
+    assert "Previous edit (the feedback refers to these ids):" in screenwriter_user
+    assert '"shot_key": "0071/s2"' in screenwriter_user
+    assert '"id": "0072/s3"' in screenwriter_user
+    assert "low score" in screenwriter_user
+    editor_user = calls_for(client, "# Editor")[0]["messages"][1]["content"]
+    assert "Feedback to apply" in editor_user
+    assert "drop 0071/s2, tunnel longer" in editor_user
+    assert "0071/s2" in editor_user
+
+
+def test_feedback_appends_one_line_per_flag(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=first, feedback=["drop 0071/s2", "tunnel longer"])
+    rows = feedback_jsonl_rows(workspace)
+    assert [row["text"] for row in rows] == ["drop 0071/s2", "tunnel longer"]
+    for row in rows:
+        assert row["action"] == "feedback"
+        assert row["tool"] == "scripts/llm_director.py"
+        assert row["ts"]
+    second = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=second, feedback=["drop 0071/s2"])
+    rows = feedback_jsonl_rows(workspace)
+    assert len(rows) == 3
+    assert rows[0]["text"] == "drop 0071/s2"
+    assert rows[2]["text"] == "drop 0071/s2"
+
+
+def test_feedback_forces_rerun_of_up_to_date_edit(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=first)
+    second = StubClient([])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=second)
+    assert code == 0
+    assert summary["status"] == "skipped"
+    assert second.calls == []
+    third = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=third, feedback=["keep it as it is"])
+    assert code == 0
+    assert summary["status"] == "written"
+    assert len(third.calls) == 3
+    assert summary["feedback"] == ["keep it as it is"]
+
+
+def test_feedback_without_previous_edit_still_reaches_the_screenwriter(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
+    assert code == 0
+    assert summary["status"] == "written"
+    screenwriter_user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
+    assert "Feedback to apply" in screenwriter_user
+    assert "drop 0071/s2" in screenwriter_user
+    assert "no previous edit.json" in screenwriter_user
+
+
+def test_feedback_recorded_even_when_the_loop_falls_back(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(["not json at all", "still not json"])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
+    assert code == 0
+    assert summary["status"] == "fallback"
+    rows = feedback_jsonl_rows(workspace)
+    assert [row["text"] for row in rows] == ["drop 0071/s2"]
+
+
+def test_no_feedback_keeps_summary_shape(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["feedback"] == []
+
+
+def test_help_lists_feedback():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--feedback" in result.stdout
+    assert "drop 0071/s2" in result.stdout

@@ -16,10 +16,13 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - An edit must not miss an eligible hero when one exists (golden invariant, tested on fixtures). — 2026-10-13 / 2026-10-14
 - Important-shot cap: default 6 s (was 8 s); the window ends where the steady motion ends, never on aimless movement after it. — 2026-10-14
 - Ordinary slot length comes from the brief's pacing (calm vs energetic) with a min/max; cut inside the steady range. — 2026-10-13
+- Pacing table (D2-7): shot length scales with the target length — 20 s → 8–10 shots of 1.5–2.5 s, 90 s → 20–25 shots of 2–5 s, 3 min → up to 6 s; hero and semantic-move slots stay the longest but shrink in proportion (hero cap `min(6, slot_target × 1.75)`); `--min-slot-s`/`--max-slot-s`/`--important-max-s` are overrides of the table. — 2026-10-15
 - Time-overlapping shots (>50% of the shorter) keep the higher score; the loser is suppressed. — 2026-10-13
 - Long segments (>20 s) split into content beats: `describe` samples a frame every ~5 s, marks scene changes; each beat becomes its own candidate. — 2026-10-14
 - The screenwriter's menu is the cuttable pool: only windows the candidacy rule above allows. — 2026-10-13
 - `edit.json` is the edit list and the only source of truth; render, preview, graphics and Kdenlive export are adapters that read it. — 2026-10-13
+- The directors record a reason for every candidate they do not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length) in `edit.json` `decisions[]`, with the short id (`0071/s2`) also on the used slots (`shot_key`); `explain.html` renders that list. — 2026-10-15
+- `edit.json` records the music track (`audio.music`) and the ambient level under it (`audio.ambient_under_music_db`) whenever they come from flags, so the render's mix is reproducible from the edit alone. — 2026-10-15
 - Router is deterministic (brief keywords → workspace signals → vacation default); a route is a decision, not an analysis. — 2026-10-13
 - LLM director: the model chooses shots and rough lengths, a code validator enforces the grammar above, the reviewer approves or sends fixes back (max 3 rounds); `director.py` is the fallback and the `--dry-run` baseline. — 2026-10-13
 - New hand-written geometric rules only when a case recurs and the eval shows it hurts edits; the long tail goes to vision verdicts, not per-case code. — 2026-10-13
@@ -75,7 +78,8 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Proxies keep the source's global metadata (`-map_metadata 0`) so `creation_time` survives for clips whose names carry no date. — 2026-10-14
 - Inbox grouping: a `YYYY-MM-DD` folder in the inbox wins over the filename date, then mtime; one workspace per day under `--projects`; a day whose clips share one folder is passed to `recap.py` directly, otherwise a rebuilt symlink farm (the inbox is read-only). — 2026-10-14
 - `inbox.py` waits for the inbox to be quiet (`--quiet-minutes`, default 5) and re-invokes `recap.py` on a new clip, a changed brief or `--force`; the station skip rule stays the only caching. — 2026-10-14
-- Phone sync is Syncthing: phone send-only camera folder → LXC receive-only `~/media/inbox`; setup steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14
+- Phone flow: the web app (`serve.py` Upload) is the primary path — files stream into `~/media/inbox/<folder>/` and `recap.py` starts in the background; Syncthing (phone send-only camera folder → LXC receive-only `~/media/inbox` plus `inbox.py`) is the optional automatic path. Steps live in `docs/guides/phone-flow.md`, installs are Doru's machine steps. — 2026-10-14 / 2026-10-15
+- The web Upload endpoint streams into `inbox/<folder>/` (allowlisted extensions, per-file and per-request size caps, atomic `.part` writes, never overwrites, never outside the inbox) and starts `recap.py` in the background; the run is recorded in `<workspace>/.run.json` (`pid`, `source`, `options`) which is what Re-edit and the status badge read. — 2026-10-15
 
 ## Photos and music (D2-6)
 
@@ -85,4 +89,5 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Photo slots (`kind: "photo"`) last 2–4 s and carry a Ken Burns move chosen deterministically from `subject_position`: centre box → `zoom_in` on the subject; else `pan_left`/`pan_right` toward the subject; `zoom_out` only for close-ups. — 2026-10-14
 - Ken Burns renders with ffmpeg `zoompan`; portrait photos sit on a blurred background (cover-scaled copy + boxblur), never black bars. — 2026-10-14
 - Music: `render.py`/`recap.py` take `--music FILE`; the track is the bed, normalised to the loudness target, and the cleaned ambient bus stays audible `--ambient-under-music-db` (default 12) below it — never removed; a loud ambient event dips the music gently (sidechain, ratio 3); fade-out at the end; no music generation before D6. — 2026-10-14
+- `--music auto` picks the track from `--music-dir` (default `~/media/music`) with `scripts/music_pick.py`: brief pace words set the BPM band and the energy target, the shot tags match the file name, `beats.py` measures BPM/energy; the choice and the beat grid land in `music_choice.json`/`beats.json`. — 2026-10-15
 - With a music track, the directors snap every timeline cut to the nearest beat (max shift half a beat period — the nearest beat is always within reach); a cut that starts a new structure beat snaps to the nearest downbeat; slots join with hard cuts when a beat grid is present (crossfades stay for ambient-only). — 2026-10-14

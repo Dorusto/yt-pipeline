@@ -177,13 +177,12 @@
     {
       "kind": "photo",
       "photo": "still_0004_c.jpg",
-      "duration_s": 3.0
+      "duration_s": 2.0
     },
     {
-      "kind": "video",
       "clip": "clipB.mp4",
       "in_s": 0.0,
-      "out_s": 3.0
+      "out_s": 2.0
     }
   ]
 }

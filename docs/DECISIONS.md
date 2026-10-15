@@ -1436,3 +1436,169 @@ unambiguous.
 **Context:** during D2-6 the DeepSeek V4.1 Flash coder returned empty replies twice on three separate tasks (proxy photo pass-through, paired beat snap, one more), so the architect did the work itself and finally stalled. The routing rule allows a coder switch on outage, never mid-task.
 
 **Decision:** D2-7 starts with GLM 5.3 Flash as the coder (`.opencode/agents/coder.md`). DeepSeek stays the fallback. Revisit after D2-7: keep whichever coder needed fewer architect takeovers.
+
+---
+
+## [2026-10-15] D2-7 decisions list, shot keys and music recorded in edit.json
+
+**Context:** D2-7 must show *why* the edit looks the way it does. The directors
+picked slots but never said what they refused, so explain.html had nothing to
+render; the D2-6 gap (the music track and the ambient level coming from flags
+never reach `edit.json`) also has to close here, because the web app passes
+options through the edit list.
+
+**Schema (`schemas/edit.schema.json`), all optional so old files keep
+validating:**
+- `video_slot.shot_key` / `photo_slot.shot_key`: the short candidate id
+  (`0071/s2`, `0072/p1`) that feedback and explain.html refer to.
+- `decisions[]`: one row per candidate the director considered —
+  `{id, status: used|rejected, reason, slot, score, clip, window_in_s,
+  window_out_s}`. The reason taxonomy is fixed: `near-duplicate of <id>`,
+  `defect: <names>`, `setup/teardown` / `accidental`, `low score`,
+  `did not fit the length`; used rows carry the slot's own reason.
+- `audio.ambient_under_music_db` next to `audio.music`, so the render's mix
+  rule is in the edit list and not only in a CLI flag.
+
+**Recording.** Both directors build the list with
+`scripts/common/decisions.py` (shared code lives in `scripts/common/`): the
+shotlog is the candidate universe, the used rows come from the final slots
+(a phrase's landing hold is marked used with the move it belongs to), the pool
+drops carry their own reason (overlapping window of X), and the rest is
+derived from the shot (`suppressed_by`, role, defects, score versus the used
+floor). `director.py` and `llm_director.py` take `--music` and
+`--ambient-under-music-db` and write them into `audio`; `recap.py` forwards
+both flags to the directors and to `render.py`, which now falls back to the
+edit's `audio.ambient_under_music_db` before its own default (12).
+
+**Rationale:** `edit.json` stays the single source of truth — render,
+explain.html and the web app all read the same reasons; a sidecar decisions
+file would have drifted. The shot key on the slot is what makes feedback
+("drop 0071/s2") and the timeline's "source in/out versus the segment range"
+possible without re-deriving ids.
+
+---
+
+## [2026-10-15] D2-7 pacing table: shot length scales with the target length
+
+**Context:** the 20 s inbox recap had 4 shots of ~5 s; Doru wants a short recap
+to carry more, shorter shots. The old rule sized the slot count as
+`clamp(round(T/6), 4, 24)` and fixed the slot band at 2–12 s, which cannot
+reach 8–10 shots in 20 s.
+
+**Rule (implemented as `pacing_table(T)` in both directors, duplicated like the
+other small helpers).** Linearly interpolated between the anchors 20 s / 90 s /
+180 s, clamped outside: `slot_min` 1.5/2.0/2.5, `slot_target` 2.0/3.6/5.0,
+`slot_max` 2.5/5.0/6.0, `hero_max` 3.5/6.0/6.0. `hero_max = min(6,
+slot_target × 1.75)` — heroes stay the longest but shrink with the rest. Slot
+count `round(T / slot_target)` clamped to 4–32 (T=20 → 10 slots, T=90 → 25,
+T=180 → 32). `uniform` gives every slot `slot_target`; `calm-to-energy`
+interpolates from `slot_max` down to `slot_min`. Photo slots keep 2–4 s.
+
+**Flags become overrides.** `--min-slot-s`, `--max-slot-s`, `--calm-slot-s`,
+`--energy-slot-s`, `--important-max-s` default to `None` = "from the table"; an
+explicit value wins. `MIN_SLOT_S` in `llm_director` drops to 1.0 so a 1.5 s
+slot survives; `MAX_SLOT_S` 12.0 and `DEFAULT_IMPORTANT_MAX_S` 6.0 stay the
+outer bounds. The screenwriter/editor/reviewer prompts no longer hardcode 6 s
+or 2–12 s: the effective hero cap and slot band are stated in the user message.
+
+**Golden fixtures regenerated** (`tests/fixtures/golden/*.json`): the frozen
+`expected_slots` windows shrink with the new targets; the picks, order and
+grammar outcomes are unchanged (`grammar_violations == []` checked per file).
+A dense synthetic workspace (1 hero + 24 holds) proves 8–10 slots at 20 s and
+20–25 at 90 s.
+
+**Rationale:** one table keeps the rule-based and the LLM director honest with
+each other and makes "short recap = more, shorter shots" a testable number
+instead of a prompt wish. Interpolation between the three anchors the spec
+gives is the smallest thing that covers the web app's 30 s/60 s/90 s/3 min
+length options.
+
+---
+
+## [2026-10-15] D2-7 feedback loop: `--feedback` re-runs only the edit
+
+**Context:** Doru must be able to talk to the agent about its own analysis
+("drop 0071/s2, tunnel longer"). The short ids exist since the decisions work;
+now the director has to accept them back.
+
+**Decision.** `llm_director --feedback TEXT` (repeatable):
+- appends one JSON line per flag to `WORKSPACE/feedback.jsonl`
+  (`{"ts", "action": "feedback", "text", "tool"}`, append-only, ~200 bytes) —
+  this is the first writer of the learning store, which the D2 rules already
+  reserved;
+- forces the re-run for that invocation only (the up-to-date check is skipped);
+- puts a "Feedback to apply / Previous edit / Rejected candidates" block into
+  the screenwriter, editor **and reviewer** user messages, built from the
+  existing `edit.json` `video[]` + `decisions[]`, so every short id in the
+  feedback resolves;
+- adds `"feedback": [...]` to the `--json` summary.
+
+`recap.py --feedback` forwards the flags and, when any is present, runs
+`llm_director` and `render` even if up to date — the analysis stations keep the
+normal skip rule, so a re-edit costs only the edit + the render.
+`render_final`/`export_kdenlive` need no special case: their mtime rule already
+fires when `edit.json` is rewritten.
+
+**Rationale:** feedback as a flag keeps the loop scriptable from Hermes/OpenCode
+without a new RPC; the id block is what makes plain words like "0071/s2"
+unambiguous; `feedback.jsonl` is written first and read later (the profile work
+is not in this phase).
+
+---
+
+## [2026-10-15] D2-7 `--music auto`: `music_pick.py` scores the library
+
+**Context:** the web app's music menu offers `auto`; the track must come from
+`~/media/music` by the brief and the shot tags using `beats.py` energy and BPM.
+
+**Decision.** New `scripts/music_pick.py` (standalone + `yt-music-pick` skill):
+every audio file in the library is measured with `beats.py` as a subprocess
+(`bpm`, `energy_mean_dbfs`, `duration_s`) and cached in
+`<library>/.yt-beats/<file>.json` (skipped when the library is read-only). Four
+deterministic signals: BPM against the band the brief's pace words pick
+(calm → 70–100, energetic → 110–150, else 85–135), mean energy against the
+matching target (−24 / −10 / −16 dBFS), file-name tokens against the brief +
+shotlog tag words, and whether the track covers `0.7 × target duration`.
+Weights 0.35 / 0.25 / 0.25 / 0.15, ties by name. The winner goes to
+`music_choice.json` and its grid to `workspace/beats.json`.
+
+`recap.py --music auto` inserts a `music_pick` station right after `index`
+(the tags exist only then) instead of the early `beats` station; the
+`llm_director`/`render` argv carry a `@music@` token that `execute()`
+substitutes once `music_choice.json` has been read. `--music-dir`,
+`--target-duration-s` and `--order` are new recap flags forwarded to the
+stations.
+
+**Rationale:** one pure decision tool keeps the recap chain dumb; the cache
+makes a second run instant; scoring in code (not a model) keeps `music auto`
+deterministic and testable. Verified on the real library: a calm brief picks
+"Travelling Light" (67 BPM), an energetic brief "Gasoline" (140 BPM).
+
+---
+
+## [2026-10-15] D2-7 acceptance fixes: beat-snap slack, @music@ substitution, music validation
+
+**Context:** the real-footage acceptance (21 Kotor clips + 4 photos uploaded
+through the web endpoint, `--music auto`) found three defects.
+
+1. **Cuts could stay off the beat.** `snap_slots` refused to move a hero or a
+   slot whose window was full, so 11 of 14 cuts stayed 20–160 ms from the
+   nearest beat — the rule says *every* timeline cut snaps and "the nearest
+   beat is always within reach". **Fix:** the snap may push a slot's edge by up
+   to half a beat period (`BEAT_SNAP_FRACTION × period`) past its candidate
+   window. The window is the steady range; half a beat (≈0.28 s at 107 BPM) of
+   context is a deliberate, bounded excursion, and heroes still keep their
+   whole range to within that slack. Measured on the acceptance edit: 14/14
+   cuts snapped, max 0.4 ms from a beat (was 3/14).
+2. **`@music@` never reached the stations.** `station["argv"]` is a list of
+   command lists, so the flat token substitution in `resolve_argv` missed it
+   and render got `--music @music@`. **Fix:** substitute inside each command;
+   and both directors now refuse a `--music` path that does not exist, so a
+   substitution bug fails at the director instead of silently recording a bad
+   path in `edit.json`.
+3. **Test photos had the wrong time base** (local wall-clock in EXIF while the
+   clips' `creation_time` is UTC), which put every photo after the last clip.
+   Test-data fix only: the pipeline's chronology was right.
+
+Also: `recap.py --no-audio-clean` forwards to both renders (the web app's
+audio-clean-up option).

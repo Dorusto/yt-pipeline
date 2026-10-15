@@ -4,6 +4,7 @@
 Usage:
     python scripts/recap.py --source ~/media/raw --brief "about 90 seconds, calm start"
     python scripts/recap.py --source ~/media/raw --brief-file brief.txt --final --json
+    python scripts/recap.py --source ~/media/raw --brief "..." --feedback "drop 0071/s2" --json
 
 ``recap.py`` is the single entry point: it chains the existing station CLIs as
 subprocesses in order (proxy, ingest, motion, quality, describe, similarity,
@@ -50,8 +51,14 @@ class Context:
         python,
         repo_root,
         music=None,
+        ambient_under_music_db=None,
         notify=False,
         preview_base=None,
+        feedback=None,
+        music_dir=None,
+        target_duration_s=None,
+        order=None,
+        no_audio_clean=False,
     ):
         self.source = source
         self.workspace = workspace
@@ -63,8 +70,14 @@ class Context:
         self.python = python
         self.repo_root = repo_root
         self.music = music
+        self.ambient_under_music_db = ambient_under_music_db
         self.notify = notify
         self.preview_base = preview_base
+        self.feedback = list(feedback or [])
+        self.music_dir = music_dir
+        self.target_duration_s = target_duration_s
+        self.order = order
+        self.no_audio_clean = no_audio_clean
 
 
 def build_parser():
@@ -73,7 +86,8 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--music MUSIC] [--force] [--notify] [--preview-base PREVIEW_BASE] [--json]"
+            " [--music MUSIC] [--feedback TEXT] [--force] [--notify]"
+            " [--preview-base PREVIEW_BASE] [--json]"
         ),
         description=(
             "Run every pipeline station from a folder of clips and a brief to a recap MP4."
@@ -111,7 +125,46 @@ def build_parser():
     parser.add_argument(
         "--music",
         default=None,
-        help="music track: detect beats and mix it under the recap",
+        help="music track: a file to detect beats and mix under the recap, or 'auto' to pick one from --music-dir",
+    )
+    parser.add_argument(
+        "--music-dir",
+        default=None,
+        help="folder of tracks for --music auto (default ~/media/music)",
+    )
+    parser.add_argument(
+        "--target-duration-s",
+        type=float,
+        default=None,
+        help="override the target duration parsed from the brief",
+    )
+    parser.add_argument(
+        "--order",
+        choices=["chronological", "score"],
+        default=None,
+        help="override the order parsed from the brief",
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=None,
+        help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
+    )
+    parser.add_argument(
+        "--no-audio-clean",
+        action="store_true",
+        help="keep the raw ambient mix (no wind high-pass, denoise or loudnorm)",
+    )
+    parser.add_argument(
+        "--feedback",
+        action="append",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "feedback in plain words against the current edit's short ids, "
+            'e.g. "drop 0071/s2, tunnel longer"; repeatable; re-runs only '
+            "llm_director and render"
+        ),
     )
     parser.add_argument(
         "--force",
@@ -207,7 +260,15 @@ def is_up_to_date(name, ctx):
     if name == "ingest":
         return all_newer(ws / "ingest.json", proxies)
     if name == "beats":
-        return ctx.music is not None and is_newer(ws / "beats.json", ctx.music)
+        return ctx.music is not None and ctx.music != "auto" and is_newer(ws / "beats.json", ctx.music)
+    if name == "music_pick":
+        choice = ws / MUSIC_CHOICE_NAME
+        if not choice.is_file():
+            return False
+        if not is_newer(choice, ws / "shotlog.json"):
+            return False
+        chosen = resolve_music_choice(ws)
+        return chosen is not None and is_newer(ws / "beats.json", chosen)
     if name == "motion":
         return bool(proxies) and all(
             is_newer(ws / "motion" / f"{clip.stem}.json", clip) for clip in proxies
@@ -271,6 +332,50 @@ def station_command(ctx, script, args, force=False, budget=False):
     return command
 
 
+MUSIC_TOKEN = "@music@"
+DEFAULT_MUSIC_DIR = "~/media/music"
+MUSIC_CHOICE_NAME = "music_choice.json"
+
+
+def music_arg(ctx):
+    """The ``--music`` value for a station, or None when no track is configured."""
+    if ctx.music is None:
+        return None
+    return MUSIC_TOKEN if ctx.music == "auto" else str(ctx.music)
+
+
+def resolve_music_choice(workspace):
+    """The chosen track path from WORKSPACE/music_choice.json, or None."""
+    data = load_json(Path(workspace) / MUSIC_CHOICE_NAME)
+    if not isinstance(data, dict):
+        return None
+    path = data.get("path")
+    return Path(path).expanduser().resolve() if path else None
+
+
+def resolve_auto_music(ctx):
+    """Point ``ctx.music`` at the chosen track; False when the choice is unreadable."""
+    chosen = resolve_music_choice(ctx.workspace)
+    if chosen is None:
+        return False
+    ctx.music = chosen
+    return True
+
+
+def resolve_argv(argv, ctx):
+    """Substitute the ``@music@`` token with the resolved track path."""
+    value = str(ctx.music) if ctx.music is not None and ctx.music != "auto" else MUSIC_TOKEN
+
+    def substitute(parts):
+        return [value if item == MUSIC_TOKEN else item for item in parts]
+
+    if not argv:
+        return []
+    if isinstance(argv[0], str):
+        return substitute(argv)
+    return [substitute(command) for command in argv]
+
+
 def director_args(ctx):
     args = [
         "--workspace",
@@ -278,15 +383,27 @@ def director_args(ctx):
         "--brief-file",
         str(ctx.workspace / "brief.txt"),
     ]
+    for text in ctx.feedback:
+        args += ["--feedback", text]
+    if ctx.target_duration_s is not None:
+        args += ["--target-duration-s", str(ctx.target_duration_s)]
+    if ctx.order is not None:
+        args += ["--order", ctx.order]
     if ctx.music is not None:
-        args += ["--beats", str(ctx.workspace / "beats.json")]
+        args += ["--beats", str(ctx.workspace / "beats.json"), "--music", music_arg(ctx)]
+    if ctx.ambient_under_music_db is not None:
+        args += ["--ambient-under-music-db", str(ctx.ambient_under_music_db)]
     return args
 
 
 def render_args(ctx, out_path):
     args = ["--edit", str(ctx.workspace / "edit.json"), "--out", str(out_path)]
     if ctx.music is not None:
-        args += ["--music", str(ctx.music)]
+        args += ["--music", music_arg(ctx)]
+    if ctx.ambient_under_music_db is not None:
+        args += ["--ambient-under-music-db", str(ctx.ambient_under_music_db)]
+    if ctx.no_audio_clean:
+        args.append("--no-audio-clean")
     return args
 
 
@@ -384,7 +501,26 @@ def build_stations(ctx):
             ],
         },
     ]
-    if ctx.music is not None:
+    if ctx.music == "auto":
+        pick_args = [
+            "--library",
+            str(ctx.music_dir or DEFAULT_MUSIC_DIR),
+            "--brief-file",
+            str(ws / "brief.txt"),
+            "--workspace",
+            str(ws),
+        ]
+        if ctx.target_duration_s is not None:
+            pick_args += ["--target-duration-s", str(ctx.target_duration_s)]
+        index_at = next(i for i, station in enumerate(stations) if station["name"] == "index")
+        stations.insert(
+            index_at + 1,
+            {
+                "name": "music_pick",
+                "argv": [station_command(ctx, "music_pick.py", pick_args, force=force)],
+            },
+        )
+    elif ctx.music is not None:
         stations.insert(
             2,
             {
@@ -480,7 +616,7 @@ def execute(station, argv, ctx):
     returncode = 0
     stdout = ""
     stderr = ""
-    for command in normalize_commands(argv):
+    for command in normalize_commands(resolve_argv(argv, ctx)):
         try:
             result = subprocess.run(
                 command,
@@ -609,7 +745,12 @@ def run(ctx):
     failed_name = None
     for index, station in enumerate(stations, start=1):
         name = station["name"]
-        if not ctx.force and is_up_to_date(name, ctx):
+        rerun = name in ("llm_director", "render") and ctx.feedback
+        if not ctx.force and not rerun and is_up_to_date(name, ctx):
+            if name == "music_pick" and not resolve_auto_music(ctx):
+                failed_name = name
+                print_failure(name, {"stderr": f"no readable {MUSIC_CHOICE_NAME} in {ctx.workspace}"})
+                break
             entries.append(
                 {
                     "name": name,
@@ -622,6 +763,15 @@ def run(ctx):
             print_progress(ctx, index, total, name, "skip", 0.0, "up to date")
             continue
         result = execute(station, station["argv"], ctx)
+        if name == "music_pick" and result["status"] != "FAIL" and not resolve_auto_music(ctx):
+            result = {
+                "status": "FAIL",
+                "wall_time_s": result["wall_time_s"],
+                "llm_cost_usd": result["llm_cost_usd"],
+                "detail": "no music_choice.json",
+                "returncode": 1,
+                "stderr": f"no readable {MUSIC_CHOICE_NAME} in {ctx.workspace}",
+            }
         entries.append(
             {
                 "name": name,
@@ -737,9 +887,14 @@ def main(argv=None):
         if is_within(workspace, source):
             raise RecapError(f"workspace must not be inside the source: {workspace}")
         workspace.mkdir(parents=True, exist_ok=True)
-        music = Path(args.music).expanduser().resolve() if args.music else None
-        if music is not None and not music.is_file():
-            raise RecapError(f"music file not found: {music}")
+        music = None
+        if args.music:
+            if args.music == "auto":
+                music = "auto"
+            else:
+                music = Path(args.music).expanduser().resolve()
+                if not music.is_file():
+                    raise RecapError(f"music file not found: {music}")
     except RecapError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
@@ -754,8 +909,14 @@ def main(argv=None):
         python=sys.executable,
         repo_root=REPO_ROOT,
         music=music,
+        ambient_under_music_db=args.ambient_under_music_db,
         notify=args.notify,
         preview_base=args.preview_base,
+        feedback=args.feedback,
+        music_dir=Path(args.music_dir).expanduser().resolve() if args.music_dir else None,
+        target_duration_s=args.target_duration_s,
+        order=args.order,
+        no_audio_clean=args.no_audio_clean,
     )
     summary = run(ctx)
     if args.json:

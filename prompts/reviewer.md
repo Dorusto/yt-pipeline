@@ -33,9 +33,9 @@ no extra keys.
    window (the window ends where the steady motion ends — never on aimless
    movement after it); a move with a landing hold ends inside that hold and never
    has its landing planned again; hero and complete semantic moves keep their whole
-   window up to 6 s; no two slots from the same take back to back unless their
+   window up to the hero cap for this edit; no two slots from the same take back to back unless their
    windows touch; no two similar shots next to each other; ordinary slots follow
-   the pacing (2-12 s); **photo slots last 2-4 s and carry a Ken Burns move** —
+   the pacing limits stated in the user message; **photo slots last 2-4 s and carry a Ken Burns move** —
    a photo has no window, no landing and no same-take rule, and a planned hero
    photo must not be dropped.
 2. **The brief.** Length (within about 10%), order (chronological means the
@@ -45,9 +45,9 @@ no extra keys.
    in the edit? Does it open on something that earns attention and end on
    something that lands? Are there dead spots — repeated, weak or too-short
    shots?
-4. **Duration balance.** No slot over 6 s unless the shot is a hero or a
-   semantic move with a long window; no slot under 2 s; the calm part longer
-   slots, the energy part shorter ones.
+4. **Duration balance.** No ordinary slot over the slot maximum or under the
+   slot minimum stated in the user message; heroes may reach the hero cap; the
+   calm part longer slots, the energy part shorter ones.
 
 ## Approving
 

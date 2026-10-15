@@ -131,6 +131,13 @@
           "const": "video",
           "default": "video",
           "description": "slot kind discriminator; omitted on legacy video slots"
+        },
+        "shot_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "short candidate id in the shotlog, e.g. 0071/s2; the id feedback and explain.html refer to"
         }
       }
     },
@@ -301,6 +308,77 @@
             "null"
           ],
           "description": "ISO 8601 EXIF capture time of the photo"
+        },
+        "shot_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "short candidate id in the shotlog, e.g. 0072/p1; the id feedback and explain.html refer to"
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "description": "one candidate the director considered: used in the edit or rejected, with the reason in plain words",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "short candidate id, e.g. 0071/s2"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "used",
+            "rejected"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "why it was used or rejected: near-duplicate of X, defect, setup/teardown, low score, did not fit the length"
+        },
+        "slot": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "edit slot id when used, e.g. v3 or p1"
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "shotlog score of the candidate when known"
+        },
+        "clip": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "source file name of the candidate"
+        },
+        "window_in_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "candidate window start in the source, seconds"
+        },
+        "window_out_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "candidate window end in the source, seconds"
         }
       }
     }
@@ -461,6 +539,15 @@
             }
           ]
         },
+        "ambient_under_music_db": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "default": 12,
+          "description": "how far the cleaned ambient bus sits under the music, in dB; it stays audible, never removed"
+        },
         "sfx": {
           "type": "array",
           "items": {
@@ -492,6 +579,13 @@
       "description": "caption overlays; empty when the edit has none",
       "items": {
         "$ref": "#/$defs/overlay"
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "every candidate the director considered, used or rejected, with the reason; the source explain.html renders",
+      "items": {
+        "$ref": "#/$defs/decision"
       }
     },
     "graphics": {

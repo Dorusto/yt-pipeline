@@ -16,10 +16,14 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 .venv/bin/python scripts/doctor.py --source ~/media/trip/raw
 .venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace \
     --brief "90 s, chronological, calm start, ambient sound only"
-# -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json and shotlog.html)
+# -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json, shotlog.html and explain.html)
 # full quality from the originals + a Kdenlive project:
 .venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
+# with music (auto picks a track from ~/media/music by the brief and the shot tags):
+.venv/bin/python scripts/recap.py --source ~/media/trip/raw --brief "90 s, chronological" --music auto
 # re-running skips finished stations; a new brief only redoes the edit
+# the web app for the phone:
+.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
 ```
 
 The long station-by-station section below is what `recap.py` chains for you.
@@ -67,6 +71,7 @@ WS=~/media/trip/workspace
 .venv/bin/python scripts/similarity.py --workspace $WS
 .venv/bin/python scripts/index.py --workspace $WS             # shotlog.json + shotlog.html
 .venv/bin/python scripts/llm_director.py --workspace $WS --brief "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only"
+.venv/bin/python scripts/explain.py --workspace $WS                    # explain.html: why the edit looks the way it does
 .venv/bin/python scripts/render.py --edit $WS/edit.json --out $WS/recap_720p.mp4
 .venv/bin/python scripts/render.py --edit $WS/edit.json --out $WS/recap_final.mp4 --originals-dir ~/media/trip/raw
 .venv/bin/python scripts/edit_to_fragments.py --edit $WS/edit.json --out $WS/fragments.yaml --source-dir ~/media/trip/raw --kdenlive-out $WS/recap.kdenlive
@@ -84,23 +89,40 @@ Say what you want, not how to cut it. The router reads length, order, pacing, mu
 | "3 minute recap, best moments first, music: ~/music/track.mp3" | ranks by score, cuts on the beats of the track |
 | "tutorial, keep everything I say, chapters" | content type tutorial: silence and filler cut, chapters, graphics (D4) |
 
-## Planned: the phone editor (D3)
+## The web app (phone + desktop)
 
-```
-┌────────────────────────────┐
-│  Kotor boat trip      ▶ 1:32│
-│  ┌──────────────────────┐  │
-│  │      preview          │  │
-│  └──────────────────────┘  │
-│  [tunnel ★][cave ★][wake] …│  ← timeline, hero shots starred
-│  ◀ trim ▶   ⟳ regenerate   │
-│  ✓ approve   ✗ reject      │
-│  label: travel_backward ✎  │  ← correct a label: it is remembered
-│  [ Render final ]          │
-└────────────────────────────┘
+`serve.py` is the app Doru uses from the phone. It is **tailnet-only** (one
+bind address, never the wildcard) and it never exposes the footage beyond the
+finished recap, the explanation and the contact sheet.
+
+```bash
+.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
+# open http://<tailnet-ip>:8091/
 ```
 
-Brief in, preview out, light edits with the thumb, final render on the homelab. Kdenlive stays available for anything heavier.
+- **Projects** lists every workspace with its status (`running` / `failed` /
+  `done`, from `<workspace>/.run.json`) and links to what exists.
+- **Upload** takes clips and photos straight from the phone browser: the files,
+  a project folder name, the brief and an options form where **every field
+  defaults to Auto** (length 30 s / 60 s / 90 s / 3 min, order chronological /
+  best first, audio clean-up, music none / a track / auto from
+  `~/media/music`, ambient level under the music). **Start** streams the files
+  into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
+  never outside the inbox) and starts `recap.py` in the background; the status
+  shows on Projects.
+- **A project page** has the tabs **Recap** (the player), **Why?**
+  (`explain.html` — the brief, the screenwriter plan in words, the timeline
+  with a thumbnail per shot and the cut versus the candidate window, and every
+  candidate used or rejected with the reason, by short id like `0071/s2`) and
+  **Shots** (`shotlog.html`, the contact sheet).
+- **Re-edit** on the project page repeats the options and adds a **feedback
+  box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
+  It re-runs only the edit and the render — the analysis is reused. The
+  feedback is appended to `feedback.jsonl` in the workspace.
+
+`--music auto` picks the track from `~/media/music` by the brief's pace and
+the shot tags, using the BPM and energy `beats.py` measures for every track
+(`scripts/music_pick.py`, skill `yt-music-pick`).
 
 ## How it learns
 
