@@ -1573,3 +1573,32 @@ stations.
 makes a second run instant; scoring in code (not a model) keeps `music auto`
 deterministic and testable. Verified on the real library: a calm brief picks
 "Travelling Light" (67 BPM), an energetic brief "Gasoline" (140 BPM).
+
+---
+
+## [2026-10-15] D2-7 acceptance fixes: beat-snap slack, @music@ substitution, music validation
+
+**Context:** the real-footage acceptance (21 Kotor clips + 4 photos uploaded
+through the web endpoint, `--music auto`) found three defects.
+
+1. **Cuts could stay off the beat.** `snap_slots` refused to move a hero or a
+   slot whose window was full, so 11 of 14 cuts stayed 20–160 ms from the
+   nearest beat — the rule says *every* timeline cut snaps and "the nearest
+   beat is always within reach". **Fix:** the snap may push a slot's edge by up
+   to half a beat period (`BEAT_SNAP_FRACTION × period`) past its candidate
+   window. The window is the steady range; half a beat (≈0.28 s at 107 BPM) of
+   context is a deliberate, bounded excursion, and heroes still keep their
+   whole range to within that slack. Measured on the acceptance edit: 14/14
+   cuts snapped, max 0.4 ms from a beat (was 3/14).
+2. **`@music@` never reached the stations.** `station["argv"]` is a list of
+   command lists, so the flat token substitution in `resolve_argv` missed it
+   and render got `--music @music@`. **Fix:** substitute inside each command;
+   and both directors now refuse a `--music` path that does not exist, so a
+   substitution bug fails at the director instead of silently recording a bad
+   path in `edit.json`.
+3. **Test photos had the wrong time base** (local wall-clock in EXIF while the
+   clips' `creation_time` is UTC), which put every photo after the last clip.
+   Test-data fix only: the pipeline's chronology was right.
+
+Also: `recap.py --no-audio-clean` forwards to both renders (the web app's
+audio-clean-up option).

@@ -1274,34 +1274,49 @@ def slot_bounds(slot, fact):
     return {"photo": False, "important": important, "low": low, "high": high, "window_in": window_in}
 
 
-def absorb_out(slot, bounds, delta):
-    """Move a slot's end by ``delta`` within its bounds; False when it cannot."""
+def _relaxed(bounds, slack):
+    """The bounds of a slot with the beat-snap slack applied."""
+    low = float(bounds["low"])
+    high = float(bounds["high"])
+    window_in = float(bounds.get("window_in", low))
+    if slack:
+        low -= slack
+        high += slack
+        window_in -= slack
+    return low, high, window_in
+
+
+def absorb_out(slot, bounds, delta, slack=0.0):
+    """Move a slot's end by ``delta`` within its bounds; False when it cannot.
+
+    ``slack`` lets a hero or semantic-move slot nudge its cut by up to half a
+    beat past its window so the cut still lands on the music.
+    """
     if bounds.get("photo"):
         target = float(slot["duration_s"]) + delta
         if not (PHOTO_MIN_S - 1e-9 <= target <= PHOTO_MAX_S + 1e-9):
             return False
         slot["duration_s"] = round(target, 3)
         return True
-    if bounds.get("important"):
-        return False
+    low, high, _ = _relaxed(bounds, slack)
     target = float(slot["out_s"]) + delta
-    if not (bounds["low"] - 1e-9 <= target <= bounds["high"] + 1e-9):
+    if not (low - 1e-9 <= target <= high + 1e-9):
         return False
     slot["out_s"] = round(target, 3)
     return True
 
 
-def absorb_length(slot, bounds, delta):
+def absorb_length(slot, bounds, delta, slack=0.0):
     """Change a slot's on-screen length by ``delta``, from its end or its head.
 
     The end first; when the end is pinned the head moves instead, never before
     the window's start. False when neither fits.
     """
-    if absorb_out(slot, bounds, delta):
+    if absorb_out(slot, bounds, delta, slack):
         return True
-    if bounds.get("photo") or bounds.get("important"):
+    if bounds.get("photo"):
         return False
-    window_in = float(bounds.get("window_in", slot["in_s"]))
+    low, high, window_in = _relaxed(bounds, slack)
     head_target = float(slot["in_s"]) - delta
     if head_target < window_in - 1e-9:
         return False
@@ -1311,18 +1326,17 @@ def absorb_length(slot, bounds, delta):
     return True
 
 
-def absorb_head(slot, bounds, delta):
+def absorb_head(slot, bounds, delta, slack=0.0):
     """Change a slot's length by ``delta`` from its head only; False when it cannot.
 
     The head move keeps the slot's end (and every cut after it) in place, which
     is what the pair absorb needs from the right slot.
     """
     if bounds.get("photo"):
-        return absorb_out(slot, bounds, delta)
-    if bounds.get("important"):
-        return False
+        return absorb_out(slot, bounds, delta, slack)
+    _, _, window_in = _relaxed(bounds, slack)
     head_target = float(slot["in_s"]) - delta
-    if head_target < float(bounds.get("window_in", slot["in_s"])) - 1e-9:
+    if head_target < window_in - 1e-9:
         return False
     if float(slot["out_s"]) - head_target < SNAP_MIN_SLOT_S - 1e-9:
         return False
@@ -1330,7 +1344,7 @@ def absorb_head(slot, bounds, delta):
     return True
 
 
-def absorb_pair(left, left_bounds, right, right_bounds, delta):
+def absorb_pair(left, left_bounds, right, right_bounds, delta, slack=0.0):
     """Move the cut between ``left`` and ``right`` by ``delta`` and nothing else.
 
     ``left`` grows by ``delta`` (from its end or its head) and ``right`` gives
@@ -1338,9 +1352,9 @@ def absorb_pair(left, left_bounds, right, right_bounds, delta):
     Both must fit; on a partial fit the left change is restored exactly.
     """
     snapshot = {key: left.get(key) for key in ("in_s", "out_s", "duration_s")}
-    if not absorb_length(left, left_bounds, delta):
+    if not absorb_length(left, left_bounds, delta, slack):
         return False
-    if not absorb_head(right, right_bounds, -delta):
+    if not absorb_head(right, right_bounds, -delta, slack):
         left.update(snapshot)
         return False
     return True
@@ -1390,14 +1404,14 @@ def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
             start += slot_duration(slot)
             continue
         delta = target - end
-        if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta):
+        if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta, tolerance):
             snapped += 1
             start += slot_duration(slot)
             continue
         if index + 1 < len(slots):
-            moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta)
+            moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta, tolerance)
         else:
-            moved = absorb_length(slot, bounds[index], delta)
+            moved = absorb_length(slot, bounds[index], delta, tolerance)
         if moved:
             snapped += 1
             start += slot_duration(slot)
@@ -1899,6 +1913,11 @@ def _run_loop(
     out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
     plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
     beats_path = Path(beats).expanduser().resolve() if beats else None
+    if music:
+        music_path = Path(music).expanduser().resolve()
+        if not music_path.is_file():
+            raise LLMDirectorError(f"music file not found: {music}")
+        music = str(music_path)
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
     hints = parse_brief(brief_text)

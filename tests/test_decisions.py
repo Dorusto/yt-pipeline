@@ -128,16 +128,18 @@ def write_workspace(root):
 def test_director_records_music_ambient_shot_key_and_decisions(tmp_path):
     workspace = tmp_path / "ws"
     write_workspace(workspace)
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"fake")
     out = tmp_path / "edit.json"
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--workspace", str(workspace), "--out", str(out),
          "--target-duration-s", "20", "--json",
-         "--music", "/media/music/track.mp3", "--ambient-under-music-db", "10"],
+         "--music", str(track), "--ambient-under-music-db", "10"],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
-    assert record["audio"]["music"] == {"path": "/media/music/track.mp3"}
+    assert record["audio"]["music"] == {"path": str(track)}
     assert record["audio"]["ambient_under_music_db"] == 10.0
     assert record["video"][0]["shot_key"] == "0001/s1"
     by_id = {item["id"]: item for item in record["decisions"]}

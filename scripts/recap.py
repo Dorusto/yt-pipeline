@@ -365,7 +365,15 @@ def resolve_auto_music(ctx):
 def resolve_argv(argv, ctx):
     """Substitute the ``@music@`` token with the resolved track path."""
     value = str(ctx.music) if ctx.music is not None and ctx.music != "auto" else MUSIC_TOKEN
-    return [value if item == MUSIC_TOKEN else item for item in argv]
+
+    def substitute(parts):
+        return [value if item == MUSIC_TOKEN else item for item in parts]
+
+    if not argv:
+        return []
+    if isinstance(argv[0], str):
+        return substitute(argv)
+    return [substitute(command) for command in argv]
 
 
 def director_args(ctx):

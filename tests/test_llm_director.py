@@ -1456,7 +1456,7 @@ def test_beat_snap_uses_downbeats_at_structure_boundaries():
     assert all(slot["transition"] == {"type": "cut", "duration_s": 0} for slot in record["video"][1:])
 
 
-def test_beat_snap_video_window_exhausted_warns():
+def test_beat_snap_video_window_exhausted_moves_within_the_slack():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
     grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
     record = {
@@ -1468,7 +1468,22 @@ def test_beat_snap_video_window_exhausted_warns():
     facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4)}
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
-    assert record["video"][0]["out_s"] == 2.4
+    assert abs(record["video"][0]["out_s"] - 2.5) <= 0.02
+    assert stats["unsnapped"] == 0
+
+
+def test_beat_snap_cut_beyond_the_slack_warns():
+    grid = {"beat_s": [0.0, 5.0, 10.0], "downbeat_s": [0.0, 5.0, 10.0], "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.3, "transition": {"type": "cut", "duration_s": 0}},
+        ]
+    }
+    plan = {"slot_plan": [{"id": "v1", "beat": "b1", "shot_key": "a/s1"}]}
+    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.3)}
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
+    assert record["video"][0]["out_s"] == 2.3
     assert stats["unsnapped"] == 1
     assert any("not snapped" in warning for warning in warnings)
 
@@ -1543,8 +1558,7 @@ def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
     }
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
-    assert record["video"][0]["out_s"] == 2.9
-    assert abs(record["video"][0]["in_s"] - 0.4) <= 0.02
+    assert abs(record["video"][0]["out_s"] - 3.0) <= 0.02
     assert 2.0 <= record["video"][1]["duration_s"] <= 4.0
     assert not [warning for warning in warnings if "not snapped" in warning]
     assert stats["unsnapped"] == 0
