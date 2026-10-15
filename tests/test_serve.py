@@ -97,11 +97,13 @@ def test_discover_projects_ignores_non_projects(tmp_path):
 def test_projects_sorted_descending(tmp_path):
     root = tmp_path / "projects"
     root.mkdir()
-    for name in ("2026-10-12", "2026-10-14", "2026-10-13"):
+    for name, stamp in (("2026-10-12", 1000), ("kotor-demo", 3000), ("2026-10-13", 2000)):
         folder = root / name
         folder.mkdir()
-        (folder / "recap_720p.mp4").write_bytes(b"x")
-    assert serve.discover_projects(root) == ["2026-10-14", "2026-10-13", "2026-10-12"]
+        recap = folder / "recap_720p.mp4"
+        recap.write_bytes(b"x")
+        os.utime(recap, (stamp, stamp))
+    assert serve.discover_projects(root) == ["kotor-demo", "2026-10-13", "2026-10-12"]
 
 
 def test_run_json_alone_is_a_project(tmp_path):

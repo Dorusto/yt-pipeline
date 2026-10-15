@@ -1734,3 +1734,11 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 **Options:** (A) provider routing in `opencode.json` — `allow_fallbacks: true`, `sort: "throughput"` so OpenRouter prefers fast providers and moves on when one is busy; (B) wait and retry once before the architect takes over; (C) bring-your-own-key at the model vendor for private rate limits (another account and bill).
 
 **Decision:** A + B now (no cost). C only if 429s continue. GLM 5.3 Flash stays the coder; compare takeovers after the next phase.
+
+---
+
+## [2026-10-15] Web app look: one theme for the app, Why? and Shots (D2-9 design pass)
+
+**Context:** Doru's first look at the D2-7 web app on the phone: works, but looks like a test page, and the demo clip will show it.
+
+**Decision:** one palette across `serve.py`, `explain.html` and `shotlog.html` (Kotor at night: deep water background, limestone text, sea-teal accent; green used / red left out / amber running), a serif for names and titles with the system sans for the interface, no web fonts (the app stays offline and private), 44 px touch targets. The memorable element is the edit strip under the player: the edit as proportional blocks (clip vs photo), tap a block to jump there, the current block lights up while playing. Plain labels: "New recap", "Clean the sound", "in the edit as v3" / "left out". Projects are ordered by last activity, not by name.

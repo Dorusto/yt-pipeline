@@ -164,10 +164,20 @@ def is_project(directory):
 
 
 def discover_projects(root):
-    """Return the project folder names under ``root``, newest first."""
+    """Return the project folder names under ``root``, most recently worked on first."""
     root = Path(root)
-    names = [child.name for child in root.iterdir() if child.is_dir() and is_project(child)]
-    return sorted(names, reverse=True)
+    folders = [child for child in root.iterdir() if child.is_dir() and is_project(child)]
+
+    def last_activity(folder):
+        times = [
+            (folder / name).stat().st_mtime
+            for name in DETECTED_ARTIFACTS
+            if (folder / name).is_file()
+        ]
+        return max(times, default=0.0)
+
+    folders.sort(key=lambda folder: (last_activity(folder), folder.name), reverse=True)
+    return [folder.name for folder in folders]
 
 
 def existing_artifacts(directory):
@@ -231,71 +241,211 @@ def html_escape(text):
     )
 
 
-PAGE_STYLE = (
-    "body{font-family:system-ui,sans-serif;margin:0;padding:1rem;"
-    "background:#111;color:#eee}a{color:#6cf}"
-    "ul{list-style:none;padding:0}li{padding:.4rem 0}"
-    "video{width:100%;max-width:640px;background:#000}"
-    ".menu{display:flex;gap:1.2rem;padding:.4rem 0 .8rem;border-bottom:1px solid #333}"
-    ".menu a{text-decoration:none}"
-    ".badge{font-size:.8rem;padding:.1rem .5rem;border-radius:8px;border:1px solid #444}"
-    ".badge-done{color:#8f8}.badge-running{color:#fc6}.badge-failed{color:#f88}"
-    ".marks{color:#aaa;font-size:.9rem}.marks a{margin-right:.6rem}"
-    ".tabs{display:flex;gap:.5rem;margin:.6rem 0}"
-    ".tabs a{padding:.25rem .7rem;border:1px solid #444;border-radius:6px;text-decoration:none}"
-    ".tabs a.active{background:#6cf;color:#111;border-color:#6cf}"
-    "iframe{width:100%;min-height:70vh;border:1px solid #333;background:#111}"
-    "form{max-width:480px}form label{display:block;margin:.7rem 0}"
-    "input,select,textarea{width:100%;box-sizing:border-box;background:#1b1b1b;"
-    "color:#eee;border:1px solid #444;border-radius:4px;padding:.35rem}"
-    "button{background:#6cf;color:#111;border:0;border-radius:4px;padding:.5rem 1.2rem}"
-    ".empty{color:#aaa}"
-)
+THEME_CSS = """
+:root{color-scheme:dark;
+--water:#13202b;--deck:#1b2a37;--rope:#2b3d4d;--stone:#ece5d5;--haze:#9badbb;
+--sea:#57b8c4;--keep:#a3cf7f;--left:#e2806f;--busy:#e8b54d;
+--radius-s:6px;--radius-l:14px;--tap:44px}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--water);color:var(--stone);
+font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--sea)}
+a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,
+textarea:focus-visible,summary:focus-visible{outline:2px solid var(--sea);outline-offset:2px}
+.wrap{max-width:760px;margin:0 auto;padding:0 16px 48px}
+.bar{display:flex;align-items:center;gap:20px;padding:14px 0;margin-bottom:8px;
+border-bottom:1px solid var(--rope)}
+.mark{font-family:ui-serif,Georgia,"Times New Roman",serif;font-size:1.15rem;
+color:var(--stone);text-decoration:none;margin-right:auto;letter-spacing:.01em}
+.bar a.nav{color:var(--haze);text-decoration:none;min-height:var(--tap);
+display:inline-flex;align-items:center}
+.bar a.nav.on{color:var(--stone)}
+h1{font-family:ui-serif,Georgia,"Times New Roman",serif;font-weight:500;
+font-size:2rem;line-height:1.15;margin:20px 0 6px;overflow-wrap:anywhere}
+.lede{color:var(--haze);margin:0 0 18px}
+.num{font-variant-numeric:tabular-nums}
+.projects{list-style:none;margin:8px 0 0;padding:0}
+.projects li{border-top:1px solid var(--rope)}
+.projects li:last-child{border-bottom:1px solid var(--rope)}
+.projects a.row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;
+padding:14px 2px;text-decoration:none;color:inherit}
+.projects .name{font-family:ui-serif,Georgia,serif;font-size:1.25rem}
+.projects .facts{grid-column:1;color:var(--haze);font-size:.9rem}
+.state{grid-row:1/span 2;grid-column:2;align-self:center;font-size:.85rem;
+display:inline-flex;align-items:center;gap:6px}
+.state::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
+.badge-done{color:var(--keep)}.badge-running{color:var(--busy)}.badge-failed{color:var(--left)}
+.badge-running::before{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.badge-running::before{animation:none}}
+.empty{color:var(--haze)}
+.tabs{display:flex;gap:4px;padding:4px;margin:10px 0 18px;background:var(--deck);
+border-radius:var(--radius-l);width:fit-content;max-width:100%}
+.tabs a{min-height:40px;display:inline-flex;align-items:center;padding:0 18px;
+border-radius:10px;color:var(--haze);text-decoration:none}
+.tabs a.active{background:var(--stone);color:var(--water)}
+video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-l)}
+.strip{margin:14px 0 4px}
+.strip-track{display:flex;gap:3px;height:56px}
+.strip-track button{flex:var(--w) 1 0;min-width:10px;border:0;border-radius:var(--radius-s);
+padding:0 6px;font:inherit;font-size:.75rem;color:var(--water);cursor:pointer;
+background:var(--sea);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+text-align:left;opacity:.72;transition:opacity .15s}
+.strip-track button.photo{background:repeating-linear-gradient(135deg,var(--stone) 0 6px,#d9d0bd 6px 12px)}
+.strip-track button.now{opacity:1;box-shadow:inset 0 -4px 0 var(--water)}
+.strip-legend{display:flex;gap:16px;margin-top:8px;color:var(--haze);font-size:.85rem}
+.strip-legend span::before{content:"";display:inline-block;width:10px;height:10px;
+border-radius:3px;margin-right:6px;vertical-align:-1px}
+.strip-legend .k-clip::before{background:var(--sea)}
+.strip-legend .k-photo::before{background:var(--stone)}
+.download{display:inline-flex;align-items:center;min-height:var(--tap);margin-top:6px}
+iframe{display:block;width:100%;height:78vh;border:0;border-radius:var(--radius-l);
+background:var(--deck)}
+details.reedit{margin-top:28px;border-top:1px solid var(--rope);padding-top:8px}
+details.reedit summary{min-height:var(--tap);display:flex;align-items:center;cursor:pointer;
+font-family:ui-serif,Georgia,serif;font-size:1.2rem}
+form{display:grid;gap:14px;max-width:520px;margin-top:8px}
+form label{display:grid;gap:6px;font-size:.95rem}
+.hint{color:var(--haze);font-size:.85rem}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:420px){.pair{grid-template-columns:1fr}}
+input,select,textarea{width:100%;min-height:var(--tap);background:var(--deck);color:var(--stone);
+border:1px solid var(--rope);border-radius:10px;padding:8px 12px;font:inherit}
+input[type=file]{padding:10px}
+textarea{resize:vertical}
+button.go{min-height:48px;border:0;border-radius:12px;background:var(--sea);color:var(--water);
+font:inherit;font-weight:600;padding:0 26px;cursor:pointer;justify-self:start}
+"""
+
+STRIP_SCRIPT = """
+(function(){var v=document.querySelector('video');var b=[].slice.call(document.querySelectorAll('.strip-track button'));
+if(!v||!b.length)return;b.forEach(function(x){x.addEventListener('click',function(){v.currentTime=parseFloat(x.dataset.t);v.play();});});
+v.addEventListener('timeupdate',function(){var t=v.currentTime;b.forEach(function(x){var s=parseFloat(x.dataset.t),e=parseFloat(x.dataset.e);x.classList.toggle('now',t>=s&&t<e);});});})();
+"""
 
 
-def render_page(title, body):
-    """Return one full HTML page with the top menu and the shared style."""
+def render_page(title, body, active=None, script=""):
+    """Return one full HTML page with the top bar and the shared theme."""
+    nav = []
+    for key, href, label in (("projects", "/", "Projects"), ("upload", "/upload", "New recap")):
+        on = " on" if key == active else ""
+        nav.append(f'<a class="nav{on}" href="{href}">{label}</a>')
+    tail = f"<script>{script}</script>" if script else ""
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{html_escape(title)}</title>"
-        f"<style>{PAGE_STYLE}</style></head><body>"
-        '<nav class="menu"><a href="/">Projects</a><a href="/upload">Upload</a></nav>'
-        f"{body}"
+        f'<style>{THEME_CSS}</style></head><body><div class="wrap">'
+        f'<header class="bar"><a class="mark" href="/">AI Director</a>{"".join(nav)}</header>'
+        f"{body}</div>{tail}"
         "</body></html>\n"
     )
 
 
+def edit_summary(directory):
+    """Read edit.json and return the timeline blocks and totals, or None."""
+    path = Path(directory) / "edit.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    slots = document.get("video") if isinstance(document, dict) else None
+    if not isinstance(slots, list):
+        return None
+    blocks = []
+    start = 0.0
+    for slot in slots:
+        if not isinstance(slot, dict):
+            continue
+        try:
+            if slot.get("kind") == "photo" or slot.get("photo"):
+                length = float(slot.get("duration_s") or 0.0)
+                kind = "photo"
+            else:
+                length = float(slot.get("out_s", 0.0)) - float(slot.get("in_s", 0.0))
+                kind = "clip"
+        except (TypeError, ValueError):
+            continue
+        if length <= 0:
+            continue
+        label = slot.get("shot_key") or slot.get("photo") or slot.get("clip") or slot.get("id") or ""
+        blocks.append({"start": start, "end": start + length, "kind": kind, "label": str(label)})
+        start += length
+    if not blocks:
+        return None
+    photos = sum(1 for block in blocks if block["kind"] == "photo")
+    return {"blocks": blocks, "total": start, "shots": len(blocks), "photos": photos}
+
+
+def describe_summary(summary):
+    """One plain line about an edit: length, shots, photos."""
+    if not summary:
+        return "No edit yet"
+    parts = [f"{summary['total']:.0f} s", f"{summary['shots']} shots"]
+    if summary["photos"]:
+        parts.append(f"{summary['photos']} photo" + ("s" if summary["photos"] != 1 else ""))
+    return ", ".join(parts)
+
+
 def render_index(entries):
-    """Return the Projects page: one row per project with status and artifacts."""
+    """Return the Projects page: one row per project with its state and edit facts."""
     rows = []
     for entry in entries:
         name = html_escape(entry["name"])
-        status = entry["status"]
-        marks = " ".join(
-            f'<a href="/{name}/{html_escape(artifact)}">{html_escape(label)}</a>'
-            for artifact, label in ARTIFACT_LABELS
-            if artifact in entry["artifacts"]
-        )
+        status = html_escape(entry["status"])
+        facts = html_escape(describe_summary(entry.get("summary")))
         rows.append(
-            f'<li><a href="/{name}/">{name}</a> '
-            f'<span class="badge badge-{html_escape(status)}">{html_escape(status)}</span> '
-            f'<span class="marks">{marks}</span></li>'
+            f'<li><a class="row" href="/{name}/">'
+            f'<span class="name">{name}</span>'
+            f'<span class="state badge-{status}">{status}</span>'
+            f'<span class="facts num">{facts}</span></a></li>'
         )
-    body = "\n".join(rows) if rows else "<li>no projects</li>"
-    return render_page("Recaps", f"<h1>Recaps</h1><ul>{body}</ul>")
+    if rows:
+        body = f'<ul class="projects">{"".join(rows)}</ul>'
+    else:
+        body = ('<p class="empty">No projects yet. Start one from '
+                '<a href="/upload">New recap</a>.</p>')
+    return render_page(
+        "Projects",
+        f'<h1>Projects</h1><p class="lede">Every folder you sent, newest first.</p>{body}',
+        active="projects",
+    )
+
+
+def render_strip(summary):
+    """The edit as a proportional strip under the player; tap a block to jump there."""
+    if not summary:
+        return ""
+    buttons = []
+    for block in summary["blocks"]:
+        width = max(0.4, block["end"] - block["start"])
+        label = html_escape(block["label"])
+        buttons.append(
+            f'<button type="button" class="{block["kind"]}" style="--w:{width:.2f}" '
+            f'data-t="{block["start"]:.2f}" data-e="{block["end"]:.2f}" '
+            f'title="{label} at {block["start"]:.1f} s">{label}</button>'
+        )
+    return (
+        '<div class="strip" aria-label="Edit timeline">'
+        f'<div class="strip-track">{"".join(buttons)}</div>'
+        '<div class="strip-legend"><span class="k-clip">clip</span>'
+        '<span class="k-photo">photo</span>'
+        f'<span class="num">{html_escape(describe_summary(summary))}</span></div></div>'
+    )
 
 
 def render_recap_panel(directory):
-    """Return the Recap tab panel: the player, or a placeholder line."""
+    """Return the Recap tab panel: the player with the edit strip, or a placeholder line."""
     parts = []
     if (Path(directory) / "recap_720p.mp4").is_file():
         parts.append('<video controls preload="metadata" src="recap_720p.mp4"></video>')
+        parts.append(render_strip(edit_summary(directory)))
     else:
-        parts.append('<p class="empty">No recap yet.</p>')
+        parts.append('<p class="empty">No recap yet. It appears here when the render finishes.</p>')
     if (Path(directory) / "recap_final.mp4").is_file():
-        parts.append('<p><a href="recap_final.mp4">recap_final.mp4</a></p>')
+        parts.append('<a class="download" href="recap_final.mp4">Download the full-quality recap_final.mp4</a>')
     return "\n".join(parts)
 
 
@@ -320,21 +470,25 @@ def render_project(name, directory, tab, music_tracks=()):
         "why": render_iframe_panel(
             directory,
             "explain.html",
-            "The explanation has not been generated yet (scripts/explain.py).",
+            "No explanation for this edit yet. Run scripts/explain.py, or re-edit it once to create one.",
         ),
         "shots": render_iframe_panel(
             directory,
             "shotlog.html",
-            "The shotlog has not been generated yet.",
+            "No shot list yet. It appears when the analysis finishes.",
         ),
     }
+    status = project_status(directory)
+    lede = f'<span class="state badge-{status}">{status}</span>'
     body = (
         f"<h1>{html_escape(name)}</h1>"
+        f'<p class="lede">{lede}</p>'
         f'<nav class="tabs">{"".join(tab_links)}</nav>'
         f'<section class="panel">{panels[tab]}</section>'
         f"{render_reedit(name, music_tracks)}"
     )
-    return render_page(name, body)
+    script = STRIP_SCRIPT if tab == "recap" else ""
+    return render_page(name, body, active="projects", script=script)
 
 
 def render_select(name, options, default=None):
@@ -369,12 +523,12 @@ def option_fields(music_tracks):
             ),
         ),
         (
-            "Audio clean",
+            "Clean the sound",
             render_select("audio_clean", [("auto", "Auto"), ("yes", "yes"), ("no", "no")], default="auto"),
         ),
         ("Music", render_select("music", music_options, default="auto")),
         (
-            "Ambient under music (dB)",
+            "Ambient under the music (dB)",
             render_select(
                 "ambient_under_music_db",
                 [("auto", "Auto"), ("6", "6"), ("8", "8"), ("12", "12"), ("16", "16"), ("20", "20")],
@@ -385,39 +539,56 @@ def option_fields(music_tracks):
 
 
 def render_form_rows(fields):
-    return "\n".join(f"<label>{html_escape(label)}{control}</label>" for label, control in fields)
+    rows = [f"<label>{html_escape(label)}{control}</label>" for label, control in fields]
+    paired = []
+    index = 0
+    while index < len(rows):
+        if index + 1 < len(rows) and fields[index][1].startswith("<select") and fields[index + 1][1].startswith("<select"):
+            paired.append(f'<div class="pair">{rows[index]}{rows[index + 1]}</div>')
+            index += 2
+        else:
+            paired.append(rows[index])
+            index += 1
+    return "\n".join(paired)
+
+
+AUTO_HINT = '<p class="hint">Leave anything on Auto and the director decides from the brief and the footage.</p>'
 
 
 def render_upload(music_tracks):
     """Return the Upload page with the form wired to POST /upload."""
     fields = [
-        ("Files", '<input type="file" name="files" multiple accept="video/*,image/*">'),
-        ("Folder", '<input type="text" name="folder">'),
-        ("Brief", '<textarea name="brief" rows="4"></textarea>'),
+        ("Clips and photos", '<input type="file" name="files" multiple accept="video/*,image/*">'),
+        ("Project name", '<input type="text" name="folder" placeholder="kotor-day-2" autocomplete="off">'),
+        ("Brief", '<textarea name="brief" rows="4" '
+                  'placeholder="About 60 seconds, chronological, calm start, energy at the end"></textarea>'),
     ]
     fields.extend(option_fields(music_tracks))
     body = (
-        "<h1>Upload</h1>"
-        '<p class="empty">Files land in the inbox and the recap starts in the background.</p>'
+        "<h1>New recap</h1>"
+        '<p class="lede">Pick the clips and photos of one day, say what you want, and start. '
+        "The files go to the inbox and the edit runs on the server; the project shows up under Projects.</p>"
         '<form method="post" action="/upload" enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
-        '<button type="submit" name="submit" value="start">Start</button>'
+        f"{AUTO_HINT}"
+        '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
         "</form>"
     )
-    return render_page("Upload", body)
+    return render_page("New recap", body, active="upload")
 
 
 def render_reedit(name, music_tracks):
     """Return the Re-edit form with the same options plus a feedback box."""
     fields = list(option_fields(music_tracks))
-    fields.append(("Feedback", '<textarea name="feedback" rows="3" '
+    fields.append(("What should change?", '<textarea name="feedback" rows="3" '
                    'placeholder="drop 0071/s2, tunnel longer"></textarea>'))
     return (
         "<details class=\"reedit\"><summary>Re-edit</summary>"
         f'<form method="post" action="/{html_escape(name)}/re-edit" '
         'enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
-        '<button type="submit" name="submit" value="reedit">Re-edit</button>'
+        f"{AUTO_HINT}"
+        '<button class="go" type="submit" name="submit" value="reedit">Re-edit</button>'
         "</form></details>"
     )
 
@@ -917,6 +1088,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     "name": name,
                     "status": project_status(directory),
                     "artifacts": existing_artifacts(directory),
+                    "summary": edit_summary(directory),
                 }
             )
         return entries
