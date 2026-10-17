@@ -70,6 +70,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `analyze_srt.py --shorts-config` | config yaml | `{name}_metadata.txt` in `shorts/` |
 | `shorts_generator.py` | `video.mp4` + config | `Short{N}-{name}.mp4` + karaoke ASS |
 | `reframe.py` | `video.mp4` | crop path JSON (time -> x, y) for a moving reframe |
+| `thumbnail.py` | portrait photo + title | `thumbnail.jpg` (1280x720) + optional `thumbnail.psd` |
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
 | `notify.py` | message | POST to the project's ntfy topic |
@@ -141,6 +142,23 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 | `render.py` | `edit.json` + the clips in `sources[]` | `--out` MP4 (1280x720, libx264 + AAC) |
 
 `--edit` is validated against `schemas/edit.schema.json`; `--media-dir` resolves clip names not in `sources[]`; `--width`/`--height` set the frame; `--xfade-s` is the fallback crossfade length. Re-running skips when `--out` is newer than `--edit` unless `--force` is given. The MP4 is written atomically and never touches the source clips.
+
+---
+
+## Thumbnail (brand kit)
+
+`thumbnail.py` turns a portrait photo + a title into a branded 1280x720 YouTube thumbnail (the approved `DEPPSiT-template-v2` look, driven by `brand.json`): cut-out portrait with an outer glow, generated or photo background, title/keyword/kicker in the brand fonts and the `#DEPPSiT` tag. Skill: `yt-thumbnail`.
+
+```bash
+.venv/bin/python scripts/thumbnail.py --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
+    --kicker "// homelab · automatizări" --theme tech --out thumb/
+.venv/bin/python scripts/thumbnail.py --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
+    --theme creator --background frame.jpg --out thumb/ --psd
+```
+
+- `--theme tech` generates the dark background; `--theme creator` requires `--background FRAME.jpg` (cover-scaled, darkened). The look (colors, fonts, layout, glow) comes from `brand.json` (validated against `schemas/brand.schema.json`); fonts ship in `assets/fonts/` (SIL OFL).
+- `--psd` also writes `thumbnail.psd` with the layers `background`, `portrait` (glow baked in), `title`, `keyword`, `kicker`, `tag` for manual retouching.
+- The cut-out uses rembg (`birefnet-portrait`, downloaded to `~/.rembg/models/` on first run); `--skip-cutout` uses the photo's own alpha instead.
 
 ---
 
