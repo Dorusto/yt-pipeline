@@ -1879,3 +1879,21 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not schema (A):** two keys and a length do not need a schema yet; the YAML is the interface and stays safe to commit (shot keys and numbers only, no footage, no paths).
 
 **Consequence:** Doru's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.
+
+---
+
+## [2026-10-17] Thumbnail tool, brand kit and the PSD writer (D6-48, pulled forward by Doru)
+
+**Context:** Doru pulled the D6 thumbnail tool forward (issue #48): one command must turn a portrait photo + a title into a branded 1280x720 YouTube thumbnail identical to his approved `DEPPSiT-template-v2` (kept locally, not in the repo). Two new dependencies were needed: a background-removal model and a PSD writer.
+
+**Options (PSD writer):** (A) `psd-tools` — MIT, actively maintained (1.25.0 released 2026-10-14), `PSDImage.new` / `create_pixel_layer` / `save`, negative layer offsets survive a round trip; (B) `pytoshop` — BSD, last release 1.2.1 in 2018 (Python 2.7/3.4-3.6 classifiers), read/write but unmaintained.
+
+**Options (cut-out):** (A) `rembg` 2.0.85 (MIT, maintained) with the `birefnet-portrait` session model, the one Doru tested on 2026-10-17 against PhotoCraft, `u2net` and `isnet-general-use` (only BiRefNet kept hair, both hands and all fingers with no haze); (B) PhotoCraft `layer.removeBackground` — rejected (poor edges, and no PhotoCraft dependency anywhere in the pipeline); (C) MatAnyone, the D6 video background remover, not applicable to stills yet.
+
+**Decision:** A and A. `scripts/thumbnail.py` writes the PSD with psd-tools (one rasterized layer per element: background, portrait, title, keyword, kicker, tag — text layers cropped to their alpha bbox so each block moves in Photoshop) and cuts the portrait with rembg's Python API (`new_session("birefnet-portrait")`, lazy import, `requirements.txt` line `rembg[cpu]` since 2.0.85 ships without an ONNX backend in the base extra). pytoshop and PhotoCraft stay out. The model downloads on first run to `~/.rembg/models/birefnet-portrait/` (2.0.85; older rembg used `~/.u2net/` — the integration test checks both). On the 6 GB build LXC the BiRefNet inference is OOM-killed even at 450x600 input: the integration test runs the cut-out in a subprocess and skips on exit 137 instead of killing the suite.
+
+**Brand kit:** the look is data — `brand.json` at the repo root (re-included in `.gitignore`), validated by `schemas/brand.schema.json`: canvas, palette, font files (Montserrat Black + JetBrains Mono, SIL OFL, shipped in `assets/fonts/` so a fresh clone renders; paths are configurable and a missing font is a hard error naming the path, never a fallback), layout baselines, drop shadow, portrait margins/placement, the generated-background recipe (seed 7 grain) and the per-theme colour roles. `--brand` points at another kit.
+
+**Interpretations the brief left open (one-line changes in `brand.json`/`thumbnail.py` if Doru wants them different):** the title is one line that shrinks 4 px steps to a 40 px floor (a wrapped second line would collide with the keyword's first baseline); the kicker stays `warm` in both themes (the brief only fixes it for `tech`); `--background` given with `tech` replaces the generated background (darkened like `creator`); the outer glow is baked inside the PSD `portrait` layer (exactly the six listed layers, no seventh glow layer — in the JPG it is screen-blended as specified); the drop shadow follows the Photoshop angle convention (120° = light upper-left, shadow toward the lower right at +2.0, +3.46 px).
+
+**Consequence:** `python scripts/thumbnail.py --photo ... --title ... --keyword ... --theme tech|creator [--psd]` produces the branded thumbnail from a brand file alone; Doru runs it once on a real photo (the one thing the build LXC cannot verify). PSD text is rasterized — retouching means moving/repainting layers, not editing type.

@@ -2,11 +2,13 @@ opencv-python-headless
 openai
 pillow
 pillow-heif
+psd-tools
 pysubs2
 pyyaml
 jsonschema
 filelock
 psutil
+rembg[cpu]
 torch
 torchaudio
 whisperx

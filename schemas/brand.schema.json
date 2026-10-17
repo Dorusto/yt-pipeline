@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/brand.schema.json",
+  "title": "brand",
+  "description": "Brand kit read by scripts/thumbnail.py: canvas, palette, font files, layout baselines, drop shadow, portrait cutout/placement, generated background recipe and per-theme colour roles. The look of the approved DEPPSiT template; every number here is tunable without touching code. Font paths are resolved relative to the brand.json file; a missing font file is an error, never a silent fallback.",
+  "type": "object",
+  "required": [
+    "name",
+    "canvas",
+    "colors",
+    "fonts",
+    "layout",
+    "shadow",
+    "glow",
+    "portrait",
+    "background",
+    "themes",
+    "tag_text"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "brand kit name, reported in --json"
+    },
+    "canvas": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "type": "integer",
+          "const": 1280,
+          "description": "thumbnail width px (YouTube standard)"
+        },
+        "height": {
+          "type": "integer",
+          "const": 720,
+          "description": "thumbnail height px (YouTube standard)"
+        }
+      }
+    },
+    "colors": {
+      "type": "object",
+      "description": "named palette; roles below pick one of these names",
+      "required": ["night", "ink", "muted", "warm", "cool"],
+      "additionalProperties": false,
+      "properties": {
+        "night": {"$ref": "#/$defs/hex"},
+        "ink": {"$ref": "#/$defs/hex"},
+        "muted": {"$ref": "#/$defs/hex"},
+        "warm": {"$ref": "#/$defs/hex"},
+        "cool": {"$ref": "#/$defs/hex"}
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "description": "font files and sizes; title and keyword share the title face",
+      "required": ["title", "kicker", "tag"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "object",
+          "required": ["path", "family", "size_px", "tracking_em"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {"$ref": "#/$defs/font_path"},
+            "family": {"type": "string", "minLength": 1, "description": "informational family name"},
+            "size_px": {"type": "number", "exclusiveMinimum": 0, "description": "title and keyword size before the fit shrink"},
+            "tracking_em": {
+              "type": "number",
+              "maximum": 0,
+              "description": "letter spacing in em (brand: -20/1000 = -0.02)"
+            }
+          }
+        },
+        "kicker": {
+          "type": "object",
+          "required": ["path", "family", "size_px"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {"$ref": "#/$defs/font_path"},
+            "family": {"type": "string", "minLength": 1},
+            "size_px": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "tag": {
+          "type": "object",
+          "required": ["path", "family", "size_px"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {"$ref": "#/$defs/font_path"},
+            "family": {"type": "string", "minLength": 1},
+            "size_px": {"type": "number", "exclusiveMinimum": 0}
+          }
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "description": "point-text baselines of the approved template, pixels on the 1280x720 canvas",
+      "required": [
+        "text_x",
+        "text_right_x",
+        "kicker_baseline_y",
+        "title_baseline_y",
+        "keyword_baseline_y",
+        "keyword_leading_px",
+        "keyword_max_lines",
+        "tag_right_x",
+        "tag_baseline_y"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text_x": {"type": "number", "description": "left-aligned text column x"},
+        "text_right_x": {"type": "number", "description": "right edge the title and keyword lines must fit in"},
+        "kicker_baseline_y": {"type": "number"},
+        "title_baseline_y": {"type": "number"},
+        "keyword_baseline_y": {"type": "number", "description": "baseline of the first keyword line"},
+        "keyword_leading_px": {"type": "number", "exclusiveMinimum": 0, "description": "baseline-to-baseline distance of the keyword lines"},
+        "keyword_max_lines": {"type": "integer", "minimum": 1, "description": "keyword wrap limit; brand: 2"},
+        "tag_right_x": {"type": "number", "description": "right-aligned tag x"},
+        "tag_baseline_y": {"type": "number"}
+      }
+    },
+    "shadow": {
+      "type": "object",
+      "description": "drop shadow of title and keyword, Photoshop-style",
+      "required": ["color", "opacity", "distance_px", "angle_deg", "blur_px"],
+      "additionalProperties": false,
+      "properties": {
+        "color": {"$ref": "#/$defs/hex"},
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+        "distance_px": {"type": "number", "minimum": 0},
+        "angle_deg": {
+          "type": "number",
+          "description": "lighting angle, Photoshop convention (120 = light from the upper left, shadow cast to the lower right)"
+        },
+        "blur_px": {"type": "number", "minimum": 0}
+      }
+    },
+    "glow": {
+      "type": "object",
+      "description": "outer glow around the cut-out portrait, screen-blended onto the background",
+      "required": ["opacity", "spread", "size_px"],
+      "additionalProperties": false,
+      "properties": {
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+        "spread": {"type": "number", "minimum": 0, "maximum": 1, "description": "mask dilation as a fraction of size_px"},
+        "size_px": {"type": "number", "minimum": 0, "description": "glow blur radius px"}
+      }
+    },
+    "portrait": {
+      "type": "object",
+      "required": [
+        "cutout_model",
+        "alpha_subject_min",
+        "harden_mean_min",
+        "harden_threshold",
+        "margin_px",
+        "bottom_margin_px",
+        "subject_top_y",
+        "subject_bottom_y",
+        "subject_left_x"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cutout_model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "rembg session model (brand: birefnet-portrait)"
+        },
+        "alpha_subject_min": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 255,
+          "description": "alpha above this counts as subject for the bounding box"
+        },
+        "harden_mean_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "mean alpha inside the subject box below this triggers mask hardening"
+        },
+        "harden_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "hardening: alpha above this becomes 255, else 0"
+        },
+        "margin_px": {
+          "type": "number",
+          "minimum": 0,
+          "description": "transparent margin kept on top/left/right when cropping to the subject (the glow must not be clipped)"
+        },
+        "bottom_margin_px": {
+          "type": "number",
+          "minimum": 0,
+          "description": "transparent margin kept at the bottom (brand: 0, the person is cut by the frame edge)"
+        },
+        "subject_top_y": {
+          "type": "number",
+          "description": "canvas y the subject's top edge lands on after scaling"
+        },
+        "subject_bottom_y": {
+          "type": "number",
+          "description": "canvas y the subject's bottom edge lands on after scaling"
+        },
+        "subject_left_x": {
+          "type": "number",
+          "description": "canvas x the subject's left edge lands on (brand: negative, the person is cut by the left frame edge)"
+        }
+      }
+    },
+    "background": {
+      "type": "object",
+      "required": ["generated", "photo"],
+      "additionalProperties": false,
+      "properties": {
+        "generated": {
+          "type": "object",
+          "description": "the tech background recipe (NumPy/Pillow); also the vignette and grain applied to a photo background",
+          "required": ["warm_glow", "cool_glow", "grid", "vignette", "grain"],
+          "additionalProperties": false,
+          "properties": {
+            "warm_glow": {"$ref": "#/$defs/glow_blob"},
+            "cool_glow": {"$ref": "#/$defs/glow_blob"},
+            "grid": {
+              "type": "object",
+              "required": ["step_px", "line_px", "color_role", "x_start", "x_ramp", "opacity"],
+              "additionalProperties": false,
+              "properties": {
+                "step_px": {"type": "number", "exclusiveMinimum": 0},
+                "line_px": {"type": "number", "exclusiveMinimum": 0},
+                "color_role": {"$ref": "#/$defs/color_role"},
+                "x_start": {"type": "number", "description": "x where the grid opacity ramp starts"},
+                "x_ramp": {"type": "number", "exclusiveMinimum": 0, "description": "ramp length in px"},
+                "opacity": {"type": "number", "minimum": 0, "maximum": 1, "description": "opacity at the top of the ramp"}
+              }
+            },
+            "vignette": {
+              "type": "object",
+              "required": ["scale", "base", "falloff", "floor"],
+              "additionalProperties": false,
+              "properties": {
+                "scale": {"type": "number", "exclusiveMinimum": 0},
+                "base": {"type": "number"},
+                "falloff": {"type": "number", "minimum": 0},
+                "floor": {"type": "number", "minimum": 0, "maximum": 1}
+              }
+            },
+            "grain": {
+              "type": "object",
+              "required": ["sigma", "seed"],
+              "additionalProperties": false,
+              "properties": {
+                "sigma": {"type": "number", "minimum": 0},
+                "seed": {"type": "integer", "minimum": 0, "description": "noise seed; brand: 7 (deterministic re-runs)"}
+              }
+            }
+          }
+        },
+        "photo": {
+          "type": "object",
+          "required": ["brightness"],
+          "additionalProperties": false,
+          "properties": {
+            "brightness": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "description": "brightness multiplier for a --background frame (brand: 0.55)"
+            }
+          }
+        }
+      }
+    },
+    "themes": {
+      "type": "object",
+      "description": "colour roles per theme; the key names match --theme",
+      "required": ["tech", "creator"],
+      "additionalProperties": false,
+      "properties": {
+        "tech": {"$ref": "#/$defs/theme"},
+        "creator": {"$ref": "#/$defs/theme"}
+      }
+    },
+    "tag_text": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the corner tag (brand: #DEPPSiT)"
+    }
+  },
+  "$defs": {
+    "hex": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$",
+      "description": "#RRGGBB"
+    },
+    "font_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "path to a .ttf/.otf file, absolute or relative to the brand.json directory; the file must exist"
+    },
+    "color_role": {
+      "type": "string",
+      "enum": ["night", "ink", "muted", "warm", "cool"],
+      "description": "a key of colors"
+    },
+    "glow_blob": {
+      "type": "object",
+      "required": ["center", "radii", "weight"],
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[x, y] canvas centre of the blob"
+        },
+        "radii": {
+          "type": "array",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[rx, ry]"
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "peak opacity of the blob"
+        }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "required": ["keyword", "glow", "kicker", "background"],
+      "additionalProperties": false,
+      "properties": {
+        "keyword": {"$ref": "#/$defs/color_role"},
+        "glow": {"$ref": "#/$defs/color_role"},
+        "kicker": {"$ref": "#/$defs/color_role"},
+        "background": {
+          "type": "string",
+          "enum": ["generated", "photo"],
+          "description": "generated recipe, or a darkened --background frame"
+        }
+      }
+    }
+  }
+}
