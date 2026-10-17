@@ -212,7 +212,7 @@
         },
         "subject_left_x": {
           "type": "number",
-          "description": "canvas x the portrait image's left edge lands on (brand: negative, the person is cut by the left frame edge)"
+          "description": "canvas x the subject's left edge lands on (brand: negative, the person is cut by the left frame edge)"
         }
       }
     },
