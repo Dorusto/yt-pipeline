@@ -22,11 +22,13 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | D3 | Web editor v1, phone first (preview, light edits, final render on the homelab) | 🔲 partly covered by D2-7's web app (upload, tabs, re-edit); the light edits (trim/approve/reject per shot) remain |
 | D4 | Mode B on the same index (fillers, chapters, Shorts ranking) + graphics station | 🔲 |
 | D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 |
-| D6 | Packaging and publishing: thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 |
+| D6 | Packaging and publishing: thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 partly done — thumbnail + brand kit (issue #48, pulled forward 2026-10-17) |
 
 **D2-13 … D2-18 (2026-10-15):** versions + honest run state, smooth Ken Burns, exact length, heroes first, the model's edit repaired not discarded, Shots marks, best photo of a burst, still 9:16 crop without a face, explain thumbnails on moved workspaces, agent loop guards, running station + progress bar, Re-edit always makes a new edit — reports `D2-13`, `D2-14`, `D2-15`.
 
 **D2-19 (2026-10-15):** edit expectations as a test (`eval/kotor-edit.yaml` + `scripts/eval_edit.py` + `yt-eval-edit` skill) and the LLM director keeps the top stars (`hero_missing` violation, repair swaps one in for the weakest non-star of a compatible length; `STAR_*` shared in `common/moves.py`) — see [`reports/D2-19-REPORT.md`](reports/D2-19-REPORT.md). Real kotor-demo re-edit passes `eval_edit.py` 3/3 with `meta.director.by: llm`.
+
+**D6-48 (2026-10-17, pulled forward by Doru):** `scripts/thumbnail.py` + `brand.json` + `schemas/brand.schema.json` + `yt-thumbnail` skill — portrait + title → branded 1280x720 thumbnail (two themes, rembg `birefnet-portrait` cut-out, layered `thumbnail.psd` via psd-tools) — see [`reports/D6-48-REPORT.md`](reports/D6-48-REPORT.md). Doru runs it once on a real photo (the build LXC OOM-kills BiRefNet).
 
 **Next (open from 2026-10-15):**
 - Watchdog spend cap per agent run (spend since the run started), not per day; then set it back to 2 USD per run (cron is at 3.8 USD/day today).
