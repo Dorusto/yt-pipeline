@@ -1,0 +1,117 @@
+{
+  "$schema": "schemas/brand.schema.json",
+  "name": "DEPPSiT",
+  "canvas": {
+    "width": 1280,
+    "height": 720
+  },
+  "colors": {
+    "night": "#0F1218",
+    "ink": "#EDEBE6",
+    "muted": "#9A9890",
+    "warm": "#E8A25A",
+    "cool": "#5FD3C4"
+  },
+  "fonts": {
+    "title": {
+      "path": "assets/fonts/Montserrat-Black.ttf",
+      "family": "Montserrat Black",
+      "size_px": 96,
+      "tracking_em": -0.02
+    },
+    "kicker": {
+      "path": "assets/fonts/JetBrainsMono-Regular.ttf",
+      "family": "JetBrains Mono",
+      "size_px": 26
+    },
+    "tag": {
+      "path": "assets/fonts/JetBrainsMono-Regular.ttf",
+      "family": "JetBrains Mono",
+      "size_px": 24
+    }
+  },
+  "layout": {
+    "text_x": 700,
+    "text_right_x": 1240,
+    "kicker_baseline_y": 160,
+    "title_baseline_y": 258,
+    "keyword_baseline_y": 352,
+    "keyword_leading_px": 92,
+    "keyword_max_lines": 2,
+    "tag_right_x": 1236,
+    "tag_baseline_y": 690
+  },
+  "shadow": {
+    "color": "#000000",
+    "opacity": 0.7,
+    "distance_px": 4,
+    "angle_deg": 120,
+    "blur_px": 14
+  },
+  "glow": {
+    "opacity": 0.55,
+    "spread": 0.08,
+    "size_px": 14
+  },
+  "portrait": {
+    "cutout_model": "birefnet-portrait",
+    "alpha_subject_min": 40,
+    "harden_mean_min": 240,
+    "harden_threshold": 160,
+    "margin_px": 60,
+    "bottom_margin_px": 0,
+    "subject_top_y": 117,
+    "subject_bottom_y": 720,
+    "subject_left_x": -106
+  },
+  "background": {
+    "generated": {
+      "warm_glow": {
+        "center": [260, 420],
+        "radii": [520, 430],
+        "weight": 0.38
+      },
+      "cool_glow": {
+        "center": [1100, 160],
+        "radii": [560, 420],
+        "weight": 0.16
+      },
+      "grid": {
+        "step_px": 40,
+        "line_px": 1,
+        "color_role": "cool",
+        "x_start": 560,
+        "x_ramp": 600,
+        "opacity": 0.1
+      },
+      "vignette": {
+        "scale": 0.75,
+        "base": 1.15,
+        "falloff": 0.55,
+        "floor": 0.55
+      },
+      "grain": {
+        "sigma": 5,
+        "seed": 7
+      }
+    },
+    "photo": {
+      "brightness": 0.55
+    }
+  },
+  "themes": {
+    "tech": {
+      "keyword": "cool",
+      "glow": "cool",
+      "kicker": "warm",
+      "background": "generated"
+    },
+    "creator": {
+      "keyword": "warm",
+      "glow": "warm",
+      "kicker": "warm",
+      "background": "photo"
+    }
+  },
+  "tag_text": "#DEPPSiT"
+}

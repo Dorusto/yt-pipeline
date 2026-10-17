@@ -12,6 +12,7 @@ corrections.txt
 *.ass
 .opencode/tasks/
 !opencode.json
+!brand.json
 !schemas/*.json
 !tests/fixtures/**/*.json
 *.mov
