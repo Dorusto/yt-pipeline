@@ -30,7 +30,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 **D6-48 (2026-10-17, pulled forward by Doru):** `scripts/thumbnail.py` + `brand.json` + `schemas/brand.schema.json` + `yt-thumbnail` skill — portrait + title → branded 1280x720 thumbnail (two themes, rembg `birefnet-portrait` cut-out, layered `thumbnail.psd` via psd-tools) — see [`reports/D6-48-REPORT.md`](reports/D6-48-REPORT.md). Doru runs it once on a real photo (the build LXC OOM-kills BiRefNet).
 
-**S51 publish-kit sprint (issue #51, branch `sprint-publish-kit`):** lot 0 done 2026-10-20 (watchdog per-run spend cap); lot 1 done 2026-10-20 — the publish chain (`subs_from_edit.py`, `transcribe.py`, `metadata.py` + `prompts/metadata.md`, `publish.py`, `yt-publish` skill, doctor publish checks; `analyze_srt.py`/`translate_srt.py`/`daily_summary_srt.py` now take the model per role from the config through `common/llm.py`). Lots 2-4 open: `matte.py` (issue #50), HyperFrames graphics, licence + docs. One PR to master at the end of the sprint.
+**S51 publish-kit sprint (issue #51, branch `sprint-publish-kit`):** lot 0 done 2026-10-20 (watchdog per-run spend cap); lot 1 done 2026-10-20 — the publish chain (`subs_from_edit.py`, `transcribe.py`, `metadata.py` + `prompts/metadata.md`, `publish.py`, `yt-publish` skill, doctor publish checks; `analyze_srt.py`/`translate_srt.py`/`daily_summary_srt.py` now take the model per role from the config through `common/llm.py`) plus the lot 1 addendum (2026-10-20: `metadata.md` writes a `## Thumbnail` section with 2-3 photo concepts mapping to `thumbnail.py`); lot 2 done 2026-10-20 — `matte.py` (issue #50 scope 1-2: RVM via `torch.hub` → ProRes 4444 `.mov` with alpha for a time range). Lots 3-4 open: HyperFrames graphics, licence + docs. One PR to master at the end of the sprint.
 
 **Next (open from 2026-10-15):**
 - Set the cron watchdog to `--run-cap 2` per run (the per-run cap shipped in S51 lot 0, 2026-10-20).
@@ -63,8 +63,9 @@ Milestones 2–7 below are the older plan for the finished-clip pipeline. Where 
 | `shorts_generator.py` | ✅ done | 9:16 crop, WhisperX alignment, karaoke ASS, ffmpeg nvenc |
 | `subs_from_edit.py` | ✅ done (S51) | FilmCraft project or `edit.json` + per-source word JSONs → timeline `_RO.srt` + `_words.json` |
 | `transcribe.py` | ✅ done (S51) | Single Whisper run → SRT + `_words.json` (`--backend mock` offline) |
-| `metadata.py` | ✅ done (S51) | Corrected RO SRT + context note → `metadata.md` draft (titles, RO+EN description with CTA rules, chapters, tags, pinned comment) |
+| `metadata.py` | ✅ done (S51) | Corrected RO SRT + context note → `metadata.md` draft (titles, RO+EN description with CTA rules, chapters, tags, pinned comment, thumbnail photo concepts) |
 | `publish.py` | ✅ done (S51) | Publish chain: subtitles → corrections → review stop → translate → thumbnail → metadata, with `publish_state.json` |
+| `matte.py` | ✅ done (S51) | RVM background removal for a time range → ProRes 4444 `.mov` with alpha (`torch.hub`, CUDA or CPU) |
 | `pipeline.py` | 🔲 planned | Orchestrator for all steps |
 
 ---
