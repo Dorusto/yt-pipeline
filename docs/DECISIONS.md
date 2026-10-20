@@ -1967,3 +1967,19 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** free-form markdown cannot be checked and does not map to the `thumbnail.py` flags. **Why not C:** the addendum is in this sprint; #52 later picks candidate frames with the vision model on top of these concepts.
 
 **Consequence:** `metadata.md` grows a `## Thumbnail` section whose concepts can be executed as-is (grab the frame or shoot the photo, then run the listed `thumbnail.py` command). The model contract (`prompts/metadata.md` + `validate_model_json`) changed in a backwards-incompatible way: old canned model JSON without `thumbnail_concepts` is rejected by design.
+
+---
+
+## [2026-10-20] matte.py: RVM through torch.hub, own frame loop, ProRes 4444 export (S51 lot 2)
+
+**Context:** Issue #50 scope 1-2 / sprint lot 2: talking-head clip in, ProRes 4444 `.mov` with alpha out, only a time range processed, RVM as the default backend (decision 2026-10-19) and its code never vendored into this repo.
+
+**Options (inference loop):** (A) the hub's `convert_video` converter API (whole-file, its own reader and outputs); (B) our own loop — `cv2.VideoCapture` plus the official recurrent call `fgr, pha, *rec = model(src, *rec, downsample_ratio)`, two PNG sequences and one ffmpeg `alphamerge` export; (C) TorchScript/ONNX backends instead of the hub.
+
+**Decision:** B. `scripts/matte.py` validates every user error before the lazy `torch` import (so a missing torch never masks a bad argument), seeks with `CAP_PROP_POS_MSEC`, carries the 4 recurrent states across frames, writes `fgr/%05d.png` + `pha/%05d.png` in a temp dir and encodes with the issue #50 recipe (`prores_ks -profile:v 4444`, `alphamerge,format=yuva444p10le`) to an atomically replaced output. The model is `torch.hub.load("PeterL1n/RobustVideoMatting", "resnet50", trust_repo=True)` — `trust_repo=True` because a CLI must never block on the hub's interactive trust prompt; the clone and `rvm_resnet50.pth` land in `~/.cache/torch/hub/`. `--ratio` (`downsample_ratio`) defaults to 0.6 (steadier edges, the band issue #50 measured) with 0.25 documented as the faster option. The output is video-only (the editor keeps the original's audio). Unit tests run without torch; one integration test skips through `pytest.importorskip("torch")` and asserts the alpha on a generated clip. `torchvision` joins `requirements.txt` (hub dependency).
+
+**Probes say `yuva444p12le` on ffmpeg >= 6.0:** issue #50 and the sprint acceptance name `ffprobe pix_fmt yuva444p10le`, but ProRes 4444 (`ap4h`) is a 12-bit codec — ffmpeg < 6.0 reported `yuva444p10le` for it and ffmpeg >= 6.0 decodes it as `yuva444p12le`. The encoder recipe is unchanged and the file is the same ProRes 4444 with alpha that FilmCraft 0.9.0 reads (tested on the Sammie exports); the integration test accepts both strings.
+
+**Why not A:** `convert_video` owns its own reader and whole-file range, needs `av tqdm pims`, and still leaves the ProRes export to us. **Why not C:** no second model format is needed this sprint.
+
+**Consequence:** `python3 scripts/matte.py clip.mp4 [--start S] [--end E] [--ratio R] [--out FILE] [--json]` produces the composite-ready matte on GPU when present, on CPU otherwise (build LXC: 3 s 640x360 at ratio 0.6 in ~45 s). The settings used on the real Second Brain clip are added to issue #50 as a comment after Doru's run; MatAnyone2 stays out of the repo (scope 3, personal-use only).

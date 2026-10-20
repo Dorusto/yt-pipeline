@@ -162,6 +162,22 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ---
 
+## Background removal (matte.py)
+
+`matte.py` cuts a talking-head clip out of its background with RobustVideoMatting (RVM, loaded through `torch.hub` — never vendored) and writes a ProRes 4444 `.mov` with alpha, ready to place over screen capture. It runs on CUDA when present, else on CPU, and processes only the `--start`/`--end` range. Skill: `yt-matte`.
+
+```bash
+.venv/bin/python scripts/matte.py clip.mp4 --start 10 --end 40 --ratio 0.25 --out clip_matte.mov --json
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `matte.py` | `clip.mp4` (+ `--start`/`--end`) | `clip_matte.mov` — ProRes 4444 with alpha, video only |
+
+`--ratio` is RVM's `downsample_ratio` (default 0.6, steadier edges; 0.25 is faster). The output keeps the input resolution and fps and has no audio (the editor keeps the original's). Re-running overwrites the output; an `--out` that would overwrite the input is refused. The first run downloads the RVM code and weights into `~/.cache/torch/hub/`.
+
+---
+
 ## Director (AI Director, phase S1)
 
 `director.py` turns the workspace `motion/` and `quality/` labels into an
