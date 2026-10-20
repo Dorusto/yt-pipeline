@@ -30,6 +30,8 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 **D6-48 (2026-10-17, pulled forward by Doru):** `scripts/thumbnail.py` + `brand.json` + `schemas/brand.schema.json` + `yt-thumbnail` skill — portrait + title → branded 1280x720 thumbnail (two themes, rembg `birefnet-portrait` cut-out, layered `thumbnail.psd` via psd-tools) — see [`reports/D6-48-REPORT.md`](reports/D6-48-REPORT.md). Doru runs it once on a real photo (the build LXC OOM-kills BiRefNet).
 
+**S51 publish-kit sprint (issue #51, branch `sprint-publish-kit`):** lot 0 done 2026-10-20 (watchdog per-run spend cap); lot 1 done 2026-10-20 — the publish chain (`subs_from_edit.py`, `transcribe.py`, `metadata.py` + `prompts/metadata.md`, `publish.py`, `yt-publish` skill, doctor publish checks; `analyze_srt.py`/`translate_srt.py`/`daily_summary_srt.py` now take the model per role from the config through `common/llm.py`). Lots 2-4 open: `matte.py` (issue #50), HyperFrames graphics, licence + docs. One PR to master at the end of the sprint.
+
 **Next (open from 2026-10-15):**
 - Set the cron watchdog to `--run-cap 2` per run (the per-run cap shipped in S51 lot 0, 2026-10-20).
 - Architect: switch back to `master` at the end of a run (D2-18 left the LXC checkout on its branch).
@@ -56,10 +58,13 @@ Milestones 2–7 below are the older plan for the finished-clip pipeline. Where 
 | Script | Status | What it does |
 |:---|:---|:---|
 | `correct_srt.py` | ✅ done | Find/replace corrections on raw Whisper SRT |
-| `translate_srt.py` | ✅ done | RO→EN translation via DeepSeek API, saves next to video |
-| `analyze_srt.py` | ✅ done | Main video metadata + short candidates + per-short metadata (`--shorts-config`) |
+| `translate_srt.py` | ✅ done | RO→EN translation via `common/llm.py` (model role `translate`), saves next to video |
+| `analyze_srt.py` | ✅ done | Main video metadata + short candidates + per-short metadata (`--shorts-config`), model role `analyze` |
 | `shorts_generator.py` | ✅ done | 9:16 crop, WhisperX alignment, karaoke ASS, ffmpeg nvenc |
-| `transcribe.py` | 🔲 planned | Single Whisper run → SRT + `_words.json` |
+| `subs_from_edit.py` | ✅ done (S51) | FilmCraft project or `edit.json` + per-source word JSONs → timeline `_RO.srt` + `_words.json` |
+| `transcribe.py` | ✅ done (S51) | Single Whisper run → SRT + `_words.json` (`--backend mock` offline) |
+| `metadata.py` | ✅ done (S51) | Corrected RO SRT + context note → `metadata.md` draft (titles, RO+EN description with CTA rules, chapters, tags, pinned comment) |
+| `publish.py` | ✅ done (S51) | Publish chain: subtitles → corrections → review stop → translate → thumbnail → metadata, with `publish_state.json` |
 | `pipeline.py` | 🔲 planned | Orchestrator for all steps |
 
 ---
