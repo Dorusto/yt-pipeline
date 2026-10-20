@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Run the publish kit for a finished edit: subtitles, corrections, review, translation, thumbnail and metadata.
 
 Usage:

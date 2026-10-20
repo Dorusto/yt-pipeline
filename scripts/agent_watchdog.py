@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Watch the build agents and send an ntfy alert only when something looks wrong.
 
 Run it from cron every 30 minutes. Two checks:

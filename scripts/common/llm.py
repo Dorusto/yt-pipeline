@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """LLM client for OpenRouter with job-level spend tracking and a mock backend.
 
 The backend is chosen by ``llm_backend`` in ``config.yaml`` and every model id

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Still-photo helpers: JPEG/HEIC decode, EXIF capture time, renderable copies.
 
 Shared by ingest, describe, similarity, index and render. Pillow plus

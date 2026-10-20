@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Load and validate the project-wide AI Director configuration.
 
 The config file lists the OpenRouter model id per role and the per-run LLM

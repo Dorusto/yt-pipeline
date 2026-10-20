@@ -2,6 +2,8 @@
 
 CLI pipeline for processing YouTube clips: transcription → correction → translation → metadata → 9:16 shorts with karaoke subtitles.
 
+Licensed under [AGPL-3.0-or-later](LICENSE); external contributions need a signed CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 **Use it from an AI agent** (Claude Code or opencode): see [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md).
 
 ## Quickstart — folder + brief to recap

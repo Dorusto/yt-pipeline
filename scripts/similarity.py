@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Embed every quality segment and list the visually similar pairs.
 
 Usage:

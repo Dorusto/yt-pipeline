@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Run every pipeline station from a folder of clips and a brief to a recap MP4.
 
 Usage:

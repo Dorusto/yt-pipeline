@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Post short notifications to an ntfy server.
 
 The URL is read from the ``NTFY_URL`` environment variable and falls back to

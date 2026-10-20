@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Traduce un fisier .srt din romana in engleza via DeepSeek API.
 Pastreaza exact structura .srt: numere, timestamps, linii goale.

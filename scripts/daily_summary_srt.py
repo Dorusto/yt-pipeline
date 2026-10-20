@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Generează un rezumat narativ pe zile dintr-un folder de transcripturi .srt brute
 (footage acțiune/dronă, gen DJI_YYYYMMDDHHMMSS_NNN_D.srt).

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Render a branded 1280x720 YouTube thumbnail from a portrait photo and a title.
 
 The look comes from the brand kit (``brand.json``, validated against

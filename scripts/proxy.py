@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Build 720p H.264 constant-frame-rate proxies with audio from originals.
 
 Usage:

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Render branded graphic overlays (lower third, counter, callout) as ProRes 4444 .mov with alpha.
 
 Usage:

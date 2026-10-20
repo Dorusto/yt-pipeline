@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Build a Romanian timeline .srt and word list from a FilmCraft project or an edit.json.
 
 The tool maps the per-source Whisper word JSON files onto the cuts of an edit

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Shot length policy for camera moves versus static shots.
 
 A static shot respects the pacing table's ``slot_max``. A camera move (pan,

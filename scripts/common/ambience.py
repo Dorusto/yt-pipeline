@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Ambient-audio cleanup chain shared by ``audio_clean.py`` and ``render.py``.
 
 Wind high-pass, RNNoise or afftdn noise reduction and loudnorm — the same chain

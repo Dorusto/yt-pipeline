@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Render an ``edit.json`` edit list to a preview or final MP4 with ffmpeg.
 
 Usage:

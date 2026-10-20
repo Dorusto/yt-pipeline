@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Remove the background of a clip with RVM and write a ProRes 4444 .mov with alpha.
 
 Usage:

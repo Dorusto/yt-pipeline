@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Read a brief and a workspace and write ``route.json``: which stations run.
 
 The router is the front door of the AI Director pipeline. It parses the plain

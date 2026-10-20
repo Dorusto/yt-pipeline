@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Transcribe a media file in one Whisper run and write a raw ``.srt`` plus a word JSON.
 
 The word JSON is the Whisper result shape (``segments[].words[]`` with ``word``,

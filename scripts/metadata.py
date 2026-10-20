@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Build a metadata.md publish draft from a corrected Romanian .srt and a context note.
 
 The tool sends the prompt in ``prompts/metadata.md`` plus the context, the

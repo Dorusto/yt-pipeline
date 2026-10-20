@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Convert an edit.json edit list into the fragments.yaml that the Kdenlive adapter reads.
 
 The optional Kdenlive export is one adapter of the edit list: this tool reads

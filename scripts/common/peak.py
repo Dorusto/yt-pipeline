@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Best moment ("peak") of a shot and the cut window centred on it.
 
 When a shot is longer than the length it may keep on screen, the part to keep

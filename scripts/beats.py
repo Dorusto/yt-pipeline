@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Detect a music file's tempo, beats, downbeats and energy, and plan a cut grid.
 
 Usage:

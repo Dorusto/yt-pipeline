@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Numbered snapshots of a workspace's edit and its renders.
 
 Each re-edit overwrites ``edit.json`` and the recap files in the workspace.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Load JSON Schemas from ``schemas/`` and validate data files against them.
 
 Tools write JSON/YAML artifacts on disk; those artifacts are the interface
