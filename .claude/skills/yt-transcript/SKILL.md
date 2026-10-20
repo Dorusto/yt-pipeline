@@ -19,7 +19,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 .venv/bin/python scripts/correct_srt.py raw.srt Clip_RO.srt
 ```
 
-- Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, copy `scripts/corrections_example.txt` to `scripts/corrections.txt` first; the script crashes with FileNotFoundError without it. The example has no active corrections, so a fresh copy changes nothing.
+- Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, the script prints a warning and falls back to `scripts/corrections_example.txt` (0 active corrections), so it never crashes and always writes the output. Copy the example to `scripts/corrections.txt` to add your own corrections.
 - Without the second argument the output is `<input>_corectat.srt`.
 - Matching is a plain, case-sensitive text replace over the whole file, timestamps included. Do not add very short patterns.
 - It prints `Corecturi încărcate: N` and `Termeni înlocuiți: M`. M counts distinct wrong terms that were found, not occurrences. N = 0 means the list is empty; M = 0 with N > 0 means nothing matched.
