@@ -31,7 +31,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 **D6-48 (2026-10-17, pulled forward by Doru):** `scripts/thumbnail.py` + `brand.json` + `schemas/brand.schema.json` + `yt-thumbnail` skill — portrait + title → branded 1280x720 thumbnail (two themes, rembg `birefnet-portrait` cut-out, layered `thumbnail.psd` via psd-tools) — see [`reports/D6-48-REPORT.md`](reports/D6-48-REPORT.md). Doru runs it once on a real photo (the build LXC OOM-kills BiRefNet).
 
 **Next (open from 2026-10-15):**
-- Watchdog spend cap per agent run (spend since the run started), not per day; then set it back to 2 USD per run (cron is at 3.8 USD/day today).
+- Set the cron watchdog to `--run-cap 2` per run (the per-run cap shipped in S51 lot 0, 2026-10-20).
 - Architect: switch back to `master` at the end of a run (D2-18 left the LXC checkout on its branch).
 - Progress bar colour: theme the `<progress>` element (Chrome on Android ignores `accent-color` there).
 - Check v4 of kotor-demo: Why? should say "Edited by the model" (D2-17 repair).

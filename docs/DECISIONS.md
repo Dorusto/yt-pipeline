@@ -1911,3 +1911,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not B:** permissive licence, but per-frame ViTMatte flickers (1.7x the edge noise of Sammie) and a temporal EMA that hides it leaves ghost halos around moving hands.
 
 **Consequence:** prototypes live outside the repo in `~/Proiecte-AI/YouTube/roto-lab/` (`rvm_test.py`, `matanyone2_test.py`, `edgetam_vitmatte.py`); the pipeline step (`scripts/matte.py <video> --start/--end --backend rvm|matanyone2`) is built when the Second Brain edit needs it. The repo still has no LICENSE file; one must be chosen before any commercial use. FilmCraft's native rotoscoping (#2122, #406) is being followed and may replace this step for manual work.
+
+---
+
+## [2026-10-20] Watchdog: per-run spend cap from a run-spend ledger (S51 lot 0)
+
+**Context:** the agent budgets are per run (per brief / per lot), but the watchdog only knew "spend today" from the OpenRouter key. A run that started at $0 and a day already at $2.90 looked the same. Issue #51 lot 0 asks for spend since the run started, a `--run-cap` from the brief, an ntfy at 80 % (`Budget`) and a stop at 100 % (`Blocked`).
+
+**Options:** (A) baseline `usage_daily` at run start and measure the delta on every cron pass, nothing on disk; (B) the same delta, but appended to a per-run spend ledger file (`entries[].cost_usd`, the `common/llm.py` entry shape) that the watchdog sums since `run_started_at`; (C) read the opencode session DB for per-message model cost.
+
+**Decision:** B. `agent_watchdog.py --run-cap USD --lot "S51 lot 1" [--ledger PATH] [--start-run]`. The watchdog keeps `~/.cache/yt-pipeline/run-spend.json` itself: every invocation appends the OpenRouter daily-usage delta since its previous observation as one `openrouter-delta` entry, so everything billed to the key (script calls through `common/llm.py` and agent model calls) is counted exactly once. A run starts with `--start-run` or implicitly the first time the agent is seen running after being absent; `run_spend_usd` sums the entries since then. 80 % of the cap sends `--title Budget` (never stops); 100 % stops the agent and sends `--title Blocked` naming the lot and the reason (independent of `--kill-over-usd`, which stays daily). `--dry-run` writes neither ledger nor state.
+
+**Why not A:** nothing survives a watchdog restart and two cron passes cannot agree on the baseline. **Why not C:** the opencode DB schema is internal and does not cover script spend on the same key.
+
+**Consequence:** the architect checks `run_spend_usd` before every expensive step (vision run, director run, coder round); the daily `--spend-usd` check is unchanged. Implemented by the architect after two empty coder replies (upstream rate limit).
