@@ -1,12 +1,12 @@
 ---
 name: yt-publish
-description: Build the publish kit for a finished edit — turn a FilmCraft project or an edit.json plus per-source Whisper word JSON files into a Romanian timeline .srt and a flat _words.json for the final cut, without transcribing again, or run one Whisper pass over a media file to produce a raw .srt and the per-source word JSON. Use when the user wants subtitles for an assembled edit, a timeline word list for the cut, asks to map existing word timestamps onto the edit's clips, or wants to transcribe a clip to .srt + word JSON. Trigger phrases - "fă subtitrarea pentru montaj", "subtitrări din proiectul FilmCraft", "words.json pentru edit", "subtitles from the edit", "timeline subtitles", "map words onto the cut", "transcrie clipul în srt", "transcribe the clip to words.json". Not for translating subtitles (that is `yt-transcript`), not for correcting them (`correct_srt.py`), not for building the edit (that is `director`/`llm_director`) and not for rendering (that is `render`).
-compatibility: Run from the repository root with the repo .venv. Step 1 makes no model calls and needs no new dependencies; step 2 needs openai-whisper + torch on the real machine but runs offline with --backend mock. Reads a FilmCraft project (JSON, schema filmcraft-project) or an edit.json (schemas/edit.schema.json) and one Whisper word JSON per source clip. Originals are read-only; outputs are derived and overwritten on re-run.
+description: Build the publish kit for a finished edit — turn a FilmCraft project or an edit.json plus per-source Whisper word JSON files into a Romanian timeline .srt and a flat _words.json for the final cut, without transcribing again, run one Whisper pass over a media file to produce a raw .srt and the per-source word JSON, or run the whole publish chain in one command (subtitles → corrections → a human-review stop → EN translation → thumbnail → metadata draft). Use when the user wants subtitles for an assembled edit, a timeline word list for the cut, asks to map existing word timestamps onto the edit's clips, wants to transcribe a clip to .srt + word JSON, or wants the publish kit run end to end. Trigger phrases - "fă subtitrarea pentru montaj", "subtitrări din proiectul FilmCraft", "words.json pentru edit", "subtitles from the edit", "timeline subtitles", "map words onto the cut", "transcrie clipul în srt", "transcribe the clip to words.json", "rulează lanțul de publicare", "publish chain", "subtitles to metadata in one command", "publish.py". Not for translating subtitles alone (that is `yt-transcript`), not for correcting them alone (`correct_srt.py`), not for building the edit (that is `director`/`llm_director`) and not for rendering (that is `render`).
+compatibility: Run from the repository root with the repo .venv. Step 1 makes no model calls and needs no new dependencies; step 2 needs openai-whisper + torch on the real machine but runs offline with --backend mock. Reads a FilmCraft project (JSON, schema filmcraft-project) or an edit.json (schemas/edit.schema.json) and one Whisper word JSON per source clip. Step 4 chains steps 1-3 plus correct_srt.py, translate_srt.py and thumbnail.py as subprocesses; it calls no model itself and runs offline with a mock config. Originals are read-only; outputs are derived and overwritten on re-run.
 ---
 
 # yt-publish
 
-Build the publish kit for a finished edit. Step 1 produces the timeline subtitles and the word list for the final cut from word timestamps that already exist. Step 2 transcribes a source clip in one Whisper run when no word JSONs exist yet, and writes the raw `.srt` plus the per-source word JSON that step 1 consumes. Step 3 turns a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft. Later steps of the sprint (thumbnail, matte, graphics) will extend this skill.
+Build the publish kit for a finished edit. Step 1 produces the timeline subtitles and the word list for the final cut from word timestamps that already exist. Step 2 transcribes a source clip in one Whisper run when no word JSONs exist yet, and writes the raw `.srt` plus the per-source word JSON that step 1 consumes. Step 3 turns a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft. Step 4 runs the whole chain in one command, from the subtitles to the metadata draft, with a human-review stop in the middle.
 
 ## Step 1: timeline subtitles from an edit project
 
@@ -74,6 +74,31 @@ Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publis
 - `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `wall_time_s` and `llm_cost_usd`.
 - Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` missing or empty in the config, a missing model role, budget or LLM errors, unparseable model JSON, a missing or invalid JSON key (named), or a bad chapter (named).
 - Re-run safe: the output is a derived file and is overwritten.
+
+## Step 4: the publish chain
+
+One command runs the whole publish kit for a finished edit: subtitles (from the edit project if given, else transcribe) → corrections → a stop for human review → `--resume` → EN translation → thumbnail (when a photo is given) → metadata draft. A step whose output exists is skipped, and the run history is kept in `PROJECT/publish_state.json`.
+
+```bash
+.venv/bin/python scripts/publish.py --project DIR --context FILE \
+  (--fcproj PROJ --sequence NAME [--track T] | --from-edit EDIT.json | --media FILE) \
+  [--words-dir DIR] [--name NAME] \
+  [--photo FILE --title T --keyword K --theme tech|creator [--kicker K]] \
+  [--previous-url URL] [--repo-url URL] \
+  [--transcribe-backend whisper|mock] [--resume] [--force] [--json]
+```
+
+- `--project` is the project folder (created if missing); all outputs and `publish_state.json` live there. `--context` is the context note for `metadata.py`.
+- Source, exactly one of: `--fcproj PROJ --sequence NAME [--track T]` (+ `--words-dir DIR`, required) → `subs_from_edit.py`; `--from-edit EDIT.json` (+ `--words-dir DIR`, required) → `subs_from_edit.py`; `--media FILE` → `transcribe.py` (`--words-dir` not allowed with it).
+- `--name` is the artifact stem (default: the project folder's name).
+- `--photo` + `--title` + `--keyword` + `--theme` (+ optional `--kicker`) run the `thumbnail.py` step; without `--photo` the step is skipped and `--title`/`--keyword`/`--theme` must not be given.
+- `--previous-url`/`--repo-url` are passed to `metadata.py`. `--transcribe-backend` is passed to `transcribe.py` (`whisper` default, `mock` for offline runs).
+- Steps, each a subprocess of the station CLI: subtitles → correct → review → translate → thumbnail → metadata. The working raw SRT is `PROJECT/<name>.srt`; `subs_from_edit.py` writes `<name>_RO.srt`, which the chain renames to `<name>.srt` before `correct_srt.py` produces the canonical `<name>_RO.srt`. Words stay at `PROJECT/<name>_words.json`.
+- The chain stops at the review step unless `--resume` is given: review `PROJECT/<name>_RO.srt`, then re-run with `--resume`. The `--json` summary then has `"stopped_at": "review"` and the exit code is still 0.
+- A step whose output exists is skipped; `--force` re-runs every step (still stopping at the review without `--resume`). A child exit code other than 0 aborts the chain: the message names the step and the child's stderr tail, the step is recorded `failed` and the exit code is 2.
+- `--json` prints a summary: `project`, `name`, `steps` (name, status, outputs), `stopped_at`, `outputs` (`srt_raw`, `words_json`, `srt_ro`, `srt_en`, `thumbnail`, `metadata`), `wall_time_s` and `llm_cost_usd` (the sum of the children's reported costs plus the `LLM cost: $X.XXXX` line from `translate_srt.py`).
+- The state file `PROJECT/publish_state.json` is rewritten atomically after every step and records the run history; the skip decision is the output-existence rule, not the state file.
+- Errors exit 2 with a message on stderr: missing or conflicting source flags, `--words-dir` missing for fcproj/from-edit or given with `--media`, `--title`/`--keyword`/`--theme` given without `--photo` (or `--photo` without them), a child step failing, or a project folder that is not writable.
 
 ## What this step does not do
 

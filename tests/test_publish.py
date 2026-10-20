@@ -1,0 +1,564 @@
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+import publish
+
+FIXTURES = Path(__file__).parent / "fixtures" / "publish"
+FCPROJ = FIXTURES / "fixture.fcproj"
+
+SRT_RAW = (
+    "1\n00:00:00,200 --> 00:00:03,800\ndoi trei patru cinci.\n\n"
+    "2\n00:00:04,200 --> 00:00:06,600\nAlfa beta gama.\n\n"
+    "3\n00:00:08,600 --> 00:00:09,800\nopt nouă.\n"
+)
+SRT_EN = (
+    "1\n00:00:00,200 --> 00:00:03,800\nHello\n\n"
+    "2\n00:00:04,200 --> 00:00:06,600\nWorld\n\n"
+    "3\n00:00:08,600 --> 00:00:09,800\nEnd\n"
+)
+
+
+class Recorder:
+    """Stand-in for ``publish.execute``: writes the child outputs and returns success."""
+
+    def __init__(self, fail_at=None, costs=None):
+        self.fail_at = fail_at
+        self.costs = costs or {}
+        self.calls = []
+        self.argvs = []
+
+    def __call__(self, step, argv, ctx):
+        name = step["name"]
+        self.calls.append(name)
+        self.argvs.append((name, argv))
+        if name == self.fail_at:
+            return {
+                "status": "FAIL",
+                "returncode": 1,
+                "outputs": [],
+                "llm_cost_usd": 0.0,
+                "stderr": "boom",
+                "stdout": "",
+                "wall_time_s": 0.1,
+            }
+        self.create_outputs(name, ctx)
+        return {
+            "status": "done",
+            "returncode": 0,
+            "outputs": [],
+            "llm_cost_usd": self.costs.get(name, 0.0),
+            "stderr": "",
+            "stdout": "",
+            "wall_time_s": 0.1,
+        }
+
+    def create_outputs(self, name, ctx):
+        project = ctx.project
+        if name == "subtitles":
+            (project / f"{ctx.name}_RO.srt").write_text(SRT_RAW, encoding="utf-8")
+            (project / f"{ctx.name}_words.json").write_text("[]", encoding="utf-8")
+        elif name == "correct":
+            (project / f"{ctx.name}_RO.srt").write_text(SRT_RAW, encoding="utf-8")
+        elif name == "translate":
+            (project / f"{ctx.name}_EN.srt").write_text(SRT_EN, encoding="utf-8")
+        elif name == "thumbnail":
+            (project / "thumbnail.jpg").write_bytes(b"jpg")
+        elif name == "metadata":
+            (project / "metadata.md").write_text("# Metadata", encoding="utf-8")
+
+
+def write_context(tmp_path):
+    context = tmp_path / "ctx.md"
+    context.write_text("Angle: test", encoding="utf-8")
+    return context
+
+
+def run_publish(project, context, extra=None):
+    argv = [
+        "--project",
+        str(project),
+        "--context",
+        str(context),
+        "--fcproj",
+        str(FCPROJ),
+        "--sequence",
+        "Main",
+        "--words-dir",
+        str(FIXTURES),
+    ]
+    if extra:
+        argv += extra
+    return publish.main(argv)
+
+
+def test_step_order_stops_at_review(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--json"]) == 0
+    assert recorder.calls == ["subtitles", "correct"]
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["stopped_at"] == "review"
+    statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
+    assert statuses["review"] == "stopped"
+    assert "translate" not in statuses
+    assert "thumbnail" not in statuses
+    assert "metadata" not in statuses
+
+
+def test_resume_runs_the_rest(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    assert recorder.calls == ["subtitles", "correct", "translate", "metadata"]
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["stopped_at"] is None
+    statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
+    assert statuses["review"] == "passed"
+    assert statuses["thumbnail"] == "skipped"
+
+
+def test_command_lines(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    commands = dict(recorder.argvs)
+    name = project.name
+    subs = commands["subtitles"]
+    assert subs[1] == "scripts/subs_from_edit.py"
+    assert "--fcproj" in subs and str(FCPROJ) in subs
+    assert "--sequence" in subs and "Main" in subs
+    assert "--words-dir" in subs and str(FIXTURES) in subs
+    assert "--out-dir" in subs and str(project) in subs
+    assert "--name" in subs and name in subs
+    assert subs[-1] == "--json"
+    correct = commands["correct"]
+    assert correct[1] == "scripts/correct_srt.py"
+    assert correct[2] == str(project / f"{name}.srt")
+    assert correct[3] == str(project / f"{name}_RO.srt")
+    translate = commands["translate"]
+    assert translate[1] == "scripts/translate_srt.py"
+    assert translate[2] == str(project / f"{name}_RO.srt")
+    assert translate[3] == str(project / f"{name}_EN.srt")
+    metadata = commands["metadata"]
+    assert metadata[1] == "scripts/metadata.py"
+    assert metadata[2] == str(project / f"{name}_RO.srt")
+    assert "--context" in metadata
+    assert "--out-dir" in metadata and str(project) in metadata
+    assert "--name" in metadata and name in metadata
+    assert metadata[-1] == "--json"
+
+
+def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"")
+    argv = [
+        "--project",
+        str(project),
+        "--context",
+        str(write_context(tmp_path)),
+        "--media",
+        str(media),
+        "--transcribe-backend",
+        "mock",
+        "--resume",
+        "--json",
+    ]
+    assert publish.main(argv) == 0
+    subs = dict(recorder.argvs)["subtitles"]
+    assert subs[1] == "scripts/transcribe.py"
+    assert str(media) in subs
+    assert "--backend" in subs and "mock" in subs
+    assert "--words-dir" not in subs
+
+
+def test_from_edit_source_uses_subs_from_edit(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    edit = tmp_path / "edit.json"
+    edit.write_text("{}", encoding="utf-8")
+    argv = [
+        "--project",
+        str(project),
+        "--context",
+        str(write_context(tmp_path)),
+        "--from-edit",
+        str(edit),
+        "--words-dir",
+        str(FIXTURES),
+        "--resume",
+        "--json",
+    ]
+    assert publish.main(argv) == 0
+    subs = dict(recorder.argvs)["subtitles"]
+    assert subs[1] == "scripts/subs_from_edit.py"
+    assert "--from-edit" in subs and str(edit) in subs
+    assert "--fcproj" not in subs
+
+
+def test_second_run_skips_everything(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, context, extra=["--resume", "--json"]) == 0
+    capsys.readouterr()
+    recorder.calls.clear()
+    assert run_publish(project, context, extra=["--resume", "--json"]) == 0
+    assert recorder.calls == []
+    summary = json.loads(capsys.readouterr().out)
+    statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
+    assert statuses["subtitles"] == "skipped"
+    assert statuses["correct"] == "skipped"
+    assert statuses["translate"] == "skipped"
+    assert statuses["metadata"] == "skipped"
+
+
+def test_force_reruns_every_step(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, context, extra=["--resume", "--json"]) == 0
+    capsys.readouterr()
+    recorder.calls.clear()
+    assert run_publish(project, context, extra=["--resume", "--force", "--json"]) == 0
+    assert recorder.calls == ["subtitles", "correct", "translate", "metadata"]
+
+
+def test_force_still_stops_at_review(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, context, extra=["--resume", "--json"]) == 0
+    capsys.readouterr()
+    recorder.calls.clear()
+    assert run_publish(project, context, extra=["--force", "--json"]) == 0
+    assert recorder.calls == ["subtitles", "correct"]
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["stopped_at"] == "review"
+
+
+def test_thumbnail_skipped_without_photo(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    assert "thumbnail" not in recorder.calls
+    summary = json.loads(capsys.readouterr().out)
+    thumbnail = next(entry for entry in summary["steps"] if entry["name"] == "thumbnail")
+    assert thumbnail["status"] == "skipped"
+    state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["thumbnail"]["reason"] == "no photo"
+
+
+def test_thumbnail_runs_with_photo(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    photo = tmp_path / "photo.jpg"
+    photo.write_bytes(b"")
+    extra = [
+        "--photo",
+        str(photo),
+        "--title",
+        "T",
+        "--keyword",
+        "K",
+        "--theme",
+        "tech",
+        "--resume",
+        "--json",
+    ]
+    assert run_publish(project, write_context(tmp_path), extra=extra) == 0
+    assert "thumbnail" in recorder.calls
+    command = dict(recorder.argvs)["thumbnail"]
+    assert command[1] == "scripts/thumbnail.py"
+    assert "--photo" in command and str(photo) in command
+    assert "--out" in command and str(project) in command
+    assert command[-1] == "--json"
+
+
+def test_failing_child_aborts(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder(fail_at="correct")
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 2
+    assert recorder.calls == ["subtitles", "correct"]
+    summary = json.loads(capsys.readouterr().out)
+    statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
+    assert statuses["correct"] == "failed"
+    state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["correct"]["status"] == "failed"
+
+
+def test_naming_normalization(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder(fail_at="correct")
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--json"]) == 2
+    raw = project / f"{project.name}.srt"
+    assert raw.is_file()
+    assert raw.read_text(encoding="utf-8") == SRT_RAW
+    assert not (project / f"{project.name}_RO.srt").exists()
+
+
+def test_json_summary_fields(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder(costs={"translate": 0.01, "metadata": 0.02})
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["project"] == str(project)
+    assert summary["name"] == project.name
+    assert summary["stopped_at"] is None
+    assert summary["outputs"]["srt_raw"] == str(project / f"{project.name}.srt")
+    assert summary["outputs"]["words_json"] == str(project / f"{project.name}_words.json")
+    assert summary["outputs"]["srt_ro"] == str(project / f"{project.name}_RO.srt")
+    assert summary["outputs"]["srt_en"] == str(project / f"{project.name}_EN.srt")
+    assert summary["outputs"]["thumbnail"] is None
+    assert summary["outputs"]["metadata"] == str(project / "metadata.md")
+    assert isinstance(summary["wall_time_s"], (int, float))
+    assert summary["llm_cost_usd"] == pytest.approx(0.03)
+
+
+def test_state_file_shape(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
+    assert state["tool"] == "scripts/publish.py"
+    assert state["name"] == project.name
+    assert state["options"]["source"] == "fcproj"
+    assert state["options"]["sequence"] == "Main"
+    assert state["options"]["photo"] is None
+    assert state["steps"]["subtitles"]["status"] == "done"
+    assert state["steps"]["subtitles"]["command"][1] == "scripts/subs_from_edit.py"
+    assert state["steps"]["review"]["status"] == "passed"
+    assert state["steps"]["translate"]["status"] == "done"
+    assert state["steps"]["metadata"]["status"] == "done"
+
+
+def test_conflicting_sources_exit_2(tmp_path, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    rc = publish.main(
+        [
+            "--project",
+            str(project),
+            "--context",
+            str(context),
+            "--fcproj",
+            str(FCPROJ),
+            "--sequence",
+            "Main",
+            "--media",
+            "clip.mp4",
+            "--words-dir",
+            str(FIXTURES),
+        ]
+    )
+    assert rc == 2
+    assert "exactly one" in capsys.readouterr().err
+
+
+def test_words_dir_required_for_fcproj(tmp_path, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    rc = publish.main(
+        [
+            "--project",
+            str(project),
+            "--context",
+            str(context),
+            "--fcproj",
+            str(FCPROJ),
+            "--sequence",
+            "Main",
+        ]
+    )
+    assert rc == 2
+    assert "--words-dir" in capsys.readouterr().err
+
+
+def test_words_dir_not_allowed_with_media(tmp_path, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    rc = publish.main(
+        [
+            "--project",
+            str(project),
+            "--context",
+            str(context),
+            "--media",
+            "clip.mp4",
+            "--words-dir",
+            str(FIXTURES),
+        ]
+    )
+    assert rc == 2
+    assert "--words-dir" in capsys.readouterr().err
+
+
+def test_title_without_photo_exit_2(tmp_path, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    rc = publish.main(
+        [
+            "--project",
+            str(project),
+            "--context",
+            str(context),
+            "--fcproj",
+            str(FCPROJ),
+            "--sequence",
+            "Main",
+            "--words-dir",
+            str(FIXTURES),
+            "--title",
+            "T",
+        ]
+    )
+    assert rc == 2
+    assert "--photo" in capsys.readouterr().err
+
+
+def test_photo_without_title_exit_2(tmp_path, capsys):
+    project = tmp_path / "proj"
+    context = write_context(tmp_path)
+    rc = publish.main(
+        [
+            "--project",
+            str(project),
+            "--context",
+            str(context),
+            "--fcproj",
+            str(FCPROJ),
+            "--sequence",
+            "Main",
+            "--words-dir",
+            str(FIXTURES),
+            "--photo",
+            "photo.jpg",
+        ]
+    )
+    assert rc == 2
+    assert "--title" in capsys.readouterr().err
+
+
+def test_help_lists_an_example(capsys):
+    with pytest.raises(SystemExit) as exc:
+        publish.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "--project" in out
+    assert "example:" in out
+
+
+def write_mock_config(tmp_path):
+    config = {
+        "models": {"translate": "mock/model", "metadata": "mock/model"},
+        "llm_budget_usd": 5.0,
+        "llm_backend": "mock",
+        "llm_mock_text": {
+            "translate": "[1] Hello\n[2] World\n[3] End",
+            "metadata": json.dumps(
+                {
+                    "titles": ["T1", "T2", "T3"],
+                    "intro": {"ro": "Intro RO", "en": "Intro EN"},
+                    "github_line": None,
+                    "previous_line": None,
+                    "subscribe_line": {"ro": "Sub RO", "en": "Sub EN"},
+                    "promo_lines": [],
+                    "chapters": [{"timestamp": "00:00:00", "title": "Intro"}],
+                    "tags": ["a", "b"],
+                    "pinned_comment": "Q?",
+                }
+            ),
+        },
+        "channel": {"members": "Andrei, Mihai și Maria"},
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    return path
+
+
+def run_publish_subprocess(project, config_path, context_path, extra=None):
+    argv = [
+        sys.executable,
+        "scripts/publish.py",
+        "--project",
+        str(project),
+        "--context",
+        str(context_path),
+        "--fcproj",
+        str(FCPROJ),
+        "--sequence",
+        "Main",
+        "--words-dir",
+        str(FIXTURES),
+    ]
+    if extra:
+        argv += extra
+    env = dict(os.environ)
+    env["YT_CONFIG"] = str(config_path)
+    return subprocess.run(
+        argv, capture_output=True, text=True, cwd=str(publish.REPO_ROOT), env=env
+    )
+
+
+def test_end_to_end_with_mock_llm(tmp_path):
+    project = tmp_path / "project"
+    config_path = write_mock_config(tmp_path)
+    context_path = write_context(tmp_path)
+    name = project.name
+
+    run1 = run_publish_subprocess(project, config_path, context_path, extra=["--json"])
+    assert run1.returncode == 0, run1.stderr
+    summary1 = json.loads(run1.stdout)
+    assert summary1["stopped_at"] == "review"
+    assert (project / f"{name}.srt").is_file()
+    assert (project / f"{name}_words.json").is_file()
+    assert (project / f"{name}_RO.srt").is_file()
+    assert (project / "publish_state.json").is_file()
+    assert (project / f"{name}_RO.srt").read_text(encoding="utf-8").count("-->") == 3
+
+    run2 = run_publish_subprocess(
+        project, config_path, context_path, extra=["--resume", "--json"]
+    )
+    assert run2.returncode == 0, run2.stderr
+    summary2 = json.loads(run2.stdout)
+    assert summary2["stopped_at"] is None
+    english = (project / f"{name}_EN.srt").read_text(encoding="utf-8")
+    assert english.count("-->") == 3
+    assert "Hello" in english and "World" in english and "End" in english
+    metadata_text = (project / "metadata.md").read_text(encoding="utf-8")
+    assert "Andrei, Mihai și Maria" in metadata_text
+    assert "nu uita să fii creativ" in metadata_text
+    state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["translate"]["status"] == "done"
+    assert state["steps"]["metadata"]["status"] == "done"
+
+    run3 = run_publish_subprocess(
+        project, config_path, context_path, extra=["--resume", "--json"]
+    )
+    assert run3.returncode == 0, run3.stderr
+    summary3 = json.loads(run3.stdout)
+    statuses = {entry["name"]: entry["status"] for entry in summary3["steps"]}
+    assert statuses["review"] == "passed"
+    for step in ("subtitles", "correct", "translate", "thumbnail", "metadata"):
+        assert statuses[step] == "skipped"
