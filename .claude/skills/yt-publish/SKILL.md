@@ -6,7 +6,7 @@ compatibility: Run from the repository root with the repo .venv. Step 1 makes no
 
 # yt-publish
 
-Build the publish kit for a finished edit. Step 1 produces the timeline subtitles and the word list for the final cut from word timestamps that already exist. Step 2 transcribes a source clip in one Whisper run when no word JSONs exist yet, and writes the raw `.srt` plus the per-source word JSON that step 1 consumes. Later steps of the sprint (metadata, thumbnail, matte, graphics) will extend this skill.
+Build the publish kit for a finished edit. Step 1 produces the timeline subtitles and the word list for the final cut from word timestamps that already exist. Step 2 transcribes a source clip in one Whisper run when no word JSONs exist yet, and writes the raw `.srt` plus the per-source word JSON that step 1 consumes. Step 3 turns a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft. Later steps of the sprint (thumbnail, matte, graphics) will extend this skill.
 
 ## Step 1: timeline subtitles from an edit project
 
@@ -55,7 +55,28 @@ Run one Whisper pass over a media file and write a raw `.srt` plus the per-sourc
 - Errors exit 2 with a message on stderr and write nothing: missing or unreadable input, an ffmpeg extraction failure (names the input and the stderr tail), `whisper` not installed (`openai-whisper is not installed (pip install openai-whisper); use --backend mock for offline runs`), a model load failure, or an unknown `--backend`.
 - Re-run safe: the outputs are derived files and are overwritten.
 
+## Step 3: metadata draft
+
+Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags and a pinned-comment proposal. A human reviews the draft; nothing is uploaded.
+
+```bash
+.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--previous-url URL] [--repo-url URL] \
+  [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+```
+
+- `SRT` is the corrected Romanian `.srt` (timeline time). `--context` is required: a markdown note with the clip's angle and what the viewer leaves with.
+- `--previous-url` links a relevant earlier clip; `--repo-url` links the clip's own code repo. Both are optional and are passed to the model in a `## Links` section.
+- `--out-dir` is the output folder (default: the SRT's parent; created if missing). `--name` is used in the draft header and the `--json` summary (default: the SRT stem). It writes `<out-dir>/metadata.md`.
+- `--prompt` is an alternative prompt file (default: `prompts/metadata.md`).
+- The tool sends the prompt file text plus `## Context`, `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
+- The channel-members sentence and the closing are fixed and never taken from the model: the members sentence substitutes `channel.members` from the config, and the closing is always last. Both appear verbatim in the RO and the EN description. The description order is intro → github line (omitted when null) → members sentence → previous line (omitted when null or when `--previous-url` was not given) → subscribe line → promo lines (each prefixed with its `[label]`) → closing.
+- Chapters must be `HH:MM:SS` or `MM:SS` (normalized to `HH:MM:SS`), non-decreasing, inside the transcript, first one `00:00:00`.
+- `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `wall_time_s` and `llm_cost_usd`.
+- Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` missing or empty in the config, a missing model role, budget or LLM errors, unparseable model JSON, a missing or invalid JSON key (named), or a bad chapter (named).
+- Re-run safe: the output is a derived file and is overwritten.
+
 ## What this step does not do
 
 - Step 1 never transcribes or re-runs Whisper; word times come only from the given JSON files. Step 2 is the initial transcription only — it does not correct (`correct_srt.py`), translate, or force-align the transcript.
+- Step 3 writes only the draft; it never uploads, renders a thumbnail or translates the transcript (that is `translate_srt.py`).
 - Neither step styles subtitles, reads video tracks, caption tracks or markers, or renders anything.

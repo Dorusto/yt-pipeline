@@ -12,6 +12,12 @@ models:
   translate: deepseek/deepseek-v4.1-flash
   analyze: deepseek/deepseek-v4.1-flash
   summary: deepseek/deepseek-v4.1-flash
+  metadata: deepseek/deepseek-v4.1-flash
+
+# Names thanked verbatim in the publish description (the channel members
+# sentence). Never commit real names; config.yaml is git-ignored.
+channel:
+  members: "Andrei, Mihai și Maria"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
