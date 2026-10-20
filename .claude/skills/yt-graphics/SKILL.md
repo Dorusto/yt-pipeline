@@ -1,19 +1,59 @@
 ---
 name: yt-graphics
-description: Render branded graphic overlays (lower third, counter, callout) as ProRes 4444 .mov files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0); the look comes from brand.json. Use when the user wants a lower third, a counter or a callout overlay, a transparent graphic for the edit, or to render the approved entries of a graphics plan. Trigger phrases - "randeaza un lower third", "graphic overlay", "counter overlay", "callout animat", "graphics.py", "ProRes overlay cu alpha", "lower third cu brandul", "render the graphics plan". Not for planning where the graphics go (that is the graphics plan tool, next task), not for placing the overlay on a timeline (the editor's job), not for captions/ASS burn-in (that is the render) and not for still thumbnails (that is `thumbnail`).
-compatibility: Run from the repository root. Needs Node.js 22+ and npx on PATH for the default `--backend hyperframes` (the pinned HyperFrames CLI is fetched by npx, never vendored) and ffmpeg/ffprobe for `--backend mock` and the alpha check. Makes no LLM calls, so the run costs 0 USD.
+description: Plan where graphic overlays belong on a timeline (graphics_plan.py, the graphics model proposes time, template, props and reason for human approval) and render the approved ones (graphics.py) as ProRes 4444 .mov files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0); the look comes from brand.json. Use when the user wants a lower third, a counter or a callout overlay, a transparent graphic for the edit, a graphics plan, or to render the approved entries of a graphics plan. Trigger phrases - "randeaza un lower third", "graphic overlay", "counter overlay", "callout animat", "graphics.py", "graphics_plan.py", "planul de grafice", "unde pun graficele", "plan the graphics", "ProRes overlay cu alpha", "lower third cu brandul", "render the graphics plan". Not for placing the overlay on a timeline (the editor's job), not for captions/ASS burn-in (that is the render) and not for still thumbnails (that is `thumbnail`).
+compatibility: Run from the repository root. `graphics_plan.py` needs the `graphics` model role in the config (OpenRouter or `llm_backend: mock`). `graphics.py` needs Node.js 22+ and npx on PATH for the default `--backend hyperframes` (the pinned HyperFrames CLI is fetched by npx, never vendored) and ffmpeg/ffprobe for `--backend mock` and the alpha check; it makes no LLM calls, so its run costs 0 USD.
 ---
 
 # yt-graphics
 
-Render one branded graphic overlay as a ProRes 4444 `.mov` with alpha, at the
-timeline resolution, so the editor can drop it over the edit. The composition
-HTML per template lives in `assets/graphics/`; `graphics.py` fills it with the
-brand values from `brand.json` and the entry props and renders it with the
-HyperFrames CLI. Placing the overlay on a timeline is the editor's job — this
-tool only produces the file.
+Plan where graphic overlays belong on a timeline, then render the approved ones
+as ProRes 4444 `.mov` files with alpha, at the timeline resolution, so the editor
+can drop them over the edit. `graphics_plan.py` reads a timeline words JSON (and
+optionally a `markers.json`) and has the `graphics` model propose the overlays
+into `graphics_plan.json` for human approval; `graphics.py` fills a composition
+HTML per template in `assets/graphics/` with the brand values from `brand.json`
+and the entry props and renders it with the HyperFrames CLI. Placing the overlay
+on a timeline is the editor's job — this station only produces the plan and the
+files.
 
-## Step 1: render one overlay
+## Step 1: plan the graphics
+
+```bash
+.venv/bin/python scripts/graphics_plan.py words.json --json
+.venv/bin/python scripts/graphics_plan.py words.json --markers markers.json \
+  --context context.md --max-entries 3 --out graphics_plan.json
+```
+
+- `words.json` (positional) is the timeline words JSON. Both shapes are accepted
+  and reported as `words_shape`: `flat` (a JSON array of `{word, start, end}`,
+  what `subs_from_edit.py` writes) or `whisper` (the Whisper result shape with
+  `segments[].words[]`, what `transcribe.py` writes). An empty list, a missing
+  key or a non-numeric time exits 2 naming the problem.
+- `--markers` is an optional `markers.json` (a bare array or `{"markers": [...]}`).
+  Only markers whose `colour` is `Mango` (case-insensitive) become candidates;
+  `Green` (section) and `Rose` (to redo) are ignored. A Mango marker at `time_s`
+  becomes a candidate at that time and its `name` (or `comment`) is the hint.
+- `--context` is an optional markdown note (the clip's angle) passed to the model.
+- `--max-entries` caps the proposed entries (default 4, `>= 0`); fewer is fine and
+  zero graphics is a valid answer. `--max-entries 0` writes an empty plan without
+  a model call.
+- `--out` is the plan path (default `<words dir>/graphics_plan.json`); re-running
+  overwrites it (a derived artifact).
+- The model answers with strict JSON (`time_s`, `duration_s`, `template`, `props`,
+  `reason`); the tool assigns `id` (`g1`, `g2`, … in time order), sets
+  `approved: false` on every entry and sets `origin` (`marker` when the entry
+  matches a Mango candidate within 1 s, else `model`). The plan is validated
+  against `schemas/graphics_plan.schema.json`; an invalid answer is retried once
+  with the validation errors appended, then exits 2 printing the problems.
+- `--json` prints one summary line: `output`, `entries`, `approved` (always 0
+  here), `markers_used` (Mango candidates), `words_shape`, `model`, `wall_time_s`,
+  `llm_cost_usd`. Without it, one human line plus a "review and flip approved"
+  notice.
+
+A human reviews `graphics_plan.json` and flips `approved: true` on the entries to
+render; nothing is rendered by this step.
+
+## Step 2: render one overlay
 
 ```bash
 .venv/bin/python scripts/graphics.py --template lower_third \
@@ -46,7 +86,7 @@ tool only produces the file.
 | `counter` | `number` (string or number, kept as written), `label` | — |
 | `callout` | `text` | `style`: `text` (default) or `terminal` |
 
-## Step 2: render an approved graphics plan
+## Step 3: render an approved graphics plan
 
 ```bash
 .venv/bin/python scripts/graphics.py --plan graphics_plan.json --out-dir overlays/ --json
@@ -105,9 +145,10 @@ alone. The runtime code does not depend on the skill files being present.
 
 ## What is not its job
 
-- Planning where the graphics go (`graphics_plan.py`, the next task) — this tool
-  only renders the approved entries.
 - Placing the overlay on a timeline, rendering it into the edit, Kdenlive or
   FilmCraft import — the editor's job.
 - Captions/ASS burn-in (that is the render) and still thumbnails (that is
   `thumbnail`).
+
+Planning where the graphics go is `graphics_plan.py` (step 1, the same station);
+`graphics.py` only renders the approved entries.

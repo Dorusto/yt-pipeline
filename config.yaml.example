@@ -7,6 +7,7 @@ models:
   coder: deepseek/deepseek-v4.1-flash
   coder_fallback: z-ai/glm-5.3-flash
   director: deepseek/deepseek-v4.1-flash
+  graphics: deepseek/deepseek-v4.1-flash
   vision: z-ai/glm-5.3-flash
   vision_fallback: deepseek/deepseek-v4.1-flash
   translate: deepseek/deepseek-v4.1-flash
