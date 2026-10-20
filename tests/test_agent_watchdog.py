@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import agent_watchdog as watchdog
 
@@ -238,3 +239,126 @@ def test_main_stops_the_agent_over_the_cap(tmp_path, monkeypatch, capsys):
     assert stopped == [1]
     assert summary["stopped"] == 1
     assert any(alert.startswith("Stopped the agent") for alert in summary["alerts"])
+
+
+def test_kill_reason_run_cap():
+    reason = watchdog.kill_reason(
+        True, 0.1, None, 0.0, 0.0, None, run_spend=1.2, run_cap=1.0, lot="S51 lot 0"
+    )
+    assert "S51 lot 0" in reason
+    assert "1.20" in reason
+    assert "1.00" in reason
+    assert watchdog.kill_reason(False, 0.1, None, 0.0, 0.0, None, run_spend=1.2, run_cap=1.0) is None
+    assert watchdog.kill_reason(True, 0.1, None, 0.0, 0.0, None, run_spend=0.2, run_cap=1.0) is None
+
+
+def test_run_spend_ignores_old_entries(tmp_path):
+    ledger = tmp_path / "run-spend.json"
+    ledger.write_text(json.dumps({"entries": [
+        {"ts": "2026-10-20T10:00:00+00:00", "cost_usd": 5.0, "note": "old"},
+        {"ts": "2026-10-20T12:00:00+00:00", "cost_usd": 0.4, "note": "new"},
+    ]}))
+    entries = watchdog.read_spend_ledger(ledger)
+    total = watchdog.run_spend_usd(entries, "2026-10-20T11:00:00+00:00", ledger)
+    assert total == 0.4
+
+
+def _run_cap_setup(tmp_path, monkeypatch, capsys, usage=0.5):
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    holder = {"usage": usage}
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: holder["usage"])
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
+    stopped = []
+    monkeypatch.setattr(watchdog, "stop_agent", lambda: stopped.append(1) or 1)
+    sent = []
+    monkeypatch.setattr(
+        watchdog, "send", lambda message, **k: sent.append((k.get("title"), message)) or 200
+    )
+    state_file = tmp_path / "state.json"
+    ledger = tmp_path / "run-spend.json"
+    started = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+    state_file.write_text(json.dumps({
+        "run_started_at": started.isoformat(),
+        "usage_daily_last_seen": usage,
+    }))
+    args = [
+        "--repo", str(tmp_path), "--state-file", str(state_file), "--ledger", str(ledger),
+        "--run-cap", "1", "--lot", "S51 lot 0", "--watch", str(tmp_path), "--json",
+    ]
+    return args, ledger, started, stopped, sent, holder
+
+
+def test_run_budget_alert_at_80_percent(tmp_path, monkeypatch, capsys):
+    args, ledger, started, stopped, sent, _ = _run_cap_setup(tmp_path, monkeypatch, capsys)
+    ledger.write_text(json.dumps({"entries": [
+        {"ts": started.isoformat(), "cost_usd": 0.9, "note": "fake"},
+    ]}))
+    watchdog.main(args)
+    capsys.readouterr()
+    watchdog.main(args)
+    summary = json.loads(capsys.readouterr().out)
+    assert stopped == []
+    assert summary["kill_reason"] is None
+    assert summary["stopped"] == 0
+    assert summary["run_spend_usd"] == 0.9
+    assert summary["run_cap_usd"] == 1
+    assert "budget-80" in summary["run_alerted"]
+    budget = [message for title, message in sent if title == "Budget"]
+    assert len(budget) == 1
+    assert "S51 lot 0" in budget[0]
+    assert "0.90" in budget[0]
+
+
+def test_run_cap_stops_the_agent_at_100_percent(tmp_path, monkeypatch, capsys):
+    args, ledger, started, stopped, sent, _ = _run_cap_setup(tmp_path, monkeypatch, capsys)
+    ledger.write_text(json.dumps({"entries": [
+        {"ts": started.isoformat(), "cost_usd": 1.2, "note": "fake"},
+    ]}))
+    watchdog.main(args)
+    summary = json.loads(capsys.readouterr().out)
+    assert stopped == [1]
+    assert summary["stopped"] == 1
+    assert "S51 lot 0" in summary["kill_reason"]
+    assert "1.20" in summary["kill_reason"]
+    assert "1.00" in summary["kill_reason"]
+    assert "blocked" in summary["run_alerted"]
+    blocked = [message for title, message in sent if title == "Blocked"]
+    assert len(blocked) == 1
+    assert "S51 lot 0" in blocked[0]
+    assert not [t for t, _ in sent if t == "Budget"]
+
+
+def test_run_cap_dry_run_neither_sends_nor_stops(tmp_path, monkeypatch, capsys):
+    args, ledger, started, stopped, sent, _ = _run_cap_setup(tmp_path, monkeypatch, capsys)
+    ledger.write_text(json.dumps({"entries": [
+        {"ts": started.isoformat(), "cost_usd": 1.2, "note": "fake"},
+    ]}))
+    watchdog.main(args + ["--dry-run"])
+    summary = json.loads(capsys.readouterr().out)
+    assert sent == []
+    assert stopped == []
+    assert summary["sent"] == 0
+    assert summary["stopped"] == 0
+    assert summary["dry_run"] is True
+    assert "S51 lot 0" in summary["kill_reason"]
+    assert summary["run_spend_usd"] == 1.2
+
+
+def test_run_spend_ledger_appends_openrouter_delta(tmp_path, monkeypatch, capsys):
+    args, ledger, _started, stopped, sent, holder = _run_cap_setup(tmp_path, monkeypatch, capsys)
+    state_file = tmp_path / "state.json"
+    state_file.unlink()
+    base = [a for a in args if a not in ("--run-cap", "1")]
+    first = watchdog.main(base + ["--run-cap", "10", "--start-run"])
+    capsys.readouterr()
+    assert first == 0
+    holder["usage"] = 2.0
+    watchdog.main(base + ["--run-cap", "10"])
+    summary = json.loads(capsys.readouterr().out)
+    entries = json.loads(ledger.read_text())["entries"]
+    assert stopped == []
+    assert [entry["note"] for entry in entries] == ["openrouter-delta"]
+    assert entries[0]["cost_usd"] == 1.5
+    assert summary["run_spend_usd"] == 1.5

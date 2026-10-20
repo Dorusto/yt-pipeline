@@ -14,9 +14,14 @@ Usage:
     python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline
     python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --spend-usd 3 --stall-hours 2 --json
     python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --dry-run
+    python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --run-cap 6 --lot "S51 lot 1" --start-run
 
 The API key is read from OPENROUTER_API_KEY or from --key-file
 (default ~/.config/opencode/secrets/openrouter.key). It is never printed.
+
+With ``--run-cap`` the spend is measured since the run started (a run-spend
+ledger kept by this script), not per day: ntfy ``Budget`` at 80 % of the cap
+and ntfy ``Blocked`` plus a stop at 100 %.
 """
 
 import argparse
@@ -36,6 +41,7 @@ from common.notify import NotifyError, send
 KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 DEFAULT_KEY_FILE = "~/.config/opencode/secrets/openrouter.key"
 DEFAULT_STATE_FILE = "~/.cache/yt-pipeline/watchdog-state.json"
+DEFAULT_LEDGER_FILE = "~/.cache/yt-pipeline/run-spend.json"
 DEFAULT_EXTRA_WATCH = "~/.local/share/opencode"
 SKIPPED_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
 IS_WINDOWS = sys.platform.startswith("win")
@@ -108,10 +114,14 @@ def stop_agent(timeout=10.0):
     return len(targets)
 
 
-def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_commit_hours):
-    """Why the agent must be stopped now, or None. Both limits are off unless set."""
+def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_commit_hours,
+                run_spend=None, run_cap=None, lot=None):
+    """Why the agent must be stopped now, or None. All limits are off unless set."""
     if not running:
         return None
+    if run_cap is not None and run_spend is not None and run_cap > 0 and run_spend >= run_cap:
+        label = f"{lot}: " if lot else ""
+        return f"{label}run spend ${run_spend:.2f} is over the run cap ${run_cap:.2f}"
     if kill_over_usd is not None and daily_usd is not None and daily_usd > kill_over_usd:
         return f"spend today ${daily_usd:.2f} is over the hard cap ${kill_over_usd:.2f}"
     if kill_no_commit_hours is not None and last_commit > 0:
@@ -181,6 +191,92 @@ def save_state(path, state):
     target = Path(path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def read_spend_ledger(path):
+    """Return the spend ledger entries (list of dicts with ``cost_usd``), [] when absent."""
+    target = Path(path).expanduser()
+    if not target.exists():
+        return []
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"spend ledger {target} is unreadable: {exc}") from exc
+    if isinstance(data, dict):
+        data = data.get("entries", [])
+    if not isinstance(data, list):
+        raise ValueError(f"spend ledger {target} must hold an entries list")
+    return [entry for entry in data if isinstance(entry, dict) and isinstance(entry.get("cost_usd"), (int, float))]
+
+
+def write_spend_ledger(path, entries):
+    """Write the run-spend ledger atomically (sums are recomputed from the entries)."""
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(json.dumps({"entries": entries}, indent=2), encoding="utf-8")
+    tmp.replace(target)
+
+
+def append_spend_entry(path, cost_usd, note, ts):
+    """Append one spend entry to the run ledger and return the updated entries."""
+    entries = read_spend_ledger(path)
+    entries.append({"ts": ts, "cost_usd": round(float(cost_usd), 8), "note": note})
+    write_spend_ledger(path, entries)
+    return entries
+
+
+def parse_ts(value):
+    """Parse an ISO-8601 timestamp to epoch seconds, or None when unusable."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def run_spend_usd(entries, run_started_at, ledger_path=None):
+    """Sum ``cost_usd`` over ledger entries that belong to the current run."""
+    started = parse_ts(run_started_at)
+    if started is None:
+        return None
+    ledger_time = Path(ledger_path).expanduser().stat().st_mtime if ledger_path and Path(ledger_path).expanduser().exists() else None
+    total = 0.0
+    for entry in entries:
+        stamp = parse_ts(entry.get("ts"))
+        if stamp is None:
+            if ledger_time is not None and ledger_time >= started:
+                total += float(entry["cost_usd"])
+            continue
+        if stamp >= started:
+            total += float(entry["cost_usd"])
+    return round(total, 8)
+
+
+def run_cap_reached(run_spend, run_cap):
+    """True when the run spend is at or over the run cap."""
+    return run_cap is not None and run_cap > 0 and run_spend is not None and run_spend >= run_cap
+
+
+def check_run_budget(run_spend, run_cap, state, lot=None):
+    """Alert once per run when run spend reaches 80 % of the cap (never stops)."""
+    if run_spend is None or run_cap is None or run_cap <= 0:
+        return None
+    markers = state.setdefault("run_alerted", [])
+    if run_spend >= run_cap or "budget-80" in markers:
+        return None
+    if run_spend < 0.8 * run_cap:
+        return None
+    markers.append("budget-80")
+    label = f"{lot}: " if lot else ""
+    return (
+        f"{label}run spend ${run_spend:.2f} reached 80% of the run cap ${run_cap:.2f}. "
+        "Check what is left to do before it stops the agent."
+    )
 
 
 def check_spend(daily_usd, threshold, state, today):
@@ -254,6 +350,14 @@ def build_parser():
                         help="stop the agent when today's spend passes this many USD (default off)")
     parser.add_argument("--kill-no-commit-hours", type=float, default=None,
                         help="stop the agent after this many hours without a commit (default off)")
+    parser.add_argument("--run-cap", type=float, default=None,
+                        help="hard cap in USD for the current agent run (default off)")
+    parser.add_argument("--lot", default=None,
+                        help="label naming the lot/task, included in the Budget and Blocked alerts")
+    parser.add_argument("--ledger", default=DEFAULT_LEDGER_FILE,
+                        help=f"run-spend ledger (default {DEFAULT_LEDGER_FILE})")
+    parser.add_argument("--start-run", action="store_true",
+                        help="start a new run now: fresh run marker and an empty ledger")
     parser.add_argument("--key-file", default=DEFAULT_KEY_FILE, help="file holding the OpenRouter key")
     parser.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="where alerts already sent are remembered")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -265,6 +369,7 @@ def main(argv=None):
     started = time.monotonic()
     args = build_parser().parse_args(argv)
     now = time.time()
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = datetime.now(timezone.utc).date().isoformat()
     state = load_state(args.state_file)
     errors = []
@@ -284,24 +389,84 @@ def main(argv=None):
     last_activity = newest_mtime(watch)
     last_commit = last_commit_time(args.repo)
 
-    alerts = [m for m in (
+    ledger_path = Path(args.ledger).expanduser()
+    try:
+        entries = read_spend_ledger(ledger_path)
+    except ValueError as exc:
+        entries = []
+        errors.append(f"ledger check failed: {exc}")
+
+    run_started_at = state.get("run_started_at")
+    if args.start_run:
+        run_started_at = now_iso
+        state["run_started_at"] = now_iso
+        state["run_alerted"] = []
+        state["usage_daily_last_seen"] = None
+        entries = []
+        if not args.dry_run:
+            write_spend_ledger(ledger_path, entries)
+    elif running:
+        stopped_at = parse_ts(state.get("agent_stopped_at"))
+        started_at_epoch = parse_ts(run_started_at)
+        stale = started_at_epoch is None or (stopped_at is not None and started_at_epoch < stopped_at)
+        if stale:
+            run_started_at = now_iso
+            state["run_started_at"] = now_iso
+            state["run_alerted"] = []
+    if not running:
+        state["agent_stopped_at"] = now_iso
+
+    if daily_usd is not None:
+        last_seen = state.get("usage_daily_last_seen")
+        if last_seen is not None and run_started_at and daily_usd > last_seen:
+            delta = round(daily_usd - last_seen, 8)
+            if args.dry_run:
+                entries = entries + [{"ts": now_iso, "cost_usd": delta, "note": "openrouter-delta"}]
+            else:
+                entries = append_spend_entry(ledger_path, delta, "openrouter-delta", now_iso)
+        state["usage_daily_last_seen"] = daily_usd
+
+    run_spend = run_spend_usd(entries, run_started_at, ledger_path)
+
+    notifications = []
+    for message in (
         check_spend(daily_usd, args.spend_usd, state, today),
         check_stall(running, last_activity, now, args.stall_hours * 3600, state),
         check_no_progress(running, last_commit, now, args.no_commit_hours * 3600, state),
-    ) if m]
+    ):
+        if message:
+            notifications.append(("yt-pipeline watchdog", message))
+    if args.run_cap is not None:
+        budget_message = check_run_budget(run_spend, args.run_cap, state, args.lot)
+        if budget_message:
+            notifications.append(("Budget", budget_message))
 
-    reason = kill_reason(running, daily_usd, args.kill_over_usd, last_commit, now, args.kill_no_commit_hours)
+    reason = kill_reason(
+        running, daily_usd, args.kill_over_usd, last_commit, now, args.no_commit_hours,
+        run_spend=run_spend, run_cap=args.run_cap, lot=args.lot,
+    )
     stopped = 0
     if reason:
         if not args.dry_run:
             stopped = stop_agent()
-        alerts.append(f"Stopped the agent: {reason}. Its changes stay in the working tree.")
+        if args.run_cap is not None and run_spend is not None and run_cap_reached(run_spend, args.run_cap):
+            state.setdefault("run_alerted", []).append("blocked")
+            notifications.append((
+                "Blocked",
+                f"{reason} — the agent was stopped. Its changes stay in the working tree.",
+            ))
+        else:
+            notifications.append((
+                "yt-pipeline watchdog",
+                f"Stopped the agent: {reason}. Its changes stay in the working tree.",
+            ))
 
+    alerts = [message for _, message in notifications]
     sent = 0
     if not args.dry_run:
-        for message in alerts:
+        for title, message in notifications:
             try:
-                send(message, title="yt-pipeline watchdog", priority="high", tags=["warning"])
+                send(message, title=title, priority="high", tags=["warning"])
                 sent += 1
             except NotifyError as exc:
                 errors.append(f"notify failed: {exc}")
@@ -312,6 +477,10 @@ def main(argv=None):
         "idle_hours": round((now - last_activity) / 3600, 2) if last_activity else None,
         "hours_since_commit": round((now - last_commit) / 3600, 2) if last_commit else None,
         "spend_today_usd": daily_usd,
+        "run_spend_usd": run_spend,
+        "run_cap_usd": args.run_cap,
+        "run_started_at": run_started_at,
+        "run_alerted": list(state.get("run_alerted", [])),
         "alerts": alerts,
         "kill_reason": reason,
         "stopped": stopped,
