@@ -1925,3 +1925,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** nothing survives a watchdog restart and two cron passes cannot agree on the baseline. **Why not C:** the opencode DB schema is internal and does not cover script spend on the same key.
 
 **Consequence:** the architect checks `run_spend_usd` before every expensive step (vision run, director run, coder round); the daily `--spend-usd` check is unchanged. Implemented by the architect after two empty coder replies (upstream rate limit).
+
+---
+
+## [2026-10-20] Transcription: openai-whisper behind a Transcriber interface (S51 lot 1)
+
+**Context:** The publish chain needs per-source word timestamps when there is no edit project (`transcribe.py`), and the word JSONs it writes must be exactly what `subs_from_edit.py --words-dir` reads. The build LXC has no torch/whisper and must stay that way for the test suite.
+
+**Options:** (A) `openai-whisper` (MIT, maintained reference implementation) — the one the sprint brief names: turbo on GPU, `--model tiny` on CPU; (B) `faster-whisper` (MIT, CTranslate2, faster on CPU, already on the real machine transitively via whisperx); (C) whisper.cpp binding (no Python wheel story here).
+
+**Decision:** A, per issue #51 lot 1. `Transcriber` interface with `WhisperTranscriber` and `MockTranscriber` lives inside `scripts/transcribe.py` (the sprint puts `GraphicsEngine` in `scripts/graphics.py` the same way; it moves to `scripts/common/` when a second consumer appears). `torch`/`whisper` import lazily inside the whisper backend only, a missing import is a clear error naming the pip package, and `openai-whisper` joins `requirements.txt` for the real machine without being installed on the LXC. `--backend mock` is the deterministic offline run. The `_words.json` from `transcribe.py` is the Whisper result shape (`text`, `language`, `segments[].words[]`) — exactly the `subs_from_edit.py` input — while `subs_from_edit.py` writes the flat timeline list (`[{word, start, end}]`, the `shorts_generator.py` shape). Both are documented in the `yt-publish` skill.
+
+**Why not B:** the brief names openai-whisper; faster-whisper stays the next candidate if CPU transcription speed ever matters.
+
+**Consequence:** real runs need `pip install openai-whisper` on the laptop; tests and offline runs use `--backend mock` and never touch a model. Word times from this run are the initial transcript only — the Shorts flow still takes word timing from WhisperX forced alignment on the corrected SRT.

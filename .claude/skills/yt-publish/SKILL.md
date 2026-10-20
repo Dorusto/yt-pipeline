@@ -1,12 +1,12 @@
 ---
 name: yt-publish
-description: Build the publish kit for a finished edit — in this step, turn a FilmCraft project or an edit.json plus per-source Whisper word JSON files into a Romanian timeline .srt and a flat _words.json for the final cut, without transcribing again. Use when the user wants subtitles for an assembled edit, a timeline word list for the cut, or asks to map existing word timestamps onto the edit's clips. Trigger phrases - "fă subtitrarea pentru montaj", "subtitrări din proiectul FilmCraft", "words.json pentru edit", "subtitles from the edit", "timeline subtitles", "map words onto the cut". Not for transcribing audio (that is `yt-transcript`), not for translating subtitles (that is `yt-transcript`), not for building the edit (that is `director`/`llm_director`) and not for rendering (that is `render`).
-compatibility: Run from the repository root with the repo .venv. No model calls, no new dependencies, CPU only. Reads a FilmCraft project (JSON, schema filmcraft-project) or an edit.json (schemas/edit.schema.json) and one Whisper word JSON per source clip. Originals are read-only; outputs are derived and overwritten on re-run.
+description: Build the publish kit for a finished edit — turn a FilmCraft project or an edit.json plus per-source Whisper word JSON files into a Romanian timeline .srt and a flat _words.json for the final cut, without transcribing again, or run one Whisper pass over a media file to produce a raw .srt and the per-source word JSON. Use when the user wants subtitles for an assembled edit, a timeline word list for the cut, asks to map existing word timestamps onto the edit's clips, or wants to transcribe a clip to .srt + word JSON. Trigger phrases - "fă subtitrarea pentru montaj", "subtitrări din proiectul FilmCraft", "words.json pentru edit", "subtitles from the edit", "timeline subtitles", "map words onto the cut", "transcrie clipul în srt", "transcribe the clip to words.json". Not for translating subtitles (that is `yt-transcript`), not for correcting them (`correct_srt.py`), not for building the edit (that is `director`/`llm_director`) and not for rendering (that is `render`).
+compatibility: Run from the repository root with the repo .venv. Step 1 makes no model calls and needs no new dependencies; step 2 needs openai-whisper + torch on the real machine but runs offline with --backend mock. Reads a FilmCraft project (JSON, schema filmcraft-project) or an edit.json (schemas/edit.schema.json) and one Whisper word JSON per source clip. Originals are read-only; outputs are derived and overwritten on re-run.
 ---
 
 # yt-publish
 
-Build the publish kit for a finished edit. This step produces the timeline subtitles and the word list for the final cut from word timestamps that already exist, so nothing is transcribed again. Later steps of the sprint (transcribe, metadata, thumbnail, matte, graphics) will extend this skill.
+Build the publish kit for a finished edit. Step 1 produces the timeline subtitles and the word list for the final cut from word timestamps that already exist. Step 2 transcribes a source clip in one Whisper run when no word JSONs exist yet, and writes the raw `.srt` plus the per-source word JSON that step 1 consumes. Later steps of the sprint (metadata, thumbnail, matte, graphics) will extend this skill.
 
 ## Step 1: timeline subtitles from an edit project
 
@@ -37,7 +37,25 @@ From an `edit.json` edit list:
 - Errors exit 2 with a message on stderr and write nothing: missing word JSON (names the clip and the path it looked for), a non-1.0 speed or reverse, an unknown sequence or track (lists the names found), unreadable or non-JSON input, or both/neither of `--fcproj` and `--from-edit`.
 - Re-run safe: the outputs are derived files and are overwritten.
 
+## Step 2: transcribe a source clip
+
+Run one Whisper pass over a media file and write a raw `.srt` plus the per-source word JSON that step 1's `--words-dir` reads. Use it when no edit project and no word JSONs exist yet, then transcribe each source clip with `--name` set to the source stem.
+
+```bash
+.venv/bin/python scripts/transcribe.py INPUT [--out-dir DIR] [--name NAME] [--model MODEL] \
+  [--language ro] [--backend whisper|mock] [--json]
+```
+
+- `INPUT` is an audio (wav/mp3/…) or video file. For video, the audio track is extracted with ffmpeg to a temporary 16 kHz mono wav that is deleted afterwards.
+- `--out-dir` is the output folder (default: the input file's parent; created if missing). `--name` is the output stem (default: the input file stem). It writes `<name>.srt` and `<name>_words.json`.
+- `--backend whisper` (default) runs `openai-whisper`; `--backend mock` is deterministic and offline (no torch/whisper needed) and always returns `Bună ziua. Aceasta este o înregistrare de test.` with eight words.
+- `--model` is the Whisper model id (default: `turbo` with a CUDA GPU, else `tiny`). `--language` is a Whisper code, default `ro`; `auto` lets Whisper detect.
+- The `<name>_words.json` is the Whisper result shape (`text`, `language`, `segments[].words[]` with `word`, `start`, `end`, `probability`). Name it after the source stem (`camera A.json` for `camera A.mp4`) and step 1 picks it up.
+- `--json` prints a summary: `outputs` (`srt`, `words_json`), `backend`, `model`, `device` (`cuda`/`cpu` for whisper, `mock` for mock), `language`, `segments`, `words`, `wall_time_s` and `llm_cost_usd` (always 0.0 — a local model, not an LLM call).
+- Errors exit 2 with a message on stderr and write nothing: missing or unreadable input, an ffmpeg extraction failure (names the input and the stderr tail), `whisper` not installed (`openai-whisper is not installed (pip install openai-whisper); use --backend mock for offline runs`), a model load failure, or an unknown `--backend`.
+- Re-run safe: the outputs are derived files and are overwritten.
+
 ## What this step does not do
 
-- It never transcribes or re-runs Whisper; word times come only from the given JSON files.
-- It does not translate, style subtitles, read video tracks, caption tracks or markers, or render anything.
+- Step 1 never transcribes or re-runs Whisper; word times come only from the given JSON files. Step 2 is the initial transcription only — it does not correct (`correct_srt.py`), translate, or force-align the transcript.
+- Neither step styles subtitles, reads video tracks, caption tracks or markers, or renders anything.
