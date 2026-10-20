@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 import agent_watchdog as watchdog
@@ -239,6 +240,48 @@ def test_main_stops_the_agent_over_the_cap(tmp_path, monkeypatch, capsys):
     assert stopped == [1]
     assert summary["stopped"] == 1
     assert any(alert.startswith("Stopped the agent") for alert in summary["alerts"])
+
+
+def _old_commit_repo(tmp_path, hours=3):
+    repo = tmp_path / "repo"
+    ref = repo / ".git" / "refs" / "heads" / "main"
+    ref.parent.mkdir(parents=True)
+    ref.write_text("abc\n")
+    old = time.time() - hours * 3600
+    os.utime(ref, (old, old))
+    return repo
+
+
+def test_no_hard_stop_without_kill_no_commit_hours(tmp_path, monkeypatch, capsys):
+    stopped = []
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 0.1)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "stop_agent", lambda: stopped.append(1) or 1)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = _old_commit_repo(tmp_path)
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["kill_reason"] is None
+    assert summary["stopped"] == 0
+    assert stopped == []
+
+
+def test_hard_stop_with_kill_no_commit_hours(tmp_path, monkeypatch, capsys):
+    stopped = []
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 0.1)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "stop_agent", lambda: stopped.append(1) or 1)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = _old_commit_repo(tmp_path)
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--kill-no-commit-hours", "2", "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert stopped == [1]
+    assert summary["stopped"] == 1
+    assert "no commit" in summary["kill_reason"]
 
 
 def test_kill_reason_run_cap():

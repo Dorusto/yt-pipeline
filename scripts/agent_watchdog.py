@@ -442,7 +442,7 @@ def main(argv=None):
             notifications.append(("Budget", budget_message))
 
     reason = kill_reason(
-        running, daily_usd, args.kill_over_usd, last_commit, now, args.no_commit_hours,
+        running, daily_usd, args.kill_over_usd, last_commit, now, args.kill_no_commit_hours,
         run_spend=run_spend, run_cap=args.run_cap, lot=args.lot,
     )
     stopped = 0
