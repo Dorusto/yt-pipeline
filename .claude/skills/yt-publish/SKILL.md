@@ -57,7 +57,7 @@ Run one Whisper pass over a media file and write a raw `.srt` plus the per-sourc
 
 ## Step 3: metadata draft
 
-Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags and a pinned-comment proposal. A human reviews the draft; nothing is uploaded.
+Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags, a pinned-comment proposal and a `## Thumbnail` section with 2-3 photo concepts. A human reviews the draft; nothing is uploaded.
 
 ```bash
 .venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--previous-url URL] [--repo-url URL] \
@@ -71,8 +71,9 @@ Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publis
 - The tool sends the prompt file text plus `## Context`, `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
 - The channel-members sentence and the closing are fixed and never taken from the model: the members sentence substitutes `channel.members` from the config, and the closing is always last. Both appear verbatim in the RO and the EN description. The description order is intro → github line (omitted when null) → members sentence → previous line (omitted when null or when `--previous-url` was not given) → subscribe line → promo lines (each prefixed with its `[label]`) → closing.
 - Chapters must be `HH:MM:SS` or `MM:SS` (normalized to `HH:MM:SS`), non-decreasing, inside the transcript, first one `00:00:00`.
-- `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `wall_time_s` and `llm_cost_usd`.
-- Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` missing or empty in the config, a missing model role, budget or LLM errors, unparseable model JSON, a missing or invalid JSON key (named), or a bad chapter (named).
+- The `## Thumbnail` section holds 2-3 distinct photo concepts (the `thumbnail_concepts` model key): each with pose, a real emotion (never neutral), thumbnail text of 3-4 words that says the same as the titles (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and the source — a clip-frame timecode inside the transcript where that emotion fits, or a new photo to shoot. The chosen concept maps directly to the `thumbnail.py` flags (`--photo --title --keyword --kicker --theme`). Channel formula: own face + authentic emotion + short text, never a generic illustration.
+- `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `thumbnail_concepts`, `wall_time_s` and `llm_cost_usd`.
+- Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` missing or empty in the config, a missing model role, budget or LLM errors, unparseable model JSON, a missing or invalid JSON key (named), a bad chapter (named) or a bad thumbnail concept (named).
 - Re-run safe: the output is a derived file and is overwritten.
 
 ## Step 4: the publish chain

@@ -1953,3 +1953,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** it would not exercise the real output handoff between stations. **Why not C:** the backend is config, never code.
 
 **Consequence:** offline end-to-end runs of any LLM tool work with one config file; production configs simply omit `llm_mock_text`.
+
+---
+
+## [2026-10-20] Metadata draft carries structured thumbnail photo concepts (S51 lot 1 addendum)
+
+**Context:** The lot 1 addendum to issue #51 (Doru, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
+
+**Options:** (A) the model writes the `## Thumbnail` section as free-form markdown in its JSON; (B) a structured `thumbnail_concepts` key (2-3 objects with `name`/`pose`/`emotion`/`text{title,keyword,kicker}`/`theme`/`source{kind,timecode}`) validated like `chapters` and rendered by the tool; (C) no section for now — frame picking is issue #52's vision pass.
+
+**Decision:** B. The tool validates the shape (2-3 concepts, non-empty name/pose/emotion, non-empty title and keyword, `theme` in `tech`/`creator`, `source.kind` in `clip_frame`/`new_photo`, a clip-frame timecode normalized and inside the transcript) and renders the section with the exact `thumbnail.py --photo --title --keyword --kicker --theme` command line per concept. Content quality (a real emotion, the text saying the same as the titles) stays the model's job, steered by `prompts/metadata.md` — same split as the CTA rules. The old one-line "Thumbnail text:" note is folded into the section; the `--json` summary reports `thumbnail_concepts` and every canned mock JSON in the tests carries the new key.
+
+**Why not A:** free-form markdown cannot be checked and does not map to the `thumbnail.py` flags. **Why not C:** the addendum is in this sprint; #52 later picks candidate frames with the vision model on top of these concepts.
+
+**Consequence:** `metadata.md` grows a `## Thumbnail` section whose concepts can be executed as-is (grab the frame or shoot the photo, then run the listed `thumbnail.py` command). The model contract (`prompts/metadata.md` + `validate_model_json`) changed in a backwards-incompatible way: old canned model JSON without `thumbnail_concepts` is rejected by design.

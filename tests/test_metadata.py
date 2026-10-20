@@ -32,6 +32,24 @@ FULL = {
     ],
     "tags": ["tag1", "tag2", "tag3"],
     "pinned_comment": "Ce întrebare?",
+    "thumbnail_concepts": [
+        {
+            "name": "Bucurie",
+            "pose": "mâinile ridicate, cadru strâns",
+            "emotion": "bucurie reală",
+            "text": {"title": "AI-UL MEU", "keyword": "RULEAZĂ ACASĂ", "kicker": "// homelab"},
+            "theme": "tech",
+            "source": {"kind": "clip_frame", "timecode": "00:00:02"},
+        },
+        {
+            "name": "Surpriză",
+            "pose": "privire în cameră, zâmbet larg",
+            "emotion": "surpriză",
+            "text": {"title": "MERGE SINGUR", "keyword": "ACASĂ", "kicker": ""},
+            "theme": "creator",
+            "source": {"kind": "new_photo"},
+        },
+    ],
 }
 
 
@@ -96,7 +114,16 @@ def test_end_to_end(tmp_path, monkeypatch):
     assert "00:00:00 Intro" in text
     assert "00:00:02 Lume" in text
     assert "tag1, tag2, tag3" in text
-    assert "Thumbnail text:" in text
+    assert "## Thumbnail" in text
+    assert text.index("## Titles") < text.index("## Thumbnail") < ro_start
+    assert "### 1. Bucurie" in text
+    assert "### 2. Surpriză" in text
+    assert "Emotion: bucurie reală" in text
+    assert "clip frame 00:00:02" in text
+    assert "new photo (shoot it for --photo)" in text
+    assert "thumbnail.py --photo <source>" in text
+    assert '--title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ"' in text
+    assert "--theme tech" in text and "--theme creator" in text
     assert "Ce întrebare?" in text
 
 
@@ -161,6 +188,76 @@ def test_bad_chapter_exits_2(tmp_path, monkeypatch, capsys, name, chapters):
     assert "Traceback" not in err
 
 
+def _concept(**overrides):
+    concept = json.loads(json.dumps(FULL["thumbnail_concepts"][0]))
+    concept.update(overrides)
+    return concept
+
+
+BAD_CONCEPT_COUNTS = [
+    ("one", [0]),
+    ("four", [0, 1, 0, 1]),
+]
+
+
+@pytest.mark.parametrize("name,picks", BAD_CONCEPT_COUNTS, ids=[case[0] for case in BAD_CONCEPT_COUNTS])
+def test_bad_thumbnail_concept_count_exits_2(tmp_path, monkeypatch, capsys, name, picks):
+    data = dict(FULL, thumbnail_concepts=[FULL["thumbnail_concepts"][i] for i in picks])
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "thumbnail_concepts" in err
+    assert "Traceback" not in err
+
+
+def test_bad_thumbnail_theme_exits_2(tmp_path, monkeypatch, capsys):
+    data = dict(FULL, thumbnail_concepts=[_concept(theme="dark"), FULL["thumbnail_concepts"][1]])
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "theme" in err
+    assert "Traceback" not in err
+
+
+def test_thumbnail_frame_without_timecode_exits_2(tmp_path, monkeypatch, capsys):
+    concept = _concept()
+    del concept["source"]["timecode"]
+    data = dict(FULL, thumbnail_concepts=[concept, FULL["thumbnail_concepts"][1]])
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "timecode" in err
+    assert "Traceback" not in err
+
+
+def test_thumbnail_timecode_beyond_transcript_exits_2(tmp_path, monkeypatch, capsys):
+    data = dict(
+        FULL,
+        thumbnail_concepts=[
+            _concept(source={"kind": "clip_frame", "timecode": "00:00:12"}),
+            FULL["thumbnail_concepts"][1],
+        ],
+    )
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "beyond the transcript end" in err
+    assert "Traceback" not in err
+
+
+def test_neutral_emotion_is_still_valid_json(tmp_path, monkeypatch):
+    data = dict(
+        FULL,
+        thumbnail_concepts=[
+            _concept(emotion="neutral"),
+            FULL["thumbnail_concepts"][1],
+        ],
+    )
+    code, out = run_main(tmp_path, monkeypatch, data)
+    assert code == 0
+    assert "Emotion: neutral" in out.read_text(encoding="utf-8")
+
+
 def test_json_summary(tmp_path, monkeypatch, capsys):
     code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--json"], cost_per_call=0.005)
     assert code == 0
@@ -168,6 +265,7 @@ def test_json_summary(tmp_path, monkeypatch, capsys):
     assert summary["titles"] == 3
     assert summary["chapters"] == 2
     assert summary["tags"] == 3
+    assert summary["thumbnail_concepts"] == 2
     assert summary["llm_cost_usd"] == 0.005
     assert summary["wall_time_s"] >= 0
     assert summary["output"].endswith("metadata.md")

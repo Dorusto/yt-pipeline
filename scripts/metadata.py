@@ -179,6 +179,12 @@ def validate_model_json(data):
     if not isinstance(pinned_comment, str):
         raise MetadataError("model JSON key 'pinned_comment' must be a string")
 
+    thumbnail_concepts = require_key(data, "thumbnail_concepts")
+    if not isinstance(thumbnail_concepts, list) or not 2 <= len(thumbnail_concepts) <= 3:
+        raise MetadataError("model JSON key 'thumbnail_concepts' must be a list of 2 or 3 concepts")
+    for index, concept in enumerate(thumbnail_concepts):
+        validate_thumbnail_concept(concept, index)
+
     return {
         "titles": titles,
         "intro": intro,
@@ -189,7 +195,37 @@ def validate_model_json(data):
         "chapters": chapters,
         "tags": tags,
         "pinned_comment": pinned_comment,
+        "thumbnail_concepts": thumbnail_concepts,
     }
+
+
+def validate_thumbnail_concept(concept, index):
+    """Validate one thumbnail concept shape (its timecode is checked later, against the transcript)."""
+    label = f"model JSON key 'thumbnail_concepts[{index}]'"
+    if not isinstance(concept, dict):
+        raise MetadataError(f"{label} must be an object")
+    for field in ("name", "pose", "emotion"):
+        if not isinstance(concept.get(field), str) or not concept[field].strip():
+            raise MetadataError(f"{label}.{field} must be a non-empty string")
+    text = concept.get("text")
+    if not isinstance(text, dict):
+        raise MetadataError(f"{label}.text must be an object with 'title', 'keyword' and 'kicker'")
+    for field in ("title", "keyword", "kicker"):
+        if not isinstance(text.get(field), str):
+            raise MetadataError(f"{label}.text.{field} must be a string")
+    if not text["title"].strip() or not text["keyword"].strip():
+        raise MetadataError(f"{label}.text needs a non-empty title and keyword")
+    if concept.get("theme") not in ("tech", "creator"):
+        raise MetadataError(f"{label}.theme must be 'tech' or 'creator'")
+    source = concept.get("source")
+    if not isinstance(source, dict):
+        raise MetadataError(f"{label}.source must be an object with 'kind'")
+    kind = source.get("kind")
+    if kind == "clip_frame":
+        if not isinstance(source.get("timecode"), str):
+            raise MetadataError(f"{label}.source.timecode must be a string for kind 'clip_frame'")
+    elif kind != "new_photo":
+        raise MetadataError(f"{label}.source.kind must be 'clip_frame' or 'new_photo'")
 
 
 def normalize_timestamp(value):
@@ -237,6 +273,31 @@ def validate_chapters(chapters, srt_end):
     return normalized
 
 
+def validate_thumbnail_concepts(concepts, srt_end):
+    """Normalize clip-frame timecodes and check they lie inside the transcript; name the offending concept."""
+    normalized = []
+    for index, concept in enumerate(concepts):
+        copy = dict(concept)
+        source = dict(concept["source"])
+        if source["kind"] == "clip_frame":
+            raw = source["timecode"]
+            stamp = normalize_timestamp(raw)
+            if stamp is None:
+                raise MetadataError(
+                    f"thumbnail concept {index + 1} ('{concept['name']}') has an invalid timecode "
+                    f"('{raw}'); use HH:MM:SS or MM:SS"
+                )
+            if timestamp_seconds(stamp) > srt_end:
+                raise MetadataError(
+                    f"thumbnail concept {index + 1} ('{concept['name']}') timecode is beyond the "
+                    f"transcript end ({format_clock(srt_end)})"
+                )
+            source["timecode"] = stamp
+        copy["source"] = source
+        normalized.append(copy)
+    return normalized
+
+
 def build_description(fields, lang, members_sentence, previous_url):
     paragraphs = [fields["intro"][lang]]
     if fields["github_line"] is not None:
@@ -261,8 +322,32 @@ def build_markdown(name, fields, chapters, ro_description, en_description):
         lines.append(f"{index}. {title}")
     lines.extend([
         "",
-        "Thumbnail text: use the chosen title's keyword — the title and the thumbnail must say the same thing.",
+        "## Thumbnail",
         "",
+        "Own face + authentic emotion + short text, never a generic illustration.",
+        "Title and thumbnail must say the same thing.",
+        "",
+    ])
+    for index, concept in enumerate(fields["thumbnail_concepts"], 1):
+        source = concept["source"]
+        if source["kind"] == "clip_frame":
+            source_line = f"clip frame {source['timecode']} (grab it for --photo)"
+        else:
+            source_line = "new photo (shoot it for --photo)"
+        text = concept["text"]
+        lines.extend([
+            f"### {index}. {concept['name']}",
+            "",
+            f"- Pose: {concept['pose']}",
+            f"- Emotion: {concept['emotion']}",
+            f"- Text: title \"{text['title']}\" · keyword \"{text['keyword']}\" · kicker \"{text['kicker']}\"",
+            f"- Theme: {concept['theme']}",
+            f"- Source: {source_line}",
+            f"- thumbnail.py --photo <source> --title \"{text['title']}\" --keyword \"{text['keyword']}\" "
+            f"--kicker \"{text['kicker']}\" --theme {concept['theme']}",
+            "",
+        ])
+    lines.extend([
         "## Description RO",
         "",
         ro_description,
@@ -318,6 +403,9 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
 
     fields = validate_model_json(parse_model_json(response.text))
     chapters = validate_chapters(fields["chapters"], srt_end)
+    fields["thumbnail_concepts"] = validate_thumbnail_concepts(
+        fields["thumbnail_concepts"], srt_end
+    )
 
     ro_description = build_description(fields, "ro", members_sentence, previous_url)
     en_description = build_description(fields, "en", members_sentence, previous_url)
@@ -336,6 +424,7 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
         "titles": len(fields["titles"]),
         "chapters": len(chapters),
         "tags": len(fields["tags"]),
+        "thumbnail_concepts": len(fields["thumbnail_concepts"]),
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": get_client().spent_usd,
     }
