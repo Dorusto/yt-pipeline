@@ -15,21 +15,25 @@ Necesită: OPENROUTER_API_KEY în environment
 Necesită: pip install openai
 """
 
-import os
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-from openai import OpenAI
+from common.config import ConfigError
+from common.llm import LLMError, make_client
 
 BATCH_CHARS = 80000
 DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{6})")
 
-client = OpenAI(
-    api_key=os.environ["OPENROUTER_API_KEY"],
-    base_url="https://openrouter.ai/api/v1",
-)
+_client = None
+
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = make_client()
+    return _client
 
 
 def parse_srt(path):
@@ -77,12 +81,12 @@ REGULI:
 TRANSCRIPT BRUT ({date}):
 {transcript_text}"""
 
-    response = client.chat.completions.create(
-        model="deepseek/deepseek-v4-flash",
-        messages=[{"role": "user", "content": prompt}],
+    response = get_client().complete(
+        "summary",
+        [{"role": "user", "content": prompt}],
         temperature=0.3,
     )
-    return response.choices[0].message.content.strip()
+    return response.text.strip()
 
 
 def main():
@@ -110,22 +114,28 @@ def main():
 
     print(f"{len(days)} zile găsite: {', '.join(days.keys())}")
 
-    sections = []
-    for date, files in days.items():
-        print(f"\nProcesez {date} ({len(files)} fișier{'e' if len(files) > 1 else ''})...")
-        transcript_text = "\n".join(parse_srt(path) for _, path in files)
-        if len(transcript_text) > BATCH_CHARS:
-            print(f"  Transcript lung ({len(transcript_text)} chars) — trimit primele {BATCH_CHARS} chars")
-            transcript_text = transcript_text[:BATCH_CHARS]
-        summary = summarize_day(date, transcript_text)
-        sections.append(f"## {date}\n\n{summary}\n")
-        print("  ✓ rezumat generat")
+    try:
+        sections = []
+        for date, files in days.items():
+            print(f"\nProcesez {date} ({len(files)} fișier{'e' if len(files) > 1 else ''})...")
+            transcript_text = "\n".join(parse_srt(path) for _, path in files)
+            if len(transcript_text) > BATCH_CHARS:
+                print(f"  Transcript lung ({len(transcript_text)} chars) — trimit primele {BATCH_CHARS} chars")
+                transcript_text = transcript_text[:BATCH_CHARS]
+            summary = summarize_day(date, transcript_text)
+            sections.append(f"## {date}\n\n{summary}\n")
+            print("  ✓ rezumat generat")
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("# Rezumat pe zile\n\n")
-        f.write("\n".join(sections))
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("# Rezumat pe zile\n\n")
+            f.write("\n".join(sections))
 
-    print(f"\nSalvat: {output_path}")
+        print(f"\nSalvat: {output_path}")
+    except (ConfigError, LLMError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"LLM cost: ${get_client().spent_usd:.4f}")
 
 
 if __name__ == "__main__":

@@ -13,19 +13,23 @@ Necesita: OPENROUTER_API_KEY in environment
 Necesita: pip install openai
 """
 
-import os
 import re
 import sys
 from pathlib import Path
 
-from openai import OpenAI
+from common.config import ConfigError
+from common.llm import LLMError, make_client
 
 BATCH_SIZE = 20
 
-client = OpenAI(
-    api_key=os.environ["OPENROUTER_API_KEY"],
-    base_url="https://openrouter.ai/api/v1"
-)
+_client = None
+
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = make_client()
+    return _client
 
 
 def parse_srt(path):
@@ -55,12 +59,12 @@ def translate_batch(texts):
         "- Do not merge or split items\n\n"
         f"{numbered}"
     )
-    response = client.chat.completions.create(
-        model="deepseek/deepseek-v4-flash",
-        messages=[{"role": "user", "content": prompt}],
+    response = get_client().complete(
+        "translate",
+        [{"role": "user", "content": prompt}],
         temperature=0.3,
     )
-    result = response.choices[0].message.content.strip()
+    result = response.text.strip()
     translations = {}
     for line in result.splitlines():
         m = re.match(r"\[(\d+)\]\s*(.*)", line)
@@ -90,19 +94,25 @@ def main():
     texts = [s["text"].replace("\n", " ") for s in segments]
     translated_texts = {}
 
-    for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i:i + BATCH_SIZE]
-        print(f"Traduc segmentele {i+1}–{i+len(batch)}...")
-        result = translate_batch(batch)
-        for j, translation in result.items():
-            translated_texts[i + j] = translation
+    try:
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i:i + BATCH_SIZE]
+            print(f"Traduc segmentele {i+1}–{i+len(batch)}...")
+            result = translate_batch(batch)
+            for j, translation in result.items():
+                translated_texts[i + j] = translation
 
-    with open(output_file, "w", encoding="utf-8") as f:
-        for idx, seg in enumerate(segments):
-            translation = translated_texts.get(idx + 1, seg["text"])
-            f.write(f"{seg['num']}\n{seg['time']}\n{translation}\n\n")
+        with open(output_file, "w", encoding="utf-8") as f:
+            for idx, seg in enumerate(segments):
+                translation = translated_texts.get(idx + 1, seg["text"])
+                f.write(f"{seg['num']}\n{seg['time']}\n{translation}\n\n")
 
-    print(f"Salvat: {output_file}")
+        print(f"Salvat: {output_file}")
+    except (ConfigError, LLMError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"LLM cost: ${get_client().spent_usd:.4f}")
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ Read this before offering it:
 - The prompt inside the script is written in Romanian for a solo motorcycle trip dictated on the road or in a tent. The summary is a first-person Romanian diary, 150-400 words per day. For other kinds of footage the framing will be wrong.
 - Only the first 80,000 characters of each day are summarised. When it prints `Transcript lung ... trimit primele 80000 chars`, whatever was said later that day is not in the summary. Tell the user.
 - Needs `OPENROUTER_API_KEY`, one API call per day. The output file is written only at the end; an API error leaves nothing.
+- The model id comes from the `summary` role in `config.yaml` (`models:`); a missing role or a budget error prints `[error] ...` and exits 2.
 - Without the second argument the output is `rezumat_pe_zile.md` in the parent folder of the transcripts folder.
 - The summary is a map for navigation, not a source for quotes: it cleans up hesitations. Take exact quotes only from the raw `.srt`.
 
