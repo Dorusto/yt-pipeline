@@ -178,6 +178,27 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ---
 
+## Graphics overlays (graphics.py)
+
+`graphics.py` renders branded graphic overlays (lower third, counter, callout) as ProRes 4444 `.mov` files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0): a composition HTML per template in `assets/graphics/` is filled with the brand values from `brand.json` and the entry props, then rendered by the pinned `hyperframes@0.8.181` CLI. Skill: `yt-graphics`.
+
+```bash
+.venv/bin/python scripts/graphics.py --template lower_third \
+    --props '{"name":"Doru","role":"creator"}' --out /tmp/lt.mov --json
+.venv/bin/python scripts/graphics.py --template counter \
+    --props '{"number":"42","label":"clips"}' --out /tmp/counter.mov --duration 3
+.venv/bin/python scripts/graphics.py --template callout \
+    --props '{"text":"echo hello","style":"terminal"}' --out /tmp/callout.mov
+.venv/bin/python scripts/graphics.py --plan graphics_plan.json --out-dir overlays/ --json
+```
+
+- `--template` is `lower_third` (`name`, `role`), `counter` (`number`, `label`) or `callout` (`text`, optional `style` `text`/`terminal`). `--width`/`--height`/`--fps`/`--duration` default to `1920`/`1080`/`30`/`3.0` (`--duration` `> 0` and `<= 15`).
+- `--plan` renders only the `approved: true` entries of a `graphics_plan.json` (validated against `schemas/graphics_plan.schema.json`), one `<id>.mov` per entry in `--out-dir`.
+- `--backend hyperframes` (default) needs Node.js 22+ and npx; `--backend mock` is deterministic and offline (composed `index.html` + an ffmpeg transparent MOV). Every output is checked with ffprobe for an alpha pixel format (`yuva444p10le`/`yuva444p12le`).
+- The look comes from `brand.json` via `--brand`; a missing font file is a hard error naming the path and the brand key. The HyperFrames agent skills are not committed (the published set is ~19 MB); install them with `GIT_CLONE_PROTECTION_ACTIVE=0 npx skills add heygen-com/hyperframes --all` (pinned commit `908f2d095bba4e2b97363c5533e2702f1e92505d`).
+
+---
+
 ## Director (AI Director, phase S1)
 
 `director.py` turns the workspace `motion/` and `quality/` labels into an
