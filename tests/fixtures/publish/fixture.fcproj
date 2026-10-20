@@ -1,0 +1,180 @@
+{
+ "format": "filmcraft-project",
+ "schema_version": 1,
+ "generator": "fixture",
+ "project": {
+  "name": "Fixture",
+  "settings": {},
+  "root": {
+   "id": 0,
+   "name": "Fixture",
+   "children": [
+    {
+     "Item": 1
+    },
+    {
+     "Item": 2
+    },
+    {
+     "Item": 10
+    }
+   ]
+  },
+  "items": {
+   "1": {
+    "id": 1,
+    "name": "camera A.mp4",
+    "label": "Iris",
+    "kind": {
+     "Media": {
+      "media": {
+       "File": {
+        "path": "/footage/camera/camera A.mp4"
+       }
+      },
+      "info": {
+       "name": "camera A.mp4",
+       "kind": "Movie",
+       "duration": 15240960000000
+      }
+     }
+    },
+    "created": 0,
+    "metadata": {}
+   },
+   "2": {
+    "id": 2,
+    "name": "camera B.mp4",
+    "label": "Iris",
+    "kind": {
+     "Media": {
+      "media": {
+       "File": {
+        "path": "/footage/camera/camera B.mp4"
+       }
+      },
+      "info": {
+       "name": "camera B.mp4",
+       "kind": "Movie",
+       "duration": 15240960000000
+      }
+     }
+    },
+    "created": 0,
+    "metadata": {}
+   },
+   "10": {
+    "id": 10,
+    "name": "Main",
+    "label": "Forest",
+    "kind": {
+     "Sequence": {
+      "settings": {
+       "width": 1920,
+       "height": 1080,
+       "frame_rate": {
+        "num": 25,
+        "den": 1
+       }
+      },
+      "video_tracks": [
+       {
+        "id": 11,
+        "kind": "Video",
+        "name": "Video 1",
+        "items": []
+       }
+      ],
+      "audio_tracks": [
+       {
+        "id": 12,
+        "kind": "Audio",
+        "name": "Audio 1",
+        "items": [
+         {
+          "id": 20,
+          "item": 1,
+          "name": "camera A.mp4",
+          "label": "Iris",
+          "start": 0,
+          "duration": 1016064000000,
+          "source_in": 254016000000,
+          "speed": 1.0,
+          "reverse": false,
+          "enabled": true,
+          "link": null,
+          "group": null,
+          "markers": [],
+          "gain_db": 0.0,
+          "frame_hold": null,
+          "scale_to_frame": false
+         },
+         {
+          "id": 21,
+          "item": 2,
+          "name": "camera B.mp4",
+          "label": "Iris",
+          "start": 1016064000000,
+          "duration": 762048000000,
+          "source_in": 2540160000000,
+          "speed": 1.0,
+          "reverse": false,
+          "enabled": true,
+          "link": null,
+          "group": null,
+          "markers": [],
+          "gain_db": 0.0,
+          "frame_hold": null,
+          "scale_to_frame": false
+         },
+         {
+          "id": 22,
+          "item": 1,
+          "name": "camera A.mp4",
+          "label": "Iris",
+          "start": 2032128000000,
+          "duration": 508032000000,
+          "source_in": 2336947200000,
+          "speed": 1.0,
+          "reverse": false,
+          "enabled": true,
+          "link": null,
+          "group": null,
+          "markers": [],
+          "gain_db": 0.0,
+          "frame_hold": null,
+          "scale_to_frame": false
+         },
+         {
+          "id": 23,
+          "item": 2,
+          "name": "camera B.mp4",
+          "label": "Iris",
+          "start": 2540160000000,
+          "duration": 254016000000,
+          "source_in": 5080320000000,
+          "speed": 1.0,
+          "reverse": false,
+          "enabled": false,
+          "link": null,
+          "group": null,
+          "markers": [],
+          "gain_db": 0.0,
+          "frame_hold": null,
+          "scale_to_frame": false
+         }
+        ]
+       }
+      ],
+      "markers": [],
+      "caption_tracks": []
+     }
+    },
+    "created": 0,
+    "metadata": {}
+   }
+  },
+  "next_id": 30
+ },
+ "view": {}
+}
