@@ -41,7 +41,8 @@ Read `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, the D-phase status in `docs
 ## Loop for each task
 
 1. Pick the next smallest useful task in the current phase. One tool, one schema or one fix per task.
-2. Write the brief to `.opencode/tasks/D<phase>-<nn>-<slug>.md` with these sections:
+2. New technology: before a brief that uses a library, tool or API not yet used in the repo (or a new major version), look it up first: project skills in `.claude/skills/`, the `hyperframes` MCP for HyperFrames, `context7` for any other library. Copy the relevant excerpts and code examples into the brief under a "Reference" section; the coder sees only the brief.
+3. Write the brief to `.opencode/tasks/D<phase>-<nn>-<slug>.md` with these sections:
    - Goal (one or two sentences)
    - Files to create or change (exact paths)
    - Rules that apply, copied in full from CLAUDE.md, RULES.md, VISION.md and DECISIONS.md. The coder sees only the brief, so never write "see CLAUDE.md".
@@ -61,7 +62,7 @@ Read `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, the D-phase status in `docs
 
 - Changes touching more than 3 tightly coupled files.
 - Any change to `schemas/` or `scripts/common/`.
-- DECISIONS, RULES, ROADMAP, VISION and phase reports.
+- The final say on DECISIONS, RULES, ROADMAP, VISION and phase reports. The coder writes the draft from a short brief (facts, decisions, files touched); you review and correct it, you do not write it from scratch.
 
 ## Stop and ask Doru only when
 

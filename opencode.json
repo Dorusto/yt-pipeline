@@ -35,5 +35,13 @@
       "/root/.cache/yt-pipeline/**": "allow"
     },
     "doom_loop": "deny"
+  },
+  "agent": {
+    "explore": {
+      "model": "openrouter/deepseek/deepseek-v4.1-flash"
+    },
+    "general": {
+      "model": "openrouter/deepseek/deepseek-v4.1-flash"
+    }
   }
 }
