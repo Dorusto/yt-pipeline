@@ -5,6 +5,7 @@ budget. It holds no secrets: API keys stay in environment variables.
 """
 
 import math
+import os
 from pathlib import Path
 
 import yaml
@@ -23,6 +24,12 @@ class ConfigError(RuntimeError):
 def resolve_config_path(path=None):
     if path is not None:
         candidate = Path(path)
+        if candidate.exists():
+            return candidate
+        raise ConfigError(f"config file not found: {candidate}")
+    from_env = os.environ.get("YT_CONFIG")
+    if from_env:
+        candidate = Path(from_env)
         if candidate.exists():
             return candidate
         raise ConfigError(f"config file not found: {candidate}")
@@ -81,5 +88,18 @@ def _validate(data):
     backend = data.get("llm_backend")
     if backend not in VALID_BACKENDS:
         raise ConfigError("llm_backend must be 'openrouter' or 'mock'")
+
+    mock_text = data.get("llm_mock_text")
+    if mock_text is not None:
+        if isinstance(mock_text, str):
+            pass
+        elif isinstance(mock_text, dict):
+            for key, value in mock_text.items():
+                if not isinstance(key, str) or not key or not isinstance(value, str):
+                    raise ConfigError(
+                        "llm_mock_text must map non-empty role names to non-empty strings"
+                    )
+        else:
+            raise ConfigError("llm_mock_text must be a string or a mapping of role to string")
 
     return data

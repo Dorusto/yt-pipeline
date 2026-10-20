@@ -1939,3 +1939,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not B:** the brief names openai-whisper; faster-whisper stays the next candidate if CPU transcription speed ever matters.
 
 **Consequence:** real runs need `pip install openai-whisper` on the laptop; tests and offline runs use `--backend mock` and never touch a model. Word times from this run are the initial transcript only — the Shorts flow still takes word timing from WhisperX forced alignment on the corrected SRT.
+
+---
+
+## [2026-10-20] Offline mock text per role and a YT_CONFIG override (S51 lot 1)
+
+**Context:** `publish.py` must run end-to-end on the fixture with a mock LLM (issue #51 lot 1 acceptance). `llm_backend: mock` returned one fixed string, so structured consumers (`metadata.py` JSON, `translate_srt.py` `[N]` lines) could not run offline, and tests could not point a subprocess at a test config.
+
+**Options:** (A) recorder-style chain tests only (what `test_recap.py` does) and per-tool mock tests; (B) `llm_mock_text` in the config (a string for all roles or a role→text mapping) plus a `YT_CONFIG` env override in `resolve_config_path`; (C) a `--mock` flag on every tool.
+
+**Decision:** B. `MockClient` picks `texts[role]` and falls back to its default text; `make_client` wires `llm_mock_text` through; `YT_CONFIG` wins over the repo `config.yaml` and `config.yaml.example` (same pattern as `YT_SPEND_LEDGER`/`YT_WORKSPACE`). A chain test can now run `publish.py` as a real subprocess against the fixture with a canned metadata JSON and translate lines.
+
+**Why not A:** it would not exercise the real output handoff between stations. **Why not C:** the backend is config, never code.
+
+**Consequence:** offline end-to-end runs of any LLM tool work with one config file; production configs simply omit `llm_mock_text`.
