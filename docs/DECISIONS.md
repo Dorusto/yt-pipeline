@@ -2047,3 +2047,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** live taps would mix into the committed regression fixtures. **Why not C:** the issue names the expectations file, and `eval_edit.py` must be able to check what the taps said.
 
 **Consequence:** a phone review of the Shots tab becomes a file any agent can run (`eval_edit.py --expect WS/expectations.yaml`); curated expectations stay in `eval/`. The RULES serve line and the D2-19 expectations line grow the one write route and the workspace file.
+
+---
+
+## [2026-10-21] Mode B angles: paired edit.json slots sharing one id (S56 lot 1)
+
+**Context:** Issue #56 lot 1 has `rough_cut.py` write an `edit.json` (the existing schema) that `export_filmcraft.py` opens with "the screen on Video 1 and the camera on Video 2, the same cuts on both". The reference project lays every kept window on two parallel tracks at one timeline position. `edit.json` has one sequential `video[]` timeline and `additionalProperties: false` everywhere, so two clips at one timeline position are not representable with unique slots — and the issue forbids changing the schema ("the existing schema").
+
+**Options:** (A) extend `schemas/edit.schema.json` with a multi-angle field and teach every adapter; (B) encode the angle pair as two consecutive video slots sharing one `id` (screen first, then camera), understood by `export_filmcraft.py`; (C) only the camera angle in `edit.json`, the screen cloned by an export flag.
+
+**Decision:** B. `rough_cut.py` writes one slot per angle of a kept window, both with the window's `id`; `export_filmcraft.py`'s `build_timeline` groups consecutive video slots with the same `id`, gives the group one timeline start (the cursor advances once per group), routes the members to Screen 1 / Camera 1 as before, emits one audio clip from the first non-screen member and one marker per group (Green with the window's reason, Rose when any member is flagged). Unique-id slots — every existing edit — behave byte-for-byte as before (regression test on `tests/fixtures/filmcraft/edit.json`).
+
+**Why not A:** the schema is the interface the issue pins ("the existing schema"), and every adapter would need the multi-angle concept. **Why not C:** the pairing would live in a CLI flag instead of the edit list, breaking "edit.json is the only source of truth".
+
+**Consequence:** a rough-cut `edit.json` is consumable by `export_filmcraft.py` (and `eval_rough_cut.py`); `render.py`, `subs_from_edit.py` and the web app still treat slots sequentially and a Mode B rough cut is not rendered in this slice. A kept window's `reason` names the cut before it (`cut: pause 1.2 s`, `cut: filler 'deci'`, `cut: retake of w007`, `start: session`) and becomes the FilmCraft marker; every merged cut run is a rejected `decisions[]` entry. RULES.md grows the Mode B paired-slots line.
