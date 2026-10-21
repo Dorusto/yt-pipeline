@@ -225,6 +225,20 @@ def collect_words(plan, words_dir):
     return placements, words_dropped
 
 
+def attach_hyphen_suffixes(placements):
+    """Glue Whisper's split clitics back on: "task" + "-uri" -> "task-uri", "m" + "-am" -> "m-am"."""
+    merged = []
+    for item in placements:
+        if merged and item["word"].startswith("-") and len(item["word"]) > 1:
+            previous = dict(merged[-1])
+            previous["word"] = previous["word"] + item["word"]
+            previous["end"] = max(previous["end"], item["end"])
+            merged[-1] = previous
+        else:
+            merged.append(item)
+    return merged
+
+
 def layout_lines(words):
     """Greedily pack words into lines of at most ``MAX_LINE_CHARS`` characters."""
     lines = []
@@ -307,6 +321,7 @@ def run(fcproj, sequence, track, from_edit, words_dir, out_dir, name):
     output_name = name or default_name
 
     placements, words_dropped = collect_words(plan, words_dir)
+    placements = attach_hyphen_suffixes(placements)
     cues = build_cues(placements)
 
     out_path = Path(out_dir)

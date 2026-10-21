@@ -16,12 +16,15 @@ Necesita: pip install openai
 
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 
 BATCH_SIZE = 20
+WORKERS = 4
+MAX_LINE_CHARS = 42
 
 _client = None
 
@@ -49,6 +52,18 @@ def parse_srt(path):
     return segments
 
 
+def wrap_subtitle(text, width=MAX_LINE_CHARS):
+    """Lay a translated cue out as at most 2 lines, each at most ``width`` characters when it fits."""
+    words = text.split()
+    if len(" ".join(words)) <= width:
+        return " ".join(words)
+    # Pick the split that keeps the longer line shortest, so the two lines stay balanced.
+    best = min(range(1, len(words)),
+               key=lambda k: max(len(" ".join(words[:k])), len(" ".join(words[k:]))),
+               default=len(words))
+    return " ".join(words[:best]) + "\n" + " ".join(words[best:])
+
+
 def translate_batch(texts):
     numbered = "\n".join(f"[{i+1}] {t}" for i, t in enumerate(texts))
     prompt = (
@@ -57,6 +72,7 @@ def translate_batch(texts):
         "- Keep the [N] prefix on each line\n"
         "- Preserve the exact number of lines (one [N] per input line)\n"
         "- Natural, conversational English\n"
+        "- Keep each line about as long as the Romanian one; it is a subtitle read in a few seconds\n"
         "- Do not merge or split items\n\n"
         f"{numbered}"
     )
@@ -96,16 +112,17 @@ def main():
     translated_texts = {}
 
     try:
-        for i in range(0, len(texts), BATCH_SIZE):
-            batch = texts[i:i + BATCH_SIZE]
-            print(f"Traduc segmentele {i+1}–{i+len(batch)}...")
-            result = translate_batch(batch)
-            for j, translation in result.items():
-                translated_texts[i + j] = translation
+        starts = list(range(0, len(texts), BATCH_SIZE))
+        print(f"Traduc {len(texts)} segmente în {len(starts)} loturi, câte {WORKERS} odată...")
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            results = pool.map(lambda i: (i, translate_batch(texts[i:i + BATCH_SIZE])), starts)
+            for i, result in results:
+                for j, translation in result.items():
+                    translated_texts[i + j] = translation
 
         with open(output_file, "w", encoding="utf-8") as f:
             for idx, seg in enumerate(segments):
-                translation = translated_texts.get(idx + 1, seg["text"])
+                translation = wrap_subtitle(translated_texts.get(idx + 1, seg["text"]))
                 f.write(f"{seg['num']}\n{seg['time']}\n{translation}\n\n")
 
         print(f"Salvat: {output_file}")

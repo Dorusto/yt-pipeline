@@ -55,7 +55,7 @@ Field rules:
   - `name` — short label for the concept.
   - `pose` — what the face and body do in the shot.
   - `emotion` — a real, readable emotion (bucurie, surpriză, entuziasm, uimire, concentrare…), never "neutral" and never a flat stare.
-  - `text` — the thumbnail text of 3-4 words that says the same thing as the titles (the title and the thumbnail must say the same thing): row 1 `title`, row 2 `keyword`, and the small `kicker` line above them (`kicker` may be `""`).
+  - `text` — the thumbnail text of 3-4 words that says the same thing as the titles (the title and the thumbnail must say the same thing): row 1 `title`, row 2 `keyword`, and the small `kicker` line above them (`kicker` may be `""`). The concepts are alternatives to choose from, so their texts differ: each concept phrases the promise its own way (no two share both `title` and `keyword`), and at least one concept has a non-empty `kicker`.
   - `theme` — `tech` or `creator`.
   - `source` — either `{"kind": "clip_frame", "timecode": "HH:MM:SS"}`: a moment inside the transcript where that emotion shows (name the timecode where it fits), or `{"kind": "new_photo"}` when a new photo has to be shot for it.
   - The chosen concept maps directly to the `thumbnail.py` flags: `--photo` (the frame or the new photo), `--title`, `--keyword`, `--kicker`, `--theme`.

@@ -370,3 +370,17 @@ def test_from_edit_crossfade_clamps_to_half_neighbour(tmp_path, capsys):
         {"word": "a", "start": 0.5, "end": 0.9},
         {"word": "b", "start": 1.5, "end": 1.9},
     ]
+
+
+def test_hyphen_suffixes_glue_to_the_previous_word():
+    placements = [
+        {"word": "task", "start": 1.0, "end": 1.4},
+        {"word": "-uri", "start": 1.4, "end": 1.6},
+        {"word": "m", "start": 2.0, "end": 2.1},
+        {"word": "-am", "start": 2.1, "end": 2.3},
+        {"word": "oprit", "start": 2.4, "end": 2.8},
+    ]
+    merged = sfe.attach_hyphen_suffixes(placements)
+    assert [p["word"] for p in merged] == ["task-uri", "m-am", "oprit"]
+    assert merged[0]["end"] == 1.6
+    assert placements[0]["word"] == "task"
