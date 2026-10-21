@@ -11,6 +11,7 @@ import subs_from_edit as sfe
 
 FIXTURES = Path(__file__).parent / "fixtures" / "filmcraft"
 EDIT = FIXTURES / "edit.json"
+PAIR = FIXTURES / "pair_edit.json"
 PLAN = FIXTURES / "graphics_plan.json"
 TICKS = 254016000000
 
@@ -220,6 +221,51 @@ def test_sequence_settings_flags(tmp_path, capsys):
     settings = sequence["kind"]["Sequence"]["settings"]
     assert settings["width"] == 1280 and settings["height"] == 720
     assert settings["frame_rate"] == {"num": 30, "den": 1}
+
+
+def test_pair_slots_share_one_start(tmp_path, capsys):
+    out = tmp_path / "pair.fcproj"
+    rc = ef.main([str(PAIR), "--out", str(out), "--screen", "2026-10-17 22-25-44.mp4", "--json"])
+    assert rc == 0
+    project = json.loads(out.read_text(encoding="utf-8"))
+    tracks = tracks_of(project)
+    screen = tracks["Screen 1"]["items"]
+    camera = tracks["Camera 1"]["items"]
+    assert len(screen) == 1 and len(camera) == 1
+    assert screen[0]["start"] == camera[0]["start"] == 0
+    assert screen[0]["source_in"] == 1 * TICKS
+    assert camera[0]["source_in"] == int(round(1.35 * TICKS))
+    audio = tracks["Audio 1"]["items"]
+    assert len(audio) == 1
+    assert audio[0]["name"] == "camera 2026-10-17 22-25-44.mp4"
+    assert audio[0]["source_in"] == int(round(1.35 * TICKS))
+    markers = markers_of(project)
+    assert len(markers) == 1
+    assert markers[0]["comment"] == "start: session"
+    assert markers[0]["color"] == "Green"
+
+
+def test_pair_marker_is_rose_when_a_member_is_flagged(tmp_path, capsys):
+    edit = json.loads(PAIR.read_text(encoding="utf-8"))
+    edit["video"][1]["centred"] = True
+    path = tmp_path / "pair.json"
+    path.write_text(json.dumps(edit), encoding="utf-8")
+    out = tmp_path / "pair.fcproj"
+    rc = ef.main([str(path), "--out", str(out), "--screen", "2026-10-17 22-25-44.mp4", "--json"])
+    assert rc == 0
+    markers = markers_of(json.loads(out.read_text(encoding="utf-8")))
+    assert len(markers) == 1
+    assert markers[0]["color"] == "Rose"
+    assert markers[0]["comment"] == "centred cut"
+
+
+def test_unique_ids_clip_starts_unchanged(tmp_path, capsys):
+    rc, out, summary, err = run_export(tmp_path, capsys)
+    assert rc == 0
+    tracks = tracks_of(json.loads(out.read_text(encoding="utf-8")))
+    assert [item["start"] for item in tracks["Camera 1"]["items"]] == [0, 2 * TICKS]
+    assert [item["start"] for item in tracks["Screen 1"]["items"]] == [5 * TICKS]
+    assert [item["start"] for item in tracks["Audio 1"]["items"]] == [0, 5 * TICKS]
 
 
 def test_rerun_replaces_output(tmp_path, capsys):

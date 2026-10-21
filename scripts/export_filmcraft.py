@@ -107,18 +107,31 @@ def slot_length(slot):
 
 
 def build_timeline(document):
-    """Return the slots in timeline order with their real-time start and length."""
-    entries = []
-    cursor = 0.0
+    """Return groups of slots in timeline order with their real-time start and length.
+
+    Consecutive video slots sharing the same ``id`` are two angles of one cut
+    window: they form one group and share one timeline start.
+    """
+    groups = []
+    current = None
     for slot in document.get("video") or []:
         kind = slot.get("kind")
         if kind not in (None, "video", "photo"):
             continue
-        length = slot_length(slot)
-        entries.append({"slot": slot, "kind": "photo" if kind == "photo" else "video",
-                        "start_s": cursor, "length_s": length})
-        cursor += length
-    return entries
+        entry = {"slot": slot, "kind": "photo" if kind == "photo" else "video"}
+        slot_id = slot.get("id")
+        if (current is not None and entry["kind"] == "video" and current["kind"] == "video"
+                and slot_id is not None and slot_id == current["slots"][0]["slot"].get("id")):
+            current["slots"].append(entry)
+        else:
+            current = {"kind": entry["kind"], "slots": [entry]}
+            groups.append(current)
+    cursor = 0.0
+    for group in groups:
+        group["start_s"] = cursor
+        group["length_s"] = slot_length(group["slots"][0]["slot"])
+        cursor += group["length_s"]
+    return groups
 
 
 def is_screen_slot(slot, screen_names):
@@ -275,7 +288,10 @@ def collect_overlays(document, timeline, graphics_plan_path, graphics_dir):
             })
         return overlays
 
-    by_slot = {entry["slot"].get("id"): entry for entry in timeline}
+    by_slot = {}
+    for group in timeline:
+        for entry in group["slots"]:
+            by_slot[entry["slot"].get("id")] = {"start_s": group["start_s"], "length_s": group["length_s"]}
     for overlay in document.get("graphics") or []:
         slot_id = overlay.get("slot")
         if slot_id is not None:
@@ -356,45 +372,71 @@ def build_project(document, options):
     slots_placed = 0
     photos_placed = 0
 
-    for entry in timeline:
-        slot = entry["slot"]
-        start_ticks = seconds_to_ticks(entry["start_s"])
-        duration_ticks = seconds_to_ticks(entry["length_s"])
-        if entry["kind"] == "photo":
-            name = slot.get("photo")
-            item_id = media_ids.get(name)
-            if item_id is None:
-                warnings.append(f"photo slot '{slot.get('id')}': source '{name}' is not in sources[]")
-                continue
-            clip = make_clip(counter, item_id, name, start_ticks, duration_ticks, 0)
-            counter += 1
-            camera_track["items"].append(clip)
-            photos_placed += 1
-            warnings.append(f"photo slot '{slot.get('id')}': Ken Burns move is not exported")
-        else:
+    for group in timeline:
+        start_ticks = seconds_to_ticks(group["start_s"])
+        duration_ticks = seconds_to_ticks(group["length_s"])
+        first = group["slots"][0]
+        for entry in group["slots"]:
+            slot = entry["slot"]
+            if entry["kind"] == "photo":
+                name = slot.get("photo")
+                item_id = media_ids.get(name)
+                if item_id is None:
+                    warnings.append(f"photo slot '{slot.get('id')}': source '{name}' is not in sources[]")
+                    continue
+                clip = make_clip(counter, item_id, name, start_ticks, duration_ticks, 0)
+                counter += 1
+                camera_track["items"].append(clip)
+                photos_placed += 1
+                warnings.append(f"photo slot '{slot.get('id')}': Ken Burns move is not exported")
+            else:
+                name = slot.get("clip")
+                item_id = media_ids.get(name)
+                if item_id is None:
+                    warnings.append(f"video slot '{slot.get('id')}': source '{name}' is not in sources[]")
+                    continue
+                source_in_ticks = seconds_to_ticks(slot["in_s"])
+                target = screen_track if is_screen_slot(slot, screen_names) else camera_track
+                target["items"].append(make_clip(counter, item_id, name, start_ticks, duration_ticks, source_in_ticks))
+                counter += 1
+                slots_placed += 1
+                flag = speed_flagged(slot)
+                if flag:
+                    warnings.append(f"slot '{slot.get('id')}': {flag} exported at real time")
+
+        video_members = [entry for entry in group["slots"] if entry["kind"] == "video"]
+        if video_members:
+            audio_member = next(
+                (entry for entry in video_members if not is_screen_slot(entry["slot"], screen_names)),
+                video_members[0],
+            )
+            slot = audio_member["slot"]
             name = slot.get("clip")
             item_id = media_ids.get(name)
-            if item_id is None:
-                warnings.append(f"video slot '{slot.get('id')}': source '{name}' is not in sources[]")
-                continue
-            source_in_ticks = seconds_to_ticks(slot["in_s"])
-            target = screen_track if is_screen_slot(slot, screen_names) else camera_track
-            target["items"].append(make_clip(counter, item_id, name, start_ticks, duration_ticks, source_in_ticks))
-            counter += 1
-            audio_track["items"].append(make_clip(counter, item_id, name, start_ticks, duration_ticks, source_in_ticks))
-            counter += 1
-            slots_placed += 1
-            flag = speed_flagged(slot)
-            if flag:
-                warnings.append(f"slot '{slot.get('id')}': {flag} exported at real time")
+            if item_id is not None:
+                source_in_ticks = seconds_to_ticks(slot["in_s"])
+                audio_track["items"].append(make_clip(counter, item_id, name, start_ticks, duration_ticks, source_in_ticks))
+                counter += 1
 
-        reason = (slot.get("reason") or "").strip()
+        for entry in group["slots"][1:]:
+            if abs(slot_length(entry["slot"]) - group["length_s"]) > 1e-9:
+                warnings.append(f"slot '{entry['slot'].get('id')}': length differs from its pair")
+
+        reason = (first["slot"].get("reason") or "").strip()
         if not reason:
             continue
-        key = slot_key(slot)
-        flag = speed_flagged(slot) if entry["kind"] == "video" else None
-        if entry["kind"] == "video" and slot.get("centred"):
-            flag = "centred cut"
+        key = slot_key(first["slot"])
+        flag = None
+        for entry in group["slots"]:
+            if entry["kind"] != "video":
+                continue
+            member_flag = speed_flagged(entry["slot"])
+            if member_flag:
+                flag = member_flag
+                break
+            if entry["slot"].get("centred"):
+                flag = "centred cut"
+                break
         if flag:
             markers.append(make_marker(counter, start_ticks, f"redo {key}", flag, ROSE))
         else:
