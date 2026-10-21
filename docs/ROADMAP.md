@@ -59,6 +59,5 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 ## Next
 
-- Set the cron watchdog to `--run-cap 2` per run (the per-run cap shipped in S51 lot 0, 2026-10-20).
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
 - Mode B next: the remaining D3 light edits (trim per shot); run the whole chain on the Second Brain clip the day its edit is finished (S59 made the tools fit it); the devlog clip (gate lifted 2026-10-21) and the long-clip burned captions stay on the list.

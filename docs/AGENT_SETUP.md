@@ -152,10 +152,10 @@ The server URL comes from `NTFY_URL` and defaults to `http://10.10.1.61:8090/ope
 ```bash
 git -C ~/projects/yt-pipeline worktree add --detach ~/yt-watchdog origin/master
 mkdir -p ~/.cache/yt-pipeline
-( crontab -l 2>/dev/null; echo '*/15 * * * * cd ~/yt-watchdog/scripts && python3 agent_watchdog.py --repo ~/projects/yt-pipeline --kill-over-usd 2 --kill-no-commit-hours 1.5 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
+( crontab -l 2>/dev/null; echo '*/15 * * * * cd ~/yt-watchdog/scripts && python3 agent_watchdog.py --repo ~/projects/yt-pipeline --run-cap 6 --lot "S59" --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
 ```
 
-`--kill-over-usd X` stops every `opencode` process when today's OpenRouter spend passes X dollars; `--kill-no-commit-hours H` stops it after H hours without a commit. Both are off unless given. The agent's uncommitted changes stay in the working tree; save them on a branch before starting another run.
+`--spend-usd X` is the daily spend threshold for the alert (default 3); `--kill-over-usd X` stops every `opencode` process when today's OpenRouter spend passes X dollars; `--kill-no-commit-hours H` stops it after H hours without a commit; `--run-cap X --lot NAME` is the hard cap for the current agent run (spend since the run started, from the run-spend ledger) with the lot name in the `Budget` and `Blocked` alerts — update the `--lot` label when a new run starts. The kill flags and the run cap are off unless given. The agent's uncommitted changes stay in the working tree; save them on a branch before starting another run.
 
 Update it later with `git -C ~/yt-watchdog checkout --detach origin/master` after a `git fetch`.
 
