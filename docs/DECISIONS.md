@@ -2113,3 +2113,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** expectations are per-shot edit checks; cut review is per-cut-run and needs the clip/window. **Why not C:** the taps would not change the next rough cut.
 
 **Consequence:** a phone review of the Cuts tab becomes a file both Mode B tools read; `schemas/` is unchanged (`decisions[]` stays frozen, cut words are derived at render time from `sessions.yaml` + the word JSONs).
+
+---
+
+## [2026-10-21] chapters.json is the chapter source of truth (S57 lot 2)
+
+**Context:** Issue #57 lot 2 needs the topic chapters of a Mode B rough cut as a file the FilmCraft export can place as section markers and the publish kit can reuse, instead of asking the model for chapters again in `metadata.py`. The chapter rules already exist in `prompts/metadata.md` (first chapter at 0, non-decreasing, titles at most 40 characters, real topic changes).
+
+**Options:** (A) ask the model again in `metadata.py` and keep chapters only in the publish draft; (B) a `chapters.json` written by a new `chapters.py` station (role `metadata`, one pass over the kept transcript in timeline time) that `export_filmcraft.py --chapters` and `mode_b.py` consume; (C) hard-code chapter times from the cut reasons.
+
+**Decision:** B. `scripts/chapters.py edit.json WORDS [--out chapters.json] [--json]` maps the per-source Whisper words onto the edit timeline (the `subs_from_edit.py` midpoint rule; a Mode B pair is one window and its words are counted once), builds the kept transcript as `[MM:SS.d] words…` lines and asks the `metadata` role once (temperature 0.3, retry once on unparseable output). The first chapter is snapped to 0, starts must be non-decreasing and inside the transcript, titles are 1–40 and summaries 1–200 characters after strip; the file is validated against `schemas/chapters.schema.json` before the atomic write. `export_filmcraft.py --chapters` adds one Green section marker per chapter (`name` = title, `comment` = summary) and reports `markers.sections`; `mode_b.py` runs `chapters.py` between the rough cut and the export and passes `--chapters` when the file exists.
+
+**Why not A:** the publish kit would ask the model for the same chapters a second time and the two answers could disagree. **Why not C:** chapter times are a content judgement, not a cut artefact.
+
+**Consequence:** `chapters.json` is the chapter source of truth from `chapters.py`; the publish kit can read it instead of asking again (a later task), and the FilmCraft project opens with the chapters as Green section markers. `schemas/` and `scripts/common/` are unchanged.

@@ -81,15 +81,18 @@ referenced by path, never embedded.
 .venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj --json
 .venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
   --graphics-plan graphics_plan.json --graphics-dir overlays/ --sequence Main
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+  --chapters chapters.json
 ```
 
 - `--out` is required and written atomically (temp file + `os.replace`), so re-running is safe; an `--out` that would overwrite a source file is refused (exit 2).
 - `--graphics-plan` places the `approved: true` entries as overlays; `--graphics-dir` holds the rendered `<entry id>.mov` files. `--sequence` (default `Main`), `--width`/`--height`/`--fps` (default `1920`/`1080`/`25`) set the sequence. `--screen FILE` (repeatable) marks a source as screen capture; a clip whose name contains `screen` is treated as screen too.
+- `--chapters FILE` loads a `chapters.json` (validated against `schemas/chapters.schema.json`; a bad file is exit 2) and adds one Green section marker per chapter at `seconds_to_ticks(start_s)`, with `name` = the chapter title and `comment` = its summary. Without the flag the output is unchanged.
 - Track layout: `Camera 1` (video slots), `Screen 1` (screen slots), `Audio 1` (each video slot's own audio), `Graphics 1` (overlays) above the picture.
-- Markers: one Green marker per used slot with a reason, at the slot's timeline in-point; a slot flagged for a human check (`centred: true` or a speed ramp) gets a Rose "to redo" marker **instead of** its Green; one Mango marker per placed overlay. Rejected `decisions[]` have no timeline position and get no marker. `fcproj_markers.py` maps the colours into `markers.json`/`todo.md` (Rose = the redo list).
+- Markers: one Green marker per used slot with a reason, at the slot's timeline in-point; a slot flagged for a human check (`centred: true` or a speed ramp) gets a Rose "to redo" marker **instead of** its Green; one Mango marker per placed overlay; with `--chapters`, one Green section marker per chapter. Rejected `decisions[]` have no timeline position and get no marker. `fcproj_markers.py` maps the colours into `markers.json`/`todo.md` (Rose = the redo list).
 - Missing media is a **warning**, not an error: the project still opens with offline media. Photo slots export as stills with a "Ken Burns not exported" warning; speed ramps export at real time with a warning.
 - `filmcraft-cli` is only needed to OPEN or inspect the result (resolved from `$FILMCRAFT_CLI` else PATH); the export itself never calls it.
-- `--json` reports `output`, `sequence`, `tracks`, `slots_placed`, `photos_placed`, `overlays_placed`, `markers` (`green`/`rose`/`mango`), `missing_media`, `warnings`, `route: "json"`, `wall_time_s`, `llm_cost_usd` (`0.0`).
+- `--json` reports `output`, `sequence`, `tracks`, `slots_placed`, `photos_placed`, `overlays_placed`, `markers` (`green`/`rose`/`mango`, plus `sections` when `--chapters` is given), `missing_media`, `warnings`, `route: "json"`, `wall_time_s`, `llm_cost_usd` (`0.0`).
 - On this machine the scripts need `.venv/bin/python` — the system `python3` has no `jsonschema`.
 
 ## What is out of scope

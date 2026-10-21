@@ -1,9 +1,17 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 import mode_b
+
+MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mode_b" / "mock_config.yaml"
+
+
+@pytest.fixture(autouse=True)
+def mock_llm_config(monkeypatch):
+    monkeypatch.setenv("YT_CONFIG", str(MOCK_CONFIG))
 
 
 def make_camera(folder, name):
@@ -143,7 +151,7 @@ def test_end_to_end_mock(tmp_path, capsys):
     assert summary["ok"] is True
     assert summary["sessions"] == 2
     assert summary["transcribed"] == 2
-    assert summary["skipped"] == {"transcribe": 0, "rough_cut": False, "export": False}
+    assert summary["skipped"] == {"transcribe": 0, "rough_cut": False, "chapters": 0, "export": False}
     assert isinstance(summary["wall_time_s"], float)
     assert summary["llm_cost_usd"] == 0.0
     out_dir = folder / "mode_b"
@@ -188,7 +196,7 @@ def test_second_run_skips_everything(tmp_path, capsys):
     assert code == 0
     summary = json.loads(out)
     assert summary["transcribed"] == 0
-    assert summary["skipped"] == {"transcribe": 1, "rough_cut": True, "export": True}
+    assert summary["skipped"] == {"transcribe": 1, "rough_cut": True, "chapters": 1, "export": True}
 
 
 def test_force_reruns(tmp_path, capsys):
@@ -201,7 +209,7 @@ def test_force_reruns(tmp_path, capsys):
     assert code == 0
     summary = json.loads(out)
     assert summary["transcribed"] == 1
-    assert summary["skipped"] == {"transcribe": 0, "rough_cut": False, "export": False}
+    assert summary["skipped"] == {"transcribe": 0, "rough_cut": False, "chapters": 0, "export": False}
 
 
 def test_transcribe_only_missing_words(tmp_path, capsys):
@@ -256,4 +264,78 @@ def test_failing_step_exit_2(tmp_path, capsys):
     assert code == 2
     assert "[error]" in err
     assert "rough_cut failed" in err
+    assert json.loads(out)["ok"] is False
+
+
+def test_chapters_step_runs_and_writes_file(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    out_dir = folder / "mode_b"
+    assert (out_dir / "chapters.json").is_file()
+    assert summary["outputs"]["chapters"] == str(out_dir / "chapters.json")
+    assert summary["skipped"]["chapters"] == 0
+
+
+def test_second_run_skips_chapters(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["skipped"]["chapters"] == 1
+
+
+def test_force_reruns_chapters(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    code, out, err = run_main([str(folder), "--backend", "mock", "--force", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["skipped"]["chapters"] == 0
+
+
+def test_project_receives_chapter_markers(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    project = json.loads((folder / "mode_b" / "project.fcproj").read_text(encoding="utf-8"))
+    sequence = next(
+        value for value in project["project"]["items"].values() if "Sequence" in value["kind"]
+    )
+    markers = sequence["kind"]["Sequence"]["markers"]
+    sections = [marker for marker in markers if marker["name"] == "Intro"]
+    assert len(sections) == 1
+    assert sections[0]["color"] == "Green"
+    assert sections[0]["comment"] == "Start."
+
+
+def test_failing_chapters_step_exit_2(tmp_path, capsys, monkeypatch):
+    config = {
+        "models": {"metadata": "mock-model"},
+        "llm_budget_usd": None,
+        "llm_backend": "mock",
+        "llm_mock_text": {"metadata": "not json"},
+    }
+    config_path = tmp_path / "bad_config.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setenv("YT_CONFIG", str(config_path))
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 2
+    assert "[error]" in err
+    assert "chapters failed" in err
     assert json.loads(out)["ok"] is False

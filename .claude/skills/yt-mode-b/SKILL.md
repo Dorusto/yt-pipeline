@@ -1,6 +1,6 @@
 ---
 name: yt-mode-b
-description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Also scores a rough cut against a hand-made FilmCraft edit of the same material (precision/recall, the sessions and sections the reference did not use, the biggest disagreements). Also runs the whole flow on a folder of OBS recordings in one command (mode_b.py transcribes what has no words JSON yet, rough-cuts it and exports the FilmCraft project). Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, run the whole Mode B flow on a folder in one command, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "rulează tot fluxul Mode B", "mode_b.py", "one command Mode B", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
+description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Also writes the edit's topic chapters (chapters.py, one LLM pass, chapters.json) and scores a rough cut against a hand-made FilmCraft edit of the same material (precision/recall, the sessions and sections the reference did not use, the biggest disagreements). Also runs the whole flow on a folder of OBS recordings in one command (mode_b.py transcribes what has no words JSON yet, rough-cuts it, writes chapters.json and exports the FilmCraft project). Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, write the chapters of a rough cut, run the whole Mode B flow on a folder in one command, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "fă capitolele montajului", "chapters.json", "rulează tot fluxul Mode B", "mode_b.py", "one command Mode B", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
 compatibility: Run from the repository root. Needs the repo .venv, PyYAML and ffprobe (for media duration and container start time; missing media is a warning, not an error). No model is called unless --llm is given, and --llm only proposes cuts for human approval — it never changes the edit.
 ---
 
@@ -49,7 +49,42 @@ When a session has a screen file, each kept window becomes a pair of slots shari
   --screen "2026-10-17 22-25-44.mp4" --json
 ```
 
-`--screen` names the screen source file (the OBS file without the `camera ` prefix does not contain the `screen` token, so pass it explicitly). The export reports `slots_placed` and `markers.green`; a pair contributes two slots and one marker.
+`--screen` names the screen source file (the OBS file without the `camera ` prefix does not contain the `screen` token, so pass it explicitly). The export reports `slots_placed` and `markers.green`; a pair contributes two slots and one marker. `--chapters chapters.json` adds one Green section marker per chapter (see below).
+
+## Chapters (`chapters.py`)
+
+```bash
+.venv/bin/python scripts/chapters.py edit.json words/ --json
+.venv/bin/python scripts/chapters.py edit.json words/ --out chapters.json
+```
+
+`chapters.py` turns the kept transcript of an edit into topic chapters with one
+`metadata` LLM pass and writes `chapters.json` (validated against
+`schemas/chapters.schema.json`). It is the chapter source of truth: the publish
+kit can take its chapters from this file instead of asking the model again, and
+`export_filmcraft.py --chapters` places one Green section marker per chapter.
+
+- `edit.json` is the edit list (validated against `schemas/edit.schema.json`).
+- `WORDS` is a Whisper word JSON or a folder of them; for a slot whose `clip` is
+  `X.mp4` the words file is `X.json` or `X_words.json` inside that folder.
+- The words are mapped onto timeline time with the same midpoint rule
+  `subs_from_edit.py` uses: consecutive video slots sharing one `id` (a Mode B
+  pair) are one timeline window and their words are counted once, from the angle
+  whose clip stem matches a words file. A slot with `speed`/`middle_speed` != 1
+  or a reverse flag is exit 2 (word times would not map linearly).
+- The chapter rules of `prompts/metadata.md` apply: the first chapter starts at
+  0 (snapped), starts never decrease, titles are at most 40 characters and mark
+  real topic changes; each chapter carries a one-line summary (at most 200
+  characters). The model output is retried once when it is not parseable JSON.
+- `--out` (default `chapters.json` next to the edit) is written atomically;
+  re-running with the same inputs rewrites the same file, only `generated_at`
+  changes.
+- `--json` reports `outputs.chapters`, `chapters`, `words_mapped`, `warnings`,
+  `wall_time_s`, `llm_cost_usd`.
+- Exit codes: `0` success, `2` user error (missing/invalid edit, no words found,
+  empty kept transcript, a chapter rule violation, unparseable model output
+  after one retry, LLM budget reached). Errors print `[error] <message>` on
+  stderr and write nothing.
 
 ## Eval against a hand edit (`eval_rough_cut.py`)
 
@@ -81,19 +116,23 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 `mode_b.py` is the Mode B front door: it scans `FOLDER` for `camera ...` files
 (plus an optional sibling screen file whose stem is the camera stem without the
 `camera ` prefix), transcribes every session with no words JSON yet, writes
-`<out-dir>/sessions.yaml`, runs `rough_cut.py` and exports `project.fcproj`. It
-chains the three station CLIs as subprocesses and imports none of them.
+`<out-dir>/sessions.yaml`, runs `rough_cut.py`, writes `<out-dir>/chapters.json`
+with `chapters.py` and exports `project.fcproj` (passing `--chapters` when the
+file exists). It chains the station CLIs as subprocesses and imports none of
+them.
 
 - `--out-dir` (default `<FOLDER>/mode_b/`) holds `words/`, `sessions.yaml`,
-  `edit.json`, `project.fcproj` and (with `--llm`) `rough_cut_proposals.json`.
+  `edit.json`, `chapters.json`, `project.fcproj` and (with `--llm`)
+  `rough_cut_proposals.json`.
 - `--backend` is passed to `transcribe.py` (`mock` for offline runs).
 - `--config` and `--llm` are passed to `rough_cut.py`.
 - Skip rule: a step is skipped when its output exists (`--force` re-runs every
   step). A failing step stops the run (exit `2`) and the next run resumes at it.
-- `--json` reports `outputs` (`words_dir`, `sessions`, `edit`, `project`),
-  `sessions`, `transcribed`, `skipped` (`transcribe` count, `rough_cut`/`export`
-  bools), `warnings`, `wall_time_s`, `llm_cost_usd`. On success the last human
-  line is `project: <path>`.
+- `--json` reports `outputs` (`words_dir`, `sessions`, `edit`, `chapters`,
+  `project`), `sessions`, `transcribed`, `skipped` (`transcribe` count,
+  `rough_cut`/`export` bools, `chapters` count), `warnings`, `wall_time_s`,
+  `llm_cost_usd` (the rough-cut and chapters child costs added up). On success
+  the last human line is `project: <path>`.
 - Exit codes: `0` success, `2` user error (missing folder, no camera files, a
   failing step). Errors print `[error] <message>` on stderr and write nothing.
 

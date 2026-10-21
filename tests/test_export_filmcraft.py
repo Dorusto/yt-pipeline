@@ -276,6 +276,52 @@ def test_rerun_replaces_output(tmp_path, capsys):
     assert out.read_text(encoding="utf-8") == first
 
 
+def write_chapters(tmp_path, chapters):
+    path = tmp_path / "chapters.json"
+    path.write_text(
+        json.dumps({
+            "schema_version": "0.1",
+            "generated_at": "2026-10-21T00:00:00+00:00",
+            "tool": "scripts/chapters.py",
+            "chapters": chapters,
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_chapters_place_section_markers(tmp_path, capsys):
+    chapters = write_chapters(tmp_path, [
+        {"start_s": 0.0, "title": "Intro", "summary": "Start."},
+        {"start_s": 2.5, "title": "Demo", "summary": "Demo."},
+    ])
+    rc, out, summary, err = run_export(tmp_path, capsys, extra=["--chapters", str(chapters)])
+    assert rc == 0
+    assert summary["markers"]["sections"] == 2
+    markers = markers_of(json.loads(out.read_text(encoding="utf-8")))
+    sections = [marker for marker in markers if marker["name"] in ("Intro", "Demo")]
+    assert [marker["name"] for marker in sections] == ["Intro", "Demo"]
+    assert all(marker["color"] == "Green" for marker in sections)
+    assert sections[0]["start"] == 0
+    assert sections[1]["start"] == int(round(2.5 * TICKS))
+    assert sections[0]["comment"] == "Start."
+    assert sections[1]["comment"] == "Demo."
+
+
+def test_without_chapters_no_sections_key(tmp_path, capsys):
+    rc, out, summary, err = run_export(tmp_path, capsys)
+    assert rc == 0
+    assert "sections" not in summary["markers"]
+
+
+def test_bad_chapters_is_exit_2(tmp_path, capsys):
+    bad = tmp_path / "bad_chapters.json"
+    bad.write_text('{"chapters": []}', encoding="utf-8")
+    rc = ef.main([str(EDIT), "--out", str(tmp_path / "o.fcproj"), "--chapters", str(bad), "--json"])
+    assert rc == 2
+    assert "chapters" in capsys.readouterr().err
+
+
 def test_missing_edit_is_exit_2(tmp_path, capsys):
     rc = ef.main([str(tmp_path / "nope.json"), "--out", str(tmp_path / "o.fcproj"), "--json"])
     assert rc == 2

@@ -9,12 +9,13 @@ Usage:
 ``mode_b.py`` is the single entry point for the Mode B flow: it scans a folder
 of OBS recordings (a ``camera ...`` file plus an optional sibling screen file),
 transcribes every session that has no words JSON yet, writes the sessions
-manifest, runs ``rough_cut.py`` and exports the result with
-``export_filmcraft.py``. It chains the three station CLIs as subprocesses and
-imports none of them. Every step is skipped when its output already exists
-(``--force`` re-runs everything); a failing step stops the run and the next run
-resumes at it. Originals are read-only; everything is written under ``--out-dir``
-(default ``<FOLDER>/mode_b/``).
+manifest, runs ``rough_cut.py``, writes ``chapters.json`` with
+``chapters.py`` and exports the result with ``export_filmcraft.py``. It chains
+the station CLIs as subprocesses and imports none of them. Every step is
+skipped when its output already exists (``--force`` re-runs everything); a
+failing step stops the run and the next run resumes at it. Originals are
+read-only; everything is written under ``--out-dir`` (default
+``<FOLDER>/mode_b/``).
 """
 
 import argparse
@@ -227,7 +228,7 @@ def rough_cut_command(sessions_path, edit_path, config, use_llm):
     return command
 
 
-def export_command(edit_path, project_path, sessions):
+def export_command(edit_path, project_path, sessions, chapters_path=None):
     command = [
         sys.executable,
         "scripts/export_filmcraft.py",
@@ -238,8 +239,22 @@ def export_command(edit_path, project_path, sessions):
     for session in sessions:
         if session["screen"] is not None:
             command += ["--screen", session["screen"].name]
+    if chapters_path is not None and Path(chapters_path).is_file():
+        command += ["--chapters", str(chapters_path)]
     command.append("--json")
     return command
+
+
+def chapters_command(edit_path, words_dir, chapters_path):
+    return [
+        sys.executable,
+        "scripts/chapters.py",
+        str(edit_path),
+        str(words_dir),
+        "--out",
+        str(chapters_path),
+        "--json",
+    ]
 
 
 def run(folder, out_dir, backend, config, use_llm, force):
@@ -281,9 +296,26 @@ def run(folder, out_dir, backend, config, use_llm, force):
             warnings.extend(data.get("warnings") or [])
 
     project_path = out_dir / "project.fcproj"
+    chapters_path = out_dir / "chapters.json"
+    chapters_skipped = int(chapters_path.is_file() and not force)
+    if not chapters_skipped:
+        code, stdout, stderr = run_command(
+            chapters_command(edit_path, words_dir, chapters_path)
+        )
+        if code != 0:
+            raise ModeBError(step_error("chapters", edit_path.name, code, stderr))
+        data = parse_child_json(stdout)
+        if isinstance(data, dict):
+            value = data.get("llm_cost_usd")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                llm_cost += float(value)
+            warnings.extend(data.get("warnings") or [])
+
     export_skipped = project_path.is_file() and not force
     if not export_skipped:
-        code, stdout, stderr = run_command(export_command(edit_path, project_path, sessions))
+        code, stdout, stderr = run_command(
+            export_command(edit_path, project_path, sessions, chapters_path)
+        )
         if code != 0:
             raise ModeBError(step_error("export", edit_path.name, code, stderr))
         data = parse_child_json(stdout)
@@ -297,6 +329,7 @@ def run(folder, out_dir, backend, config, use_llm, force):
             "words_dir": str(words_dir),
             "sessions": str(sessions_path),
             "edit": str(edit_path),
+            "chapters": str(chapters_path),
             "project": str(project_path),
         },
         "sessions": len(sessions),
@@ -304,6 +337,7 @@ def run(folder, out_dir, backend, config, use_llm, force):
         "skipped": {
             "transcribe": skipped_transcribe,
             "rough_cut": rough_cut_skipped,
+            "chapters": chapters_skipped,
             "export": export_skipped,
         },
         "warnings": warnings,
