@@ -2,7 +2,7 @@
 
 ## Current status
 
-Pipeline fully functional for end-to-end clip processing (transcription → correction → translation → metadata → 9:16 shorts) and for the AI Director track (D0–D2 done, D3–D6 open). The S51 publish-kit sprint is in progress on branch `sprint-publish-kit`: lots 0–4 done (watchdog per-run cap, publish chain, `matte.py`, HyperFrames graphics, licence + docs), lots 5–6 open; one PR to master at the end of the sprint (Doru merges).
+Pipeline fully functional for end-to-end clip processing (transcription → correction → translation → metadata → 9:16 shorts) and for the AI Director track (D0–D2 done, D3–D6 open). The S51 publish-kit sprint is done on branch `sprint-publish-kit` (lots 0–6: watchdog per-run cap, publish chain, `matte.py`, HyperFrames graphics, licence + docs, FilmCraft bridge, `publish.py --kit`); PR #53 to master is open for Doru to review and merge.
 
 **Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
@@ -32,7 +32,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 **D6-48 (2026-10-17, pulled forward by Doru):** `scripts/thumbnail.py` + `brand.json` + `schemas/brand.schema.json` + `yt-thumbnail` skill — portrait + title → branded 1280x720 thumbnail (two themes, rembg `birefnet-portrait` cut-out, layered `thumbnail.psd` via psd-tools) — see [`reports/D6-48-REPORT.md`](reports/D6-48-REPORT.md). Doru runs it once on a real photo (the build LXC OOM-kills BiRefNet).
 
-**S51 publish-kit sprint (issue #51, branch `sprint-publish-kit`):** lot 0 done 2026-10-20 (watchdog per-run spend cap); lot 1 done 2026-10-20 — the publish chain (`subs_from_edit.py`, `transcribe.py`, `metadata.py` + `prompts/metadata.md`, `publish.py`, `yt-publish` skill, doctor publish checks; `analyze_srt.py`/`translate_srt.py`/`daily_summary_srt.py` now take the model per role from the config through `common/llm.py`) plus the lot 1 addendum (2026-10-20: `metadata.md` writes a `## Thumbnail` section with 2-3 photo concepts mapping to `thumbnail.py`); lot 2 done 2026-10-20 — `matte.py` (issue #50 scope 1-2: RVM via `torch.hub` → ProRes 4444 `.mov` with alpha for a time range); lot 3 done 2026-10-21 — HyperFrames graphics (`graphics.py` + `graphics_plan.py`, DECISIONS 2026-10-21); lot 4 done 2026-10-21 — licence AGPL-3.0-or-later + CLA, docs cleaned. Lots 5-6 open (FilmCraft bridge, publish kit for manual upload). One PR to master at the end of the sprint.
+**S51 publish-kit sprint (issue #51, branch `sprint-publish-kit`):** lot 0 done 2026-10-20 (watchdog per-run spend cap); lot 1 done 2026-10-20 — the publish chain (`subs_from_edit.py`, `transcribe.py`, `metadata.py` + `prompts/metadata.md`, `publish.py`, `yt-publish` skill, doctor publish checks; `analyze_srt.py`/`translate_srt.py`/`daily_summary_srt.py` now take the model per role from the config through `common/llm.py`) plus the lot 1 addendum (2026-10-20: `metadata.md` writes a `## Thumbnail` section with 2-3 photo concepts mapping to `thumbnail.py`); lot 2 done 2026-10-20 — `matte.py` (issue #50 scope 1-2: RVM via `torch.hub` → ProRes 4444 `.mov` with alpha for a time range); lot 3 done 2026-10-21 — HyperFrames graphics (`graphics.py` + `graphics_plan.py`, DECISIONS 2026-10-21); lot 4 done 2026-10-21 — licence AGPL-3.0-or-later + CLA, docs cleaned; lot 5 done 2026-10-21 — FilmCraft bridge (`fcproj_markers.py` → `markers.json` + Rose `todo.md`, `loudness.py` two backends); lot 6 done 2026-10-21 — `publish.py --kit` publish kit for manual YouTube Studio upload (variant B per Doru's comment: no API upload, `studio.md` copy-ready blocks + loud checks). PR #53 open.
 
 ---
 
@@ -57,4 +57,4 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
 - Progress bar colour: theme the `<progress>` element (Chrome on Android ignores `accent-color` there).
 - D3: per-shot buttons on the Shots tab ("must be in" / "wrong label") write to the expectations file.
-- S51 lots 5-6 open: FilmCraft bridge and the publish kit for manual upload, after lot 4 on the same branch/PR.
+- S51 PR #53 awaits Doru's review and merge (sprint lots 0-6 done).
