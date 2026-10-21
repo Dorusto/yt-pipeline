@@ -4,6 +4,22 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] Shorts karaoke: timeline word times and the brand look (S59 lot 3b, issue #60)
+
+**Context:** `shorts_generator.py` interpolated word times evenly inside each corrected `.srt` line, so the karaoke highlight drifted from the speech on lines with pauses, and it hardcoded an Arial/white/yellow look with three words per line. The publish chain already writes a timeline `_words.json` (`subs_from_edit.py`) with real word times, and `brand.json` is the brand kit the thumbnail already reads.
+
+**Options:**
+- A) Keep the SRT interpolation and the hardcoded look
+- B) Burn the real word times of the timeline `_words.json` when given (SRT interpolation stays the fallback), take the caption font and colours from `brand.json`, and break captions on phrase boundaries
+
+**Decision:** B. `shorts_generator.py` gains `--words FILE` (the timeline `_words.json`; the words whose midpoint lies in `[start, end)` are shifted to segment time, hyphenated fragments merged and the corrections applied to the text, times unchanged), `--corrections FILE` (default `scripts/corrections.txt`, falling back to the example) and `--brand FILE` (default `brand.json` at the repo root). Both ASS generators take `fontname`/`fontsize` from `fonts.caption` (size scaled to the 1080-high ASS canvas), `colors.ink` as the primary, `colors.warm` as the active word and `colors.night` as the outline; `marginv` follows `karaoke.safe_zone_frac` (default 0.33) and `karaoke.scale_active_word` (default false) adds a 106% scale to the active word. Captions break on `.`/`!`/`?`/`…` and pauses over 0.6 s, pack into lines of at most 18 characters, at most 2 lines per caption. `render_short` passes the caption font directory to libass (`ass=…:fontsdir=…`). The `--json` summary gains `wall_time_s`, `llm_cost_usd` (0.0) and a per-short `words_source`.
+
+**Why not A:** the highlight drifts from the speech and the look is not the brand; the real word times already exist in the publish chain, so interpolating them again is a second, weaker source.
+
+**Consequence:** a Short cut from a timeline with a `_words.json` gets real word times and the brand look; without `--words` the SRT interpolation is unchanged. `scripts/common/`, `schemas/`, `brand.json`, `shorts_rank.py` and `subs_from_edit.py` are unchanged. `layout: split` is a later task.
+
+---
+
 ## [2026-10-21] S59 lot 2 — one word mapping, final-edit chapter inputs, chapters.json in the publish chain
 
 **Context:** The word-to-timeline mapping was duplicated in `subs_from_edit.py`, `chapters.py` and `shorts_rank.py`, and the publish chain asked the model for chapters a second time even when `chapters.py` had already written the chapter source of truth. The Second Brain final edit is a FilmCraft project, so the chapter and Shorts tools had to read the final timeline, not only the rough cut.

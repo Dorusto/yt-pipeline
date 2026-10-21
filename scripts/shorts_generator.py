@@ -10,14 +10,25 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import cv2
 import pysubs2
 import yaml
 
+from common.brand import BrandError, load_brand, resolve_font
+from common.corrections import (
+    CORRECTIONS_EXAMPLE_FILE,
+    CORRECTIONS_FILE,
+    CorrectionsError,
+    apply_corrections,
+    load_corrections,
+    resolve_corrections_file,
+)
 from common.ffmpeg_tools import available_video_encoders, pick_video_encoder, video_encode_args
 from common.schema import SchemaError, validate_or_raise
+from common.timeline_words import TimelineWordsError, timeline_words_from_file
 
 CROP_W = 608
 CROP_H = 1080
@@ -26,6 +37,14 @@ REFRAME_SCRIPT = Path(__file__).resolve().parent / "reframe.py"
 
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "shorts_config.yaml"
+DEFAULT_BRAND = SCRIPT_DIR.parent / "brand.json"
+
+PHRASE_END_CHARS = (".", "!", "?", "…")
+PHRASE_GAP_S = 0.6
+LINE_MAX_CHARS = 18
+CAPTION_MAX_LINES = 2
+DEFAULT_SAFE_ZONE_FRAC = 0.33
+DEFAULT_SCALE_ACTIVE_WORD = False
 
 YAML_TEMPLATE = """\
 video: "MyVideo.mp4"
@@ -325,47 +344,183 @@ def merge_hyphenated(words: list) -> list:
     return merged
 
 
-def generate_karaoke_ass(words: list, output_path: str) -> None:
-    LINE_WORDS = 3
+def load_brand_kit(path=None):
+    """Load the brand kit, turning a missing or invalid kit into a user error."""
+    try:
+        return load_brand(path or DEFAULT_BRAND)
+    except BrandError as exc:
+        raise RuntimeError(str(exc))
+
+
+def resolve_caption_font_dir(brand, brand_dir):
+    """Return the caption font directory, or raise naming the path and the brand key."""
+    try:
+        return resolve_font(brand, brand_dir, "caption").parent
+    except BrandError as exc:
+        raise RuntimeError(str(exc))
+
+
+def hex_to_ass_color(value):
+    """Turn a ``#RRGGBB`` brand colour into a pysubs2 colour (ASS stores BGR)."""
+    digits = value.lstrip("#")
+    red, green, blue = (int(digits[index:index + 2], 16) for index in (0, 2, 4))
+    return pysubs2.Color(red, green, blue, 0)
+
+
+def hex_to_ass_tag(value):
+    """Turn a ``#RRGGBB`` brand colour into an inline ASS ``&HBBGGRR&`` tag."""
+    digits = value.lstrip("#")
+    red, green, blue = (int(digits[index:index + 2], 16) for index in (0, 2, 4))
+    return f"&H{blue:02X}{green:02X}{red:02X}&"
+
+
+def caption_style(brand, safe_zone_frac):
+    """Build the ASS caption style from the brand kit and the safe-zone fraction."""
+    caption = brand["fonts"]["caption"]
+    fontsize = round(caption["size_px"] * 1080 / brand["canvas"]["height"])
+    return pysubs2.SSAStyle(
+        fontname=caption["family"],
+        fontsize=fontsize,
+        primarycolor=hex_to_ass_color(brand["colors"]["ink"]),
+        outlinecolor=hex_to_ass_color(brand["colors"]["night"]),
+        outline=3,
+        shadow=1,
+        bold=True,
+        alignment=2,
+        marginv=round(1080 * safe_zone_frac),
+    )
+
+
+def split_phrases(words: list) -> list:
+    """Split a merged word list into phrases on sentence ends and pauses over 0.6 s."""
+    phrases = []
+    current = []
+    for word in words:
+        if current and word["start"] - current[-1]["end"] > PHRASE_GAP_S:
+            phrases.append(current)
+            current = []
+        current.append(word)
+        if word["word"].endswith(PHRASE_END_CHARS):
+            phrases.append(current)
+            current = []
+    if current:
+        phrases.append(current)
+    return phrases
+
+
+def pack_lines(phrase: list) -> list:
+    """Greedily pack a phrase's words into lines of at most 18 characters."""
+    lines = []
+    current = []
+    length = 0
+    for word in phrase:
+        text = word["word"]
+        if len(text) > LINE_MAX_CHARS:
+            if current:
+                lines.append(current)
+                current = []
+                length = 0
+            lines.append([word])
+            continue
+        added = len(text) if not current else len(text) + 1
+        if current and length + added > LINE_MAX_CHARS:
+            lines.append(current)
+            current = [word]
+            length = len(text)
+        else:
+            current.append(word)
+            length += added
+    if current:
+        lines.append(current)
+    return lines
+
+
+def caption_lines(phrase: list) -> list:
+    """Split a phrase into captions of at most two lines each."""
+    lines = pack_lines(phrase)
+    return [
+        lines[index:index + CAPTION_MAX_LINES]
+        for index in range(0, len(lines), CAPTION_MAX_LINES)
+    ]
+
+
+def words_for_segment(words: list, start: float, end: float) -> list:
+    """Select the words whose midpoint lies in ``[start, end)`` and shift them to segment time."""
+    selected = []
+    for word in words:
+        midpoint = (word["start"] + word["end"]) / 2
+        if start <= midpoint < end:
+            selected.append({
+                "word": word["word"],
+                "start": word["start"] - start,
+                "end": word["end"] - start,
+            })
+    return selected
+
+
+def karaoke_settings(config: dict):
+    """Return ``(safe_zone_frac, scale_active_word)`` from the config's ``karaoke:`` mapping."""
+    karaoke = config.get("karaoke")
+    if karaoke is None:
+        return DEFAULT_SAFE_ZONE_FRAC, DEFAULT_SCALE_ACTIVE_WORD
+    if not isinstance(karaoke, dict):
+        raise RuntimeError("'karaoke:' must be a mapping with safe_zone_frac and scale_active_word")
+    return (
+        karaoke.get("safe_zone_frac", DEFAULT_SAFE_ZONE_FRAC),
+        karaoke.get("scale_active_word", DEFAULT_SCALE_ACTIVE_WORD),
+    )
+
+
+def generate_karaoke_ass(
+    words: list,
+    output_path: str,
+    brand: dict | None = None,
+    safe_zone_frac: float = DEFAULT_SAFE_ZONE_FRAC,
+    scale_active_word: bool = DEFAULT_SCALE_ACTIVE_WORD,
+) -> None:
+    """Write the karaoke ASS: one event per active word, styled from the brand kit."""
+    if brand is None:
+        brand, _ = load_brand_kit()
     words = merge_hyphenated(words)
 
     subs = pysubs2.SSAFile()
     subs.info["PlayResX"] = "608"
     subs.info["PlayResY"] = "1080"
-    subs.styles["Default"] = pysubs2.SSAStyle(
-        fontname="Arial",
-        fontsize=70,
-        primarycolor=pysubs2.Color(255, 255, 255, 0),
-        outlinecolor=pysubs2.Color(0, 0, 0, 0),
-        outline=3,
-        shadow=1,
-        bold=True,
-        alignment=2,
-        marginv=60,
-    )
+    subs.styles["Default"] = caption_style(brand, safe_zone_frac)
 
-    for i in range(0, len(words), LINE_WORDS):
-        line = words[i : i + LINE_WORDS]
-        for j, active in enumerate(line):
-            if j < len(line) - 1:
-                end_ms = int(line[j + 1]["start"] * 1000)
-            elif i + LINE_WORDS < len(words):
-                end_ms = int(words[i + LINE_WORDS]["start"] * 1000)
-            else:
-                end_ms = int(active["end"] * 1000)
-            parts = []
-            for k, w in enumerate(line):
-                if k == j:
-                    parts.append(r"{\c&H00FFFF&}" + w["word"] + r"{\c&HFFFFFF&}")
+    active_tag = r"{\c" + hex_to_ass_tag(brand["colors"]["warm"]) + "}"
+    reset_tag = r"{\c" + hex_to_ass_tag(brand["colors"]["ink"]) + "}"
+    scale_tag = r"{\fscx106\fscy106}"
+    reset_scale_tag = r"{\fscx100\fscy100}"
+
+    for phrase in split_phrases(words):
+        for caption in caption_lines(phrase):
+            flat = [word for line in caption for word in line]
+            for active_index, active in enumerate(flat):
+                if active_index < len(flat) - 1:
+                    end_ms = int(flat[active_index + 1]["start"] * 1000)
                 else:
-                    parts.append(w["word"])
-            subs.append(
-                pysubs2.SSAEvent(
-                    start=pysubs2.make_time(ms=int(active["start"] * 1000)),
-                    end=pysubs2.make_time(ms=end_ms),
-                    text=" ".join(parts),
+                    end_ms = int(active["end"] * 1000)
+                line_texts = []
+                index = 0
+                for line in caption:
+                    word_texts = []
+                    for word in line:
+                        if index == active_index:
+                            prefix = active_tag + (scale_tag if scale_active_word else "")
+                            suffix = (reset_scale_tag if scale_active_word else "") + reset_tag
+                            word_texts.append(prefix + word["word"] + suffix)
+                        else:
+                            word_texts.append(word["word"])
+                        index += 1
+                    line_texts.append(" ".join(word_texts))
+                subs.append(
+                    pysubs2.SSAEvent(
+                        start=pysubs2.make_time(ms=int(active["start"] * 1000)),
+                        end=pysubs2.make_time(ms=end_ms),
+                        text=r"\N".join(line_texts),
+                    )
                 )
-            )
 
     subs.save(output_path)
 
@@ -394,29 +549,27 @@ def words_from_srt_segments(segments: list) -> list:
     return words
 
 
-def generate_plain_ass(segments: list, output_path: str) -> None:
+def generate_plain_ass(
+    segments: list,
+    output_path: str,
+    brand: dict | None = None,
+    safe_zone_frac: float = DEFAULT_SAFE_ZONE_FRAC,
+) -> None:
     """
     Fallback fără highlight per-cuvânt: text direct din .srt corectat (deja
     verificat de om), fără WhisperX. Nu poate pierde cuvinte, pentru că nu
     depinde de alinierea audio — doar de segmentele SRT deja parsate.
     Randare libass face wrap automat la PlayResX, nu tăiem noi liniile.
     """
+    if brand is None:
+        brand, _ = load_brand_kit()
     subs = pysubs2.SSAFile()
     subs.info["PlayResX"] = "608"
     subs.info["PlayResY"] = "1080"
-    subs.styles["Default"] = pysubs2.SSAStyle(
-        fontname="Arial",
-        fontsize=60,
-        primarycolor=pysubs2.Color(255, 255, 255, 0),
-        outlinecolor=pysubs2.Color(0, 0, 0, 0),
-        outline=3,
-        shadow=1,
-        bold=True,
-        alignment=2,
-        marginv=60,
-        marginl=20,
-        marginr=20,
-    )
+    style = caption_style(brand, safe_zone_frac)
+    style.marginl = 20
+    style.marginr = 20
+    subs.styles["Default"] = style
     for seg in segments:
         subs.append(
             pysubs2.SSAEvent(
@@ -430,15 +583,18 @@ def generate_plain_ass(segments: list, output_path: str) -> None:
 
 def render_short(
     video_path: str, crop_filter: str, start: float, end: float,
-    ass_path: str, output_path: str, encoder: str | None = None,
+    ass_path: str, output_path: str, encoder: str | None = None, font_dir=None,
 ) -> str:
     encoder = encoder or pick_video_encoder()
+    ass_filter = f"ass={ass_path}"
+    if font_dir:
+        ass_filter += f":fontsdir={font_dir}"
 
     def command(enc: str) -> list:
         return [
             "ffmpeg", "-y",
             "-ss", str(start), "-to", str(end), "-i", video_path,
-            "-vf", f"{crop_filter},ass={ass_path}",
+            "-vf", f"{crop_filter},{ass_filter}",
             *video_encode_args(enc),
             "-c:a", "aac", "-b:a", "192k",
             output_path,
@@ -473,11 +629,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Use existing _words.json instead of re-running alignment")
     parser.add_argument("--candidates", type=str, default=None,
                         help="shorts_candidates.json; use its candidates as the segments instead of shorts_config.yaml")
+    parser.add_argument("--words", type=str, default=None,
+                        help="timeline _words.json (subs_from_edit.py output); real word times instead of SRT interpolation")
+    parser.add_argument("--corrections", type=str, default=None,
+                        help="wrong|correct corrections file applied to --words text (default: scripts/corrections.txt)")
+    parser.add_argument("--brand", type=str, default=None,
+                        help="brand kit JSON (default: brand.json at the repo root)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
 
 def main(argv=None) -> int:
+    started = time.monotonic()
     args, _ = build_parser().parse_known_args(argv)
     interactive = not args.yes
 
@@ -514,7 +677,19 @@ def main(argv=None) -> int:
 
         encoder = args.encoder or os.environ.get("YT_VIDEO_ENCODER") or pick_video_encoder()
         segments = load_candidates_segments(args.candidates) if args.candidates else config["segments"]
-    except RuntimeError as exc:
+        safe_zone_frac, scale_active_word = karaoke_settings(config)
+        brand, brand_path = load_brand_kit(args.brand)
+        font_dir = resolve_caption_font_dir(brand, brand_path.parent)
+
+        timeline_words = None
+        corrections = []
+        if args.words:
+            timeline_words = timeline_words_from_file(args.words)
+            corrections_path = resolve_corrections_file(
+                args.corrections or CORRECTIONS_FILE, CORRECTIONS_EXAMPLE_FILE
+            )
+            corrections = load_corrections(corrections_path) if corrections_path else []
+    except (RuntimeError, TimelineWordsError, CorrectionsError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
         else:
@@ -564,18 +739,32 @@ def main(argv=None) -> int:
                 crop_path_file = None
                 x_offset = (SRC_W - CROP_W) // 2
 
-        log("  → cuvinte din .srt corectat (fără WhisperX — nu pierde cuvinte)...")
-        srt_segments = parse_srt_for_alignment(str(srt_path), start, end)
-        words = words_from_srt_segments(srt_segments)
-        log(f"     {len(words)} cuvinte (timing interpolat, nu aliniat pe audio)")
+        if timeline_words is not None:
+            log("  → cuvinte din timeline _words.json (timpi reali)...")
+            words = words_for_segment(timeline_words, start, end)
+            words = merge_hyphenated(words)
+            words = [
+                {"word": apply_corrections(word["word"], corrections), "start": word["start"], "end": word["end"]}
+                for word in words
+            ]
+            words_source = "words.json"
+            log(f"     {len(words)} cuvinte (timpi din _words.json)")
+        else:
+            log("  → cuvinte din .srt corectat (fără WhisperX — nu pierde cuvinte)...")
+            srt_segments = parse_srt_for_alignment(str(srt_path), start, end)
+            words = words_from_srt_segments(srt_segments)
+            words_source = "srt"
+            log(f"     {len(words)} cuvinte (timing interpolat, nu aliniat pe audio)")
 
         ass_path = auto_dir / f"{name}_karaoke.ass"
-        generate_karaoke_ass(words, str(ass_path))
+        generate_karaoke_ass(words, str(ass_path), brand, safe_zone_frac, scale_active_word)
         log(f"     ASS generat → {ass_path.name}")
 
         output = shorts_dir / f"Short{i}-{name}.mp4"
         log(f"  → render → {output.name}")
-        used_encoder = render_short(str(video_path), crop_filter, start, end, str(ass_path), str(output), encoder)
+        used_encoder = render_short(
+            str(video_path), crop_filter, start, end, str(ass_path), str(output), encoder, font_dir=font_dir
+        )
         log(f"  ✓ {output}")
         results.append({
             "name": name,
@@ -584,6 +773,7 @@ def main(argv=None) -> int:
             "x_offset": x_offset,
             "crop_path": str(crop_path_file) if crop_path_file else None,
             "words": len(words),
+            "words_source": words_source,
             "output": str(output),
             "encoder": used_encoder,
         })
@@ -591,7 +781,13 @@ def main(argv=None) -> int:
     log(f"\nDone! {len(segments)} short(s) in {shorts_dir}")
 
     if args.json:
-        print(json.dumps({"ok": True, "shorts": results, "output_dir": str(shorts_dir)}))
+        print(json.dumps({
+            "ok": True,
+            "shorts": results,
+            "output_dir": str(shorts_dir),
+            "wall_time_s": round(time.monotonic() - started, 3),
+            "llm_cost_usd": 0.0,
+        }))
     return 0
 
 

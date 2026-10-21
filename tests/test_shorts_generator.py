@@ -1,6 +1,9 @@
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
+import pysubs2
 import pytest
 
 import shorts_generator as sg
@@ -115,7 +118,7 @@ def test_main_with_candidates_uses_file_segments(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sg, "reframe_crop_path", lambda *args, **kwargs: record)
     renders = []
 
-    def fake_render(video_path, crop_filter, start, end, ass_path, output_path, encoder=None):
+    def fake_render(video_path, crop_filter, start, end, ass_path, output_path, encoder=None, font_dir=None):
         renders.append((start, end, Path(output_path).name))
         return encoder or "libx264"
 
@@ -149,3 +152,293 @@ def test_main_bad_candidates_exit_1(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "candidates" in captured.err
+
+
+def write_words(tmp_path, words=None):
+    path = tmp_path / "Clip_words.json"
+    path.write_text(json.dumps(words or [
+        {"word": "chezve", "start": 2.0, "end": 2.5},
+        {"word": "bun", "start": 2.6, "end": 3.0},
+        {"word": "prea", "start": 3.1, "end": 3.4},
+    ]), encoding="utf-8")
+    return path
+
+
+def write_corrections(tmp_path, text="chezve|cezve\n"):
+    path = tmp_path / "corrections.txt"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def read_style_line(ass_path):
+    for line in Path(ass_path).read_text(encoding="utf-8").splitlines():
+        if line.startswith("Style: Default,"):
+            return line
+    raise AssertionError("no Default style line in the ASS")
+
+
+def test_words_for_segment_uses_midpoint_and_shifts():
+    words = [
+        {"word": "before", "start": 0.0, "end": 0.4},
+        {"word": "inside", "start": 1.0, "end": 1.4},
+        {"word": "straddles", "start": 1.8, "end": 2.6},
+        {"word": "after", "start": 3.0, "end": 3.4},
+    ]
+    selected = sg.words_for_segment(words, 1.0, 2.0)
+    assert [word["word"] for word in selected] == ["inside"]
+    assert selected[0]["start"] == 0.0
+    assert selected[0]["end"] == pytest.approx(0.4)
+
+
+def test_split_phrases_on_punctuation_and_pause():
+    words = [
+        {"word": "Salut.", "start": 0.0, "end": 0.5},
+        {"word": "Ce", "start": 0.5, "end": 0.7},
+        {"word": "faci?", "start": 0.7, "end": 1.0},
+        {"word": "unu", "start": 1.0, "end": 1.4},
+        {"word": "doi", "start": 2.2, "end": 2.6},
+    ]
+    phrases = sg.split_phrases(words)
+    assert [[word["word"] for word in phrase] for phrase in phrases] == [
+        ["Salut."],
+        ["Ce", "faci?"],
+        ["unu"],
+        ["doi"],
+    ]
+
+
+def test_pack_lines_respects_the_character_limit():
+    phrase = [
+        {"word": word, "start": index, "end": index + 0.5}
+        for index, word in enumerate("unu doi trei patru cinci sase sapte opt noua zece".split())
+    ]
+    lines = sg.pack_lines(phrase)
+    assert all(len(" ".join(word["word"] for word in line)) <= sg.LINE_MAX_CHARS for line in lines)
+    assert [word["word"] for line in lines for word in line] == [word["word"] for word in phrase]
+
+
+def test_pack_lines_gives_a_long_word_its_own_line():
+    phrase = [
+        {"word": "a" * 25, "start": 0.0, "end": 0.5},
+        {"word": "b", "start": 0.5, "end": 0.7},
+    ]
+    lines = sg.pack_lines(phrase)
+    assert lines[0] == [phrase[0]]
+    assert lines[1] == [phrase[1]]
+
+
+def test_caption_lines_caps_at_two_lines_and_splits_long_phrases():
+    phrase = [
+        {"word": word, "start": index, "end": index + 0.5}
+        for index, word in enumerate("unu doi trei patru cinci sase sapte opt noua zece unsprezece doisprezece".split())
+    ]
+    captions = sg.caption_lines(phrase)
+    assert all(len(caption) <= sg.CAPTION_MAX_LINES for caption in captions)
+    assert len(captions) > 1
+    assert [word["word"] for caption in captions for line in caption for word in line] == [
+        word["word"] for word in phrase
+    ]
+
+
+def test_generate_karaoke_ass_merges_hyphenated_before_breaking(tmp_path):
+    words = [
+        {"word": "task", "start": 0.0, "end": 0.4},
+        {"word": "-ul", "start": 0.4, "end": 0.6},
+        {"word": "meu.", "start": 0.6, "end": 1.0},
+    ]
+    out = tmp_path / "k.ass"
+    sg.generate_karaoke_ass(words, str(out))
+    text = out.read_text(encoding="utf-8")
+    assert "task-ul" in text
+    assert "-ul" not in text.replace("task-ul", "")
+
+
+def test_generate_karaoke_ass_style_comes_from_the_brand(tmp_path):
+    brand, _ = sg.load_brand_kit()
+    words = [{"word": "salut", "start": 0.0, "end": 0.5}]
+    out = tmp_path / "k.ass"
+    sg.generate_karaoke_ass(words, str(out), brand, safe_zone_frac=0.33)
+    style = read_style_line(out)
+    fields = style.split(",")
+    assert fields[1] == brand["fonts"]["caption"]["family"]
+    assert int(fields[2]) == round(brand["fonts"]["caption"]["size_px"] * 1080 / brand["canvas"]["height"])
+    assert fields[3] == "&H00E6EBED"
+    assert fields[5] == "&H0018120F"
+    assert int(fields[21]) == round(1080 * 0.33)
+    text = out.read_text(encoding="utf-8")
+    assert "&H5AA2E8&" in text
+
+
+def test_generate_karaoke_ass_marginv_follows_safe_zone(tmp_path):
+    brand, _ = sg.load_brand_kit()
+    words = [{"word": "salut", "start": 0.0, "end": 0.5}]
+    out = tmp_path / "k.ass"
+    sg.generate_karaoke_ass(words, str(out), brand, safe_zone_frac=0.5)
+    assert int(read_style_line(out).split(",")[21]) == round(1080 * 0.5)
+
+
+def test_generate_karaoke_ass_scale_active_word_only(tmp_path):
+    brand, _ = sg.load_brand_kit()
+    words = [
+        {"word": "unu", "start": 0.0, "end": 0.5},
+        {"word": "doi", "start": 0.5, "end": 1.0},
+    ]
+    out = tmp_path / "k.ass"
+    sg.generate_karaoke_ass(words, str(out), brand, scale_active_word=True)
+    text = out.read_text(encoding="utf-8")
+    assert text.count(r"\fscx106\fscy106") == 2
+    assert r"\fscx100\fscy100" in text
+
+
+def test_missing_brand_font_is_a_hard_error(tmp_path):
+    brand, _ = sg.load_brand_kit()
+    brand["fonts"]["caption"]["path"] = "assets/fonts/DoesNotExist.ttf"
+    brand_path = tmp_path / "brand.json"
+    brand_path.write_text(json.dumps(brand), encoding="utf-8")
+    loaded, loaded_path = sg.load_brand_kit(str(brand_path))
+    with pytest.raises(RuntimeError) as excinfo:
+        sg.resolve_caption_font_dir(loaded, loaded_path.parent)
+    message = str(excinfo.value)
+    assert "DoesNotExist.ttf" in message
+    assert "fonts.caption" in message
+
+
+def test_karaoke_settings_defaults_and_non_mapping():
+    assert sg.karaoke_settings({}) == (0.33, False)
+    assert sg.karaoke_settings({"karaoke": {"safe_zone_frac": 0.4, "scale_active_word": True}}) == (0.4, True)
+    with pytest.raises(RuntimeError):
+        sg.karaoke_settings({"karaoke": "nope"})
+
+
+def test_render_short_adds_fontsdir_when_given(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, check=True, **kwargs):
+        calls.append(cmd)
+
+    monkeypatch.setattr(sg.subprocess, "run", fake_run)
+    sg.render_short(
+        "v.mp4", sg.fixed_crop_filter(0), 0.0, 1.0, "a.ass", str(tmp_path / "o.mp4"),
+        encoder="libx264", font_dir="/fonts",
+    )
+    vf = calls[0][calls[0].index("-vf") + 1]
+    assert "ass=a.ass:fontsdir=/fonts" in vf
+
+
+def test_render_short_without_font_dir_keeps_the_old_filter(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, check=True, **kwargs):
+        calls.append(cmd)
+
+    monkeypatch.setattr(sg.subprocess, "run", fake_run)
+    sg.render_short("v.mp4", sg.fixed_crop_filter(0), 0.0, 1.0, "a.ass", str(tmp_path / "o.mp4"), encoder="libx264")
+    vf = calls[0][calls[0].index("-vf") + 1]
+    assert "ass=a.ass" in vf
+    assert "fontsdir" not in vf
+
+
+def test_main_with_words_applies_corrections_and_reports_source(monkeypatch, tmp_path, capsys):
+    cfg = write_config(tmp_path, 'video: "Clip.mp4"\nsrt: "Clip_RO.srt"\n')
+    monkeypatch.setattr(sg, "CONFIG_PATH", cfg)
+    video = tmp_path / "Clip.mp4"
+    video.write_bytes(b"")
+    srt = write_srt(tmp_path)
+    words = write_words(tmp_path)
+    corrections = write_corrections(tmp_path)
+    candidates = write_candidates(tmp_path)
+
+    record = {
+        "crop_w": 608,
+        "crop_h": 1080,
+        "points": [{"t_s": 0.0, "x": 656, "y": 0, "source": "face", "confidence": 0.9}],
+    }
+    monkeypatch.setattr(sg, "reframe_crop_path", lambda *args, **kwargs: record)
+    monkeypatch.setattr(sg, "render_short", lambda *args, **kwargs: "libx264")
+
+    code = sg.main([
+        "--video", str(video), "--srt", str(srt), "--candidates", str(candidates),
+        "--words", str(words), "--corrections", str(corrections),
+        "--yes", "--json", "--encoder", "libx264",
+    ])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["llm_cost_usd"] == 0.0
+    assert "wall_time_s" in summary
+    assert [short["words_source"] for short in summary["shorts"]] == ["words.json", "words.json"]
+
+    ass = tmp_path / "auto" / "short1_karaoke.ass"
+    text = ass.read_text(encoding="utf-8")
+    assert "cezve" in text
+    assert "chezve" not in text
+    subs = pysubs2.load(str(ass))
+    assert subs[0].start == 500
+
+
+def test_main_without_words_reports_srt_source(monkeypatch, tmp_path, capsys):
+    cfg = write_config(tmp_path, 'video: "Clip.mp4"\nsrt: "Clip_RO.srt"\n')
+    monkeypatch.setattr(sg, "CONFIG_PATH", cfg)
+    video = tmp_path / "Clip.mp4"
+    video.write_bytes(b"")
+    srt = write_srt(tmp_path)
+    candidates = write_candidates(tmp_path)
+
+    record = {
+        "crop_w": 608,
+        "crop_h": 1080,
+        "points": [{"t_s": 0.0, "x": 656, "y": 0, "source": "face", "confidence": 0.9}],
+    }
+    monkeypatch.setattr(sg, "reframe_crop_path", lambda *args, **kwargs: record)
+    monkeypatch.setattr(sg, "render_short", lambda *args, **kwargs: "libx264")
+
+    code = sg.main([
+        "--video", str(video), "--srt", str(srt), "--candidates", str(candidates),
+        "--yes", "--json", "--encoder", "libx264",
+    ])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert [short["words_source"] for short in summary["shorts"]] == ["srt", "srt"]
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_end_to_end_with_and_without_words(monkeypatch, tmp_path):
+    video = tmp_path / "Clip.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=25:duration=3",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+            str(video),
+        ],
+        check=True, capture_output=True,
+    )
+    srt = write_srt(tmp_path)
+    words = write_words(tmp_path)
+    cfg = write_config(
+        tmp_path,
+        'video: "Clip.mp4"\nsrt: "Clip_RO.srt"\n'
+        "segments:\n  - name: Hook\n    start: \"00:00:00\"\n    end: \"00:00:03\"\n    x_offset: 656\n",
+    )
+    monkeypatch.setattr(sg, "CONFIG_PATH", cfg)
+
+    code = sg.main([
+        "--video", str(video), "--srt", str(srt), "--words", str(words),
+        "--yes", "--json", "--encoder", "libx264",
+    ])
+    assert code == 0
+    ass = tmp_path / "auto" / "Hook_karaoke.ass"
+    short = tmp_path / "shorts" / "Short1-Hook.mp4"
+    assert ass.exists()
+    assert short.exists()
+    text = ass.read_text(encoding="utf-8")
+    assert "Montserrat Black" in text
+    assert "&H5AA2E8&" in text
+
+    code = sg.main([
+        "--video", str(video), "--srt", str(srt),
+        "--yes", "--json", "--encoder", "libx264",
+    ])
+    assert code == 0
+    assert ass.exists()
+    assert short.exists()

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from common.schema import SchemaError, validate_or_raise
 
-DEFAULT_BRAND = Path(__file__).resolve().parents[1] / "brand.json"
+DEFAULT_BRAND = Path(__file__).resolve().parents[2] / "brand.json"
 
 
 class BrandError(Exception):

@@ -2,6 +2,11 @@ video: "MyVideo.mp4"
 srt: "MyVideo_corrected.srt"
 youtube_url: "https://youtu.be/xxxxxxxxxxx"   # optional — auto-added to short descriptions
 
+# Karaoke caption look (optional; these are the defaults)
+karaoke:
+  safe_zone_frac: 0.33     # caption box bottom, fraction of the frame height above the bottom
+  scale_active_word: false # gentle ASS scale (106%) on the active word
+
 segments:
   - name: "Hook"
     start: "00:00:00"
