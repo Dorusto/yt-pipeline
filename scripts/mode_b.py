@@ -29,9 +29,15 @@ name-only ``sync_offset_s``.
 Every session with a screen file is also checked for a mistaken recording: when
 the screen file looks like a camera recording (a face in most sampled frames, or
 high frame similarity to the paired camera file) the run warns loudly and the
-``--json`` summary lists it under ``screen_suspects``. ``--check`` runs only
-these checks — no transcription, nothing written — so it is fast enough to run
-right after recording; it exits 1 when a suspect is found.
+``--json`` summary lists it under ``screen_suspects``. When the face detector
+cannot load the check is incomplete: the run warns
+``screen check incomplete: face detector unavailable: ...`` and the ``--json``
+summary sets ``screen_check_incomplete``. ``--check`` runs only these checks —
+no transcription, nothing written — so it is fast enough to run right after
+recording. Its exit codes are the contract: ``0`` all clear, ``1`` a suspect
+screen file was found, ``2`` the check could not run completely (the face
+detector could not load) or a user error (bad folder, no camera files). A
+suspect found while the detector is unavailable still exits ``2``.
 """
 
 import argparse
@@ -559,9 +565,17 @@ def screen_camera_check(session, get_detector):
     }
 
 
-def run_screen_checks(sessions, warnings):
-    """Warn per session when its screen file looks like a camera recording."""
-    state = {"detector": None, "error": None}
+def run_screen_checks(sessions, warnings, state=None):
+    """Warn per session when its screen file looks like a camera recording.
+
+    ``state`` (optional) receives ``detector`` and ``error``; ``error`` is set
+    when the face detector could not load, so the caller can report an
+    incomplete check.
+    """
+    if state is None:
+        state = {}
+    state.setdefault("detector", None)
+    state.setdefault("error", None)
 
     def get_detector():
         if state["detector"] is None and state["error"] is None:
@@ -582,7 +596,9 @@ def run_screen_checks(sessions, warnings):
             )
             suspects.append(suspect)
     if state["error"] is not None:
-        warnings.append(f"face detector unavailable: {state['error']}")
+        warnings.append(
+            f"screen check incomplete: face detector unavailable: {state['error']}"
+        )
     return suspects
 
 
@@ -593,7 +609,9 @@ def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
     mode_b_config = mode_b_config or dict(DEFAULT_MODE_B_CONFIG)
     sessions = scan_sessions(folder, out_dir, warnings, mode_b_config)
     pairing = pairing_summary(sessions, folder, mode_b_config)
-    suspects = run_screen_checks(sessions, warnings)
+    screen_state = {}
+    suspects = run_screen_checks(sessions, warnings, screen_state)
+    screen_check_incomplete = screen_state["error"] is not None
     words_dir = out_dir / "words"
     transcribed = 0
     skipped_transcribe = 0
@@ -669,6 +687,7 @@ def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
         "sessions": len(sessions),
         "pairing": pairing,
         "screen_suspects": suspects,
+        "screen_check_incomplete": screen_check_incomplete,
         "transcribed": transcribed,
         "skipped": {
             "transcribe": skipped_transcribe,
@@ -689,13 +708,16 @@ def check(folder, out_dir, mode_b_config=None):
     mode_b_config = mode_b_config or dict(DEFAULT_MODE_B_CONFIG)
     sessions = scan_sessions(folder, out_dir, warnings, mode_b_config)
     pairing = pairing_summary(sessions, folder, mode_b_config)
-    suspects = run_screen_checks(sessions, warnings)
+    screen_state = {}
+    suspects = run_screen_checks(sessions, warnings, screen_state)
+    screen_check_incomplete = screen_state["error"] is not None
     return {
-        "ok": not suspects,
+        "ok": not suspects and not screen_check_incomplete,
         "check": True,
         "sessions": len(sessions),
         "pairing": pairing,
         "screen_suspects": suspects,
+        "screen_check_incomplete": screen_check_incomplete,
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
@@ -779,7 +801,9 @@ def build_parser():
         help=(
             "only run the screen-file checks (a screen file that looks like a camera "
             "recording: a face in most sampled frames, or high frame similarity to the "
-            "paired camera file); no transcription, nothing written; exit 1 on a suspect"
+            "paired camera file); no transcription, nothing written; exit codes: 0 all "
+            "clear, 1 a suspect was found, 2 the check could not run completely (face "
+            "detector unavailable) or a user error"
         ),
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -817,9 +841,11 @@ def main(argv=None):
         print(json.dumps(summary))
     if args.check:
         print_check(summary, stream)
-    else:
-        print_human(summary, stream)
-    return 1 if (args.check and summary["screen_suspects"]) else 0
+        if summary["screen_check_incomplete"]:
+            return 2
+        return 1 if summary["screen_suspects"] else 0
+    print_human(summary, stream)
+    return 0
 
 
 if __name__ == "__main__":

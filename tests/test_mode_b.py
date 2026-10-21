@@ -669,6 +669,14 @@ def install_detector(monkeypatch, sequence):
     return detector
 
 
+def install_broken_detector(monkeypatch):
+    def boom(path):
+        raise mode_b.FacesError("model missing")
+
+    monkeypatch.setattr(mode_b, "make_detector", boom)
+    monkeypatch.setattr(mode_b, "ensure_model", lambda path, url=None: Path(path))
+
+
 def test_check_warns_when_screen_shows_a_face(tmp_path, capsys, monkeypatch):
     folder = tmp_path / "obs"
     camera_dir, screen_dir = make_subfolders(folder)
@@ -829,3 +837,81 @@ def test_unreadable_screen_never_loads_the_face_detector(tmp_path, monkeypatch):
     suspects = mode_b.run_screen_checks(sessions, warnings)
     assert suspects == []
     assert warnings == []
+
+
+def test_check_detector_unavailable_exits_2(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    install_broken_detector(monkeypatch)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 2
+    summary = json.loads(out)
+    assert summary["screen_check_incomplete"] is True
+    assert summary["ok"] is False
+    assert any(
+        "screen check incomplete: face detector unavailable" in warning
+        for warning in summary["warnings"]
+    )
+    assert "screen check incomplete: face detector unavailable" in err
+
+
+def test_check_suspect_with_detector_unavailable_exits_2(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    frames = rect_frames()
+    write_video(camera_dir / "camera 2026-09-29 20-58-37.mp4", frames)
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", frames)
+    install_broken_detector(monkeypatch)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 2
+    summary = json.loads(out)
+    assert summary["screen_check_incomplete"] is True
+    assert summary["ok"] is False
+    assert summary["screen_suspects"][0]["reason"] == "similar_to_camera"
+    assert "screen check incomplete: face detector unavailable" in err
+
+
+def test_check_detector_fine_clean_reports_complete(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    write_video(camera_dir / "camera 2026-09-29 20-58-37.mp4", noise_frames(seed=2))
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    install_detector(monkeypatch, [[]] * 8)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["screen_check_incomplete"] is False
+    assert summary["ok"] is True
+
+
+def test_check_detector_fine_suspect_reports_complete(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    install_detector(monkeypatch, [[(100.0, 100.0, 80.0, 80.0, 0.9)]] * 8)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 1
+    summary = json.loads(out)
+    assert summary["screen_check_incomplete"] is False
+    assert summary["ok"] is False
+
+
+def test_run_detector_unavailable_warns_and_exits_zero(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    make_words(folder / "json" / "camera 2026-09-29 20-58-37.json")
+    install_broken_detector(monkeypatch)
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["screen_check_incomplete"] is True
+    assert any(
+        "screen check incomplete: face detector unavailable" in warning
+        for warning in summary["warnings"]
+    )
+    assert "screen check incomplete: face detector unavailable" in err

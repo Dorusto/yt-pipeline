@@ -156,10 +156,17 @@ station CLIs as subprocesses and imports none of them.
   mean frame similarity >= 0.85 to the paired camera file (best match within
   ±2 s of each sample). The run warns loudly per session
   (`screen file '…' looks like a CAMERA recording: …`) and lists them in
-  `screen_suspects`; the pair still runs (the warning is not a stop).
+  `screen_suspects`; the pair still runs (the warning is not a stop). When the
+  face detector cannot load the check is incomplete: the run warns
+  `screen check incomplete: face detector unavailable: …` and the `--json`
+  summary sets `screen_check_incomplete` to `true` (the run still completes and
+  exits `0`).
 - `--check` runs only those checks — no transcription, nothing written, fast
-  enough to run right after recording — and exits `1` when a suspect is found
-  (`0` when clean).
+  enough to run right after recording. Exit codes: `0` all clear, `1` a suspect
+  screen file was found, `2` the check could not run completely (the face
+  detector could not load) or a user error. A suspect found while the detector
+  is unavailable still exits `2` (a partial check never looks like a clean `0`
+  or a normal `1`).
 - **Words lookup.** `find_words` searches `FOLDER`, then `FOLDER/<words_dir>`
   (default `json`, where the real project keeps its Whisper JSONs), then
   `<out-dir>/words`. The chain always reads `<out-dir>/words`: every session's
@@ -182,9 +189,13 @@ station CLIs as subprocesses and imports none of them.
   `llm_cost_usd` (the rough-cut and chapters child costs added up). On success
   the last human line is `project: <path>`, followed by `[warn]` lines; the
   `--check` summary has `ok`, `check`, `sessions`, `pairing`, `screen_suspects`,
-  `warnings`, `wall_time_s`, `llm_cost_usd`.
-- Exit codes: `0` success (`1` from `--check` when a screen file looks like a
-  camera recording), `2` user error (missing folder, no camera files, a
-  bad `mode_b:` config, a failing step). Errors print `[error] <message>` on
-  stderr and write nothing.
+  `screen_check_incomplete`, `warnings`, `wall_time_s`, `llm_cost_usd`. Both
+  summaries carry `screen_check_incomplete` (`true` when the face detector could
+  not load); in the `--check` summary `ok` is `false` when the check is
+  incomplete.
+- Exit codes: `0` success (`--check`: all clear), `1` (`--check` only: a screen
+  file looks like a camera recording), `2` user error (missing folder, no camera
+  files, a bad `mode_b:` config, a failing step) or an incomplete `--check` (the
+  face detector could not load). Errors print `[error] <message>` on stderr and
+  write nothing.
 

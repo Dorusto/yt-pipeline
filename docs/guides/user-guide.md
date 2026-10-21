@@ -127,6 +127,13 @@ clip is the reference.
   karaoke highlight). `layout: split` stacks the face over the screen for a
   face-over-screen recording. Sample frames from a synthetic clip:
   `examples/s59-shorts-frames/`.
+- Exit codes. `--check`: `0` all clear, `1` a suspect screen file was found,
+  `2` the check could not run completely (the face detector could not load) or a
+  user error (bad folder, no camera files). A normal run exits `0` on success
+  and `2` on a user error or a failing step; when the face detector cannot load
+  the run still completes and exits `0`, but warns
+  `screen check incomplete: face detector unavailable: …` and sets
+  `screen_check_incomplete` in `--json`.
 
 ## Writing a brief
 
