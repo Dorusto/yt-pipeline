@@ -266,6 +266,39 @@ See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured,
 
 ---
 
+## Timeline markers (fcproj_markers.py)
+
+`fcproj_markers.py` reads the sequence-level markers of a FilmCraft `.fcproj` project (read-only) and writes two files next to it: `markers.json` in the shape `graphics_plan.py --markers` already consumes, and `todo.md` holding only the Rose markers — the redo list outside the editor. FilmCraft need not be installed. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/fcproj_markers.py project.fcproj --json
+.venv/bin/python scripts/fcproj_markers.py project.fcproj --sequence Main --out markers.json --todo todo.md
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `fcproj_markers.py` | `.fcproj` project | `markers.json` (all markers) + `todo.md` (Rose markers) |
+
+`--sequence` is required when the project has more than one sequence. Each marker carries `time_s` (ticks / 254016000000), `timecode` (`HH:MM:SS:FF` at the sequence frame rate), `name`, `comment`, `colour` and `kind`, sorted by time. Clip-level markers are counted and reported as `clip_markers_ignored`, never mapped. `--json` reports `output`, `todo`, `sequence`, `markers`, `rose`, `clip_markers_ignored`, `wall_time_s`, `llm_cost_usd`.
+
+---
+
+## Loudness (loudness.py)
+
+`loudness.py` applies the audio loudness recipe as one command, with two backends. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/loudness.py --video clip.mp4 --json
+.venv/bin/python scripts/loudness.py --fcproj project.fcproj --sequence Main --json
+.venv/bin/python scripts/loudness.py --fcproj project.fcproj --dry-run
+```
+
+- `--video` runs an ffmpeg two-pass `loudnorm` to the YouTube targets (`I=-14 LUFS`, `TP=-1 dBTP`, `LRA 11` by default, set with `--target-i`/`--target-tp`/`--target-lra`), copies the video stream and re-encodes the audio as AAC 320k. `--out` defaults to `<stem>_loud.mp4` (or the input's own suffix); writing onto the input is refused.
+- `--fcproj` applies the Essential Sound recipe (Dialogue type, Auto-Match loudness, Clarity Dynamics medium) to the voice clips of one audio track through the headless `filmcraft-cli` (`$FILMCRAFT_CLI` or PATH). The input project is never modified unless `--in-place` is given; without it the tool works on a copy (`<stem>_loudness.fcproj`). `--dry-run` prints the commands without running them.
+- Both backends report `wall_time_s` and `llm_cost_usd` (`0.0`); `--json` adds the measured and target loudness values.
+
+---
+
 ## Installation
 
 ```bash
