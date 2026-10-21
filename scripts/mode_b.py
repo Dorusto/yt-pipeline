@@ -4,7 +4,7 @@
 
 Usage:
     python3 scripts/mode_b.py FOLDER [--out-dir DIR] [--backend {whisper,mock}]
-        [--config FILE] [--llm] [--force] [--json]
+        [--config FILE] [--llm] [--force] [--check] [--json]
 
 ``mode_b.py`` is the single entry point for the Mode B flow: it scans a folder
 of OBS recordings, transcribes every session that has no words JSON yet, writes
@@ -25,6 +25,13 @@ still pairs. The camera-to-screen sync offset is computed in one place,
 ``rough_cut.py`` (sound measurement when the voice tracks correlate, else the
 name timestamps plus the container start time); the manifest never carries a
 name-only ``sync_offset_s``.
+
+Every session with a screen file is also checked for a mistaken recording: when
+the screen file looks like a camera recording (a face in most sampled frames, or
+high frame similarity to the paired camera file) the run warns loudly and the
+``--json`` summary lists it under ``screen_suspects``. ``--check`` runs only
+these checks — no transcription, nothing written — so it is fast enough to run
+right after recording; it exits 1 when a suspect is found.
 """
 
 import argparse
@@ -37,8 +44,17 @@ import tempfile
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 import yaml
 
+from common.faces import (
+    DEFAULT_MODEL_PATH,
+    FacesError,
+    detect_faces,
+    ensure_model,
+    make_detector,
+)
 from common.media import parse_stamp, stem_timestamp, video_files
 
 TOOL = "scripts/mode_b.py"
@@ -47,6 +63,10 @@ CAMERA_PREFIX = "camera "
 BACKENDS = ("whisper", "mock")
 WORDS_SUFFIXES = ("_words.json", ".json")
 SCREEN_DIR_CANDIDATES = ("ecran", "screen")
+CHECK_SAMPLES = 8
+FACE_FRAME_FRAC = 0.6
+SIMILARITY_THRESHOLD = 0.85
+SIMILARITY_MATCH_WINDOW_S = 2.0
 DEFAULT_MODE_B_CONFIG = {
     "camera_dir": "camera",
     "screen_dir": None,
@@ -409,6 +429,132 @@ def chapters_command(edit_path, words_dir, chapters_path):
     ]
 
 
+def media_duration_s(path):
+    """Return the media duration in seconds from OpenCV, or None."""
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        return None
+    fps = capture.get(cv2.CAP_PROP_FPS) or 0.0
+    count = capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+    capture.release()
+    if fps <= 0 or count <= 0:
+        return None
+    return float(count) / float(fps)
+
+
+def sample_times(duration_s, count):
+    """Return ``count`` evenly spaced sample times inside ``duration_s``."""
+    if duration_s is None or duration_s <= 0:
+        return []
+    step = float(duration_s) / float(count)
+    return [step * (index + 0.5) for index in range(count)]
+
+
+def read_frames(path, times):
+    """Read one frame per time; return ``(t_s, frame)`` pairs for the frames found."""
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        return []
+    frames = []
+    for t_s in times:
+        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(t_s)) * 1000.0)
+        ok, frame = capture.read()
+        if ok and frame is not None:
+            frames.append((float(t_s), frame))
+    capture.release()
+    return frames
+
+
+def frame_similarity(first, second):
+    """Normalised correlation of two frames on a 64x36 grey thumbnail, in ``[-1, 1]``."""
+    grey_a = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
+    grey_b = cv2.cvtColor(second, cv2.COLOR_BGR2GRAY)
+    thumb_a = cv2.resize(grey_a, (64, 36), interpolation=cv2.INTER_AREA).astype(np.float64)
+    thumb_b = cv2.resize(grey_b, (64, 36), interpolation=cv2.INTER_AREA).astype(np.float64)
+    thumb_a -= thumb_a.mean()
+    thumb_b -= thumb_b.mean()
+    denominator = float(np.linalg.norm(thumb_a) * np.linalg.norm(thumb_b))
+    if denominator <= 1e-9:
+        return 0.0
+    return float(np.dot(thumb_a.ravel(), thumb_b.ravel()) / denominator)
+
+
+def screen_camera_similarity(screen_frames, camera_frames):
+    """Mean best-match similarity of the screen frames against the camera frames."""
+    scores = []
+    for t_s, frame in screen_frames:
+        candidates = [
+            other
+            for other_t, other in camera_frames
+            if abs(other_t - t_s) <= SIMILARITY_MATCH_WINDOW_S
+        ]
+        if not candidates:
+            continue
+        scores.append(max(frame_similarity(frame, other) for other in candidates))
+    if not scores:
+        return None
+    return sum(scores) / len(scores)
+
+
+def screen_camera_check(session, detector):
+    """Return a suspect record when the screen file looks like a camera recording, else None."""
+    screen = session.get("screen")
+    if screen is None:
+        return None
+    screen_frames = read_frames(screen, sample_times(media_duration_s(screen), CHECK_SAMPLES))
+    if not screen_frames:
+        return None
+    reasons = []
+    detail = []
+    if detector is not None:
+        hits = sum(1 for _, frame in screen_frames if detect_faces(detector, frame))
+        if hits / len(screen_frames) >= FACE_FRAME_FRAC:
+            reasons.append("face_in_most_frames")
+            detail.append(f"a face in {hits}/{len(screen_frames)} sampled frames")
+    camera = session.get("camera")
+    if camera is not None:
+        camera_frames = read_frames(
+            camera, sample_times(media_duration_s(camera), CHECK_SAMPLES)
+        )
+        similarity = screen_camera_similarity(screen_frames, camera_frames)
+        if similarity is not None and similarity >= SIMILARITY_THRESHOLD:
+            reasons.append("similar_to_camera")
+            detail.append(f"frame similarity {similarity:.2f} to '{Path(camera).name}'")
+    if not reasons:
+        return None
+    return {
+        "screen": Path(screen).name,
+        "screen_path": str(screen),
+        "camera": Path(camera).name if camera is not None else None,
+        "reason": "+".join(reasons),
+        "detail": "; ".join(detail),
+    }
+
+
+def run_screen_checks(sessions, warnings):
+    """Warn per session when its screen file looks like a camera recording."""
+    suspects = []
+    detector = None
+    detector_error = None
+    for session in sessions:
+        if session.get("screen") is None:
+            continue
+        if detector is None and detector_error is None:
+            try:
+                detector = make_detector(ensure_model(DEFAULT_MODEL_PATH))
+            except FacesError as exc:
+                detector_error = str(exc)
+        suspect = screen_camera_check(session, detector)
+        if suspect is not None:
+            warnings.append(
+                f"screen file '{suspect['screen']}' looks like a CAMERA recording: {suspect['detail']}"
+            )
+            suspects.append(suspect)
+    if detector_error is not None:
+        warnings.append(f"face detector unavailable: {detector_error}")
+    return suspects
+
+
 def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
     """Run the Mode B chain and return the ``--json`` summary object."""
     started = time.monotonic()
@@ -416,6 +562,7 @@ def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
     mode_b_config = mode_b_config or dict(DEFAULT_MODE_B_CONFIG)
     sessions = scan_sessions(folder, out_dir, warnings, mode_b_config)
     pairing = pairing_summary(sessions, folder, mode_b_config)
+    suspects = run_screen_checks(sessions, warnings)
     words_dir = out_dir / "words"
     transcribed = 0
     skipped_transcribe = 0
@@ -490,6 +637,7 @@ def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
         },
         "sessions": len(sessions),
         "pairing": pairing,
+        "screen_suspects": suspects,
         "transcribed": transcribed,
         "skipped": {
             "transcribe": skipped_transcribe,
@@ -503,6 +651,26 @@ def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
     }
 
 
+def check(folder, out_dir, mode_b_config=None):
+    """Run only the screen-file checks and return the ``--json`` summary object."""
+    started = time.monotonic()
+    warnings = []
+    mode_b_config = mode_b_config or dict(DEFAULT_MODE_B_CONFIG)
+    sessions = scan_sessions(folder, out_dir, warnings, mode_b_config)
+    pairing = pairing_summary(sessions, folder, mode_b_config)
+    suspects = run_screen_checks(sessions, warnings)
+    return {
+        "ok": not suspects,
+        "check": True,
+        "sessions": len(sessions),
+        "pairing": pairing,
+        "screen_suspects": suspects,
+        "warnings": warnings,
+        "wall_time_s": round(time.monotonic() - started, 3),
+        "llm_cost_usd": 0.0,
+    }
+
+
 def print_human(summary, stream):
     print(
         f"mode_b: {summary['sessions']} session(s), {summary['transcribed']} transcribed",
@@ -511,6 +679,21 @@ def print_human(summary, stream):
     print(f"sessions: {summary['outputs']['sessions']}", file=stream)
     print(f"edit: {summary['outputs']['edit']}", file=stream)
     print(f"project: {summary['outputs']['project']}", file=stream)
+    for warning in summary.get("warnings") or []:
+        print(f"[warn] {warning}", file=stream)
+
+
+def print_check(summary, stream):
+    print(f"mode_b --check: {summary['sessions']} session(s)", file=stream)
+    print(f"pairing: {summary['pairing']}", file=stream)
+    for suspect in summary["screen_suspects"]:
+        print(
+            f"[warn] screen file '{suspect['screen']}' looks like a CAMERA recording: "
+            f"{suspect['detail']}",
+            file=stream,
+        )
+    for warning in summary.get("warnings") or []:
+        print(f"[warn] {warning}", file=stream)
 
 
 def build_parser():
@@ -559,6 +742,15 @@ def build_parser():
     )
     parser.add_argument("--llm", action="store_true", help="propose extra cuts in rough_cut.py (never applied)")
     parser.add_argument("--force", action="store_true", help="re-run every step even when its output exists")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "only run the screen-file checks (a screen file that looks like a camera "
+            "recording: a face in most sampled frames, or high frame similarity to the "
+            "paired camera file); no transcription, nothing written; exit 1 on a suspect"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -579,19 +771,24 @@ def main(argv=None):
         out_dir = (
             Path(args.out_dir).expanduser().resolve() if args.out_dir else folder / "mode_b"
         )
-        summary = run(folder, out_dir, args.backend, config, args.llm, args.force, mode_b_config)
+        if args.check:
+            summary = check(folder, out_dir, mode_b_config)
+        else:
+            summary = run(folder, out_dir, args.backend, config, args.llm, args.force, mode_b_config)
     except ModeBError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
 
+    stream = sys.stderr if args.json else sys.stdout
     if args.json:
         print(json.dumps(summary))
-        print_human(summary, sys.stderr)
+    if args.check:
+        print_check(summary, stream)
     else:
-        print_human(summary, sys.stdout)
-    return 0
+        print_human(summary, stream)
+    return 1 if (args.check and summary["screen_suspects"]) else 0
 
 
 if __name__ == "__main__":

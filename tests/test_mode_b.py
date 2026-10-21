@@ -3,6 +3,8 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 import yaml
 
@@ -259,7 +261,8 @@ def test_printed_project_path(tmp_path, capsys):
     code, out, err = run_main([str(folder), "--backend", "mock"], capsys)
     assert code == 0
     lines = [line for line in out.splitlines() if line.strip()]
-    assert lines[-1] == f"project: {folder / 'mode_b' / 'project.fcproj'}"
+    assert f"project: {folder / 'mode_b' / 'project.fcproj'}" in lines
+    assert any(line.startswith("[warn]") for line in lines)
 
 
 def test_missing_folder_exit_2(tmp_path, capsys):
@@ -581,3 +584,122 @@ def test_reference_names_pairing(tmp_path, capsys):
     assert "camera 2026-09-29 20-58-37" in stems
     assert "camera 2026-10-03 21-46-01" in stems
     assert "camera 2026-10-17 23-05-15" in stems
+
+
+FOURCC = cv2.VideoWriter_fourcc(*"mp4v")
+
+
+def write_video(path, frames, fps=10, size=(640, 360)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(str(path), FOURCC, fps, size)
+    if not writer.isOpened():
+        pytest.skip("OpenCV mp4v VideoWriter is unavailable on this build")
+    for frame in frames:
+        writer.write(frame)
+    writer.release()
+    return path
+
+
+def rect_frames(count=30, size=(640, 360)):
+    frames = []
+    for index in range(count):
+        frame = np.full((size[1], size[0], 3), 20, dtype=np.uint8)
+        x = 40 + index * 6
+        cv2.rectangle(frame, (x, 100), (x + 80, 220), (220, 220, 220), -1)
+        frames.append(frame)
+    return frames
+
+
+def noise_frames(count=30, size=(640, 360), seed=5):
+    rng = np.random.default_rng(seed)
+    return [rng.integers(0, 255, (size[1], size[0], 3), dtype=np.uint8) for _ in range(count)]
+
+
+class SequenceDetector:
+    """Face detector stub: returns the next canned box list on every call."""
+
+    def __init__(self, sequence):
+        self.sequence = list(sequence)
+        self.index = 0
+
+    def setInputSize(self, size):
+        return None
+
+    def detect(self, frame):
+        boxes = self.sequence[min(self.index, len(self.sequence) - 1)]
+        self.index += 1
+        if not boxes:
+            return None, None
+        faces = np.array(
+            [[x, y, w, h, score] for (x, y, w, h, score) in boxes], dtype=np.float32
+        )
+        return None, faces
+
+
+def install_detector(monkeypatch, sequence):
+    detector = SequenceDetector(sequence)
+    monkeypatch.setattr(mode_b, "make_detector", lambda path: detector)
+    monkeypatch.setattr(mode_b, "ensure_model", lambda path, url=None: Path(path))
+    return detector
+
+
+def test_check_warns_when_screen_shows_a_face(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    install_detector(monkeypatch, [[(100.0, 100.0, 80.0, 80.0, 0.9)]] * 8)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 1
+    summary = json.loads(out)
+    assert summary["ok"] is False
+    assert summary["check"] is True
+    assert summary["llm_cost_usd"] == 0.0
+    suspect = summary["screen_suspects"][0]
+    assert suspect["reason"] == "face_in_most_frames"
+    assert "CAMERA recording" in summary["warnings"][0]
+    assert not (folder / "mode_b").exists()
+
+
+def test_check_warns_when_screen_matches_the_camera(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    frames = rect_frames()
+    write_video(camera_dir / "camera 2026-09-29 20-58-37.mp4", frames)
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", frames)
+    install_detector(monkeypatch, [[]] * 8)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 1
+    summary = json.loads(out)
+    suspect = summary["screen_suspects"][0]
+    assert suspect["reason"] == "similar_to_camera"
+    assert suspect["camera"] == "camera 2026-09-29 20-58-37.mp4"
+    assert "CAMERA recording" in summary["warnings"][0]
+
+
+def test_check_clean_screen_exits_zero(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    write_video(camera_dir / "camera 2026-09-29 20-58-37.mp4", noise_frames(seed=2))
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    install_detector(monkeypatch, [[]] * 8)
+    code, out, err = run_main([str(folder), "--check", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["ok"] is True
+    assert summary["screen_suspects"] == []
+    assert summary["warnings"] == []
+
+
+def test_full_run_warns_on_camera_like_screen(tmp_path, capsys, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    write_video(screen_dir / "2026-09-29 20-58-35.mp4", rect_frames())
+    make_words(folder / "json" / "camera 2026-09-29 20-58-37.json")
+    install_detector(monkeypatch, [[(100.0, 100.0, 80.0, 80.0, 0.9)]] * 8)
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["screen_suspects"][0]["reason"] == "face_in_most_frames"
+    assert any("CAMERA recording" in warning for warning in summary["warnings"])

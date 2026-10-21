@@ -125,6 +125,7 @@ kit can take its chapters from this file instead of asking the model again, and
 ```bash
 .venv/bin/python scripts/mode_b.py FOLDER --json
 .venv/bin/python scripts/mode_b.py FOLDER --backend mock --force --json
+.venv/bin/python scripts/mode_b.py FOLDER --check --json
 ```
 
 `mode_b.py` is the Mode B front door: it scans `FOLDER`, transcribes every
@@ -145,6 +146,16 @@ station CLIs as subprocesses and imports none of them.
   left unpaired is a warning. `mode_b.py` never writes `sync_offset_s`: the
   camera-to-screen offset is computed in one place, `rough_cut.py` (see the
   sync section above).
+- **Screen checks.** Every session with a screen file is checked for a
+  mistaken recording: the screen file is flagged when it looks like a camera
+  recording — a face (YuNet) in at least 60 % of 8 evenly sampled frames, or a
+  mean frame similarity >= 0.85 to the paired camera file (best match within
+  ±2 s of each sample). The run warns loudly per session
+  (`screen file '…' looks like a CAMERA recording: …`) and lists them in
+  `screen_suspects`; the pair still runs (the warning is not a stop).
+- `--check` runs only those checks — no transcription, nothing written, fast
+  enough to run right after recording — and exits `1` when a suspect is found
+  (`0` when clean).
 - **Words lookup.** `find_words` searches `FOLDER`, then `FOLDER/<words_dir>`
   (default `json`, where the real project keeps its Whisper JSONs), then
   `<out-dir>/words`. The chain always reads `<out-dir>/words`: every session's
@@ -161,11 +172,15 @@ station CLIs as subprocesses and imports none of them.
   step). A failing step stops the run (exit `2`) and the next run resumes at it.
 - `--json` reports `outputs` (`words_dir`, `sessions`, `edit`, `chapters`,
   `project`), `sessions`, `pairing` (`paired`/`camera_only`/`screen_only`
-  counts), `transcribed`, `skipped` (`transcribe` count,
+  counts), `screen_suspects` (per suspect: `screen`, `screen_path`, `camera`,
+  `reason`, `detail`), `transcribed`, `skipped` (`transcribe` count,
   `rough_cut`/`export` bools, `chapters` count), `warnings`, `wall_time_s`,
   `llm_cost_usd` (the rough-cut and chapters child costs added up). On success
-  the last human line is `project: <path>`.
-- Exit codes: `0` success, `2` user error (missing folder, no camera files, a
+  the last human line is `project: <path>`, followed by `[warn]` lines; the
+  `--check` summary has `ok`, `check`, `sessions`, `pairing`, `screen_suspects`,
+  `warnings`, `wall_time_s`, `llm_cost_usd`.
+- Exit codes: `0` success (`1` from `--check` when a screen file looks like a
+  camera recording), `2` user error (missing folder, no camera files, a
   bad `mode_b:` config, a failing step). Errors print `[error] <message>` on
   stderr and write nothing.
 
