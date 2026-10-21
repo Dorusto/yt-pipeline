@@ -47,7 +47,7 @@ DEFAULT_CONFIG = {
     "pause_gap_s": 0.6,
     "handle_s": 0.12,
     "retake_window_s": 60.0,
-    "retake_similarity": 0.55,
+    "retake_similarity": 0.75,
     "retake_min_words": 3,
     "repeat_window_s": 3.0,
     "fillers": {
