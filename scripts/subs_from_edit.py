@@ -19,13 +19,18 @@ import sys
 import time
 from pathlib import Path
 
-TICKS_PER_SECOND = 254016000000
+from common.timeline_words import (
+    EPSILON,
+    TimelineWordsError,
+    collect_words,
+    plan_from_fcproj,
+)
+
 SENTENCE_END = (".", "!", "?", "\u2026")
 PAUSE_SPLIT_S = 0.6
 MAX_LINES = 2
 MAX_LINE_CHARS = 42
 XFADE_DEFAULT_S = 0.3
-EPSILON = 1e-9
 
 
 class SubsError(Exception):
@@ -42,79 +47,6 @@ def load_json(path):
         raise SubsError(f"cannot read '{path}': not valid JSON ({exc})")
     except OSError as exc:
         raise SubsError(f"cannot read '{path}': {exc}")
-
-
-def load_source_words(path):
-    """Return ``[{word, start, end}]`` for every word of a Whisper word JSON file."""
-    data = load_json(path)
-    words = []
-    for segment in data.get("segments") or []:
-        for word in segment.get("words") or []:
-            text = str(word.get("word", "")).strip()
-            if not text:
-                continue
-            try:
-                start = float(word["start"])
-                end = float(word["end"])
-            except (KeyError, TypeError, ValueError):
-                raise SubsError(f"'{path}': a word entry has no numeric start/end")
-            words.append({"word": text, "start": start, "end": end})
-    return words
-
-
-def media_item_path(item):
-    media = (((item or {}).get("kind") or {}).get("Media") or {}).get("media") or {}
-    return (media.get("File") or {}).get("path")
-
-
-def plan_from_fcproj(path, sequence, track):
-    """Build the timeline plan from a FilmCraft project's audio track."""
-    data = load_json(path)
-    items = (data.get("project") or {}).get("items") or {}
-    sequences = {}
-    for value in items.values():
-        kind = value.get("kind") or {}
-        if "Sequence" in kind and value.get("name"):
-            sequences[value["name"]] = value
-    if sequence not in sequences:
-        found = ", ".join(sorted(sequences)) or "none"
-        raise SubsError(f"unknown sequence '{sequence}' (sequences found: {found})")
-    sequence_item = sequences[sequence]
-    audio_tracks = ((sequence_item.get("kind") or {}).get("Sequence") or {}).get("audio_tracks") or []
-    tracks = {entry.get("name"): entry for entry in audio_tracks}
-    if track not in tracks:
-        found = ", ".join(sorted(str(name) for name in tracks)) or "none"
-        raise SubsError(f"unknown track '{track}' (tracks found: {found})")
-
-    timeline_items = sorted(tracks[track].get("items") or [], key=lambda clip: clip.get("start", 0))
-    plan = []
-    for clip in timeline_items:
-        media_path = media_item_path(items.get(str(clip.get("item"))))
-        name = clip.get("name") or (Path(media_path).name if media_path else str(clip.get("item")))
-        if not clip.get("enabled", True):
-            plan.append({"name": name, "enabled": False})
-            continue
-        if media_path is None:
-            raise SubsError(f"clip '{name}': source media is missing from the project")
-        speed = float(clip.get("speed", 1.0) or 1.0)
-        if abs(speed - 1.0) > EPSILON:
-            raise SubsError(f"clip '{name}': speed {speed:g} is not 1.0, word times would not map linearly")
-        if clip.get("reverse", False):
-            raise SubsError(f"clip '{name}': reverse playback is not supported, word times would not map linearly")
-        start = float(clip["start"]) / TICKS_PER_SECOND
-        duration = float(clip["duration"]) / TICKS_PER_SECOND
-        source_in = float(clip["source_in"]) / TICKS_PER_SECOND
-        plan.append({
-            "name": name,
-            "source_stem": Path(media_path).stem,
-            "enabled": True,
-            "window_start": source_in,
-            "window_end": source_in + duration,
-            "timeline_start": start,
-            "timeline_end": start + duration,
-            "kept_words": 0,
-        })
-    return plan
 
 
 def fade_for_join(slot, dur_prev, dur_next, xfade_s=XFADE_DEFAULT_S):
@@ -190,39 +122,6 @@ def plan_from_edit(path):
         })
         plan.append(entry)
     return plan
-
-
-def collect_words(plan, words_dir):
-    """Map every source word onto the timeline; return ``(placements, words_dropped)``."""
-    by_source = {}
-    for entry in plan:
-        if entry.get("enabled") and entry.get("source_stem"):
-            by_source.setdefault(entry["source_stem"], []).append(entry)
-    placements = []
-    words_dropped = 0
-    for stem, entries in by_source.items():
-        words_path = Path(words_dir) / f"{stem}.json"
-        if not words_path.is_file():
-            raise SubsError(
-                f"no word JSON for clip '{entries[0]['name']}' (looked for '{stem}.json' in {words_dir})"
-            )
-        for word in load_source_words(words_path):
-            midpoint = (word["start"] + word["end"]) / 2
-            matched = False
-            for entry in entries:
-                if entry["window_start"] <= midpoint < entry["window_end"]:
-                    matched = True
-                    shift = entry["timeline_start"] - entry["window_start"]
-                    placements.append({
-                        "word": word["word"],
-                        "start": round(word["start"] + shift, 3),
-                        "end": round(word["end"] + shift, 3),
-                    })
-                    entry["kept_words"] += 1
-            if not matched:
-                words_dropped += 1
-    placements.sort(key=lambda item: (item["start"], item["end"]))
-    return placements, words_dropped
 
 
 def attach_hyphen_suffixes(placements):
@@ -391,7 +290,7 @@ def main(argv=None):
             args.out_dir,
             args.name,
         )
-    except SubsError as exc:
+    except (SubsError, TimelineWordsError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
