@@ -146,7 +146,7 @@ def candidates_of(edit_path, words_path, chapters_path=None):
     document = json.loads(edit_path.read_text(encoding="utf-8"))
     groups = shorts_rank.build_groups(document)
     words_map, single = shorts_rank.build_words_map(words_path)
-    mapped, _ = shorts_rank.map_words(groups, words_map, single)
+    mapped, _warnings, _dropped = shorts_rank.map_words(groups, words_map, single)
     chapters = (
         shorts_rank.load_chapters(chapters_path)
         if chapters_path
@@ -241,7 +241,7 @@ def test_paired_group_counts_words_once(tmp_path):
     document = json.loads(edit.read_text(encoding="utf-8"))
     groups = shorts_rank.build_groups(document)
     words_map, single = shorts_rank.build_words_map(words)
-    mapped, warnings = shorts_rank.map_words(groups, words_map, single)
+    mapped, warnings, _dropped = shorts_rank.map_words(groups, words_map, single)
     assert warnings == []
     assert len(mapped) == 3
     assert [round(item["start"], 3) for item in mapped] == [0.15, 1.15, 1.65]
@@ -576,3 +576,23 @@ def test_reference_final_project(tmp_path, monkeypatch, capsys):
         assert 0 <= candidate["end_s"] <= REFERENCE_END_S
         assert 20.0 <= candidate["end_s"] - candidate["start_s"] <= 60.0
         assert candidate["chapter_start_s"] == 0.0
+
+
+def test_fcproj_default_out_is_the_publish_folder(tmp_path, monkeypatch, capsys):
+    fcproj, words_dir = long_fcproj_fixture(tmp_path)
+    clip = tmp_path / "clip"
+    moved_words = clip / "json"
+    moved_words.mkdir(parents=True)
+    for source in words_dir.glob("*.json"):
+        (moved_words / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    moved_fcproj = tmp_path / "other" / "Second Brain.fcproj"
+    moved_fcproj.parent.mkdir(parents=True)
+    moved_fcproj.write_text(fcproj.read_text(encoding="utf-8"), encoding="utf-8")
+    client = AutoScoreClient()
+    patch(monkeypatch, client)
+    code = shorts_rank.main([
+        "--fcproj", str(moved_fcproj), "--sequence", "Main", "--words-dir", str(moved_words), "--json",
+    ])
+    assert code == 0
+    assert (clip / "shorts_candidates.json").is_file()
+    assert not (moved_fcproj.parent / "shorts_candidates.json").exists()

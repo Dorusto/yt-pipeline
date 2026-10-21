@@ -113,7 +113,7 @@ def test_map_words_uses_timeline_seconds(tmp_path):
     document = json.loads(edit.read_text(encoding="utf-8"))
     groups = chapters.build_groups(document)
     words_map, single = chapters.build_words_map(words)
-    mapped, warnings = chapters.map_words(groups, words_map, single)
+    mapped, warnings, _dropped = chapters.map_words(groups, words_map, single)
     assert warnings == []
     assert [round(item["start"], 3) for item in mapped] == [0.5, 1.5, 2.5]
     assert [item["word"] for item in mapped] == ["unu", "doi", "trei"]
@@ -136,7 +136,7 @@ def test_paired_group_counts_words_once(tmp_path):
     document = json.loads(edit.read_text(encoding="utf-8"))
     groups = chapters.build_groups(document)
     words_map, single = chapters.build_words_map(words)
-    mapped, warnings = chapters.map_words(groups, words_map, single)
+    mapped, warnings, _dropped = chapters.map_words(groups, words_map, single)
     assert len(mapped) == 3
     assert [round(item["start"], 3) for item in mapped] == [0.15, 1.15, 1.65]
 
@@ -421,3 +421,22 @@ def test_reference_final_project(tmp_path, monkeypatch, capsys):
     validate_or_raise(document, "chapters")
     for chapter in document["chapters"]:
         assert 0 <= chapter["start_s"] <= REFERENCE_END_S
+
+
+def test_fcproj_default_out_is_the_publish_folder(tmp_path, monkeypatch, capsys):
+    clip = tmp_path / "clip"
+    words_dir = clip / "json"
+    words_dir.mkdir(parents=True)
+    for source in FIXTURES.glob("*.json"):
+        (words_dir / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    fcproj = tmp_path / "other" / "Second Brain.fcproj"
+    fcproj.parent.mkdir(parents=True)
+    fcproj.write_text(FCPROJ.read_text(encoding="utf-8"), encoding="utf-8")
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+    code = chapters.main([
+        "--fcproj", str(fcproj), "--sequence", "Main", "--words-dir", str(words_dir), "--json",
+    ])
+    assert code == 0
+    assert (clip / "chapters.json").is_file()
+    assert not (fcproj.parent / "chapters.json").exists()

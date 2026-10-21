@@ -36,10 +36,11 @@ from pathlib import Path
 
 import yaml
 
+from common.constants import TICKS_PER_SECOND
 from common.schema import SchemaError, validate_or_raise
+from common.timeline_words import media_item_path
 
 TOOL = "scripts/eval_rough_cut.py"
-TICKS_PER_SECOND = 254016000000
 DEFAULT_TRACK = "Audio 1"
 DEFAULT_SECTION_MIN_S = 30.0
 MAX_DISAGREEMENTS = 10
@@ -175,11 +176,6 @@ def flatten_words(path):
                 raise EvalError(f"words '{path}': a word entry has no numeric start/end")
             words.append({"word": text, "start": float(start), "end": float(end)})
     return words
-
-
-def media_item_path(item):
-    media = (((item or {}).get("kind") or {}).get("Media") or {}).get("media") or {}
-    return (media.get("File") or {}).get("path")
 
 
 def our_windows(edit, sessions):

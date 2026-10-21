@@ -31,9 +31,9 @@ import sys
 import time
 from pathlib import Path
 
+from common.constants import TICKS_PER_SECOND
 from common.ffmpeg_tools import ffmpeg_path
 
-TICKS_PER_SECOND = 254016000000
 DEFAULT_TARGET_I = -14.0
 DEFAULT_TARGET_TP = -1.0
 DEFAULT_TARGET_LRA = 11.0

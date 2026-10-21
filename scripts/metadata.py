@@ -287,20 +287,21 @@ def validate_chapters(chapters, srt_end):
 
 def load_chapters_file(path):
     """Read a ``chapters.json``, validate it against the schema and return model-shaped chapters."""
+    resolved = Path(path).expanduser()
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = resolved.read_text(encoding="utf-8")
     except FileNotFoundError:
-        raise MetadataError(f"chapters file not found: {path}")
+        raise MetadataError(f"chapters file not found: {resolved}")
     except OSError as exc:
-        raise MetadataError(f"cannot read chapters file '{path}': {exc}")
+        raise MetadataError(f"cannot read chapters file '{resolved}': {exc}")
     try:
         document = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise MetadataError(f"chapters file '{path}' is not valid JSON: {exc}")
+        raise MetadataError(f"chapters file '{resolved}' is not valid JSON: {exc}")
     try:
         validate_or_raise(document, "chapters")
     except SchemaError as exc:
-        raise MetadataError(f"chapters file '{path}' is not valid chapters.json: {exc}")
+        raise MetadataError(f"chapters file '{resolved}' is not valid chapters.json: {exc}")
     return [
         {"timestamp": format_clock(chapter["start_s"]), "title": chapter["title"]}
         for chapter in document["chapters"]

@@ -89,9 +89,10 @@ kit can take its chapters from this file instead of asking the model again, and
   0 (snapped), starts never decrease, titles are at most 40 characters and mark
   real topic changes; each chapter carries a one-line summary (at most 200
   characters). The model output is retried once when it is not parseable JSON.
-- `--out` (default `chapters.json` next to the primary input: the edit, the
-  `--fcproj` or the `--timeline-words` file) is written atomically; re-running
-  with the same inputs rewrites the same file, only `generated_at` changes.
+- `--out` (default `chapters.json` in the clip's publish folder — the parent of
+  `--words-dir` — in `--fcproj` mode, else next to the primary input: the edit
+  or the `--timeline-words` file) is written atomically; re-running with the
+  same inputs rewrites the same file, only `generated_at` changes.
 - `--json` reports `outputs.chapters`, `chapters`, `words_mapped`, `warnings`,
   `wall_time_s`, `llm_cost_usd`. `warnings` is empty in the final-project and
   timeline-words modes (there are no edit slots to skip).

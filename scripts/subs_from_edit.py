@@ -20,17 +20,18 @@ import time
 from pathlib import Path
 
 from common.timeline_words import (
-    EPSILON,
+    PAUSE_SPLIT_S,
     TimelineWordsError,
+    build_groups,
+    build_words_map,
     collect_words,
+    map_words,
     plan_from_fcproj,
 )
 
 SENTENCE_END = (".", "!", "?", "\u2026")
-PAUSE_SPLIT_S = 0.6
 MAX_LINES = 2
 MAX_LINE_CHARS = 42
-XFADE_DEFAULT_S = 0.3
 
 
 class SubsError(Exception):
@@ -49,79 +50,33 @@ def load_json(path):
         raise SubsError(f"cannot read '{path}': {exc}")
 
 
-def fade_for_join(slot, dur_prev, dur_next, xfade_s=XFADE_DEFAULT_S):
-    """The overlap at the join into ``slot``, matching ``render.py``; 0 means cut."""
-    transition = slot.get("transition") or {}
-    if transition.get("type") != "crossfade":
-        return 0.0
-    requested = float(transition.get("duration_s") or 0.0)
-    if requested <= 0:
-        requested = xfade_s
-    if requested <= 0:
-        return 0.0
-    return min(requested, dur_prev / 2, dur_next / 2)
-
-
-def plan_from_edit(path):
-    """Build the timeline plan from an edit.json edit list.
-
-    Video slots carry their source window and on-screen length; photo slots
-    hold the timeline for their ``duration_s`` and contribute no words. A
-    ``crossfade`` into a slot overlaps it with the previous one by the same
-    rule ``render.py`` uses.
-    """
-    data = load_json(path)
-    sources = {source["file"]: source for source in data.get("sources") or [] if source.get("file")}
-    plan = []
-    timeline_cursor = 0.0
-    previous_length = 0.0
-    has_previous = False
-    for slot in data.get("video") or []:
-        kind = slot.get("kind")
-        if kind == "photo":
-            length = float(slot.get("duration_s") or 0.0)
-            entry = {"name": slot.get("photo"), "kind": "photo", "kept_words": 0}
-        elif kind is None or kind == "video":
-            clip = slot.get("clip")
-            if not clip:
-                continue
-            slot_id = slot.get("id")
-            speed = float(slot.get("speed", 1.0) or 1.0)
-            middle = slot.get("middle_speed")
-            if abs(speed - 1.0) > EPSILON or (middle is not None and abs(float(middle) - 1.0) > EPSILON):
-                raise SubsError(
-                    f"edit slot '{slot_id}' ({clip}): speed is not 1.0, word times would not map linearly"
-                )
-            in_s = float(slot["in_s"])
-            out_s = float(slot["out_s"])
-            file_name = (sources.get(clip) or {}).get("file") or clip
-            length = out_s - in_s
-            entry = {
-                "name": file_name,
-                "kind": "video",
-                "source_stem": Path(file_name).stem,
-                "window_start": in_s,
-                "window_end": out_s,
-                "kept_words": 0,
-            }
-        else:
+def clips_from_plan(plan):
+    clips = []
+    for entry in plan:
+        if not entry.get("enabled"):
+            clips.append({"name": entry["name"], "skipped": "disabled"})
             continue
-        overlap = 0.0
-        if has_previous:
-            overlap = fade_for_join(slot, previous_length, length)
-        start = timeline_cursor - overlap
-        end = start + length
-        timeline_cursor = end
-        previous_length = length
-        has_previous = True
-        entry.update({
-            "enabled": True,
-            "screen_length": length,
-            "timeline_start": start,
-            "timeline_end": end,
+        clips.append({
+            "name": entry["name"],
+            "kept_words": entry.get("kept_words", 0),
+            "timeline_start_s": round(entry["timeline_start"], 3),
+            "timeline_end_s": round(entry["timeline_end"], 3),
         })
-        plan.append(entry)
-    return plan
+    return clips
+
+
+def clips_from_groups(groups):
+    clips = []
+    for group in groups:
+        slot = group["slots"][0]["slot"]
+        name = slot.get("photo") if group["kind"] == "photo" else slot.get("clip")
+        clips.append({
+            "name": name,
+            "kept_words": group.get("kept_words", 0),
+            "timeline_start_s": round(group["start_s"], 3),
+            "timeline_end_s": round(group["start_s"] + group["length_s"], 3),
+        })
+    return clips
 
 
 def attach_hyphen_suffixes(placements):
@@ -212,14 +167,18 @@ def build_srt(cues):
 def run(fcproj, sequence, track, from_edit, words_dir, out_dir, name):
     started = time.monotonic()
     if from_edit:
-        plan = plan_from_edit(from_edit)
+        groups = build_groups(load_json(from_edit))
+        words_map, single_file = build_words_map(words_dir)
+        placements, _warnings, words_dropped = map_words(groups, words_map, single_file, strict=True)
         default_name = Path(from_edit).stem
+        clips = clips_from_groups(groups)
     else:
         plan = plan_from_fcproj(fcproj, sequence, track)
+        placements, words_dropped = collect_words(plan, words_dir)
         default_name = sequence
+        clips = clips_from_plan(plan)
     output_name = name or default_name
 
-    placements, words_dropped = collect_words(plan, words_dir)
     placements = attach_hyphen_suffixes(placements)
     cues = build_cues(placements)
 
@@ -229,18 +188,6 @@ def run(fcproj, sequence, track, from_edit, words_dir, out_dir, name):
     words_path = out_path / f"{output_name}_words.json"
     srt_path.write_text(build_srt(cues), encoding="utf-8")
     words_path.write_text(json.dumps(placements, ensure_ascii=False), encoding="utf-8")
-
-    clips = []
-    for entry in plan:
-        if not entry.get("enabled"):
-            clips.append({"name": entry["name"], "skipped": "disabled"})
-            continue
-        clips.append({
-            "name": entry["name"],
-            "kept_words": entry.get("kept_words", 0),
-            "timeline_start_s": round(entry["timeline_start"], 3),
-            "timeline_end_s": round(entry["timeline_end"], 3),
-        })
 
     return {
         "outputs": {"srt": str(srt_path), "words_json": str(words_path)},

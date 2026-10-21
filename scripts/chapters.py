@@ -37,16 +37,12 @@ from common.timeline_words import (
     TimelineWordsError,
     build_groups,
     build_words_map,
-    check_linear,
     collect_words,
-    format_stamp,
     format_timeline,
-    load_source_words,
     map_words,
     plan_from_fcproj,
-    slot_length,
+    publish_folder_for,
     timeline_words_from_file,
-    words_member,
 )
 
 TOOL = "scripts/chapters.py"
@@ -126,7 +122,7 @@ def resolve_inputs(args):
     document = load_edit(args.edit)
     groups = build_groups(document)
     words_map, single_file = build_words_map(args.words)
-    mapped, warnings = map_words(groups, words_map, single_file)
+    mapped, warnings, _dropped = map_words(groups, words_map, single_file)
     return mapped, warnings, Path(args.edit)
 
 
@@ -228,7 +224,7 @@ def write_json(path, document):
         raise
 
 
-def run(mapped, warnings, primary_input, out_path=None, prompt_path=None):
+def run(mapped, warnings, primary_input, out_path=None, prompt_path=None, publish_dir=None):
     """Build the chapters and return the ``--json`` summary; raise ``ChaptersError`` on bad input."""
     started = time.monotonic()
     if not mapped:
@@ -248,11 +244,12 @@ def run(mapped, warnings, primary_input, out_path=None, prompt_path=None):
     chapters = request_chapters(client, message)
     normalized = validate_chapters(chapters, transcript_end)
 
-    out = (
-        Path(out_path).expanduser()
-        if out_path
-        else Path(primary_input).expanduser().parent / "chapters.json"
-    )
+    if out_path:
+        out = Path(out_path).expanduser()
+    elif publish_dir is not None:
+        out = Path(publish_dir).expanduser() / "chapters.json"
+    else:
+        out = Path(primary_input).expanduser().parent / "chapters.json"
     output = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": now_iso(),
@@ -298,7 +295,14 @@ def build_parser():
     )
     parser.add_argument("edit", nargs="?", help="edit.json edit list (rough-cut mode)")
     parser.add_argument("words", nargs="?", help="a Whisper word JSON or a folder of them (rough-cut mode)")
-    parser.add_argument("--out", default=None, help="the chapters.json to write (default: next to the primary input)")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help=(
+            "the chapters.json to write (default: the clip's publish folder — the parent of "
+            "--words-dir — in --fcproj mode, else next to the primary input)"
+        ),
+    )
     parser.add_argument("--prompt", default=None, help="alternative prompt file")
     parser.add_argument("--fcproj", default=None, help="FilmCraft project file (final-project mode)")
     parser.add_argument("--sequence", default=None, help="name of the sequence item to use (with --fcproj)")
@@ -313,7 +317,12 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         mapped, warnings, primary_input = resolve_inputs(args)
-        summary = run(mapped, warnings, primary_input, args.out, args.prompt)
+        publish_dir = (
+            publish_folder_for(args.words_dir)
+            if args.fcproj and args.words_dir
+            else None
+        )
+        summary = run(mapped, warnings, primary_input, args.out, args.prompt, publish_dir)
     except (ChaptersError, ConfigError, LLMError, TimelineWordsError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:

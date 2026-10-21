@@ -11,7 +11,7 @@ import yaml
 import mode_b
 from fs_probe import safe_is_dir
 
-MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mode_b" / "mock_config.yaml"
+MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mock_llm_config.yaml"
 REFERENCE_DIR = Path("/root/media/eval/second-brain")
 REFERENCE_FCPROJ = "Second Brain.fcproj"
 REFERENCE_MEDIA = re.compile(r'"([^"]+\.(?:mp4|mov|mkv|m4v))"', re.IGNORECASE)

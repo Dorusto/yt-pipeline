@@ -30,9 +30,9 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+from common.constants import TICKS_PER_SECOND
 from common.schema import SchemaError, validate_or_raise
-
-TICKS_PER_SECOND = 254016000000
+from common.timeline_words import slot_length
 SCHEMA_VERSION = 15
 GENERATOR = "yt-pipeline export_filmcraft.py"
 DEFAULT_SEQUENCE = "Main"
@@ -120,12 +120,6 @@ def load_shorts_candidates(path):
     except SchemaError as exc:
         raise ExportError(f"invalid shorts candidates '{path}': {exc}")
     return document["candidates"]
-
-
-def slot_length(slot):
-    if slot.get("kind") == "photo":
-        return float(slot.get("duration_s") or 0.0)
-    return float(slot["out_s"]) - float(slot["in_s"])
 
 
 def build_timeline(document):

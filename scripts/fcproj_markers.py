@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-TICKS_PER_SECOND = 254016000000
+from common.constants import TICKS_PER_SECOND
 DEFAULT_FRAME_RATE = 25.0
 ROSE = "rose"
 SCHEMA_VERSION = "1"

@@ -1,6 +1,0 @@
-models:
-  metadata: mock-model
-llm_budget_usd: null
-llm_backend: mock
-llm_mock_text:
-  metadata: '{"chapters": [{"start_s": 0.0, "title": "Intro", "summary": "Start."}]}'

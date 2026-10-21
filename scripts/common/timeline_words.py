@@ -11,9 +11,9 @@ timeline time is the source time shifted by the window's timeline start.
 import json
 from pathlib import Path
 
-TICKS_PER_SECOND = 254016000000
-EPSILON = 1e-9
-PAUSE_SPLIT_S = 0.6
+from common.constants import EPSILON, PAUSE_SPLIT_S, TICKS_PER_SECOND
+
+XFADE_DEFAULT_S = 0.3
 WORDS_SUFFIXES = ("_words.json", ".json")
 
 
@@ -102,6 +102,16 @@ def words_file_for(words_dir, stem):
         if candidate.is_file():
             return candidate
     return None
+
+
+def publish_folder_for(words_dir):
+    """Return the clip's publish folder for a words dir: its parent.
+
+    The words JSONs live in the clip's ``json/`` subfolder and the publish chain
+    builds ``publish-kit/`` in the same clip folder, so the parent is where the
+    publish kit's siblings (``chapters.json``, ``shorts_candidates.json``) go.
+    """
+    return Path(words_dir).expanduser().resolve().parent
 
 
 def media_item_path(item):
@@ -203,8 +213,27 @@ def slot_length(slot):
     return float(slot["out_s"]) - float(slot["in_s"])
 
 
+def fade_for_join(slot, dur_prev, dur_next, xfade_s=XFADE_DEFAULT_S):
+    """The overlap at the join into ``slot``, matching ``render.py``; 0 means cut."""
+    transition = slot.get("transition") or {}
+    if transition.get("type") != "crossfade":
+        return 0.0
+    requested = float(transition.get("duration_s") or 0.0)
+    if requested <= 0:
+        requested = xfade_s
+    if requested <= 0:
+        return 0.0
+    return min(requested, dur_prev / 2, dur_next / 2)
+
+
 def build_groups(document):
-    """Group consecutive video slots sharing one id; each group is one timeline window."""
+    """Group consecutive video slots sharing one id; each group is one timeline window.
+
+    A Mode B pair (two video slots with the same ``id``) is one group. A
+    ``crossfade`` into a group overlaps it with the previous one by the same
+    rule ``render.py`` uses. Every group carries a ``kept_words`` counter filled
+    in by ``map_words``.
+    """
     groups = []
     current = None
     for slot in document.get("video") or []:
@@ -220,10 +249,18 @@ def build_groups(document):
             current = {"kind": entry["kind"], "slots": [entry]}
             groups.append(current)
     cursor = 0.0
+    previous_length = 0.0
+    has_previous = False
     for group in groups:
-        group["start_s"] = cursor
         group["length_s"] = slot_length(group["slots"][0]["slot"])
-        cursor += group["length_s"]
+        overlap = 0.0
+        if has_previous:
+            overlap = fade_for_join(group["slots"][0]["slot"], previous_length, group["length_s"])
+        group["start_s"] = cursor - overlap
+        cursor = group["start_s"] + group["length_s"]
+        previous_length = group["length_s"]
+        has_previous = True
+        group["kept_words"] = 0
     return groups
 
 
@@ -264,35 +301,58 @@ def words_member(group, words_map, single_file, video_group_count):
     return None, None
 
 
-def map_words(groups, words_map, single_file):
-    """Map every kept word onto timeline time; return ``(mapped, warnings)``."""
+def map_words(groups, words_map, single_file, strict=False):
+    """Map every kept word onto timeline time; return ``(mapped, warnings, words_dropped)``.
+
+    A Mode B pair is one window and its words are counted once, from the member
+    whose clip stem matches a words file. A word that falls in no window counts
+    as dropped. ``strict`` raises instead of warning when a group has no words
+    file.
+    """
     video_groups = [group for group in groups if group["kind"] == "video"]
-    mapped = []
     warnings = []
+    resolved = []
     for group in groups:
+        group["kept_words"] = 0
         if group["kind"] != "video":
             continue
         for entry in group["slots"]:
             check_linear(entry["slot"])
         member, words_file = words_member(group, words_map, single_file, len(video_groups))
         if member is None:
-            warnings.append(
-                f"no words file for slot '{group['slots'][0]['slot'].get('id')}', skipped"
-            )
+            slot_id = group["slots"][0]["slot"].get("id")
+            if strict:
+                raise TimelineWordsError(
+                    f"slot '{slot_id}' ({group['slots'][0]['slot'].get('clip')}): no words file"
+                )
+            warnings.append(f"no words file for slot '{slot_id}', skipped")
             continue
-        in_s = float(member["slot"]["in_s"])
-        out_s = float(member["slot"]["out_s"])
-        shift = group["start_s"] - in_s
+        resolved.append((group, member, Path(words_file)))
+    by_file = {}
+    for group, member, words_file in resolved:
+        by_file.setdefault(words_file, []).append((group, member))
+    mapped = []
+    words_dropped = 0
+    for words_file, entries in by_file.items():
         for word in load_source_words(words_file):
             midpoint = (word["start"] + word["end"]) / 2
-            if in_s <= midpoint < out_s:
-                mapped.append({
-                    "word": word["word"],
-                    "start": round(word["start"] + shift, 3),
-                    "end": round(word["end"] + shift, 3),
-                })
+            matched = False
+            for group, member in entries:
+                in_s = float(member["slot"]["in_s"])
+                out_s = float(member["slot"]["out_s"])
+                if in_s <= midpoint < out_s:
+                    matched = True
+                    shift = group["start_s"] - in_s
+                    mapped.append({
+                        "word": word["word"],
+                        "start": round(word["start"] + shift, 3),
+                        "end": round(word["end"] + shift, 3),
+                    })
+                    group["kept_words"] += 1
+            if not matched:
+                words_dropped += 1
     mapped.sort(key=lambda item: (item["start"], item["end"]))
-    return mapped, warnings
+    return mapped, warnings, words_dropped
 
 
 def format_stamp(seconds):
