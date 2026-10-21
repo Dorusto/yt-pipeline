@@ -113,6 +113,21 @@ def test_scan_sorts_chronologically_unstamped_last(tmp_path):
     ]
 
 
+def test_flat_layout_ignores_untimestamped_videos(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(folder, "2026-09-29 20-58-35.mp4")
+    make_camera(folder, "notes.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["sessions"] == 1
+    assert summary["pairing"] == {"paired": 1, "camera_only": 0, "screen_only": 0}
+    assert not any("unpaired screen file" in warning for warning in summary["warnings"])
+    assert "notes.mp4" not in out
+
+
 def test_find_words_in_folder(tmp_path):
     folder = tmp_path / "obs"
     folder.mkdir()
@@ -144,6 +159,17 @@ def test_find_words_missing(tmp_path):
     folder = tmp_path / "obs"
     folder.mkdir()
     assert mode_b.find_words(folder, tmp_path / "out" / "words", "camera x") is None
+
+
+def test_find_words_prefers_words_suffix_and_folder_order(tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    words_dir = tmp_path / "out" / "words"
+    stem = "camera 2026-10-17 22-25-44"
+    make_words(folder / f"{stem}.json")
+    make_words(folder / f"{stem}_words.json")
+    make_words(words_dir / f"{stem}_words.json")
+    assert mode_b.find_words(folder, words_dir, stem) == folder / f"{stem}_words.json"
 
 
 def test_end_to_end_mock(tmp_path, capsys):
@@ -736,6 +762,37 @@ def test_manifest_rewrite_keeps_recorded_sync_offset(tmp_path):
     assert entry["sync_offset_confidence"] == 0.8
     assert entry["screen"] == str((folder / "2026-10-17 22-25-44.mp4").resolve())
     assert entry["words"]
+
+
+def test_manifest_rewrite_keeps_offset_for_relative_camera(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    camera = folder / "camera 2026-10-17 22-25-44.mp4"
+    camera.write_bytes(b"")
+    words = make_words(tmp_path / "out" / "words" / "camera 2026-10-17 22-25-44_words.json")
+    sessions = [
+        {
+            "stem": "camera 2026-10-17 22-25-44",
+            "camera": camera,
+            "screen": None,
+            "words": words,
+        }
+    ]
+    previous = {
+        "sessions": [
+            {
+                "camera": "obs/camera 2026-10-17 22-25-44.mp4",
+                "sync_offset_s": -1.25,
+                "sync_offset_confidence": 0.8,
+            }
+        ]
+    }
+    document = mode_b.manifest_document(sessions, previous)
+    entry = document["sessions"][0]
+    assert entry["camera"] == str(camera.resolve())
+    assert entry["sync_offset_s"] == -1.25
+    assert entry["sync_offset_confidence"] == 0.8
 
 
 def test_second_run_keeps_hand_written_sync_offset(tmp_path, capsys):

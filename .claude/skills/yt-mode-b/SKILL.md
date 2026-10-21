@@ -137,8 +137,10 @@ station CLIs as subprocesses and imports none of them.
 
 - **Folder layouts.** The subfolder layout has a `camera/` folder and an
   `ecran/` (or `screen/`) folder; the flat layout keeps the camera and screen
-  files directly in `FOLDER` (camera files start with `camera `). Derived matte
-  exports (`*-Alpha.mov`, `*_matte.mov`) are never camera or screen candidates.
+  files directly in `FOLDER` (camera files start with `camera `, screen files
+  carry a `YYYY-MM-DD HH-MM-SS` name timestamp; other videos are ignored
+  silently). Derived matte exports (`*-Alpha.mov`, `*_matte.mov`) are never
+  camera or screen candidates.
 - **Pairing.** A camera file pairs with the screen file whose name timestamp is
   nearest within `pair_tolerance_s` (default 10 s), so a screen recording that
   starts a second or two before the camera still pairs. Pairs are assigned

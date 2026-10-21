@@ -57,12 +57,12 @@ from common.faces import (
 )
 from common.frames import read_frame_pairs
 from common.media import parse_stamp, stem_timestamp, video_files
+from common.timeline_words import words_file_for
 
 TOOL = "scripts/mode_b.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CAMERA_PREFIX = "camera "
 BACKENDS = ("whisper", "mock")
-WORDS_SUFFIXES = ("_words.json", ".json")
 SCREEN_DIR_CANDIDATES = ("ecran", "screen")
 CHECK_SAMPLES = 8
 FACE_FRAME_FRAC = 0.6
@@ -151,6 +151,7 @@ def layout_screen_files(kind, camera_dir, screen_dir):
         path
         for path in video_files(screen_dir, exclude_matte=True)
         if not path.stem.startswith(CAMERA_PREFIX)
+        and stem_timestamp(path.stem) is not None
     ]
 
 
@@ -233,10 +234,9 @@ def find_words(folder, words_dir, stem, words_subdir="json"):
         directories.append(folder / words_subdir)
     directories.append(words_dir)
     for directory in directories:
-        for suffix in WORDS_SUFFIXES:
-            candidate = directory / f"{stem}{suffix}"
-            if candidate.is_file():
-                return candidate
+        found = words_file_for(directory, stem)
+        if found is not None:
+            return found
     return None
 
 
@@ -291,7 +291,7 @@ def consolidate_words(sessions, words_dir):
         if source is None or source.parent == words_dir:
             continue
         stem = session["stem"]
-        if any((words_dir / f"{stem}{suffix}").is_file() for suffix in WORDS_SUFFIXES):
+        if words_file_for(words_dir, stem) is not None:
             continue
         words_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, words_dir / source.name)
@@ -321,11 +321,13 @@ def manifest_document(sessions, previous=None):
         camera = entry.get("camera")
         if not camera:
             continue
-        recorded[str(Path(camera))] = {
+        preserved = {
             key: entry[key]
             for key in ("sync_offset_s", "sync_offset_confidence")
             if key in entry
         }
+        for key in (str(Path(camera)), str(Path(camera).expanduser().resolve())):
+            recorded[key] = preserved
     entries = []
     for session in sessions:
         camera = str(session["camera"].resolve())
@@ -333,7 +335,8 @@ def manifest_document(sessions, previous=None):
         if session["screen"] is not None:
             entry["screen"] = str(session["screen"].resolve())
         entry["words"] = str(session["words"].resolve())
-        entry.update(recorded.get(camera, {}))
+        preserved = recorded.get(camera) or recorded.get(str(session["camera"])) or {}
+        entry.update(preserved)
         entries.append(entry)
     return {"sessions": entries}
 
