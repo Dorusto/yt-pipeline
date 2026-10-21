@@ -1,11 +1,14 @@
 import http.client
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 
 import pytest
+import yaml
 
 import serve
 
@@ -298,7 +301,8 @@ def test_get_artifacts(tmp_path):
         status, headers, body = request(server, "GET", "/2026-10-14/shotlog.html")
         assert status == 200
         assert headers["Content-Type"] == "text/html; charset=utf-8"
-        assert body == (project / "shotlog.html").read_bytes()
+        assert body.startswith((project / "shotlog.html").read_bytes())
+        assert b"must be in" in body and b"wrong label" in body
         status, headers, body = request(server, "GET", "/2026-10-14/explain.html")
         assert status == 200
         assert headers["Content-Type"] == "text/html; charset=utf-8"
@@ -1123,3 +1127,255 @@ def test_the_reedit_button_always_asks_for_a_new_edit(tmp_path):
     assert "--new-edit" in command
     command = serve.build_recap_command("py", tmp_path, tmp_path, "brief", {"submit": "start"}, tmp_path)
     assert "--new-edit" not in command
+
+
+def test_brand_progress_color_reads_cool(tmp_path):
+    brand = tmp_path / "brand.json"
+    brand.write_text(json.dumps({"colors": {"cool": "#123456"}}), encoding="utf-8")
+    assert serve.brand_progress_color(brand) == "#123456"
+
+
+def test_brand_progress_color_falls_back(tmp_path):
+    assert serve.brand_progress_color(tmp_path / "missing.json") == "#57b8c4"
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("{not json", encoding="utf-8")
+    assert serve.brand_progress_color(malformed) == "#57b8c4"
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"colors": {}}), encoding="utf-8")
+    assert serve.brand_progress_color(empty) == "#57b8c4"
+
+
+def test_served_html_themes_the_progress_bar(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        page = body.decode()
+        assert status == 200
+        assert "::-webkit-progress-value" in page
+        assert "::-moz-progress-bar" in page
+        assert serve.BRAND_PROGRESS_COLOR in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_append_expectation_creates_the_yaml(tmp_path):
+    path = tmp_path / "expectations.yaml"
+    serve.append_expectation(path, "must_include", "0071/s2", "", now="2026-10-21T18:55:00Z")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert document["must_include"] == [
+        {"any_of": ["0071/s2"], "note": "must be in (phone review 2026-10-21T18:55:00Z)"}
+    ]
+
+
+def test_append_expectation_wrong_label_row(tmp_path):
+    path = tmp_path / "expectations.yaml"
+    serve.append_expectation(path, "wrong_label", "0071/s2", "", now="2026-10-21T18:55:00Z")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert document["wrong_label"] == [
+        {"shot": "0071/s2", "note": "wrong label (phone review 2026-10-21T18:55:00Z)"}
+    ]
+
+
+def test_append_expectation_is_idempotent(tmp_path):
+    path = tmp_path / "expectations.yaml"
+    serve.append_expectation(path, "must_include", "0071/s2", "", now="t1")
+    serve.append_expectation(path, "must_include", "0071/s2", "", now="t2")
+    serve.append_expectation(path, "wrong_label", "0071/s2", "", now="t1")
+    serve.append_expectation(path, "wrong_label", "0071/s2", "", now="t2")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert len(document["must_include"]) == 1
+    assert len(document["wrong_label"]) == 1
+
+
+def test_append_expectation_preserves_length_s_and_other_keys(tmp_path):
+    path = tmp_path / "expectations.yaml"
+    path.write_text("length_s:\n  target: 60\n  tolerance: 3\ncustom: keep\n", encoding="utf-8")
+    serve.append_expectation(path, "must_include", "0071/s2", "", now="t")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert document["length_s"] == {"target": 60, "tolerance": 3}
+    assert document["custom"] == "keep"
+    assert document["must_include"][0]["any_of"] == ["0071/s2"]
+
+
+def test_append_expectation_keeps_a_user_note(tmp_path):
+    path = tmp_path / "expectations.yaml"
+    serve.append_expectation(path, "must_include", "0071/s2", "the tunnel", now="t")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert document["must_include"][0]["note"] == "the tunnel"
+
+
+def test_validate_note_rejects_a_long_note():
+    assert serve.validate_note("x" * 200) == "x" * 200
+    assert serve.validate_note("a\nb") == "a b"
+    with pytest.raises(serve.UploadError) as exc:
+        serve.validate_note("x" * 500)
+    assert exc.value.status == 400
+
+
+def test_validate_shot_and_kind():
+    assert serve.validate_shot("0071/s2") == "0071/s2"
+    assert serve.validate_shot("p1") == "p1"
+    for bad in ("", " ", "-bad", "a" * 65, "has space"):
+        with pytest.raises(serve.UploadError):
+            serve.validate_shot(bad)
+    assert serve.validate_kind("must_include") == "must_include"
+    assert serve.validate_kind("wrong_label") == "wrong_label"
+    with pytest.raises(serve.UploadError):
+        serve.validate_kind("bogus")
+
+
+def test_expectations_written_by_the_buttons_pass_eval_edit(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "edit.json").write_text(
+        json.dumps({"video": [{"shot_key": "0071/s2", "clip": "a.mp4", "in_s": 0.0, "out_s": 5.0}]}),
+        encoding="utf-8",
+    )
+    path = workspace / "expectations.yaml"
+    serve.append_expectation(path, "must_include", "0071/s2", "", now="2026-10-21T18:55:00Z")
+    serve.append_expectation(path, "wrong_label", "0071/s2", "", now="2026-10-21T18:55:00Z")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(serve.REPO_ROOT / "scripts" / "eval_edit.py"),
+            "--workspace",
+            str(workspace),
+            "--expect",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "must_include 0071/s2" in result.stdout
+    assert "wrong_label" not in result.stdout
+
+
+def form_headers():
+    return {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+def post_expectations(server, project, fields):
+    return request(
+        server,
+        "POST",
+        f"/{project}/expectations",
+        headers=form_headers(),
+        body=urllib.parse.urlencode(fields),
+    )
+
+
+def test_post_expectations_writes_the_file(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = post_expectations(
+            server, "2026-10-14", {"shot": "0071/s2", "kind": "must_include"}
+        )
+        assert status == 200
+        assert headers["Content-Type"] == "application/json"
+        assert json.loads(body) == {
+            "ok": True,
+            "shot": "0071/s2",
+            "kind": "must_include",
+            "file": "expectations.yaml",
+        }
+        document = yaml.safe_load(
+            (root / "2026-10-14" / "expectations.yaml").read_text(encoding="utf-8")
+        )
+        assert document["must_include"][0]["any_of"] == ["0071/s2"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_expectations_rejects_bad_input(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = post_expectations(
+            server, "2026-10-14", {"shot": "bad key", "kind": "must_include"}
+        )
+        assert status == 400 and b"shot" in body
+        status, _, body = post_expectations(
+            server, "2026-10-14", {"shot": "0071/s2", "kind": "bogus"}
+        )
+        assert status == 400 and b"kind" in body
+        status, _, body = post_expectations(
+            server,
+            "2026-10-14",
+            {"shot": "0071/s2", "kind": "must_include", "note": "x" * 500},
+        )
+        assert status == 400 and b"note" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_expectations_unknown_project_and_get(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, _ = post_expectations(
+            server, "nope", {"shot": "0071/s2", "kind": "must_include"}
+        )
+        assert status == 404
+        status, _, _ = request(server, "GET", "/2026-10-14/expectations")
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_shots_tab_has_the_review_buttons(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "shotlog.html").write_text(
+        "<html><body><main><article class=\"card\"><div class=\"range\">a.mp4 · 00:00.0–00:05.0 · 0001/s1</div>"
+        "<div class=\"badges\"></div></article></main></body></html>",
+        encoding="utf-8",
+    )
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/shotlog.html")
+        page = body.decode()
+        assert status == 200
+        assert "must be in" in page
+        assert "wrong label" in page
+        assert "/expectations" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_shots_tab_keeps_the_filter_bar_with_an_edit(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "shotlog.html").write_text(
+        "<html><body><main><article class=\"card\"><div class=\"range\">a.mp4 · 00:00.0–00:05.0 · 0001/s1</div>"
+        "<div class=\"badges\"></div></article></main></body></html>",
+        encoding="utf-8",
+    )
+    (project / "edit.json").write_text(
+        json.dumps(
+            {
+                "video": [],
+                "decisions": [{"id": "0001/s1", "status": "used", "slot": "v1", "reason": "hero"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/shotlog.html")
+        page = body.decode()
+        assert status == 200
+        assert "must be in" in page and "wrong label" in page
+        assert "In the edit" in page and "Good but left out" in page
+        assert "EDIT_DECISIONS" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+

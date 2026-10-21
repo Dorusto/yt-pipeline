@@ -77,7 +77,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | read-only preview of the workspaces on the tailnet |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons |
 
 ---
 

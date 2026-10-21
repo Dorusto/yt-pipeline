@@ -17,8 +17,8 @@ starts ``recap.py`` in the background. Only the finished artifacts (both recap f
 served, also from ``versions/vNNN/``; proxies, ``edit.json``, ``.run.json``,
 ``source/`` symlinks and every other file stay private. The address is a single host, never the wildcard, so
 the server is reachable over the tailnet only. The tool writes inside a
-workspace only ``.run.json`` and ``run.log`` (with a start marker per run);
-the inbox receives uploads and is
+workspace only ``.run.json``, ``run.log`` (with a start marker per run) and
+``expectations.yaml`` (the Shots-tab review taps); the inbox receives uploads and is
 never cleaned.
 """
 
@@ -33,7 +33,10 @@ import sys
 import threading
 import time
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
 
 from common.moves import slot_screen_length
 from common.pacing import estimate_all_good
@@ -119,6 +122,28 @@ STATION_PLAIN_NAMES = {
     "render_vertical": "rendering 9:16",
 }
 
+BRAND_PATH = REPO_ROOT / "brand.json"
+PROGRESS_FALLBACK_COLOR = "#57b8c4"
+SHOT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,63}$")
+EXPECTATION_KINDS = ("must_include", "wrong_label")
+NOTE_MAX_CHARS = 200
+EXPECTATIONS_FILE = "expectations.yaml"
+
+
+def brand_progress_color(brand_path):
+    """The brand accent for the progress bar, or the fallback when brand.json is unusable."""
+    try:
+        data = json.loads(Path(brand_path).read_text(encoding="utf-8"))
+        color = data["colors"]["cool"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return PROGRESS_FALLBACK_COLOR
+    if not isinstance(color, str) or not color.strip():
+        return PROGRESS_FALLBACK_COLOR
+    return color.strip()
+
+
+BRAND_PROGRESS_COLOR = brand_progress_color(BRAND_PATH)
+
 
 SHOTS_OVERLAY_STYLE = """
 .editbar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
@@ -128,16 +153,29 @@ background:var(--water);color:var(--stone);font:inherit;font-size:.85rem;cursor:
 .badge.used{color:var(--sea)}
 .why-out{font-size:.8rem;color:var(--left);margin:2px 0 6px;overflow-wrap:anywhere}
 .card.in-edit{outline:2px solid var(--sea)}
+.shot-actions{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 0}
+.shot-actions button{min-height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--rope);
+background:var(--water);color:var(--stone);font:inherit;font-size:.8rem;cursor:pointer}
+.shot-actions button.on{background:var(--sea);color:var(--water)}
 """
 
 SHOTS_OVERLAY_SCRIPT = """
 (function(){var d=window.EDIT_DECISIONS||{};var cards=[].slice.call(document.querySelectorAll('article.card'));
-if(!cards.length||!Object.keys(d).length)return;
-cards.forEach(function(c){var r=c.querySelector('.range');if(!r)return;var k=r.textContent.split(' \u00b7 ').pop().trim();var x=d[k];
+if(!cards.length)return;
+var hasEdit=Object.keys(d).length>0;
+if(hasEdit){cards.forEach(function(c){var r=c.querySelector('.range');if(!r)return;var k=r.textContent.split(' \u00b7 ').pop().trim();var x=d[k];
 var b=c.querySelector('.badges');if(!x||!b)return;c.dataset.state=x.status;
 if(x.status==='used'){c.classList.add('in-edit');var s=document.createElement('span');s.className='badge used';s.textContent='in the edit as '+(x.slot||'');b.insertBefore(s,b.firstChild);}
-else{var w=document.createElement('p');w.className='why-out';w.textContent='left out: '+(x.reason||'');b.parentNode.insertBefore(w,b.nextSibling);}});
-var used=cards.filter(function(c){return c.dataset.state==='used';}).length;
+else{var w=document.createElement('p');w.className='why-out';w.textContent='left out: '+(x.reason||'');b.parentNode.insertBefore(w,b.nextSibling);}});}
+cards.forEach(function(c){var r=c.querySelector('.range');if(!r)return;var k=r.textContent.split(' \u00b7 ').pop().trim();var b=c.querySelector('.badges');if(!b)return;
+var wrap=document.createElement('div');wrap.className='shot-actions';
+[['must_include','must be in'],['wrong_label','wrong label']].forEach(function(o){
+var btn=document.createElement('button');btn.type='button';btn.textContent=o[1];
+btn.addEventListener('click',function(){var body=new URLSearchParams();body.set('shot',k);body.set('kind',o[0]);
+fetch(window.location.pathname.split('/shotlog.html')[0]+'/expectations',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(function(res){if(res.ok)btn.classList.add('on');});});
+wrap.appendChild(btn);});
+b.parentNode.insertBefore(wrap,b.nextSibling);});
+if(hasEdit){var used=cards.filter(function(c){return c.dataset.state==='used';}).length;
 var good=cards.filter(function(c){return c.dataset.state!=='used'&&!c.classList.contains('ineligible');}).length;
 var bar=document.createElement('div');bar.className='editbar';
 [['all','All '+cards.length],['used','In the edit '+used],['out','Good but left out '+good]].forEach(function(o,i){
@@ -145,7 +183,7 @@ var btn=document.createElement('button');btn.type='button';btn.textContent=o[1];
 btn.addEventListener('click',function(){[].forEach.call(bar.children,function(e){e.classList.remove('on');});btn.classList.add('on');
 cards.forEach(function(c){var st=c.dataset.state;var show=o[0]==='all'||(o[0]==='used'&&st==='used')||(o[0]==='out'&&st!=='used'&&!c.classList.contains('ineligible'));c.style.display=show?'':'none';});});
 bar.appendChild(btn);});
-var main=document.querySelector('main');if(main)main.parentNode.insertBefore(bar,main);})();
+var main=document.querySelector('main');if(main)main.parentNode.insertBefore(bar,main);}})();
 """
 
 
@@ -168,10 +206,8 @@ def edit_decisions(directory):
 
 
 def shotlog_with_edit(path, decisions):
-    """The shotlog page with the edit's used/left-out marks and a filter bar added."""
+    """The shotlog page with the review buttons and, when an edit exists, its used/left-out marks."""
     text = Path(path).read_text(encoding="utf-8")
-    if not decisions:
-        return text
     payload = json.dumps(decisions).replace("</", "<\\/")
     addition = (
         f"<style>{SHOTS_OVERLAY_STYLE}</style>"
@@ -195,7 +231,7 @@ def build_parser():
         ),
         description=(
             "Serve the recap projects in a workspaces folder over the tailnet"
-            " (read-only, single bind address)."
+            " (single bind address, tailnet-only)."
         ),
         epilog=(
             "examples:\n"
@@ -523,7 +559,6 @@ textarea{resize:vertical}
 border-left:4px solid var(--busy)}
 .notice.failed{border-left-color:var(--left)}
 .notice code{overflow-wrap:anywhere;font-size:.85rem;color:var(--haze)}
-progress{width:100%;height:10px;accent-color:var(--sea);border-radius:999px;display:block;margin:8px 0 0}
 .versions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px;color:var(--haze);font-size:.9rem}
 .versions a{min-height:36px;min-width:44px;display:inline-flex;align-items:center;justify-content:center;
 padding:0 12px;border-radius:999px;background:var(--deck);color:var(--stone);text-decoration:none}
@@ -538,6 +573,12 @@ input.length-s[hidden]{display:none}
 button.go{min-height:48px;border:0;border-radius:12px;background:var(--sea);color:var(--water);
 font:inherit;font-weight:600;padding:0 26px;cursor:pointer;justify-self:start}
 """
+
+PROGRESS_CSS = (
+    "progress{width:100%;height:10px;accent-color:var(--sea);border-radius:999px;display:block;margin:8px 0 0}\n"
+    f"progress::-webkit-progress-value{{background:{BRAND_PROGRESS_COLOR};border-radius:999px}}\n"
+    f"progress::-moz-progress-bar{{background:{BRAND_PROGRESS_COLOR};border-radius:999px}}\n"
+)
 
 LENGTH_SCRIPT = """
 [].forEach.call(document.querySelectorAll('select[name=length]'),function(s){var i=s.parentNode.querySelector('.length-s');if(!i)return;
@@ -566,7 +607,7 @@ def render_page(title, body, active=None, script="", refresh=None):
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"{reload_tag}"
         f"<title>{html_escape(title)}</title>"
-        f'<style>{THEME_CSS}</style></head><body><div class="wrap">'
+        f'<style>{THEME_CSS}{PROGRESS_CSS}</style></head><body><div class="wrap">'
         f'<header class="bar"><a class="mark" href="/">AI Director</a>{"".join(nav)}</header>'
         f"{body}</div>{tail}"
         "</body></html>\n"
@@ -1320,6 +1361,16 @@ def parse_fields_only(reader):
     return fields
 
 
+def parse_urlencoded(body):
+    """Return the form fields of an ``application/x-www-form-urlencoded`` body."""
+    fields = {}
+    for name, value in urllib.parse.parse_qsl(
+        body.decode("utf-8", "replace"), keep_blank_values=True
+    ):
+        fields[name] = value
+    return fields
+
+
 def move_into_inbox(staged, inbox, folder):
     """Move the staged files to ``inbox/folder``; refuse to overwrite anything."""
     destination_dir = inbox / folder
@@ -1356,6 +1407,92 @@ def read_brief_file(source):
         return (Path(source) / "brief.txt").read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def validate_shot(value):
+    """The shot key from a review tap, or a 400 when it is missing or malformed."""
+    shot = (value or "").strip()
+    if not SHOT_KEY_RE.match(shot):
+        raise UploadError(400, "invalid shot key")
+    return shot
+
+
+def validate_kind(value):
+    """The expectation kind from a review tap, or a 400 when it is not one of the two."""
+    kind = (value or "").strip()
+    if kind not in EXPECTATION_KINDS:
+        raise UploadError(400, "invalid kind")
+    return kind
+
+
+def validate_note(value):
+    """The optional single-line note, or a 400 when it is longer than the cap."""
+    note = (value or "").replace("\r", " ").replace("\n", " ").strip()
+    if len(note) > NOTE_MAX_CHARS:
+        raise UploadError(400, "note too long")
+    return note
+
+
+def load_expectations_document(path):
+    """The expectations YAML as a mapping, or an empty mapping when the file is absent."""
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"cannot read expectations: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("expectations must be a mapping")
+    return data
+
+
+def expectation_stamp(now=None):
+    """The UTC timestamp for a review note, or the given value as text."""
+    if now is None:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if isinstance(now, datetime):
+        return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return str(now)
+
+
+def must_include_has(rows, shot):
+    """True when ``shot`` already appears in any ``any_of`` list of the must_include rows."""
+    for row in rows:
+        if isinstance(row, str) and row == shot:
+            return True
+        if isinstance(row, dict) and shot in [str(key) for key in (row.get("any_of") or [])]:
+            return True
+    return False
+
+
+def append_expectation(path, kind, shot, note, now=None):
+    """Append one review expectation to the YAML file idempotently and return the document."""
+    path = Path(path)
+    document = load_expectations_document(path)
+    stamp = expectation_stamp(now)
+    if kind == "must_include":
+        rows = document.get("must_include")
+        if not isinstance(rows, list):
+            rows = []
+        if not must_include_has(rows, shot):
+            rows.append({"any_of": [shot], "note": note or f"must be in (phone review {stamp})"})
+        document["must_include"] = rows
+    else:
+        rows = document.get("wrong_label")
+        if not isinstance(rows, list):
+            rows = []
+        if not any(isinstance(row, dict) and str(row.get("shot")) == shot for row in rows):
+            rows.append({"shot": shot, "note": note or f"wrong label (phone review {stamp})"})
+        document["wrong_label"] = rows
+    text = (
+        "# Written by scripts/serve.py from phone review taps; machine-owned.\n"
+        + yaml.safe_dump(document, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    )
+    write_text_atomic(path, text)
+    return document
 
 
 def exact_length(value):
@@ -1458,6 +1595,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "re-edit":
             self.handle_reedit(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "expectations":
+            self.handle_expectations(segments[0])
+            return
         self._method_not_allowed()
 
     def _boundary(self):
@@ -1542,6 +1682,35 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         self._start_for(fields, source, project, reedit=True)
 
+    def handle_expectations(self, project):
+        """Append one phone-review expectation to the workspace's expectations.yaml."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/x-www-form-urlencoded":
+            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.server.max_total_bytes:
+            self.send_error_text(413, "request body too large")
+            return
+        fields = parse_urlencoded(self.rfile.read(length))
+        try:
+            shot = validate_shot(fields.get("shot"))
+            kind = validate_kind(fields.get("kind"))
+            note = validate_note(fields.get("note"))
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        try:
+            append_expectation(workspace / EXPECTATIONS_FILE, kind, shot, note)
+        except (OSError, ValueError):
+            self.send_error_text(400, "unreadable expectations")
+            return
+        self.send_json({"ok": True, "shot": shot, "kind": kind, "file": EXPECTATIONS_FILE})
+
     def _start_for(self, fields, source, folder, reedit=False):
         workspace = self.server.root / folder
         if project_status(workspace) == "running":
@@ -1565,6 +1734,14 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         body = (message + "\n").encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_json(self, payload):
+        body = (json.dumps(payload) + "\n").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
