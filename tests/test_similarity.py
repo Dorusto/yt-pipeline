@@ -10,6 +10,7 @@ from PIL import Image
 
 import similarity
 from common.schema import validate
+from fs_probe import safe_is_file
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "similarity.py"
@@ -242,7 +243,7 @@ def test_missing_workspace_is_an_error(tmp_path):
         similarity.run(tmp_path, backend="hist")
 
 
-@pytest.mark.skipif(not MODEL_PATH.exists(), reason="mobilenet ONNX model not in the cache")
+@pytest.mark.skipif(not safe_is_file(MODEL_PATH), reason="mobilenet ONNX model not in the cache")
 def test_mobilenet_embeddings_are_finite_and_normalised(tmp_path):
     clip = write_solid_video(tmp_path / "clip.mp4", (40, 80, 160))
     write_quality(

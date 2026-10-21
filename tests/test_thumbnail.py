@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import thumbnail
 from common.schema import validate
+from fs_probe import safe_is_file
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,7 +31,7 @@ def _rembg_model_present():
         Path.home() / ".u2net" / "birefnet-portrait.onnx",
         Path.home() / ".rembg" / "models" / "birefnet-portrait" / "birefnet-portrait.onnx",
     ]
-    return any(candidate.is_file() for candidate in candidates)
+    return any(safe_is_file(candidate) for candidate in candidates)
 
 
 def synthetic_portrait(path, width=800, height=1000):

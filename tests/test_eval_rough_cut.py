@@ -7,13 +7,14 @@ import yaml
 import eval_rough_cut as erc
 import export_filmcraft as ef
 import rough_cut as rc
+from fs_probe import safe_is_dir
 
 REFERENCE_DIR = Path("/root/media/eval/second-brain")
 REFERENCE_FCPROJ = REFERENCE_DIR / "Second Brain.fcproj"
 REFERENCE_SEQUENCE = "Second Brain - 15 min"
 
 needs_reference = pytest.mark.skipif(
-    not REFERENCE_DIR.is_dir(), reason="reference not present"
+    not safe_is_dir(REFERENCE_DIR), reason="reference not present"
 )
 
 
