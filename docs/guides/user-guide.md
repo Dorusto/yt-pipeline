@@ -79,6 +79,55 @@ WS=~/media/trip/workspace
 
 Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `cd $WS && python3 -m http.server 8091 --bind 10.10.1.61`, then open `http://10.10.1.61:8091/shotlog.html` and the MP4.
 
+## Mode B on a finished clip
+
+A talking-head recording with a screen capture (one `Start Recording` in OBS
+writes both files) is a different flow from a trip recap: you film, rough-cut
+the recording, finish the edit in FilmCraft and then publish. The Second Brain
+clip is the reference.
+
+```bash
+# 1. right after recording — is any "screen" file really a camera recording?
+.venv/bin/python scripts/mode_b.py ~/media/second-brain --check
+
+# 2. the whole flow on the folder (transcribe what has no words JSON, pair
+#    camera and screen, rough-cut the pauses/fillers/retakes, chapters,
+#    FilmCraft project):
+.venv/bin/python scripts/mode_b.py ~/media/second-brain --json
+# -> ~/media/second-brain/mode_b/ : sessions.yaml, edit.json, chapters.json,
+#    words/, project.fcproj
+
+# 3. finish the edit in FilmCraft, then from the FINAL project:
+.venv/bin/python scripts/publish.py --project ~/media/second-brain \
+  --context notes.md --fcproj project.fcproj --sequence "Second Brain - 15 min" \
+  --words-dir ~/media/second-brain/json --chapters chapters.json \
+  --photo portrait.jpg --title "..." --keyword "..." --theme tech \
+  --final-video final.mp4 --kit
+```
+
+- The folder is `camera/` + `ecran/` (or `screen/`), or one flat folder with
+  `camera ` names. A camera pairs with the screen whose name timestamp is
+  nearest (10 s tolerance); unpaired cameras run camera-only. The camera file
+  carries the voice and starts about a second late, so `rough_cut.py` measures
+  the camera-to-screen offset **by sound** (voice cross-correlation) and records
+  it in `sessions.yaml`; a value written there by hand always wins.
+- The rough cut removes dead air (pauses over 0.6 s), standalone filler words
+  and restarted sentences, and every cut carries a reason. From the phone, the
+  web app's **Cuts** tab writes `cut_review.yaml`; `rough_cut.py --review` keeps
+  what you mark `keep`.
+- From the final FilmCraft edit, `chapters.py --fcproj` and
+  `shorts_rank.py --fcproj` read the real timeline (`--words-dir` is the folder
+  with one Whisper word JSON per source clip) and write `chapters.json` /
+  `shorts_candidates.json` into the clip's publish folder — next to
+  `publish-kit/`, not next to the `.fcproj`. `publish.py --chapters` uses the
+  chapters file instead of asking the model again.
+- `shorts_generator.py --words <timeline _words.json> --candidates
+  shorts_candidates.json` cuts the ranked Shorts with the real word times and
+  the brand look (captions above the Shorts UI, phrase-based line breaks,
+  karaoke highlight). `layout: split` stacks the face over the screen for a
+  face-over-screen recording. Sample frames from a synthetic clip:
+  `examples/s59-shorts-frames/`.
+
 ## Writing a brief
 
 Say what you want, not how to cut it. The router reads length, order, pacing, music and content type from it.
