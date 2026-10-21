@@ -5,7 +5,7 @@
 Usage:
     python3 scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
         --fcproj REF.fcproj --sequence NAME --words-dir DIR \
-        [--section-min-s 30.0] [--out report.json] [--json]
+        [--section-min-s 30.0] [--until-s S] [--out report.json] [--json]
 
 The tool compares the words ``rough_cut.py`` kept with the words a human kept in
 a FilmCraft project of the same material. Both sides are mapped with the same
@@ -16,6 +16,13 @@ disagreement runs with timecodes, and a cross-check against
 ``subs_from_edit.py`` run as a subprocess. No model is called, so
 ``llm_cost_usd`` is always 0.0. The eval is a measuring tool: it has no
 pass/fail gate and exits 0 on success.
+
+With ``--until-s S`` only the first S seconds of the reference timeline count:
+the reference clips are trimmed at S, the kept set is built from the trimmed
+windows, and a word counts on either side only when its stem has a counted clip
+and its midpoint lies inside that stem's covered source span. The cross-check
+against ``subs_from_edit.py`` is always full-sequence, whatever ``--until-s``
+says, because it validates the FilmCraft parsing over the whole project.
 """
 
 import argparse
@@ -194,6 +201,50 @@ def kept_indices(words, windows):
     return kept
 
 
+def trim_clips(clips, until_s):
+    """The clips whose timeline interval intersects ``[0, until_s)``, trimmed at the boundary."""
+    counted = []
+    for clip in clips:
+        timeline_start = clip["timeline_start"]
+        if timeline_start >= until_s:
+            continue
+        timeline_end = timeline_start + (clip["end"] - clip["start"])
+        if timeline_end <= 0:
+            continue
+        trim = min(timeline_end, until_s) - timeline_start
+        counted.append({
+            "stem": clip["stem"],
+            "start": clip["start"],
+            "end": clip["start"] + trim,
+            "timeline_start": timeline_start,
+        })
+    return counted
+
+
+def windows_by_stem(clips):
+    """Group clips into ``{stem: [(source_in, source_out), ...]}``."""
+    windows = {}
+    for clip in clips:
+        windows.setdefault(clip["stem"], []).append((clip["start"], clip["end"]))
+    return windows
+
+
+def covered_universe(windows_by_stem, words_by_stem):
+    """The ``(stem, index)`` pairs whose midpoint lies inside their stem's covered source span."""
+    universe = set()
+    for stem, windows in windows_by_stem.items():
+        words = words_by_stem.get(stem)
+        if not words:
+            continue
+        span_start = min(start for start, _ in windows)
+        span_end = max(end for _, end in windows)
+        for index, word in enumerate(words):
+            midpoint = (word["start"] + word["end"]) / 2.0
+            if span_start <= midpoint < span_end:
+                universe.add((stem, index))
+    return universe
+
+
 def merged_kept_count(clips, words_by_stem, doru_kept_by_stem):
     """Count the kept words the way ``subs_from_edit.py`` does: timeline order, hyphen clitics glued."""
     ordered = []
@@ -291,19 +342,25 @@ def cross_check(fcproj, sequence, words_dir, doru_kept_merged):
     return {"subs_from_edit_words_kept": kept, "agrees": kept == doru_kept_merged}
 
 
-def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s):
+def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s, until_s=None):
     """Compare the kept words of the edit and the reference and build the report object."""
     our_windows_by_stem = our_windows(edit, sessions)
-    doru_windows_by_stem, doru_clips = doru_windows(fcproj, sequence, track)
+    full_windows_by_stem, full_clips = doru_windows(fcproj, sequence, track)
+    counted_clips = full_clips if until_s is None else trim_clips(full_clips, until_s)
+    counted_windows_by_stem = windows_by_stem(counted_clips)
 
     words_paths = {}
     for session in sessions:
         words_paths[Path(session["camera"]).stem] = session["words"]
-    for stem in doru_windows_by_stem:
+    for stem in full_windows_by_stem:
         if stem not in words_paths:
             words_paths[stem] = str(Path(words_dir) / f"{stem}.json")
 
     words_by_stem = {stem: flatten_words(path) for stem, path in words_paths.items()}
+
+    universe = None
+    if until_s is not None:
+        universe = covered_universe(counted_windows_by_stem, words_by_stem)
 
     ours = set()
     for stem, windows in our_windows_by_stem.items():
@@ -311,21 +368,26 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s):
         if words is None:
             continue
         for index in kept_indices(words, windows):
-            ours.add((stem, index))
+            if universe is None or (stem, index) in universe:
+                ours.add((stem, index))
 
     doru = set()
     doru_kept_by_stem = {}
-    for stem, windows in doru_windows_by_stem.items():
+    for stem, windows in counted_windows_by_stem.items():
         kept = kept_indices(words_by_stem[stem], windows)
         doru_kept_by_stem[stem] = kept
         for index in kept:
             doru.add((stem, index))
 
+    full_kept_by_stem = {}
+    for stem, windows in full_windows_by_stem.items():
+        full_kept_by_stem[stem] = kept_indices(words_by_stem[stem], windows)
+
     intersect = len(ours & doru)
     precision = intersect / len(ours) if ours else 0.0
     recall = intersect / len(doru) if doru else 0.0
 
-    used_stems = set(doru_windows_by_stem)
+    used_stems = set(counted_windows_by_stem)
     session_words = set()
     for stem, words in words_by_stem.items():
         if stem not in used_stems:
@@ -333,7 +395,11 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s):
     section_words = set()
     for stem in used_stems:
         words = words_by_stem[stem]
-        dropped = [index for index in range(len(words)) if index not in doru_kept_by_stem[stem]]
+        if universe is None:
+            candidates = range(len(words))
+        else:
+            candidates = [index for index in range(len(words)) if (stem, index) in universe]
+        dropped = [index for index in candidates if index not in doru_kept_by_stem[stem]]
         section_words.update((stem, index) for index in section_runs(words, dropped, section_min_s))
     bucket = session_words | section_words
 
@@ -345,6 +411,7 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s):
 
     return {
         "ok": True,
+        "until_s": until_s,
         "ours": {"kept": len(ours), "sessions": len(sessions)},
         "doru": {
             "kept": len(doru),
@@ -364,7 +431,7 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s):
         "disagreements": build_disagreements(words_by_stem, ours, doru),
         "cross_check": cross_check(
             fcproj, sequence, words_dir,
-            merged_kept_count(doru_clips, words_by_stem, doru_kept_by_stem),
+            merged_kept_count(full_clips, words_by_stem, full_kept_by_stem),
         ),
         "wall_time_s": 0.0,
         "llm_cost_usd": 0.0,
@@ -373,7 +440,10 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s):
 
 def format_table(report):
     """Render the report as a short numbers table plus the biggest disagreements."""
-    rows = [
+    rows = []
+    if report.get("until_s") is not None:
+        rows.append(("until_s", f"{report['until_s']:g}"))
+    rows.extend([
         ("ours kept", report["ours"]["kept"]),
         ("doru kept", report["doru"]["kept"]),
         ("intersect", report["intersect"]),
@@ -386,7 +456,7 @@ def format_table(report):
         ("bucket total", report["bucket"]["total"]),
         ("cross-check kept", report["cross_check"]["subs_from_edit_words_kept"]),
         ("cross-check agrees", "yes" if report["cross_check"]["agrees"] else "no"),
-    ]
+    ])
     lines = [f"{'metric':<24}{'value'}"]
     lines.extend(f"{name:<24}{value}" for name, value in rows)
     lines.append("")
@@ -437,6 +507,8 @@ def build_parser():
     parser.add_argument("--words-dir", required=True, help="folder with one words JSON per source stem")
     parser.add_argument("--section-min-s", type=float, default=DEFAULT_SECTION_MIN_S,
                         help=f"a dropped run spanning at least this many seconds is a section (default {DEFAULT_SECTION_MIN_S:g})")
+    parser.add_argument("--until-s", type=float, default=None,
+                        help="only the first S seconds of the reference timeline count (default: no limit)")
     parser.add_argument("--out", help="also write the full report object to FILE (atomic replace)")
     parser.add_argument("--json", action="store_true", help="print the machine-readable report object")
     return parser
@@ -446,12 +518,15 @@ def main(argv=None):
     started = time.monotonic()
     args = build_parser().parse_args(argv)
     try:
+        if args.until_s is not None and not (args.until_s > 0):
+            raise EvalError(f"--until-s must be > 0 (got {args.until_s:g})")
         edit = load_edit(args.edit)
         sessions = load_sessions(args.sessions)
         words_dir = Path(args.words_dir).expanduser()
         if not words_dir.is_dir():
             raise EvalError(f"words dir not found: {words_dir}")
-        report = evaluate(edit, sessions, args.fcproj, args.sequence, DEFAULT_TRACK, words_dir, args.section_min_s)
+        report = evaluate(edit, sessions, args.fcproj, args.sequence, DEFAULT_TRACK, words_dir,
+                          args.section_min_s, args.until_s)
         report["wall_time_s"] = round(time.monotonic() - started, 3)
     except (EvalError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

@@ -330,6 +330,109 @@ def test_disabled_clip_is_skipped(tmp_path, capsys):
     assert report["bucket"]["session_words"] == 8
 
 
+def test_until_s_trims_the_boundary_clip(tmp_path, capsys):
+    words_dir = tmp_path / "words"
+    words_dir.mkdir()
+    write_words(words_dir / "camA.json", CAM_A_WORDS)
+    our_edit = tmp_path / "edit.json"
+    our_edit.write_text(json.dumps(make_edit(
+        [source("camA")], [slot("w001", "camA", 0.0, 4.0)],
+    )), encoding="utf-8")
+    sessions_path = write_sessions(tmp_path, [
+        {"camera": "/footage/camA.mp4", "words": str(words_dir / "camA.json")},
+    ])
+    fcproj = build_reference(
+        tmp_path, capsys, [source("camA")],
+        [slot("r001", "camA", 0.0, 2.0), slot("r002", "camA", 2.0, 4.0)],
+    )
+
+    code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
+    assert code == 0, err
+    assert report["doru"]["kept"] == 8
+
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "3.0"]
+    )
+    assert code == 0, err
+    assert report["doru"]["kept"] == 6
+
+
+def test_until_s_excludes_words_outside_the_covered_span(tmp_path, capsys):
+    words_dir = tmp_path / "words"
+    words_dir.mkdir()
+    write_words(words_dir / "camA.json", CAM_A_WORDS)
+    our_edit = tmp_path / "edit.json"
+    our_edit.write_text(json.dumps(make_edit(
+        [source("camA")], [slot("w001", "camA", 0.0, 4.0)],
+    )), encoding="utf-8")
+    sessions_path = write_sessions(tmp_path, [
+        {"camera": "/footage/camA.mp4", "words": str(words_dir / "camA.json")},
+    ])
+    fcproj = build_reference(tmp_path, capsys, [source("camA")], [slot("r001", "camA", 1.0, 3.0)])
+
+    code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
+    assert code == 0, err
+    assert report["ours"]["kept"] == 8
+
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "150"]
+    )
+    assert code == 0, err
+    assert report["ours"]["kept"] == 4
+
+
+def test_until_s_buckets_stems_used_only_after_s(tmp_path, capsys):
+    words_dir = tmp_path / "words"
+    words_dir.mkdir()
+    write_words(words_dir / "camA.json", CAM_A_WORDS)
+    write_words(words_dir / "camB.json", CAM_B_WORDS)
+    our_edit = tmp_path / "edit.json"
+    our_edit.write_text(json.dumps(make_edit(
+        [source("camA"), source("camB")],
+        [slot("w001", "camA", 0.0, 2.0), slot("w002", "camB", 0.0, 1.0)],
+    )), encoding="utf-8")
+    sessions_path = write_sessions(tmp_path, [
+        {"camera": "/footage/camA.mp4", "words": str(words_dir / "camA.json")},
+        {"camera": "/footage/camB.mp4", "words": str(words_dir / "camB.json")},
+    ])
+    fcproj = build_reference(
+        tmp_path, capsys, [source("camA"), source("camB")],
+        [slot("r001", "camA", 0.0, 2.0), slot("r002", "camB", 0.0, 1.0)],
+    )
+
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "1.0"]
+    )
+    assert code == 0, err
+    assert report["doru"]["kept"] == 2
+    assert report["bucket"]["session_words"] == 3
+
+
+def test_until_s_reported(tmp_path, capsys):
+    our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
+
+    code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
+    assert code == 0, err
+    assert report["until_s"] is None
+
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "150"]
+    )
+    assert code == 0, err
+    assert report["until_s"] == 150.0
+
+
+def test_until_s_nonpositive_is_exit_2(tmp_path, capsys):
+    our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
+    for value in ("0", "-5"):
+        code, report, err = run_eval(
+            capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", value]
+        )
+        assert code == 2
+        assert "--until-s" in err
+        assert report == {"ok": False, "error": report["error"]}
+
+
 @needs_reference
 @pytest.mark.needs_reference
 def test_reference_cross_check(tmp_path, capsys):

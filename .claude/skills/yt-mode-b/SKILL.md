@@ -60,8 +60,9 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 
 - Compares the words `rough_cut.py` kept with the words a human kept in a FilmCraft project of the same material. Both sides use the same midpoint rule (`(start + end) / 2` in `[in, out)`); a word is identified by `(stem, flat index)`.
 - `--edit` is the `edit.json` `rough_cut.py` wrote; `--sessions` is the same manifest (validated against `schemas/sessions.schema.json`); `--fcproj` + `--sequence` name the reference project and the sequence to read (its `Audio 1` track); `--words-dir` holds one words JSON per source stem.
+- `--until-s S` scores only the first S seconds of the reference timeline (float, must be `> 0`): the reference clips are trimmed at S, the kept set is built from the trimmed windows, and a word counts on either side only when its stem has a counted clip and its midpoint lies inside that stem's covered source span. Stems the reference uses only after S land in `bucket.session_words`. The `subs_from_edit.py` cross-check stays full-sequence whatever `--until-s` says. The report carries `until_s` (`null` when the flag is absent).
 - Reports `precision`/`recall` and `precision_used`/`recall_used` (the same numbers minus the bucket: words in sessions the reference did not use at all, plus dropped runs spanning `--section-min-s`), the ten biggest disagreement runs with timecodes, and a `subs_from_edit.py` cross-check of `words_kept` against our `|doru|`.
-- `--json` prints the report object; `--out` also writes it atomically. Exit codes: `0` success (the eval has no pass/fail gate), `2` user error (missing file, bad sequence, a clip with `speed != 1.0` or `reverse`). No model is called (`llm_cost_usd` is always `0.0`).
+- `--json` prints the report object; `--out` also writes it atomically. Exit codes: `0` success (the eval has no pass/fail gate), `2` user error (missing file, bad sequence, a clip with `speed != 1.0` or `reverse`, a non-positive `--until-s`). No model is called (`llm_cost_usd` is always `0.0`).
 
 ## One command (`mode_b.py`)
 
