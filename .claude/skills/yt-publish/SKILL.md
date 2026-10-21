@@ -60,12 +60,13 @@ Run one Whisper pass over a media file and write a raw `.srt` plus the per-sourc
 Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags, a pinned-comment proposal and a `## Thumbnail` section with 2-3 photo concepts. A human reviews the draft; nothing is uploaded.
 
 ```bash
-.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--previous-url URL] [--repo-url URL] \
-  [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--chapters chapters.json] \
+  [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
 ```
 
 - `SRT` is the corrected Romanian `.srt` (timeline time). `--context` is required: a markdown note with the clip's angle and what the viewer leaves with.
 - `--previous-url` links a relevant earlier clip; `--repo-url` links the clip's own code repo. Both are optional and are passed to the model in a `## Links` section.
+- `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's: each `start_s` becomes a normalized `HH:MM:SS` timestamp and the existing chapter rules apply (first at `00:00:00`, non-decreasing, inside the transcript). The model's own `chapters` key becomes optional and is ignored when present; without the flag nothing changes. A missing or invalid file exits 2 naming the path or the offending chapter.
 - `--out-dir` is the output folder (default: the SRT's parent; created if missing). `--name` is used in the draft header and the `--json` summary (default: the SRT stem). It writes `<out-dir>/metadata.md` and, next to it, `<out-dir>/metadata.json` with the validated fields (`name`, `titles`, `description_ro`, `description_en`, `chapters`, `tags`, `pinned_comment`, `thumbnail_concepts`) so the publish kit is deterministic from the model JSON.
 - `--prompt` is an alternative prompt file (default: `prompts/metadata.md`).
 - The tool sends the prompt file text plus `## Context`, `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
@@ -85,7 +86,7 @@ One command runs the whole publish kit for a finished edit: subtitles (from the 
   (--fcproj PROJ --sequence NAME [--track T] | --from-edit EDIT.json | --media FILE) \
   [--words-dir DIR] [--name NAME] \
   [--photo FILE --title T --keyword K --theme tech|creator [--kicker K]] \
-  [--previous-url URL] [--repo-url URL] \
+  [--previous-url URL] [--repo-url URL] [--chapters FILE] \
   [--transcribe-backend whisper|mock] [--resume] [--force] [--json] \
   [--kit [--final-video FILE] [--kit-loudness] [--kit-title TITLE]]
 ```
@@ -95,6 +96,7 @@ One command runs the whole publish kit for a finished edit: subtitles (from the 
 - `--name` is the artifact stem (default: the project folder's name).
 - `--photo` + `--title` + `--keyword` + `--theme` (+ optional `--kicker`) run the `thumbnail.py` step; without `--photo` the step is skipped and `--title`/`--keyword`/`--theme` must not be given.
 - `--previous-url`/`--repo-url` are passed to `metadata.py`. `--transcribe-backend` is passed to `transcribe.py` (`whisper` default, `mock` for offline runs).
+- `--chapters FILE` is forwarded to `metadata.py` as `--chapters FILE`, so the metadata draft takes its chapters from that `chapters.json` instead of the model. It is a metadata-step input, allowed with or without `--kit`.
 - Steps, each a subprocess of the station CLI: subtitles → correct → review → translate → thumbnail → metadata → kit (only with `--kit`). The working raw SRT is `PROJECT/<name>.srt`; `subs_from_edit.py` writes `<name>_RO.srt`, which the chain renames to `<name>.srt` before `correct_srt.py` produces the canonical `<name>_RO.srt`. Words stay at `PROJECT/<name>_words.json`.
 - The chain stops at the review step unless `--resume` is given: review `PROJECT/<name>_RO.srt`, then re-run with `--resume`. The `--json` summary then has `"stopped_at": "review"` and the exit code is still 0. The kit is the last step, so it is only built after the review has passed.
 - A step whose output exists is skipped; `--force` re-runs every step (still stopping at the review without `--resume`). A child exit code other than 0 aborts the chain: the message names the step and the child's stderr tail, the step is recorded `failed` and the exit code is 2.

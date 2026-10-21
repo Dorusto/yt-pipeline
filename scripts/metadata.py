@@ -8,10 +8,13 @@ description deterministically: the channel-members sentence and the closing are
 fixed and never taken from the model. A human reviews the draft; nothing is
 uploaded. It also writes ``metadata.json`` next to ``metadata.md`` with the
 validated fields, so the publish kit is deterministic from the model JSON.
+With ``--chapters`` the chapters come from a ``chapters.json`` (the chapter
+source of truth) instead of the model answer.
 
 Usage:
-    python3 metadata.py SRT --context CONTEXT.md [--previous-url URL] [--repo-url URL]
-        [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+    python3 metadata.py SRT --context CONTEXT.md [--chapters chapters.json]
+        [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME]
+        [--prompt PATH] [--json]
 """
 
 import argparse
@@ -23,6 +26,7 @@ from pathlib import Path
 
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
+from common.schema import SchemaError, validate_or_raise
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "metadata.md"
 MEMBERS_SENTENCE = (
@@ -138,8 +142,12 @@ def optional_localized(value, key):
     return require_localized(value, key)
 
 
-def validate_model_json(data):
-    """Validate the model contract and return the normalized fields."""
+def validate_model_json(data, require_chapters=True):
+    """Validate the model contract and return the normalized fields.
+
+    When ``require_chapters`` is False the ``chapters`` key is optional and its
+    value is ignored (the caller supplies the chapters from a file).
+    """
     if not isinstance(data, dict):
         raise MetadataError("model response is not a JSON object")
 
@@ -162,16 +170,18 @@ def validate_model_json(data):
             if not isinstance(promo.get(field), str):
                 raise MetadataError(f"model JSON key 'promo_lines[{index}].{field}' must be a string")
 
-    chapters = require_key(data, "chapters")
-    if not isinstance(chapters, list):
-        raise MetadataError("model JSON key 'chapters' must be a list")
-    for index, chapter in enumerate(chapters):
-        if not isinstance(chapter, dict):
-            raise MetadataError(f"model JSON key 'chapters[{index}]' must be an object")
-        if not isinstance(chapter.get("timestamp"), str):
-            raise MetadataError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
-        if not isinstance(chapter.get("title"), str):
-            raise MetadataError(f"model JSON key 'chapters[{index}].title' must be a string")
+    chapters = None
+    if require_chapters:
+        chapters = require_key(data, "chapters")
+        if not isinstance(chapters, list):
+            raise MetadataError("model JSON key 'chapters' must be a list")
+        for index, chapter in enumerate(chapters):
+            if not isinstance(chapter, dict):
+                raise MetadataError(f"model JSON key 'chapters[{index}]' must be an object")
+            if not isinstance(chapter.get("timestamp"), str):
+                raise MetadataError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
+            if not isinstance(chapter.get("title"), str):
+                raise MetadataError(f"model JSON key 'chapters[{index}].title' must be a string")
 
     tags = require_key(data, "tags")
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
@@ -275,6 +285,28 @@ def validate_chapters(chapters, srt_end):
     return normalized
 
 
+def load_chapters_file(path):
+    """Read a ``chapters.json``, validate it against the schema and return model-shaped chapters."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise MetadataError(f"chapters file not found: {path}")
+    except OSError as exc:
+        raise MetadataError(f"cannot read chapters file '{path}': {exc}")
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise MetadataError(f"chapters file '{path}' is not valid JSON: {exc}")
+    try:
+        validate_or_raise(document, "chapters")
+    except SchemaError as exc:
+        raise MetadataError(f"chapters file '{path}' is not valid chapters.json: {exc}")
+    return [
+        {"timestamp": format_clock(chapter["start_s"]), "title": chapter["title"]}
+        for chapter in document["chapters"]
+    ]
+
+
 def validate_thumbnail_concepts(concepts, srt_end):
     """Normalize clip-frame timecodes and check they lie inside the transcript; name the offending concept."""
     normalized = []
@@ -374,7 +406,16 @@ def build_markdown(name, fields, chapters, ro_description, en_description):
     return "\n".join(lines)
 
 
-def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, name=None, prompt_path=None):
+def run(
+    srt_path,
+    context_path,
+    previous_url=None,
+    repo_url=None,
+    out_dir=None,
+    name=None,
+    prompt_path=None,
+    chapters_path=None,
+):
     """Build the draft and return the ``--json`` summary; raise ``MetadataError`` on bad input."""
     started = time.monotonic()
 
@@ -396,6 +437,8 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
     srt_end = max((cue["end"] for cue in cues), default=0.0)
     transcript_text = format_transcript(cues)
 
+    file_chapters = load_chapters_file(chapters_path) if chapters_path else None
+
     message = build_message(prompt_text, context_text, transcript_text, previous_url, repo_url)
     response = get_client().complete(
         "metadata",
@@ -403,8 +446,12 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
         temperature=0.3,
     )
 
-    fields = validate_model_json(parse_model_json(response.text))
-    chapters = validate_chapters(fields["chapters"], srt_end)
+    fields = validate_model_json(
+        parse_model_json(response.text), require_chapters=chapters_path is None
+    )
+    chapters = validate_chapters(
+        file_chapters if file_chapters is not None else fields["chapters"], srt_end
+    )
     fields["thumbnail_concepts"] = validate_thumbnail_concepts(
         fields["thumbnail_concepts"], srt_end
     )
@@ -466,6 +513,11 @@ def build_parser():
     )
     parser.add_argument("srt", help="corrected Romanian .srt (timeline time)")
     parser.add_argument("--context", required=True, help="markdown note with the clip's angle")
+    parser.add_argument(
+        "--chapters",
+        default=None,
+        help="chapters.json to use instead of the model's chapters (schemas/chapters.schema.json)",
+    )
     parser.add_argument("--previous-url", default=None, help="relevant earlier clip to link")
     parser.add_argument("--repo-url", default=None, help="the clip's own code repo")
     parser.add_argument("--out-dir", default=None, help="output folder (default: the SRT's parent)")
@@ -486,6 +538,7 @@ def main(argv=None):
             out_dir=args.out_dir,
             name=args.name,
             prompt_path=args.prompt,
+            chapters_path=args.chapters,
         )
     except (MetadataError, ConfigError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

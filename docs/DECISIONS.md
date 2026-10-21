@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] S59 lot 2 — one word mapping, final-edit chapter inputs, chapters.json in the publish chain
+
+**Context:** The word-to-timeline mapping was duplicated in `subs_from_edit.py`, `chapters.py` and `shorts_rank.py`, and the publish chain asked the model for chapters a second time even when `chapters.py` had already written the chapter source of truth. The Second Brain final edit is a FilmCraft project, so the chapter and Shorts tools had to read the final timeline, not only the rough cut.
+
+**Options:**
+- A) Keep the three copies of the mapping and let each tool grow its own final-edit input
+- B) Move the mapping to `scripts/common/timeline_words.py`, give `chapters.py`/`shorts_rank.py` the same three input modes as `subs_from_edit.py`, and let `metadata.py`/`publish.py` take `--chapters chapters.json`
+
+**Decision:** B — `scripts/common/timeline_words.py` holds the shared mapping (`subs_from_edit.py`, `chapters.py`, `shorts_rank.py` all use it; `collect_words` also finds `<stem>_words.json`). `chapters.py` and `shorts_rank.py` accept the rough cut as before, or the final FilmCraft project (`--fcproj --sequence --words-dir`, the same mapping as `subs_from_edit.py --fcproj`) or the timeline `_words.json` (`--timeline-words`). `metadata.py` and `publish.py` take `--chapters chapters.json` and use those chapters instead of the model's; without the flag nothing changes.
+
+**Why not:** A) leaves three mappings to drift and forces the final-edit tools to re-implement the FilmCraft mapping; the model's chapters are a second, weaker source once `chapters.py` has written the timeline chapters.
+
+**Consequence:** On the Second Brain final timeline (`Second Brain - 15 min`, 866.09 s, 1955 words mapped) `chapters.py` produced 9 chapters all inside the timeline and `shorts_rank.py` 5 Shorts candidates of 29-58 s each inside one chapter. `metadata.py --chapters` makes the model's `chapters` key optional and ignores it when present; a missing or invalid file exits 2. No schema change.
+
 ## [2026-10-21] Mode B real folder layout and nearest-timestamp pairing
 
 **Context:** The Second Brain recordings live in a `camera/` + `ecran/` folder pair, not the flat folder `mode_b.py` assumed, and the OBS screen recording starts 1-2 s before the camera, so exact name matching pairs only 24 of the 31 sessions. The Whisper JSONs sit in a `json/` subfolder.

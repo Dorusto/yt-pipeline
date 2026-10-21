@@ -324,3 +324,145 @@ def test_missing_srt_exits_2(tmp_path, monkeypatch, capsys):
     code = metadata.main([str(tmp_path / "nope.srt"), "--context", str(context)])
     assert code == 2
     assert "not found" in capsys.readouterr().err
+
+
+def write_chapters(tmp_path, chapters, name="chapters.json"):
+    document = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-21T00:00:00+00:00",
+        "tool": "scripts/chapters.py",
+        "chapters": chapters,
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+FILE_CHAPTERS = [
+    {"start_s": 0.0, "title": "FileOne", "summary": "one"},
+    {"start_s": 1.0, "title": "FileTwo", "summary": "two"},
+    {"start_s": 2.0, "title": "FileThree", "summary": "three"},
+]
+
+
+def test_chapters_file_overrides_model(tmp_path, monkeypatch):
+    chapters_file = write_chapters(tmp_path, FILE_CHAPTERS)
+    data = dict(
+        FULL,
+        chapters=[
+            {"timestamp": "00:00:00", "title": "ModelIntro"},
+            {"timestamp": "00:00:03", "title": "ModelEnd"},
+        ],
+    )
+    code, out = run_main(tmp_path, monkeypatch, data, extra=["--chapters", str(chapters_file)])
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["chapters"] == [
+        {"timestamp": "00:00:00", "title": "FileOne"},
+        {"timestamp": "00:00:01", "title": "FileTwo"},
+        {"timestamp": "00:00:02", "title": "FileThree"},
+    ]
+    text = out.read_text(encoding="utf-8")
+    assert "00:00:00 FileOne" in text
+    assert "00:00:01 FileTwo" in text
+    assert "00:00:02 FileThree" in text
+    assert "ModelIntro" not in text
+    assert "ModelEnd" not in text
+
+
+def test_chapters_file_model_may_omit_chapters(tmp_path, monkeypatch):
+    chapters_file = write_chapters(tmp_path, FILE_CHAPTERS)
+    data = dict(FULL)
+    del data["chapters"]
+    code, _ = run_main(tmp_path, monkeypatch, data, extra=["--chapters", str(chapters_file)])
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert [chapter["title"] for chapter in payload["chapters"]] == [
+        "FileOne",
+        "FileTwo",
+        "FileThree",
+    ]
+
+
+def test_without_flag_model_chapters_used(tmp_path, monkeypatch):
+    code, _ = run_main(tmp_path, monkeypatch, FULL)
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["chapters"] == [
+        {"timestamp": "00:00:00", "title": "Intro"},
+        {"timestamp": "00:00:02", "title": "Lume"},
+    ]
+
+
+def test_without_flag_missing_chapters_key_exits_2(tmp_path, monkeypatch, capsys):
+    data = dict(FULL)
+    del data["chapters"]
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "chapters" in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_first_not_zero_exits_2(tmp_path, monkeypatch, capsys):
+    chapters_file = write_chapters(
+        tmp_path, [{"start_s": 1.0, "title": "Late", "summary": "late"}]
+    )
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(chapters_file)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "chapter 1" in err
+    assert "00:00:01" in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_beyond_srt_end_exits_2(tmp_path, monkeypatch, capsys):
+    chapters_file = write_chapters(
+        tmp_path,
+        [
+            {"start_s": 0.0, "title": "Start", "summary": "start"},
+            {"start_s": 10.0, "title": "Far", "summary": "far"},
+        ],
+    )
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(chapters_file)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "beyond the transcript end" in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_invalid_schema_exits_2(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "chapters.json"
+    path.write_text(
+        json.dumps({"chapters": [{"start_s": 0.0, "title": "NoSummary"}]}), encoding="utf-8"
+    )
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(path)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert str(path) in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_missing_exits_2(tmp_path, monkeypatch, capsys):
+    missing = tmp_path / "nope.json"
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(missing)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "not found" in err
+    assert "nope.json" in err
+
+
+def test_chapters_file_json_summary(tmp_path, monkeypatch, capsys):
+    chapters_file = write_chapters(tmp_path, FILE_CHAPTERS)
+    code, _ = run_main(
+        tmp_path,
+        monkeypatch,
+        FULL,
+        extra=["--chapters", str(chapters_file), "--json"],
+        cost_per_call=0.005,
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["chapters"] == 3
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.005
