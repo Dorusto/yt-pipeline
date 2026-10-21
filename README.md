@@ -317,8 +317,11 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 | Script | Input | Output |
 |:---|:---|:---|
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + Whisper words JSON) | `edit.json` rough cut (atomic replace, re-run safe) |
+| `eval_rough_cut.py` | `edit.json` + `sessions.yaml` + a reference `.fcproj` + `--words-dir` | precision/recall of the kept words vs a hand edit, the sessions/sections the reference did not use, the biggest disagreements, a `subs_from_edit.py` cross-check (table, or `--json`/`--out`) |
 
 `sessions.yaml` is validated against `schemas/sessions.schema.json`. The cut rules (`pause_gap_s`, `handle_s`, `retake_window_s`, `retake_similarity`, `retake_min_words`, `repeat_window_s`, `fillers`) come from `--config` or the built-in defaults (see `scripts/rough_cut_config_example.yaml`). Word times come only from the given word JSON files — the tool never transcribes. `--llm` (off by default) proposes extra cuts for human approval in `<out-dir>/rough_cut_proposals.json` and never changes the edit. `--json` reports `outputs`, `sessions`, `windows`, `slots`, `words_read`, `words_kept`, `cuts`, `warnings`, `wall_time_s`, `llm_cost_usd`.
+
+`eval_rough_cut.py` scores a rough cut against a hand-made FilmCraft edit of the same material: it maps both sides' words with the same midpoint rule and reports `precision`/`recall`, the same numbers minus the sessions and long sections the reference did not use (`precision_used`/`recall_used`), the ten biggest disagreement runs with timecodes, and a `subs_from_edit.py` cross-check. It is a measuring tool with no pass/fail gate (exit `0` on success, `2` on a user error) and calls no model.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: yt-mode-b
-description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, or prepare a Mode B recording for a human edit in FilmCraft. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
+description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Also scores a rough cut against a hand-made FilmCraft edit of the same material (precision/recall, the sessions and sections the reference did not use, the biggest disagreements). Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
 compatibility: Run from the repository root. Needs the repo .venv, PyYAML and ffprobe (for media duration and container start time; missing media is a warning, not an error). No model is called unless --llm is given, and --llm only proposes cuts for human approval — it never changes the edit.
 ---
 
@@ -48,6 +48,21 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 
 `--screen` names the screen source file (the OBS file without the `camera ` prefix does not contain the `screen` token, so pass it explicitly). The export reports `slots_placed` and `markers.green`; a pair contributes two slots and one marker.
 
+## Eval against a hand edit (`eval_rough_cut.py`)
+
+```bash
+.venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
+  --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ --json
+.venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
+  --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ \
+  --section-min-s 30.0 --out report.json
+```
+
+- Compares the words `rough_cut.py` kept with the words a human kept in a FilmCraft project of the same material. Both sides use the same midpoint rule (`(start + end) / 2` in `[in, out)`); a word is identified by `(stem, flat index)`.
+- `--edit` is the `edit.json` `rough_cut.py` wrote; `--sessions` is the same manifest (validated against `schemas/sessions.schema.json`); `--fcproj` + `--sequence` name the reference project and the sequence to read (its `Audio 1` track); `--words-dir` holds one words JSON per source stem.
+- Reports `precision`/`recall` and `precision_used`/`recall_used` (the same numbers minus the bucket: words in sessions the reference did not use at all, plus dropped runs spanning `--section-min-s`), the ten biggest disagreement runs with timecodes, and a `subs_from_edit.py` cross-check of `words_kept` against our `|doru|`.
+- `--json` prints the report object; `--out` also writes it atomically. Exit codes: `0` success (the eval has no pass/fail gate), `2` user error (missing file, bad sequence, a clip with `speed != 1.0` or `reverse`). No model is called (`llm_cost_usd` is always `0.0`).
+
 ## Later lots
 
-The eval script (`eval_rough_cut.py`) and the one-command wrapper (`mode_b.py`) are later lots; this skill covers `rough_cut.py` only.
+The one-command wrapper (`mode_b.py`) is a later lot; this skill covers `rough_cut.py` and its eval.
