@@ -42,8 +42,8 @@ skipping any step whose output already exists).
 
 ## Doru, check this
 
-- `docs/reports/S56-eval.md` — the tuning (`retake_similarity` 0.75 → 0.55,
-  `fillers.always` + `ok`) and its overfitting note.
+- `docs/reports/S56-eval.md` — only the `ok` filler was kept and
+  `retake_similarity` stayed at 0.75, plus the overfitting note.
 - The paired-slot rule in `docs/DECISIONS.md` (`[2026-10-21] Mode B angles: paired
   edit.json slots sharing one id`) and the cut-rules entry.
 - Run it on a real folder:

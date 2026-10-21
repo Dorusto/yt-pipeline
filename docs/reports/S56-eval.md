@@ -1,4 +1,4 @@
-# S56 — Mode B rough-cut eval (lot 2)
+# S56 — Mode B rough-cut eval (lot 2, follow-up 02)
 
 Draft report for Doru to confirm. Scope: does `rough_cut.py` keep the words a
 human kept in a hand-made FilmCraft edit of the same material, and can the lot 1
@@ -19,84 +19,115 @@ word is identified by `(stem, flat index)`. It reports:
 - the ten biggest disagreement runs (`ours_only` / `doru_only`) with timecodes;
 - a cross-check of `subs_from_edit.py`'s `words_kept` against our `|doru|`.
 
+`--until-s S` (commit 3d269b4) scores only the finished stretch of the reference:
+the reference clips are trimmed at `S` on the timeline, and a word counts only
+when its stem is used in those minutes and its midpoint lies in that stem's
+covered source span. Stems used only after `S` land in the session bucket. The
+`subs_from_edit.py` cross-check stays full-sequence in every run.
+
 The eval is a measuring tool: no pass/fail gate, exit `0` on success, `2` on a
 user error, no model (`llm_cost_usd` is always `0.0`).
 
-## Real run
+## Headline: the finished stretch (`--until-s 150`)
 
 Reference: the personal `Second Brain` project, sequence `Second Brain - 15 min`,
-read-only. The sessions manifest was built in `/tmp` over every camera word JSON
-stem (31 sessions; the camera paths do not exist, which is a warning, not an
-error). `rough_cut.py` was run with the lot 1 defaults, then the eval.
+223 audio clips, read-only. Only the first 150 s of the reference timeline is
+really edited; the rest is close to raw. Verified on the reference: the source
+material inside the early covered spans but outside the kept windows is never
+used later in the sequence (0 s overlap), which is why `--until-s` restricts each
+used source to the envelope of its counted windows.
 
-| metric | before | after |
-|:---|---:|---:|
-| ours kept | 7344 | 7247 |
-| doru kept | 1955 | 1955 |
-| intersect | 1941 | 1936 |
-| precision | 0.2643 | 0.2671 |
-| recall | 0.9928 | 0.9903 |
-| **precision_used** | **0.6345** | **0.6413** |
-| **recall_used** | **0.9928** | **0.9903** |
-| F1 (used) | 0.7742 | 0.7785 |
-| bucket session_words | 2178 | 2178 |
-| bucket section_words | 2241 | 2241 |
-| bucket total | 4419 | 4419 |
-| cross-check `words_kept` | 1891 | 1891 |
-| cross-check agrees | yes | yes |
+Final config **A1** (`retake_similarity: 0.75`, `fillers.always` with `ok`):
 
-`doru.sessions_used` = 20 of `doru.sessions_total` = 31 (11 sessions the
-reference did not use at all). `wall_time_s` ≈ 0.25 s, `llm_cost_usd` = 0.0.
+| metric | A1 `--until-s 150` |
+|:---|---:|
+| ours kept | 933 |
+| doru kept | 377 |
+| intersect | 363 |
+| precision | 0.3891 |
+| recall | 0.9629 |
+| **precision_used** | **0.5619** |
+| **recall_used** | **0.9629** |
+| F1 (used) | 0.7097 |
+| bucket session_words | 6220 |
+| bucket section_words | 296 |
+| cross-check `words_kept` | 1891 |
+| cross-check agrees | yes |
 
-## Chosen thresholds
+`doru.sessions_used` = 4 of `doru.sessions_total` = 31 on this slice. These are
+the honest ceiling while the reference is only edited for its first 150 s.
 
-Only two values changed; both are in `scripts/rough_cut.py` `DEFAULT_CONFIG` and
-`scripts/rough_cut_config_example.yaml`.
+## Full sequence (reference unfinished — indicative only)
 
-- `retake_similarity`: **0.75 → 0.55** — catches more restarted sentences; on this
-  reference `recall_used` moves only 0.9928 → 0.9903 while `precision_used` rises
-  0.6345 → 0.6413.
-- `fillers.always`: **+ `ok`** — a standalone interjection; dropping it whenever it
-  stands alone raises `precision_used` without lowering `recall_used`.
+The same final config **A1** over the whole sequence:
 
-`retake_window_s` (60 s), `retake_min_words` (3) and `repeat_window_s` (3.0 s)
-were left unchanged: sweeping them (window 60/90/120 s, min words 2/3, repeat
-window 2/4/5 s) did not move `precision_used`/`recall_used` on this reference.
+| metric | A1 full |
+|:---|---:|
+| ours kept | 7330 |
+| doru kept | 1955 |
+| intersect | 1941 |
+| precision | 0.2648 |
+| recall | 0.9928 |
+| **precision_used** | **0.6362** |
+| **recall_used** | **0.9928** |
+| F1 (used) | 0.7755 |
+| bucket session_words | 2178 |
+| bucket section_words | 2241 |
+| cross-check `words_kept` | 1891 |
+| cross-check agrees | yes |
 
-## What the biggest disagreements show
+`doru.sessions_used` = 20 of 31 full. These numbers are **not a ceiling**: most
+of the sequence is close to raw, so the reference side is not a finished edit.
 
-All ten biggest disagreement runs are `ours_only` (words we keep that the
-reference dropped), and every one of them sits in a session the reference did not
-use at all — i.e. they are already inside the session bucket, not counted against
-`precision_used`. The largest runs, by source timecode and word count:
+## Threshold decision
 
-| start_s | end_s | words |
-|---:|---:|---:|
-| 28.08 | 394.64 | 491 |
-| 3.90 | 218.00 | 362 |
-| 120.62 | 267.52 | 223 |
-| 2.86 | 187.62 | 219 |
-| 3.84 | 123.06 | 213 |
-| 105.24 | 246.70 | 173 |
-| 4.86 | 116.89 | 162 |
-| 97.70 | 192.60 | 161 |
-| 268.32 | 359.16 | 156 |
-| 515.02 | 599.44 | 143 |
+Four cut-rule configs were run (`rough_cut.py` on the same 31-session manifest,
+then the eval twice per edit — with `--until-s 150` and full):
 
-The remaining false positives inside used stems (1118 words) are almost all
-common function words from content the reference trimmed sentence by sentence;
-the pause/filler/retake rules cannot reach them, which is why the tuning gain is
-small.
+- A = lot 1 defaults before tuning: `retake_similarity: 0.75`, `fillers.always`
+  without `ok`
+- A1 = only the `ok` filler added: `retake_similarity: 0.75`, `fillers.always`
+  with `ok`
+- B1 = only the retake change: `retake_similarity: 0.55`, `fillers.always`
+  without `ok`
+- B = both (the S56 lot 2 state): `retake_similarity: 0.55`, `fillers.always`
+  with `ok`
+
+| cfg | scope | ours kept | doru kept | intersect | precision | recall | precision_used | recall_used | F1_used | bucket session | bucket section | cross-check agrees |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A | --until-s 150 | 934 | 377 | 363 | 0.3887 | 0.9629 | 0.5611 | 0.9629 | 0.7090 | 6220 | 296 | yes |
+| A1 | --until-s 150 | 933 | 377 | 363 | 0.3891 | 0.9629 | 0.5619 | 0.9629 | 0.7097 | 6220 | 296 | yes |
+| B1 | --until-s 150 | 918 | 377 | 358 | 0.3900 | 0.9496 | 0.5629 | 0.9496 | 0.7068 | 6220 | 296 | yes |
+| B | --until-s 150 | 917 | 377 | 358 | 0.3904 | 0.9496 | 0.5638 | 0.9496 | 0.7075 | 6220 | 296 | yes |
+| A | full | 7344 | 1955 | 1941 | 0.2643 | 0.9928 | 0.6345 | 0.9928 | 0.7742 | 2178 | 2241 | yes |
+| A1 | full | 7330 | 1955 | 1941 | 0.2648 | 0.9928 | 0.6362 | 0.9928 | 0.7755 | 2178 | 2241 | yes |
+| B1 | full | 7261 | 1955 | 1936 | 0.2666 | 0.9903 | 0.6396 | 0.9903 | 0.7772 | 2178 | 2241 | yes |
+| B | full | 7247 | 1955 | 1936 | 0.2671 | 0.9903 | 0.6413 | 0.9903 | 0.7785 | 2178 | 2241 | yes |
+
+The decision rule was: a tuned value is kept only if on the `--until-s 150` slice
+it does not lose recall (beyond 0.002) — precision/F1 decides between equals.
+
+**Verdict: A1 is the final config.**
+
+- `fillers.always` + `ok` **stays**: precision_used +0.0008, recall_used flat,
+  best F1_used on the finished stretch (0.7090 → 0.7097).
+- `retake_similarity` 0.55 is **reverted to 0.75** (commit cf1b59f): it buys
+  +0.0018 precision_used but loses -0.0133 recall_used and lowers F1_used
+  0.7090 → 0.7068 on the finished stretch. It only looked good on the unfinished
+  full sequence. The value may come back after the reference edit is final.
 
 ## Honest notes
 
 - `pause_gap_s` and `handle_s` are **not tunable by this word-set metric**: they
   change the cut timing, not which words are kept, so they stay at 0.6 / 0.12.
-- Tuning on a single reference risks **overfitting**. The two changes above are
-  small and plausible, but the gain (F1 0.7742 → 0.7785) is within noise; a second
-  reference would be needed to confirm them.
+- Tuning on a single reference risks **overfitting**. The kept change is small and
+  plausible, but the gain (F1_used 0.7090 → 0.7097) is within noise; a second
+  reference would be needed to confirm it.
+- **The eval must be rerun when the reference edit is final.** Until then every
+  threshold claim is provisional — the finished stretch is only the first 150 s
+  and the full-sequence numbers are not a real ceiling.
 - The cross-check compares like-for-like: `subs_from_edit.py` glues hyphen
-  clitics (`-uri`, `-am`) onto the previous word before counting, so its
-  `words_kept` is 1891 while the raw kept-word count is 1955 (the number in
-  issue #56). `eval_rough_cut.py` applies the same glue in reference timeline
-  order before comparing, and the two agree (1891 = 1891).
+  clitics onto the previous word before counting, so its `words_kept` is 1891
+  while the raw kept-word count is 1955 (the number in issue #56).
+  `eval_rough_cut.py` applies the same glue in reference timeline order before
+  comparing, and the two agree (1891 = 1891).

@@ -2089,3 +2089,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** no tool imports another tool (the repo rule); the CLIs are the interfaces. **Why not C:** a shell script cannot carry the `--json` summary, the exit codes or the tests.
 
 **Consequence:** one command turns a folder of OBS recordings into a FilmCraft rough cut; `mode_b.py` is the Mode B front door, `rough_cut.py` and `export_filmcraft.py` stay the stations.
+
+---
+
+## [2026-10-21] Unfinished reference: eval on the finished stretch; retake_similarity reverted (S56 follow-up)
+
+**Context:** Doru has edited only the first 150 s of the Second Brain reference; the lot 2 precision_used 0.64 was not a real ceiling and the tuned thresholds were fitted to partly uncut material. `eval_rough_cut.py --until-s S` was added (commit 3d269b4) and the two lot 2 threshold changes were re-checked on the `--until-s 150` slice: A1 (`retake_similarity` 0.75, `fillers.always` with `ok`) gives precision_used 0.5619, recall_used 0.9629, F1_used 0.7097; B (`retake_similarity` 0.55, `fillers.always` with `ok`) gives precision_used 0.5638, recall_used 0.9496, F1_used 0.7075.
+
+**Decision:** the headline numbers are the `--until-s 150` ones (precision_used 0.5619, recall_used 0.9629, F1_used 0.7097 for the final config); the full-sequence numbers are indicative only. `fillers.always` keeps `ok`; `retake_similarity` goes back to 0.75 because 0.55 costs 0.0133 recall_used for 0.0018 precision_used on the finished stretch.
+
+**Consequence:** the Mode B cut rules run with `retake_similarity: 0.75` and the `ok` filler; **the eval is rerun when the reference edit is final** and the thresholds may move again.
