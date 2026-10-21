@@ -34,6 +34,7 @@ import cv2
 import numpy as np
 
 from common.photos import PhotoError, read_bgr
+from common.frames import read_frame_pairs
 from common.schema import SchemaError, validate, validate_or_raise
 
 FRAME_COUNT = 3
@@ -128,20 +129,10 @@ def photo_keys(photos):
 
 def read_frames(path, times, width=FRAME_WIDTH):
     """Read one BGR frame per timestamp from a clip, resized to ``width``; frames stay in memory."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise SimilarityError(f"cannot read video: {path}")
-    frames = []
-    try:
-        for t_s in times:
-            capture.set(cv2.CAP_PROP_POS_MSEC, t_s * 1000.0)
-            ok, frame = capture.read()
-            if not ok:
-                raise SimilarityError(f"cannot read frame at {t_s:.2f}s from {path}")
-            frames.append(_resize_width(frame, width))
-    finally:
-        capture.release()
-    return frames
+    return [
+        _resize_width(frame, width)
+        for _t_s, frame in read_frame_pairs(path, times, error=SimilarityError)
+    ]
 
 
 def embed_mobilenet(frames, net):

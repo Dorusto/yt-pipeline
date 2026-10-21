@@ -41,6 +41,7 @@ import numpy as np
 from PIL import Image
 
 from common.config import ConfigError, load_config
+from common.frames import read_frame_pairs
 from common.llm import BudgetExceeded, LLMError
 from common.peak import valid_vision_peak
 from common.photos import PHOTO_FLAWS, PhotoError, jpeg_bytes, open_photo, sharpness
@@ -341,49 +342,15 @@ def build_mosaic(pairs):
 
 def read_raw_frames(path, times):
     """Read one BGR frame per timestamp from a clip; frames stay in memory."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise DescribeError(f"cannot read video: {path}")
-    frames = []
-    try:
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        for t_s in times:
-            frame = _read_frame_near(capture, t_s, fps)
-            if frame is None:
-                raise DescribeError(f"cannot read frame at {t_s:.2f}s from {path}")
-            frames.append((t_s, frame))
-    finally:
-        capture.release()
-    return frames
+    return read_frame_pairs(path, times, error=DescribeError, near_seek=True)
 
 
 def read_frames(path, times, width):
     """Read one JPEG frame per timestamp from a clip; frames stay in memory."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise DescribeError(f"cannot read video: {path}")
-    frames = []
-    try:
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        for t_s in times:
-            frame = _read_frame_near(capture, t_s, fps)
-            if frame is None:
-                raise DescribeError(f"cannot read frame at {t_s:.2f}s from {path}")
-            frames.append(VisionFrame(t_s=t_s, jpeg_bytes=_encode_jpeg(frame, width)))
-    finally:
-        capture.release()
-    return frames
-
-
-def _read_frame_near(capture, t_s, fps):
-    """Read the frame at t_s, stepping one frame back when the seek lands past the end."""
-    step = 1.0 / fps if fps and fps > 0 else 0.04
-    for attempt in range(4):
-        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_s - attempt * step) * 1000.0)
-        ok, frame = capture.read()
-        if ok:
-            return frame
-    return None
+    return [
+        VisionFrame(t_s=t_s, jpeg_bytes=_encode_jpeg(frame, width))
+        for t_s, frame in read_frame_pairs(path, times, error=DescribeError, near_seek=True)
+    ]
 
 
 def build_prompt(base_prompt, clip_file, segment, times, frame_mode="legacy"):

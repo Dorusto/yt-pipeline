@@ -703,3 +703,72 @@ def test_full_run_warns_on_camera_like_screen(tmp_path, capsys, monkeypatch):
     summary = json.loads(out)
     assert summary["screen_suspects"][0]["reason"] == "face_in_most_frames"
     assert any("CAMERA recording" in warning for warning in summary["warnings"])
+
+
+def test_manifest_rewrite_keeps_recorded_sync_offset(tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    make_camera(folder, "2026-10-17 22-25-44.mp4")
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", [])
+    sessions[0]["words"] = make_words(
+        tmp_path / "out" / "words" / "camera 2026-10-17 22-25-44_words.json"
+    )
+    sessions_path = tmp_path / "out" / "sessions.yaml"
+    sessions_path.parent.mkdir(parents=True, exist_ok=True)
+    sessions_path.write_text(
+        yaml.safe_dump(
+            {
+                "sessions": [
+                    {
+                        "camera": str(sessions[0]["camera"].resolve()),
+                        "sync_offset_s": -1.25,
+                        "sync_offset_confidence": 0.8,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    mode_b.write_manifest(sessions_path, sessions, mode_b.load_manifest(sessions_path))
+    entry = yaml.safe_load(sessions_path.read_text(encoding="utf-8"))["sessions"][0]
+    assert entry["sync_offset_s"] == -1.25
+    assert entry["sync_offset_confidence"] == 0.8
+    assert entry["screen"] == str((folder / "2026-10-17 22-25-44.mp4").resolve())
+    assert entry["words"]
+
+
+def test_second_run_keeps_hand_written_sync_offset(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    make_camera(folder, "2026-10-17 22-25-44.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    sessions_path = folder / "mode_b" / "sessions.yaml"
+    document = yaml.safe_load(sessions_path.read_text(encoding="utf-8"))
+    document["sessions"][0]["sync_offset_s"] = -1.5
+    document["sessions"][0]["sync_offset_confidence"] = 0.9
+    sessions_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    entry = yaml.safe_load(sessions_path.read_text(encoding="utf-8"))["sessions"][0]
+    assert entry["sync_offset_s"] == -1.5
+    assert entry["sync_offset_confidence"] == 0.9
+
+
+def test_unreadable_screen_never_loads_the_face_detector(tmp_path, monkeypatch):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(screen_dir, "2026-09-29 20-58-35.mp4")
+
+    def boom(path):
+        raise AssertionError("the face detector must not load")
+
+    monkeypatch.setattr(mode_b, "make_detector", boom)
+    warnings = []
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", warnings)
+    suspects = mode_b.run_screen_checks(sessions, warnings)
+    assert suspects == []
+    assert warnings == []

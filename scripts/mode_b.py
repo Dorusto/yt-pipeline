@@ -55,6 +55,7 @@ from common.faces import (
     ensure_model,
     make_detector,
 )
+from common.frames import read_frame_pairs
 from common.media import parse_stamp, stem_timestamp, video_files
 
 TOOL = "scripts/mode_b.py"
@@ -296,23 +297,52 @@ def consolidate_words(sessions, words_dir):
         shutil.copy2(source, words_dir / source.name)
 
 
-def manifest_document(sessions):
-    """Build the sessions manifest document (validated by rough_cut.py)."""
+def load_manifest(path):
+    """Return the existing sessions manifest document, or ``None`` when there is none."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ModeBError(f"cannot read sessions manifest '{path}': {exc}")
+    return document
+
+
+def manifest_document(sessions, previous=None):
+    """Build the sessions manifest document (validated by rough_cut.py).
+
+    A ``sync_offset_s``/``sync_offset_confidence`` already in ``previous`` (hand-written
+    or recorded by ``rough_cut.py``) survives the rewrite: the manifest value
+    always wins and ``mode_b.py`` never computes an offset.
+    """
+    recorded = {}
+    for entry in (previous or {}).get("sessions") or []:
+        camera = entry.get("camera")
+        if not camera:
+            continue
+        recorded[str(Path(camera))] = {
+            key: entry[key]
+            for key in ("sync_offset_s", "sync_offset_confidence")
+            if key in entry
+        }
     entries = []
     for session in sessions:
-        entry = {"camera": str(session["camera"].resolve())}
+        camera = str(session["camera"].resolve())
+        entry = {"camera": camera}
         if session["screen"] is not None:
             entry["screen"] = str(session["screen"].resolve())
         entry["words"] = str(session["words"].resolve())
+        entry.update(recorded.get(camera, {}))
         entries.append(entry)
     return {"sessions": entries}
 
 
-def write_manifest(path, sessions):
-    """Write the sessions manifest atomically."""
+def write_manifest(path, sessions, previous=None):
+    """Write the sessions manifest atomically, keeping recorded sync offsets."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = yaml.safe_dump(manifest_document(sessions), sort_keys=False, allow_unicode=True)
+    text = yaml.safe_dump(manifest_document(sessions, previous), sort_keys=False, allow_unicode=True)
     handle, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
@@ -452,17 +482,7 @@ def sample_times(duration_s, count):
 
 def read_frames(path, times):
     """Read one frame per time; return ``(t_s, frame)`` pairs for the frames found."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        return []
-    frames = []
-    for t_s in times:
-        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(t_s)) * 1000.0)
-        ok, frame = capture.read()
-        if ok and frame is not None:
-            frames.append((float(t_s), frame))
-    capture.release()
-    return frames
+    return read_frame_pairs(path, times, skip_missing=True)
 
 
 def frame_similarity(first, second):
@@ -496,14 +516,19 @@ def screen_camera_similarity(screen_frames, camera_frames):
     return sum(scores) / len(scores)
 
 
-def screen_camera_check(session, detector):
-    """Return a suspect record when the screen file looks like a camera recording, else None."""
+def screen_camera_check(session, get_detector):
+    """Return a suspect record when the screen file looks like a camera recording, else None.
+
+    ``get_detector`` is called only after readable screen frames were found, so
+    an unreadable screen never loads the face detector.
+    """
     screen = session.get("screen")
     if screen is None:
         return None
     screen_frames = read_frames(screen, sample_times(media_duration_s(screen), CHECK_SAMPLES))
     if not screen_frames:
         return None
+    detector = get_detector()
     reasons = []
     detail = []
     if detector is not None:
@@ -533,25 +558,28 @@ def screen_camera_check(session, detector):
 
 def run_screen_checks(sessions, warnings):
     """Warn per session when its screen file looks like a camera recording."""
+    state = {"detector": None, "error": None}
+
+    def get_detector():
+        if state["detector"] is None and state["error"] is None:
+            try:
+                state["detector"] = make_detector(ensure_model(DEFAULT_MODEL_PATH))
+            except FacesError as exc:
+                state["error"] = str(exc)
+        return state["detector"]
+
     suspects = []
-    detector = None
-    detector_error = None
     for session in sessions:
         if session.get("screen") is None:
             continue
-        if detector is None and detector_error is None:
-            try:
-                detector = make_detector(ensure_model(DEFAULT_MODEL_PATH))
-            except FacesError as exc:
-                detector_error = str(exc)
-        suspect = screen_camera_check(session, detector)
+        suspect = screen_camera_check(session, get_detector)
         if suspect is not None:
             warnings.append(
                 f"screen file '{suspect['screen']}' looks like a CAMERA recording: {suspect['detail']}"
             )
             suspects.append(suspect)
-    if detector_error is not None:
-        warnings.append(f"face detector unavailable: {detector_error}")
+    if state["error"] is not None:
+        warnings.append(f"face detector unavailable: {state['error']}")
     return suspects
 
 
@@ -580,7 +608,7 @@ def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
     consolidate_words(sessions, words_dir)
 
     sessions_path = out_dir / "sessions.yaml"
-    write_manifest(sessions_path, sessions)
+    write_manifest(sessions_path, sessions, load_manifest(sessions_path))
 
     edit_path = out_dir / "edit.json"
     rough_cut_skipped = edit_path.is_file() and not force

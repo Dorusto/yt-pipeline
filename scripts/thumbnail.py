@@ -28,12 +28,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from common.brand import BrandError
+from common.brand import BrandError, parse_hex_color
 from common.brand import load_brand as load_brand_kit
 from common.brand import resolve_font as resolve_font_kit
 
 TOOL = "scripts/thumbnail.py"
-DEFAULT_BRAND = Path(__file__).resolve().parents[1] / "brand.json"
 FONT_KEYS = ("title", "kicker", "tag")
 TITLE_FLOOR_PX = 40
 TITLE_STEP_PX = 4
@@ -82,8 +81,7 @@ def build_parser():
 
 
 def hex_to_rgb(value):
-    digits = value.lstrip("#")
-    return tuple(int(digits[index:index + 2], 16) for index in (0, 2, 4))
+    return parse_hex_color(value)
 
 
 def load_brand(path):
@@ -541,7 +539,7 @@ def human_summary(summary):
 
 
 def render(args, started):
-    brand, brand_path = load_brand(args.brand or DEFAULT_BRAND)
+    brand, brand_path = load_brand(args.brand)
     width = brand["canvas"]["width"]
     height = brand["canvas"]["height"]
     theme = brand["themes"][args.theme]

@@ -17,7 +17,7 @@ import cv2
 import pysubs2
 import yaml
 
-from common.brand import BrandError, load_brand, resolve_font
+from common.brand import BrandError, load_brand, parse_hex_color, resolve_font
 from common.corrections import (
     CORRECTIONS_EXAMPLE_FILE,
     CORRECTIONS_FILE,
@@ -28,7 +28,11 @@ from common.corrections import (
 )
 from common.ffmpeg_tools import available_video_encoders, pick_video_encoder, video_encode_args
 from common.schema import SchemaError, validate_or_raise
-from common.timeline_words import TimelineWordsError, timeline_words_from_file
+from common.timeline_words import (
+    TimelineWordsError,
+    timeline_words_from_file,
+    word_in_window,
+)
 
 CROP_W = 608
 CROP_H = 1080
@@ -38,7 +42,6 @@ REFRAME_SCRIPT = Path(__file__).resolve().parent / "reframe.py"
 
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "shorts_config.yaml"
-DEFAULT_BRAND = SCRIPT_DIR.parent / "brand.json"
 
 PHRASE_END_CHARS = (".", "!", "?", "…")
 PHRASE_GAP_S = 0.6
@@ -410,7 +413,7 @@ def merge_hyphenated(words: list) -> list:
 def load_brand_kit(path=None):
     """Load the brand kit, turning a missing or invalid kit into a user error."""
     try:
-        return load_brand(path or DEFAULT_BRAND)
+        return load_brand(path)
     except BrandError as exc:
         raise RuntimeError(str(exc))
 
@@ -425,15 +428,13 @@ def resolve_caption_font_dir(brand, brand_dir):
 
 def hex_to_ass_color(value):
     """Turn a ``#RRGGBB`` brand colour into a pysubs2 colour (ASS stores BGR)."""
-    digits = value.lstrip("#")
-    red, green, blue = (int(digits[index:index + 2], 16) for index in (0, 2, 4))
+    red, green, blue = parse_hex_color(value)
     return pysubs2.Color(red, green, blue, 0)
 
 
 def hex_to_ass_tag(value):
     """Turn a ``#RRGGBB`` brand colour into an inline ASS ``&HBBGGRR&`` tag."""
-    digits = value.lstrip("#")
-    red, green, blue = (int(digits[index:index + 2], 16) for index in (0, 2, 4))
+    red, green, blue = parse_hex_color(value)
     return f"&H{blue:02X}{green:02X}{red:02X}&"
 
 
@@ -508,17 +509,16 @@ def caption_lines(phrase: list) -> list:
 
 
 def words_for_segment(words: list, start: float, end: float) -> list:
-    """Select the words whose midpoint lies in ``[start, end)`` and shift them to segment time."""
-    selected = []
-    for word in words:
-        midpoint = (word["start"] + word["end"]) / 2
-        if start <= midpoint < end:
-            selected.append({
-                "word": word["word"],
-                "start": word["start"] - start,
-                "end": word["end"] - start,
-            })
-    return selected
+    """Select the kept words of ``[start, end)`` (the shared midpoint rule) and shift them to segment time."""
+    return [
+        {
+            "word": word["word"],
+            "start": word["start"] - start,
+            "end": word["end"] - start,
+        }
+        for word in words
+        if word_in_window(word, start, end)
+    ]
 
 
 def karaoke_settings(config: dict):

@@ -4,6 +4,32 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] S59 follow-ups: shared media helpers, audio sync, screen checks (issue #60)
+
+**Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). Doru also asked whether a screen file was really a screen file.
+
+**Options:** (A) keep per-tool copies and the name-only offset; (B) move the shared helpers to `scripts/common/media.py`, measure the camera-to-screen offset by sound in `rough_cut.py` and add a cheap screen-suspect check to `mode_b.py`; (C) also teach `mode_b.py` to write the offset.
+
+**Decision:** B — `scripts/common/media.py` holds `parse_stamp`, `stem_timestamp` and `video_files` (matte exports excluded), `rough_cut.py` computes the offset in one place: voice cross-correlation (ffmpeg mono 16 kHz, ±5 s search, first 60 s of overlap) with `sync_offset_confidence` (the normalised correlation peak, new key in `schemas/sessions.schema.json`), falling back to the name timestamps plus the container start time when the correlation is weak or an audio track is missing. A manifest `sync_offset_s` (hand-written or recorded) always wins and is used as is. `mode_b.py` flags a screen file that looks like a camera recording (YuNet face in ≥ 60 % of 8 sampled frames, or mean frame similarity ≥ 0.85 to the paired camera) and `--check` runs only these checks, nothing written, exit 1 on a suspect.
+
+**Why not:** C) two writers of one field is how the lot 1 bug happened; A) leaves the wrong offset and the duplicated helpers in place.
+
+**Consequence:** `mode_b.py` never writes `sync_offset_s` (the skill says so and the code keeps the promise — see the review entry below), `--check` is the post-recording sanity check, and `rough_cut.py` is the only place the offset is measured or recorded.
+
+---
+
+## [2026-10-21] Review fixes: one frame reader, one brand default, one colour parse, one keep rule (S59 review)
+
+**Context:** The lot 2/lot 3 reviews found shared logic written out per tool: the `VideoCapture` seek loop in `describe.py`, `similarity.py` and `mode_b.py` (three different contracts); `DEFAULT_BRAND` in `common/brand.py` plus `shorts_generator.py`, `thumbnail.py` and `graphics.py` (the `common` copy was dead); the `#RRGGBB` parse in `thumbnail.hex_to_rgb` and `shorts_generator.hex_to_ass_*`; the word-midpoint keep rule re-implemented in `shorts_generator.words_for_segment`; `PAUSE_SPLIT_S`, `TICKS_PER_SECOND`, `EPSILON`, `media_item_path` and `slot_length` duplicated across tools. The review also asked for a single source of truth for the word-to-edit mapping and for `chapters.json`/`shorts_candidates.json` to default to the clip's publish folder in `--fcproj` mode (Doru, 2026-10-21).
+
+**Decision:** `scripts/common/constants.py` holds `EPSILON`, `TICKS_PER_SECOND` and `PAUSE_SPLIT_S`; `scripts/common/frames.py` holds `read_frame_pairs` (near-seek retry option, strict or skip-on-missing, the caller's error class) used by `describe.py`, `similarity.py` and `mode_b.py`; `common/brand.DEFAULT_BRAND` is the only brand default and `common/brand.parse_hex_color` the only `#RRGGBB` parse (ASS colour formatting stays in `shorts_generator.py`); `common/timeline_words.word_in_window` is the keep rule used by `collect_words`, `map_words` and `words_for_segment`; `subs_from_edit.py` uses the shared `build_groups`/`map_words` (the crossfade overlap moved into `build_groups`); `mode_b.run_screen_checks` loads the YuNet detector only after readable screen frames were found; `mode_b.manifest_document` carries a recorded `sync_offset_s`/`sync_offset_confidence` over to a rewritten manifest (the skill's "the manifest value always wins" promise, kept after the lot 3 review); in `--fcproj` mode `chapters.py`/`shorts_rank.py` write `chapters.json`/`shorts_candidates.json` to the clip's publish folder (the parent of `--words-dir`), else next to the primary input.
+
+**Why not:** per-tool copies drift — they already had three `read_frames` contracts and two word mappings with different crossfade handling.
+
+**Consequence:** behaviour is unchanged except the `--fcproj` default output folder (documented in `yt-mode-b` and `yt-shorts`); `metadata.py --chapters` expands `~`; the tests cover the preserved sync offset, the lazy detector and the publish-folder default.
+
+---
+
 ## [2026-10-21] Shorts split layout: face over screen (S59 lot 3c, issue #60)
 
 **Context:** For a face-over-screen recording (a screen capture with the presenter's face in it) the 9:16 Short cropped around the face and lost the screen content. The frame holds both regions, so they can be stacked instead of cropped.
@@ -58,11 +84,11 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 - A) Keep the flat layout and require the user to rename files so the stems match exactly
 - B) Accept both layouts and pair by the nearest name timestamp within a tolerance, falling back to the exact stem
 
-**Decision:** B — detect the subfolder layout (`camera/` plus `ecran/` or `screen/`, names configurable under `mode_b:`), pair each camera with the screen whose parsed name timestamp is nearest within `pair_tolerance_s` (default 10 s) assigned greedily one-to-one, fall back to the exact stem, and write the measured `camera_stamp - screen_stamp` to the manifest as `sync_offset_s`. Unpaired cameras run camera-only; unpaired screens are warnings. `find_words` also searches `FOLDER/<words_dir>` (default `json`).
+**Decision:** B — detect the subfolder layout (`camera/` plus `ecran/` or `screen/`, names configurable under `mode_b:`), pair each camera with the screen whose parsed name timestamp is nearest within `pair_tolerance_s` (default 10 s) assigned greedily one-to-one, fall back to the exact stem, and leave `sync_offset_s` to `rough_cut.py` (corrected 2026-10-21: the offset is measured by sound there, see the follow-up entry below — the pairing itself only matches files). Unpaired cameras run camera-only; unpaired screens are warnings. `find_words` also searches `FOLDER/<words_dir>` (default `json`).
 
 **Why not:** A) forces manual renames on every recording and loses the real offset; the schema already carries `sync_offset_s`, so the measured value belongs in the manifest.
 
-**Consequence:** `mode_b.py` reads a `mode_b:` mapping from the same YAML it passes to `rough_cut.py` (which ignores unknown keys); the `--json` summary gains a `pairing` object. Words found outside `<out-dir>/words` are copied into it (the manifest keeps the found path), so `chapters.py` sees every session. No schema change. The reference check pairs 27 of 31 sessions (the old exact-name rule paired 24).
+**Consequence:** `mode_b.py` reads a `mode_b:` mapping from the same YAML it passes to `rough_cut.py` (which ignores unknown keys); the `--json` summary gains a `pairing` object. Words found outside `<out-dir>/words` are copied into it (the manifest keeps the found path), so `chapters.py` sees every session. No schema change here (`sync_offset_confidence` arrived with the audio-sync follow-up, see below). The reference check pairs 27 of 31 sessions (the old exact-name rule paired 24).
 
 ## [2026-06-18] WhisperX forced alignment instead of re-running Whisper
 

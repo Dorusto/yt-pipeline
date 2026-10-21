@@ -30,7 +30,6 @@ from common.brand import resolve_font as resolve_font_kit
 from common.schema import validate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BRAND = REPO_ROOT / "brand.json"
 TEMPLATES_DIR = REPO_ROOT / "assets" / "graphics"
 HYPERFRAMES_VERSION = "0.8.181"
 BACKENDS = ("hyperframes", "mock")
@@ -409,7 +408,7 @@ def run_single(template, props_json, out, width, height, fps, duration, brand_pa
     props = parse_props(props_json)
     validate_props(template, props)
     validate_canvas(width, height, fps, duration)
-    brand, brand_path = load_brand(brand_path or DEFAULT_BRAND)
+    brand, brand_path = load_brand(brand_path)
     brand_dir = brand_path.parent
     output = Path(out).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -467,7 +466,7 @@ def run_plan(plan_path, out_dir, width, height, fps, brand_path, backend):
     if errors:
         raise GraphicsError(f"invalid plan {plan_file}: " + "; ".join(errors))
     validate_canvas(width, height, fps, DEFAULT_DURATION)
-    brand, brand_path = load_brand(brand_path or DEFAULT_BRAND)
+    brand, brand_path = load_brand(brand_path)
     brand_dir = brand_path.parent
     output_dir = Path(out_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)

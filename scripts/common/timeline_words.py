@@ -32,6 +32,12 @@ def load_json(path):
         raise TimelineWordsError(f"cannot read '{path}': {exc}")
 
 
+def word_in_window(word, start, end):
+    """True when the word's midpoint lies in ``[start, end)`` — the shared keep rule."""
+    midpoint = (word["start"] + word["end"]) / 2
+    return start <= midpoint < end
+
+
 def load_source_words(path):
     """Return ``[{word, start, end}]`` for every word of a Whisper word JSON file."""
     data = load_json(path)
@@ -189,10 +195,9 @@ def collect_words(plan, words_dir):
                 f"(looked for '{stem}.json' in {words_dir})"
             )
         for word in load_source_words(words_path):
-            midpoint = (word["start"] + word["end"]) / 2
             matched = False
             for entry in entries:
-                if entry["window_start"] <= midpoint < entry["window_end"]:
+                if word_in_window(word, entry["window_start"], entry["window_end"]):
                     matched = True
                     shift = entry["timeline_start"] - entry["window_start"]
                     placements.append({
@@ -335,12 +340,11 @@ def map_words(groups, words_map, single_file, strict=False):
     words_dropped = 0
     for words_file, entries in by_file.items():
         for word in load_source_words(words_file):
-            midpoint = (word["start"] + word["end"]) / 2
             matched = False
             for group, member in entries:
                 in_s = float(member["slot"]["in_s"])
                 out_s = float(member["slot"]["out_s"])
-                if in_s <= midpoint < out_s:
+                if word_in_window(word, in_s, out_s):
                     matched = True
                     shift = group["start_s"] - in_s
                     mapped.append({

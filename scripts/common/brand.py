@@ -33,6 +33,12 @@ def load_brand(path=None):
     return brand, brand_path
 
 
+def parse_hex_color(value):
+    """Return the ``(r, g, b)`` triple of a ``#RRGGBB`` brand colour."""
+    digits = value.lstrip("#")
+    return tuple(int(digits[index:index + 2], 16) for index in (0, 2, 4))
+
+
 def resolve_font(brand, brand_dir, key):
     """Return the absolute font path of a brand font key, or raise naming path and key."""
     font_path = Path(brand["fonts"][key]["path"])
