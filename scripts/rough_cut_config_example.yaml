@@ -1,0 +1,10 @@
+# Cut rules for scripts/rough_cut.py (Mode B rough cut).
+pause_gap_s: 0.6        # gaps between words longer than this are cut
+handle_s: 0.12          # material kept on each side of a pause cut so words are not clipped
+retake_window_s: 60.0   # a restart within this many seconds of the earlier sentence's start counts
+retake_similarity: 0.75 # minimum normalised-word prefix similarity of a restart (difflib ratio)
+retake_min_words: 3     # shorter sentences are never retake triggers
+repeat_window_s: 3.0    # a "repeated" filler is dropped when the same token appears >= 2x within this window
+fillers:
+  always: ["ă", "îî", "ăă", "ăăă"]     # dropped whenever the token stands alone
+  repeated: ["deci", "practic"]        # dropped only when repeated (stutter)

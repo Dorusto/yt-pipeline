@@ -75,6 +75,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `thumbnail.py` | portrait photo + title | `thumbnail.jpg` (1280x720) + optional `thumbnail.psd` |
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
+| `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
 | `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons |
@@ -298,6 +299,26 @@ See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured,
 | `export_filmcraft.py` | `edit.json` (+ optional `graphics_plan.json` + overlays) | `.fcproj` project (atomic replace, re-run safe) |
 
 Video slots go on `Camera 1`, screen slots on `Screen 1`, each video slot's audio on `Audio 1`, overlays on `Graphics 1` above the picture. One Green marker per used slot carries its reason; a slot flagged for a human check (`centred` or a speed ramp) gets a Rose "to redo" marker instead; each placed overlay gets a Mango marker. Missing media is a warning (the project opens with offline media), photo slots export as stills with a "Ken Burns not exported" warning and speed ramps export at real time with a warning. `filmcraft-cli` is only needed to open or inspect the result (`$FILMCRAFT_CLI` or PATH). `--json` reports the placed counts, marker counts, missing media and warnings.
+
+Consecutive video slots sharing the same `id` are two angles of one cut window: they are placed at one shared timeline start, with one audio clip per pair and one marker per pair. This is how a Mode B rough cut (below) opens with the screen and the camera cut identically.
+
+---
+
+## Mode B rough cut (rough_cut.py)
+
+`rough_cut.py` turns one or more talking-head + screen recording sessions into an `edit.json` rough cut: silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason. The output opens through `export_filmcraft.py` with the screen on `Screen 1` and the camera on `Camera 1`, the same cuts on both, ready for a human edit. Skill: `yt-mode-b`.
+
+```bash
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --json
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --config scripts/rough_cut_config_example.yaml
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --llm --json
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `rough_cut.py` | `sessions.yaml` (camera + optional screen + Whisper words JSON) | `edit.json` rough cut (atomic replace, re-run safe) |
+
+`sessions.yaml` is validated against `schemas/sessions.schema.json`. The cut rules (`pause_gap_s`, `handle_s`, `retake_window_s`, `retake_similarity`, `retake_min_words`, `repeat_window_s`, `fillers`) come from `--config` or the built-in defaults (see `scripts/rough_cut_config_example.yaml`). Word times come only from the given word JSON files — the tool never transcribes. `--llm` (off by default) proposes extra cuts for human approval in `<out-dir>/rough_cut_proposals.json` and never changes the edit. `--json` reports `outputs`, `sessions`, `windows`, `slots`, `words_read`, `words_kept`, `cuts`, `warnings`, `wall_time_s`, `llm_cost_usd`.
 
 ---
 
