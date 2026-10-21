@@ -38,7 +38,7 @@ import yaml
 
 from common.constants import TICKS_PER_SECOND
 from common.schema import SchemaError, validate_or_raise
-from common.timeline_words import media_item_path
+from common.timeline_words import media_item_path, word_in_window
 
 TOOL = "scripts/eval_rough_cut.py"
 DEFAULT_TRACK = "Audio 1"
@@ -256,8 +256,7 @@ def kept_indices(words, windows):
     """The flat indices whose midpoint lies in one of the windows."""
     kept = set()
     for index, word in enumerate(words):
-        midpoint = (word["start"] + word["end"]) / 2.0
-        if any(start <= midpoint < end for start, end in windows):
+        if any(word_in_window(word, start, end) for start, end in windows):
             kept.add(index)
     return kept
 

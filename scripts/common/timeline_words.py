@@ -219,16 +219,28 @@ def slot_length(slot):
 
 
 def fade_for_join(slot, dur_prev, dur_next, xfade_s=XFADE_DEFAULT_S):
-    """The overlap at the join into ``slot``, matching ``render.py``; 0 means cut."""
+    """The overlap at the join into ``slot``; 0 means a hard cut.
+
+    The one crossfade rule: ``render.py`` joins with it and ``serve.py``
+    overlaps its timeline blocks with it. A ``crossfade`` transition takes
+    its ``duration_s`` (or ``xfade_s`` when absent or not positive), capped
+    at half of either neighbour.
+    """
     transition = slot.get("transition") or {}
     if transition.get("type") != "crossfade":
         return 0.0
-    requested = float(transition.get("duration_s") or 0.0)
+    try:
+        requested = float(transition.get("duration_s") or 0.0)
+    except (TypeError, ValueError):
+        requested = 0.0
     if requested <= 0:
-        requested = xfade_s
+        try:
+            requested = float(xfade_s)
+        except (TypeError, ValueError):
+            requested = 0.0
     if requested <= 0:
         return 0.0
-    return min(requested, dur_prev / 2, dur_next / 2)
+    return max(0.0, min(requested, float(dur_prev) / 2, float(dur_next) / 2))
 
 
 def build_groups(document):

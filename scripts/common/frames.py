@@ -1,7 +1,7 @@
 """Read sampled frames from a clip at given times (OpenCV).
 
-Shared by ``describe.py``, ``similarity.py`` and ``mode_b.py``: one
-``VideoCapture`` seek loop, three call shapes. Frames stay in memory as BGR
+Shared by ``describe.py``, ``similarity.py``, ``mode_b.py``, ``explain.py`` and
+``index.py``: one ``VideoCapture`` seek loop. Frames stay in memory as BGR
 numpy arrays; the callers encode, resize or compare them.
 """
 
@@ -37,6 +37,18 @@ def read_frame_pairs(path, times, error=FramesError, near_seek=False, skip_missi
     finally:
         capture.release()
     return frames
+
+
+def read_frame(path, t_s):
+    """Return the BGR frame at ``t_s`` from ``path``, or None when it cannot be read."""
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        capture.release()
+        return None
+    try:
+        return _read_frame(capture, t_s)
+    finally:
+        capture.release()
 
 
 def _read_frame(capture, t_s):

@@ -40,6 +40,7 @@ from common.ambience import (
 )
 from common.ffmpeg_tools import ffmpeg_path
 from common.moves import middle_speed_of, slot_screen_length
+from common.timeline_words import fade_for_join
 from common.photos import ensure_jpeg, open_photo
 from common import vertical
 from common.schema import SchemaError, validate_or_raise
@@ -334,19 +335,6 @@ def probe_video_size(path):
         return width, height
     except RenderError:
         return None
-
-
-def fade_for_join(slot, dur_prev, dur_next, xfade_s):
-    """Return the crossfade length used at the join into ``slot``; 0 means cut."""
-    transition = slot.get("transition") or {}
-    if transition.get("type") != "crossfade":
-        return 0.0
-    requested = transition.get("duration_s") or 0.0
-    if requested <= 0:
-        requested = xfade_s
-    if requested <= 0:
-        return 0.0
-    return min(requested, dur_prev / 2, dur_next / 2)
 
 
 def total_duration(slots, durations, xfade_s):

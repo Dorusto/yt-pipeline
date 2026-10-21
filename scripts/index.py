@@ -38,6 +38,7 @@ from pathlib import Path
 
 import cv2
 
+from common.frames import read_frame
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
@@ -971,18 +972,10 @@ def _thumbnail_html(shot, clip_paths):
 def _thumbnail_data_uri(path, t_s):
     if not path:
         return None
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        capture.release()
+    frame = read_frame(path, t_s)
+    if frame is None:
         return None
-    try:
-        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_s) * 1000.0)
-        ok, frame = capture.read()
-        if not ok:
-            return None
-        return _encode_thumbnail(frame)
-    finally:
-        capture.release()
+    return _encode_thumbnail(frame)
 
 
 def _encode_thumbnail(frame):

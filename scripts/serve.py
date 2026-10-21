@@ -39,6 +39,7 @@ from pathlib import Path
 import yaml
 
 from common.moves import slot_screen_length
+from common.timeline_words import fade_for_join
 from common.pacing import estimate_all_good
 from common.versions import list_versions
 
@@ -681,20 +682,6 @@ def render_page(title, body, active=None, script="", refresh=None):
     )
 
 
-def crossfade_overlap(slot, previous_length, length):
-    """How much this slot overlaps the previous one: the render's crossfade rule."""
-    transition = slot.get("transition") or {}
-    if transition.get("type") != "crossfade":
-        return 0.0
-    try:
-        requested = float(transition.get("duration_s") or 0.0)
-    except (TypeError, ValueError):
-        requested = 0.0
-    if requested <= 0:
-        requested = DEFAULT_XFADE_S
-    return max(0.0, min(requested, previous_length / 2, length / 2))
-
-
 def edit_summary(directory):
     """Read edit.json and return the timeline blocks and totals, or None."""
     path = Path(directory) / "edit.json"
@@ -725,7 +712,7 @@ def edit_summary(directory):
             continue
         label = slot.get("shot_key") or slot.get("photo") or slot.get("clip") or slot.get("id") or ""
         if blocks:
-            start -= crossfade_overlap(slot, blocks[-1]["end"] - blocks[-1]["start"], length)
+            start -= fade_for_join(slot, blocks[-1]["end"] - blocks[-1]["start"], length, DEFAULT_XFADE_S)
             blocks[-1]["end"] = start
         blocks.append({"start": start, "end": start + length, "kind": kind, "label": str(label)})
         start += length

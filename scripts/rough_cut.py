@@ -35,6 +35,7 @@ import yaml
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.media import parse_stamp
+from common.timeline_words import word_in_window
 from common.schema import SchemaError, validate_or_raise
 
 TOOL = "scripts/rough_cut.py"
@@ -694,8 +695,7 @@ def process_session(session, config, warnings, state, camera_duration, review_ro
     words_kept = 0
     kept_words = []
     for word in words:
-        midpoint = (word["start"] + word["end"]) / 2.0
-        if any(record["start"] <= midpoint < record["end"] for record in window_records):
+        if any(word_in_window(word, record["start"], record["end"]) for record in window_records):
             words_kept += 1
             kept_words.append(word)
 
