@@ -224,6 +224,41 @@ def test_with_chapters_fields_are_filled(tmp_path, monkeypatch, capsys):
     assert all(candidate["chapter_title"] in ("Intro", "Demo") for candidate in document["candidates"])
 
 
+def test_layout_split_written_on_every_candidate(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--layout", "split", "--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout"] == "split"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert document["candidates"]
+    assert all(candidate["layout"] == "split" for candidate in document["candidates"])
+
+
+def test_layout_absent_without_flag(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout"] is None
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert all("layout" not in candidate for candidate in document["candidates"])
+
+
+def test_json_reports_layout_in_both_cases(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    client = AutoScoreClient()
+    patch(monkeypatch, client)
+    assert shorts_rank.main([str(edit), str(words), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["layout"] is None
+    assert shorts_rank.main([str(edit), str(words), "--layout", "face", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["layout"] == "face"
+
+
 def test_paired_group_counts_words_once(tmp_path):
     edit = write_edit(
         tmp_path / "edit.json",

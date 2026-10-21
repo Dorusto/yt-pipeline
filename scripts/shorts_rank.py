@@ -4,10 +4,11 @@
 
 Usage:
     python3 scripts/shorts_rank.py edit.json WORDS [--chapters chapters.json]
-        [--out shorts_candidates.json] [--json]
+        [--out shorts_candidates.json] [--layout {face,split}] [--json]
     python3 scripts/shorts_rank.py --fcproj PROJ --sequence NAME --words-dir DIR
-        [--chapters chapters.json] [--json]
-    python3 scripts/shorts_rank.py --timeline-words FILE [--chapters chapters.json] [--json]
+        [--chapters chapters.json] [--layout {face,split}] [--json]
+    python3 scripts/shorts_rank.py --timeline-words FILE [--chapters chapters.json]
+        [--layout {face,split}] [--json]
 
 The tool maps the per-source Whisper word JSON files onto the cuts of an
 ``edit.json`` timeline (the same midpoint rule ``chapters.py`` uses), splits the
@@ -338,7 +339,7 @@ def write_json(path, document):
         raise
 
 
-def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prompt_path=None, publish_dir=None):
+def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prompt_path=None, publish_dir=None, layout=None):
     """Rank the Shorts candidates and return the ``--json`` summary."""
     started = time.monotonic()
     if not mapped:
@@ -379,7 +380,7 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
 
     output_candidates = []
     for rank, item in enumerate(ranked, 1):
-        output_candidates.append({
+        candidate = {
             "rank": rank,
             "start_s": item["start_s"],
             "end_s": item["end_s"],
@@ -390,7 +391,10 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
             "reason": item["reason"],
             "chapter_start_s": item["chapter_start_s"] if has_chapters else None,
             "chapter_title": item["chapter_title"] if has_chapters else None,
-        })
+        }
+        if layout is not None:
+            candidate["layout"] = layout
+        output_candidates.append(candidate)
 
     if out_path:
         out = Path(out_path).expanduser()
@@ -414,6 +418,7 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
         "outputs": {"candidates": str(out)},
         "candidates_scored": len(candidates),
         "written": len(output_candidates),
+        "layout": layout,
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": round(client.spent_usd, 8),
@@ -427,7 +432,7 @@ def build_parser():
             "shorts_rank.py [EDIT] [WORDS] [--chapters chapters.json] "
             "[--out shorts_candidates.json] [--prompt FILE]\n"
             "               [--fcproj PROJ --sequence NAME [--track TRACK] --words-dir DIR]\n"
-            "               [--timeline-words FILE] [--json]"
+            "               [--timeline-words FILE] [--layout {face,split}] [--json]"
         ),
         description=(
             "Rank Shorts candidates from the kept transcript of an edit with one LLM pass "
@@ -459,6 +464,16 @@ def build_parser():
     parser.add_argument("--track", default=None, help="audio track name inside the sequence (default 'Audio 1')")
     parser.add_argument("--words-dir", default=None, help="folder with one Whisper word JSON per source clip (with --fcproj)")
     parser.add_argument("--timeline-words", default=None, help="a timeline _words.json written by subs_from_edit.py (timeline-words mode)")
+    parser.add_argument(
+        "--layout",
+        choices=("face", "split"),
+        default=None,
+        help=(
+            "write this layout on every candidate: 'face' is the reframe.py face crop, "
+            "'split' stacks the face region over the screen region of the same 16:9 frame "
+            "(default: no layout key)"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -472,7 +487,7 @@ def main(argv=None):
             if args.fcproj and args.words_dir
             else None
         )
-        summary = run(mapped, warnings, primary_input, args.chapters, args.out, args.prompt, publish_dir)
+        summary = run(mapped, warnings, primary_input, args.chapters, args.out, args.prompt, publish_dir, args.layout)
     except (ShortsRankError, ConfigError, LLMError, TimelineWordsError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
