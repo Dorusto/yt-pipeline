@@ -309,6 +309,7 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 `rough_cut.py` turns one or more talking-head + screen recording sessions into an `edit.json` rough cut: silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason. The output opens through `export_filmcraft.py` with the screen on `Screen 1` and the camera on `Camera 1`, the same cuts on both, ready for a human edit. Skill: `yt-mode-b`.
 
 ```bash
+.venv/bin/python scripts/mode_b.py FOLDER --json
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --json
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --config scripts/rough_cut_config_example.yaml
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --llm --json
@@ -316,8 +317,11 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 
 | Script | Input | Output |
 |:---|:---|:---|
+| `mode_b.py` | a folder of OBS recordings (`camera ...` files + optional sibling screen files) | `mode_b/words/`, `mode_b/sessions.yaml`, `mode_b/edit.json`, `mode_b/project.fcproj` (one command, skip rule, `--force`) |
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + Whisper words JSON) | `edit.json` rough cut (atomic replace, re-run safe) |
 | `eval_rough_cut.py` | `edit.json` + `sessions.yaml` + a reference `.fcproj` + `--words-dir` | precision/recall of the kept words vs a hand edit, the sessions/sections the reference did not use, the biggest disagreements, a `subs_from_edit.py` cross-check (table, or `--json`/`--out`) |
+
+`mode_b.py` is the one-command front door: it transcribes every session with no words JSON yet (`--backend mock` for offline runs), writes the manifest, runs `rough_cut.py` and exports the FilmCraft project, skipping any step whose output already exists (`--force` re-runs everything). `--config` and `--llm` are passed to `rough_cut.py`; outputs go under `<folder>/mode_b/` and the last human line is `project: <path>`.
 
 `sessions.yaml` is validated against `schemas/sessions.schema.json`. The cut rules (`pause_gap_s`, `handle_s`, `retake_window_s`, `retake_similarity`, `retake_min_words`, `repeat_window_s`, `fillers`) come from `--config` or the built-in defaults (see `scripts/rough_cut_config_example.yaml`). Word times come only from the given word JSON files — the tool never transcribes. `--llm` (off by default) proposes extra cuts for human approval in `<out-dir>/rough_cut_proposals.json` and never changes the edit. `--json` reports `outputs`, `sessions`, `windows`, `slots`, `words_read`, `words_kept`, `cuts`, `warnings`, `wall_time_s`, `llm_cost_usd`.
 

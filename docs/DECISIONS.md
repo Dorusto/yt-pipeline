@@ -2061,3 +2061,31 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** the schema is the interface the issue pins ("the existing schema"), and every adapter would need the multi-angle concept. **Why not C:** the pairing would live in a CLI flag instead of the edit list, breaking "edit.json is the only source of truth".
 
 **Consequence:** a rough-cut `edit.json` is consumable by `export_filmcraft.py` (and `eval_rough_cut.py`); `render.py`, `subs_from_edit.py` and the web app still treat slots sequentially and a Mode B rough cut is not rendered in this slice. A kept window's `reason` names the cut before it (`cut: pause 1.2 s`, `cut: filler 'deci'`, `cut: retake of w007`, `start: session`) and becomes the FilmCraft marker; every merged cut run is a rejected `decisions[]` entry. RULES.md grows the Mode B paired-slots line.
+
+---
+
+## [2026-10-21] Mode B cut rules: pauses, fillers, retakes (S56)
+
+**Context:** Issue #56 lot 1 turns talking-head + screen recording sessions into a rough cut a human finishes in FilmCraft; the reference is Doru's hand edit of the same material. The cut has to remove the dead air, the filler words and the restarted sentences without clipping words.
+
+**Options:** (A) cut silence by audio loudness (auto-editor's approach, `docs/research/prior-art.md` §2.6); (B) cut by the word timestamps Whisper already produced (gaps between words, filler tokens, restarted sentences); (C) let an LLM choose the cut list.
+
+**Decision:** B. A gap between words over `pause_gap_s` (0.6 s) is cut keeping `handle_s` (0.12 s) each side so words are not clipped; standalone filler tokens from a config file are dropped (`ă`, `îî`, `ăă`, `ăăă`; `deci`/`practic` only when repeated within 3 s); a sentence restarted by a later one within 60 s (normalised-word prefix similarity ≥ 0.55, ≥ 3 words) is cut, keeping the last take. Every cut run is a rejected `decisions[]` entry and the kept window's `reason` names the cut before it (the FilmCraft marker). Thresholds tuned on the reference eval (`docs/reports/S56-eval.md`): `retake_similarity` 0.75 → 0.55, `fillers.always` + `ok`.
+
+**Why not A:** word timestamps already mark the pauses and clipping words is the known pitfall of loudness cutting (it needs denoising first). **Why not C:** the rule cut is deterministic and free; the optional `--llm` pass only proposes extra cuts for human approval and never changes the edit.
+
+**Consequence:** `rough_cut.py` + `eval_rough_cut.py` + `mode_b.py`, the `yt-mode-b` skill, the sessions manifest schema; the cut rules are the Mode B defaults in `scripts/rough_cut_config_example.yaml`.
+
+---
+
+## [2026-10-21] Mode B one-command flow (S56 lot 3)
+
+**Context:** Issue #56 lot 3 asks for one command that runs the whole Mode B flow on a folder of OBS recordings, the way `recap.py` is the single entry point for Mode A.
+
+**Options:** (A) import `transcribe.py`/`rough_cut.py`/`export_filmcraft.py` and call their functions; (B) chain the three station CLIs as subprocesses (the `recap.py` pattern); (C) a shell script.
+
+**Decision:** B. `scripts/mode_b.py FOLDER [--out-dir DIR] [--backend {whisper,mock}] [--config FILE] [--llm] [--force] [--json]` scans the folder (a `camera ...` file plus an optional sibling screen file), transcribes every session with no words JSON yet, writes `<out-dir>/sessions.yaml`, runs `rough_cut.py` and exports `project.fcproj`. The skip rule is "output exists" (`--force` re-runs every step); a failing step stops the run and the next run resumes at it. Outputs go under `<folder>/mode_b/`; originals are read-only.
+
+**Why not A:** no tool imports another tool (the repo rule); the CLIs are the interfaces. **Why not C:** a shell script cannot carry the `--json` summary, the exit codes or the tests.
+
+**Consequence:** one command turns a folder of OBS recordings into a FilmCraft rough cut; `mode_b.py` is the Mode B front door, `rough_cut.py` and `export_filmcraft.py` stay the stations.

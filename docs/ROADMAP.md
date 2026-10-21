@@ -2,7 +2,7 @@
 
 ## Current status
 
-Pipeline fully functional for end-to-end clip processing (transcription → correction → translation → metadata → 9:16 shorts) and for the AI Director track (D0–D2 done, D3–D6 open). The S51 publish-kit sprint is done and merged (PR #53, 2026-10-21; lots 0–6: watchdog per-run cap, publish chain, `matte.py`, HyperFrames graphics, licence + docs, FilmCraft bridge, `publish.py --kit`). The S54 FilmCraft-adapter sprint is done on branch `s54-filmcraft-spike` (lot 1 export spike, lot 2 web review polish); its PR is open for Doru.
+Pipeline fully functional for end-to-end clip processing (transcription → correction → translation → metadata → 9:16 shorts) and for the AI Director track (D0–D2 done, D3–D6 open). The S51 publish-kit sprint is done and merged (PR #53, 2026-10-21; lots 0–6: watchdog per-run cap, publish chain, `matte.py`, HyperFrames graphics, licence + docs, FilmCraft bridge, `publish.py --kit`). The S54 FilmCraft-adapter sprint is done on branch `s54-filmcraft-spike` (lot 1 export spike, lot 2 web review polish); its PR is open for Doru. The S56 Mode B sprint is done on branch `s56-mode-b` (lot 1 `rough_cut.py` + sessions schema, lot 2 `eval_rough_cut.py` + tuning, lot 3 `mode_b.py` one-command flow); its PR is open for Doru.
 
 **Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3.
 
@@ -57,3 +57,4 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 - Set the cron watchdog to `--run-cap 2` per run (the per-run cap shipped in S51 lot 0, 2026-10-20).
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
+- Mode B next: chapters, take/topic chunking, Shorts ranking (D4).
