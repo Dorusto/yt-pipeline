@@ -24,7 +24,10 @@ import time
 from pathlib import Path
 
 from common.ffmpeg_tools import ffmpeg_path
-from common.schema import SchemaError, validate, validate_or_raise
+from common.brand import BrandError
+from common.brand import load_brand as load_brand_kit
+from common.brand import resolve_font as resolve_font_kit
+from common.schema import validate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BRAND = REPO_ROOT / "brand.json"
@@ -145,28 +148,18 @@ def validate_canvas(width, height, fps, duration):
 
 def load_brand(path):
     """Load and validate the brand kit, returning ``(brand, brand_path)``."""
-    brand_path = Path(path).expanduser()
-    if not brand_path.is_file():
-        raise GraphicsError(f"brand kit not found: {brand_path}")
     try:
-        brand = json.loads(brand_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise GraphicsError(f"cannot read brand kit {brand_path}: {exc}") from exc
-    try:
-        validate_or_raise(brand, "brand")
-    except SchemaError as exc:
-        raise GraphicsError(f"invalid brand kit {brand_path}: {exc}") from exc
-    return brand, brand_path
+        return load_brand_kit(path)
+    except BrandError as exc:
+        raise GraphicsError(str(exc))
 
 
 def resolve_font(brand, brand_dir, key):
     """Return the absolute font path for a brand key, or raise naming path and key."""
-    font_path = Path(brand["fonts"][key]["path"])
-    if not font_path.is_absolute():
-        font_path = brand_dir / font_path
-    if not font_path.is_file():
-        raise GraphicsError(f'font file not found for brand key "fonts.{key}": {font_path}')
-    return font_path
+    try:
+        return resolve_font_kit(brand, brand_dir, key)
+    except BrandError as exc:
+        raise GraphicsError(str(exc))
 
 
 def resolve_fonts(brand, brand_dir):

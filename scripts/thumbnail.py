@@ -28,7 +28,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from common.schema import SchemaError, validate_or_raise
+from common.brand import BrandError
+from common.brand import load_brand as load_brand_kit
+from common.brand import resolve_font as resolve_font_kit
 
 TOOL = "scripts/thumbnail.py"
 DEFAULT_BRAND = Path(__file__).resolve().parents[1] / "brand.json"
@@ -85,27 +87,17 @@ def hex_to_rgb(value):
 
 
 def load_brand(path):
-    brand_path = Path(path).expanduser()
-    if not brand_path.is_file():
-        raise ThumbnailError(f"brand kit not found: {brand_path}")
     try:
-        brand = json.loads(brand_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ThumbnailError(f"cannot read brand kit {brand_path}: {exc}") from exc
-    try:
-        validate_or_raise(brand, "brand")
-    except SchemaError as exc:
-        raise ThumbnailError(f"invalid brand kit {brand_path}: {exc}") from exc
-    return brand, brand_path
+        return load_brand_kit(path)
+    except BrandError as exc:
+        raise ThumbnailError(str(exc))
 
 
 def resolve_font(brand, brand_dir, key):
-    font_path = Path(brand["fonts"][key]["path"])
-    if not font_path.is_absolute():
-        font_path = brand_dir / font_path
-    if not font_path.is_file():
-        raise ThumbnailError(f'font file not found for brand key "fonts.{key}": {font_path}')
-    return str(font_path)
+    try:
+        return str(resolve_font_kit(brand, brand_dir, key))
+    except BrandError as exc:
+        raise ThumbnailError(str(exc))
 
 
 _font_cache = {}
