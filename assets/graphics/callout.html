@@ -1,0 +1,124 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[
+    {"id":"text","type":"string","label":"Text","default":"echo hello"},
+    {"id":"style","type":"enum","label":"Style","default":"text","options":[{"value":"text","label":"Text"},{"value":"terminal","label":"Terminal"}]},
+    {"id":"accent","type":"color","label":"Accent","default":"#E8A25A"},
+    {"id":"fg","type":"color","label":"Foreground","default":"#EDEBE6"},
+    {"id":"bg","type":"color","label":"Plate","default":"#0F1218"},
+    {"id":"muted","type":"color","label":"Muted","default":"#9A9890"},
+    {"id":"title_font","type":"string","label":"Title font","default":"Montserrat Black"},
+    {"id":"mono_font","type":"string","label":"Mono font","default":"JetBrains Mono"},
+    {"id":"title_size_px","type":"number","label":"Title size","default":96},
+    {"id":"kicker_size_px","type":"number","label":"Kicker size","default":26},
+    {"id":"tracking_em","type":"number","label":"Tracking","default":-0.02}
+  ]'
+>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face { font-family: "__TITLE_FAMILY__"; src: url("__TITLE_FONT_URL__"); }
+      @font-face { font-family: "__MONO_FAMILY__"; src: url("__MONO_FONT_URL__"); }
+      html, body { margin: 0; padding: 0; background: transparent; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #plate { position: absolute; left: 96px; bottom: 120px; }
+      #plate-bg {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+        opacity: 0.85;
+        border-left: 8px solid var(--accent);
+      }
+      #plate.terminal #plate-bg { opacity: 0.92; }
+      #content {
+        position: relative;
+        padding: 24px 40px;
+        font-family: var(--mono_font);
+        font-size: calc(var(--kicker_size_px) * 1.8px);
+        line-height: 1.4;
+        color: var(--fg);
+        white-space: pre;
+      }
+      #prefix { color: var(--accent); }
+      #caret {
+        display: inline-block;
+        width: 0.55em;
+        height: 1.05em;
+        margin-left: 2px;
+        background: var(--fg);
+        vertical-align: text-bottom;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="callout"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-fps="30"
+      data-duration="3"
+    >
+      <div id="plate" class="clip" data-start="0" data-duration="3" data-track-index="0">
+        <div id="plate-bg"></div>
+        <div id="content"><span id="prefix"></span><span id="text"></span><span id="caret"></span></div>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var root = document.getElementById("root");
+        var duration = parseFloat(root.getAttribute("data-duration")) || 3;
+        var outAt = Math.max(1.4, duration - 0.4);
+        var variables = {};
+        try {
+          variables = window.__hyperframes.getVariables() || {};
+        } catch (error) {
+          variables = {};
+        }
+        var text = variables.text != null ? String(variables.text) : "";
+        var style = variables.style || "text";
+        var prefixEl = document.getElementById("prefix");
+        var textEl = document.getElementById("text");
+        var caret = document.getElementById("caret");
+        var plate = document.getElementById("plate");
+        if (style === "terminal") {
+          prefixEl.textContent = ">_ ";
+          plate.classList.add("terminal");
+        }
+        var characters = text.split("");
+        var typeDuration = Math.min(1.0, 0.04 * characters.length);
+        textEl.textContent = "";
+        var timeline = gsap.timeline({ paused: true });
+        var state = { index: 0 };
+        timeline.to(
+          state,
+          {
+            index: characters.length,
+            duration: typeDuration,
+            ease: "none",
+            onUpdate: function () {
+              textEl.textContent = characters.slice(0, Math.round(state.index)).join("");
+            }
+          },
+          0
+        );
+        if (style === "terminal") {
+          var blinks = Math.max(1, Math.ceil((duration - typeDuration) / 1.0));
+          timeline.to(
+            caret,
+            { opacity: 0, duration: 0.5, repeat: blinks, yoyo: true, ease: "none" },
+            typeDuration
+          );
+        } else {
+          timeline.to(caret, { opacity: 0, duration: 0.2, ease: "none" }, typeDuration);
+        }
+        timeline.to("#plate", { opacity: 0, duration: 0.4, ease: "power2.in" }, outAt);
+        window.__timelines = window.__timelines || {};
+        window.__timelines.callout = timeline;
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,107 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[
+    {"id":"number","type":"string","label":"Number","default":"42"},
+    {"id":"label","type":"string","label":"Label","default":"clips"},
+    {"id":"accent","type":"color","label":"Accent","default":"#E8A25A"},
+    {"id":"fg","type":"color","label":"Foreground","default":"#EDEBE6"},
+    {"id":"bg","type":"color","label":"Plate","default":"#0F1218"},
+    {"id":"muted","type":"color","label":"Muted","default":"#9A9890"},
+    {"id":"title_font","type":"string","label":"Title font","default":"Montserrat Black"},
+    {"id":"mono_font","type":"string","label":"Mono font","default":"JetBrains Mono"},
+    {"id":"title_size_px","type":"number","label":"Title size","default":96},
+    {"id":"kicker_size_px","type":"number","label":"Kicker size","default":26},
+    {"id":"tracking_em","type":"number","label":"Tracking","default":-0.02}
+  ]'
+>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face { font-family: "__TITLE_FAMILY__"; src: url("__TITLE_FONT_URL__"); }
+      @font-face { font-family: "__MONO_FAMILY__"; src: url("__MONO_FONT_URL__"); }
+      html, body { margin: 0; padding: 0; background: transparent; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #counter { position: absolute; left: 160px; top: 50%; transform: translateY(-50%); }
+      #number {
+        font-family: var(--title_font);
+        font-size: calc(var(--title_size_px) * 1.6px);
+        letter-spacing: calc(var(--tracking_em) * 1em);
+        line-height: 1;
+        color: var(--fg);
+      }
+      #label {
+        font-family: var(--mono_font);
+        font-size: calc(var(--kicker_size_px) * 1.6px);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="counter"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-fps="30"
+      data-duration="3"
+    >
+      <div id="counter" class="clip" data-start="0" data-duration="3" data-track-index="0">
+        <div id="number">0</div>
+        <div id="label" data-var-text="label">clips</div>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var root = document.getElementById("root");
+        var duration = parseFloat(root.getAttribute("data-duration")) || 3;
+        var outAt = Math.max(1.6, duration - 0.4);
+        var variables = {};
+        try {
+          variables = window.__hyperframes.getVariables() || {};
+        } catch (error) {
+          variables = {};
+        }
+        var raw = variables.number != null ? String(variables.number) : "0";
+        var target = parseFloat(raw);
+        var numberEl = document.getElementById("number");
+        var timeline = gsap.timeline({ paused: true });
+        if (isFinite(target)) {
+          var decimals = (raw.split(".")[1] || "").length;
+          var state = { value: 0 };
+          timeline.to(
+            state,
+            {
+              value: target,
+              duration: 1.2,
+              ease: "power2.out",
+              onUpdate: function () {
+                numberEl.textContent = state.value.toFixed(decimals);
+              },
+              onComplete: function () {
+                numberEl.textContent = raw;
+              }
+            },
+            0
+          );
+        } else {
+          numberEl.textContent = raw;
+        }
+        timeline.fromTo(
+          "#label",
+          { opacity: 0, y: 14 },
+          { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" },
+          1.2
+        );
+        timeline.to("#counter", { opacity: 0, duration: 0.4, ease: "power2.in" }, outAt);
+        window.__timelines = window.__timelines || {};
+        window.__timelines.counter = timeline;
+      })();
+    </script>
+  </body>
+</html>
