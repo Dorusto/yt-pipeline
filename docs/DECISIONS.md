@@ -2033,3 +2033,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not the API upload:** the audit gate above.
 
 **Consequence:** The manual upload is 3-5 minutes in Studio; the API upload can come back after a Google project audit (parked, not deleted from the plan — see the issue comment).
+
+---
+
+## [2026-10-21] Phone review taps write the workspace's expectations.yaml (S54 lot 2)
+
+**Context:** Issue #54 lot 2 adds two per-shot buttons on the Shots tab ("must be in" / "wrong label") that write "to the expectations file that `eval_edit.py` reads", and themes the run-progress `<progress>` bar from `brand.json` (Chrome on Android ignores `accent-color` on `<progress>`). D2-19 puts curated expectations in `eval/*.yaml` (committed regression fixtures); phone taps are live review data that belongs to one workspace.
+
+**Options (destination):** (A) append the taps to the repo's `eval/<project>-edit.yaml`; (B) write a workspace-local `expectations.yaml` that `eval_edit.py --workspace WS --expect WS/expectations.yaml` reads; (C) only append to the existing `feedback.jsonl` action log.
+
+**Decision:** B, with one extra top-level key. `serve.py` gains a single write route `POST /<project>/expectations` (urlencoded `shot` / `kind` / `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET on that path stays 404) that appends to `<workspace>/expectations.yaml` in the exact shape `eval_edit.py` already reads: `must_include: [{any_of: [shot], note}]` for "must be in" and `wrong_label: [{shot, note}]` for "wrong label". Taps are idempotent per (shot, kind), the write is atomic and the file is machine-owned (rewritten with a header comment, so hand-written YAML comments are lost). `eval_edit.py` is unchanged and ignores `wrong_label` — those rows are the record Doru and the agents read before the next re-edit or re-analysis. The progress bar takes `brand.json` `colors.cool` through `progress::-webkit-progress-value` / `progress::-moz-progress-bar` (fallback `#57b8c4`, never a start-up failure).
+
+**Why not A:** live taps would mix into the committed regression fixtures. **Why not C:** the issue names the expectations file, and `eval_edit.py` must be able to check what the taps said.
+
+**Consequence:** a phone review of the Shots tab becomes a file any agent can run (`eval_edit.py --expect WS/expectations.yaml`); curated expectations stay in `eval/`. The RULES serve line and the D2-19 expectations line grow the one write route and the workspace file.
