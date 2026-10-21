@@ -84,7 +84,10 @@ Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `
 A talking-head recording with a screen capture (one `Start Recording` in OBS
 writes both files) is a different flow from a trip recap: you film, rough-cut
 the recording, finish the edit in FilmCraft and then publish. The Second Brain
-clip is the reference.
+clip is the reference: its recordings live in a dated folder under `~/Videos/`
+(`camera/` + `ecran/`), the examples below run on the working copy
+`~/media/second-brain`, and the eval copy of the finished edit is
+`~/media/eval/second-brain`.
 
 ```bash
 # 1. right after recording — is any "screen" file really a camera recording?

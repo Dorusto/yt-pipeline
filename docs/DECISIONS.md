@@ -4,6 +4,26 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] S59 follow-up answers: flat-layout screens, one lookup, check exit codes, candidates layout
+
+**Context:** The S59 reviews left open questions (matte exclusion, flat-layout screen candidates, the `find_words` suffix copy, `--check` when the face detector cannot load, the watchdog cron docs, the crossfade/word-midpoint/frame-reader copies, and the `layout` key no tool writes) and the final review section's problems 2-3 plus decision items 1-3.
+
+**Decision:**
+- **Matte exclusion stays** (`-Alpha`/`_matte`, `scripts/common/media.py`): `matte.py` outputs can sit next to the camera files and are never recordings (recorded in the S59 layout entry above).
+- **Flat layout:** only files whose name carries a `YYYY-MM-DD HH-MM-SS` timestamp are screen candidates; other videos in the folder are ignored silently (no warning, no session). Subfolder layouts are unchanged.
+- `mode_b.find_words` uses `common.timeline_words.words_file_for`; its private `WORDS_SUFFIXES` copy is gone.
+- **Screen checks stay on by default** in every `mode_b.py` run. When the face detector cannot load, the run warns `screen check incomplete: face detector unavailable: <error>` and the `--json` summary sets `screen_check_incomplete` (both `run()` and `check()`); `--check` exits `2` with that message (`0` all clear, `1` a suspect screen file found — a suspect found while the detector is unavailable still exits `2`, because a partial check never looks clean). The exit codes live in the module docstring, `--help` and the user guide.
+- `shorts_rank.py --layout {face,split}` writes that `layout` on every candidate (the schema already allows it); without the flag the output is unchanged. The generator's config precedence (candidate key, then top-level `layout:`, then `face`) is untouched, so both ways of setting `split` work.
+- **One crossfade rule and one word-midpoint rule:** `render.py` and `serve.py` call `common.timeline_words.fade_for_join` (their local `fade_for_join`/`crossfade_overlap` copies are gone, golden tests byte-identical), `rough_cut.py` and `eval_rough_cut.py` call `common.timeline_words.word_in_window`, and `explain.py`/`index.py` read thumbnails through `common.frames.read_frame`.
+- `mode_b.manifest_document` matches a recorded `sync_offset_s`/`sync_offset_confidence` on both the raw and the resolved `camera` path, so a hand-written manifest cannot lose its offset silently.
+- The live watchdog cron (`--run-cap 6 --lot <lot> --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10`) is what `docs/AGENT_SETUP.md` documents now.
+
+**Why not:** a `--check` that exits 0 when its own detector failed is how a broken check looks clean; per-tool copies of the crossfade and midpoint rules had already drifted once (the lot 2 review).
+
+**Consequence:** `--check`'s contract is 0/1/2 and tested in both cases (detector fine, detector unavailable); the flat layout ignores junk videos silently; `shorts_candidates.json` can carry `layout: split` per candidate. No schema change.
+
+---
+
 ## [2026-10-21] S59 follow-ups: shared media helpers, audio sync, screen checks (issue #60)
 
 **Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). Doru also asked whether a screen file was really a screen file.
@@ -88,7 +108,7 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 **Why not:** A) forces manual renames on every recording and loses the real offset; the schema already carries `sync_offset_s`, so the measured value belongs in the manifest.
 
-**Consequence:** `mode_b.py` reads a `mode_b:` mapping from the same YAML it passes to `rough_cut.py` (which ignores unknown keys); the `--json` summary gains a `pairing` object. Words found outside `<out-dir>/words` are copied into it (the manifest keeps the found path), so `chapters.py` sees every session. No schema change here (`sync_offset_confidence` arrived with the audio-sync follow-up, see below). The reference check pairs 27 of 31 sessions (the old exact-name rule paired 24).
+**Consequence:** `mode_b.py` reads a `mode_b:` mapping from the same YAML it passes to `rough_cut.py` (which ignores unknown keys); the `--json` summary gains a `pairing` object. Words found outside `<out-dir>/words` are copied into it (the manifest keeps the found path), so `chapters.py` sees every session. Derived matte exports (`*-Alpha.mov`, `*_matte.mov`, `scripts/common/media.py`) are excluded from the camera and screen candidates on purpose: `matte.py` outputs sit next to the camera files and are never recordings (kept, 2026-10-21). No schema change here (`sync_offset_confidence` arrived with the audio-sync follow-up, see below). The reference check pairs 27 of 31 sessions (the old exact-name rule paired 24).
 
 ## [2026-06-18] WhisperX forced alignment instead of re-running Whisper
 

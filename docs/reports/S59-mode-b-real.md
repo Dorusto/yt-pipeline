@@ -8,6 +8,15 @@ from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
 
 ## Works
 
+- **Review answers** (follow-up, `review-s59-mode-b-real.md`): the flat layout
+  ignores videos whose name carries no `YYYY-MM-DD HH-MM-SS` timestamp (silently);
+  `find_words` uses `common.timeline_words.words_file_for`; a recorded
+  `sync_offset_s` survives a manifest rewrite even when the hand-written `camera`
+  path is unresolved; `render.py`/`serve.py` share `common.timeline_words.fade_for_join`
+  (golden tests byte-identical), `rough_cut.py`/`eval_rough_cut.py` share
+  `word_in_window`, `explain.py`/`index.py` share `common.frames.read_frame`;
+  `shorts_rank.py --layout {face,split}` writes the candidates' `layout` key; the
+  watchdog cron in `docs/AGENT_SETUP.md` is the live line.
 - **Real folder layout and pairing** (lot 1, `aed018c` + follow-ups): `mode_b.py`
   accepts `camera/` + `ecran/`/`screen/` (names under `mode_b:` in the config) or
   the flat layout, pairs each camera with the screen whose name timestamp is
@@ -24,11 +33,15 @@ from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
   key); a manifest value (hand-written or recorded) always wins and `mode_b.py`
   keeps it on a manifest rewrite. Name timestamps plus container start time are
   the weak-correlation fallback.
-- **Screen checks** (follow-up 2): a screen file that looks like a camera
-  recording (YuNet face in ≥ 60 % of 8 samples, or mean frame similarity ≥ 0.85
-  to the paired camera) warns loudly and lands in `screen_suspects`;
-  `mode_b.py FOLDER --check` runs only these checks, writes nothing, exit 1 on a
-  suspect. The YuNet detector loads only after readable screen frames.
+- **Screen checks** (follow-up 2 + answers): a screen file that looks like a
+  camera recording (YuNet face in ≥ 60 % of 8 samples, or mean frame similarity
+  ≥ 0.85 to the paired camera) warns loudly and lands in `screen_suspects`;
+  `mode_b.py FOLDER --check` runs only these checks and writes nothing. Exit
+  codes: `0` all clear, `1` a suspect found, `2` the check could not run
+  completely (face detector unavailable — the run warns
+  `screen check incomplete: face detector unavailable: …` and sets
+  `screen_check_incomplete` in `--json`) or a user error. The YuNet detector
+  loads only after readable screen frames. Tested in both cases.
 - **Chapters and Shorts from the final edit** (lot 2, `5b01fa0`): `chapters.py` /
   `shorts_rank.py` take the final FilmCraft project (`--fcproj --sequence
   --words-dir`) or the timeline `_words.json` (`--timeline-words`) on top of the
