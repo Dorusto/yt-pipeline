@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/chapters.schema.json",
+  "title": "chapters",
+  "description": "Topic chapters of an edit's kept transcript in timeline seconds, proposed by scripts/chapters.py. The chapter rules of prompts/metadata.md apply: the first chapter starts at 0, starts never decrease, titles are at most 40 characters and mark real topic changes. export_filmcraft.py places one section marker per chapter and the publish kit can take its chapters from this file instead of asking the model again.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "tool",
+    "chapters"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UTC timestamp the file was written"
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the script that wrote the file, e.g. scripts/chapters.py"
+    },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "description": "topic chunks in timeline order; the first one always starts at 0",
+      "items": {
+        "type": "object",
+        "required": [
+          "start_s",
+          "title",
+          "summary"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "start_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "timeline start of the chapter in seconds from the start of the edit"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "short chapter title, at most 40 characters (the prompts/metadata.md chapter rule)"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "one-line summary of what the chapter covers"
+          }
+        }
+      }
+    }
+  }
+}
