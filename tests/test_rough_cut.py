@@ -1,10 +1,39 @@
 import json
+import wave
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 import rough_cut as rc
 from common.schema import validate_or_raise
+
+RATE = 16000
+
+
+def write_wav(path, samples, rate=RATE):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        frames = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
+        handle.writeframes(frames.tobytes())
+    return path
+
+
+def burst_signal(duration_s=8.0, rate=RATE, seed=20261021):
+    rng = np.random.default_rng(seed)
+    samples = np.zeros(int(duration_s * rate), dtype=np.float32)
+    for start in np.arange(0.3, duration_s - 0.8, 1.0):
+        length = int(0.4 * rate)
+        begin = int(start * rate)
+        samples[begin:begin + length] = rng.uniform(-0.5, 0.5, length).astype(np.float32)
+    return samples
+
+
+def delayed(samples, delay_s, rate=RATE):
+    return np.concatenate([np.zeros(int(delay_s * rate), dtype=np.float32), samples])
 
 
 def words_document(entries):
@@ -232,6 +261,79 @@ def test_computed_offset_without_manifest_value_includes_container_start(tmp_pat
     assert screen_slot["id"] == camera_slot["id"] == "w001"
     assert screen_slot["in_s"] == camera_slot["in_s"] + 1.7
     assert screen_slot["out_s"] == camera_slot["out_s"] + 1.7
+
+
+def test_measure_audio_offset_recovers_known_shift(tmp_path):
+    screen_samples = burst_signal()
+    camera_samples = delayed(screen_samples, 0.7)
+    screen = write_wav(tmp_path / "2026-10-17 22-25-44.wav", screen_samples)
+    camera = write_wav(tmp_path / "camera 2026-10-17 22-25-45.wav", camera_samples)
+    offset_s, confidence = rc.measure_audio_offset(camera, screen)
+    assert abs(offset_s - 0.7) < 0.02
+    assert confidence >= 0.5
+
+
+def test_measure_audio_offset_is_none_without_audio(tmp_path):
+    missing = tmp_path / "absent.wav"
+    assert rc.measure_audio_offset(missing, missing) is None
+
+
+def test_measure_audio_offset_weak_on_unrelated_audio(tmp_path):
+    rng = np.random.default_rng(7)
+    screen = write_wav(tmp_path / "2026-10-17 22-25-44.wav", rng.uniform(-0.5, 0.5, RATE * 6))
+    camera = write_wav(tmp_path / "camera 2026-10-17 22-25-45.wav", rng.uniform(-0.5, 0.5, RATE * 6))
+    result = rc.measure_audio_offset(camera, screen)
+    assert result is not None
+    _, confidence = result
+    assert confidence < rc.AUDIO_SYNC_MIN_CONFIDENCE
+
+
+def test_measured_offset_recorded_and_shifts_screen(tmp_path, capsys):
+    screen_samples = burst_signal()
+    camera_samples = delayed(screen_samples, 0.7)
+    screen = write_wav(tmp_path / "2026-10-17 22-25-44.wav", screen_samples)
+    camera = write_wav(tmp_path / "camera 2026-10-17 22-25-45.wav", camera_samples)
+    sessions = [{
+        "camera": str(camera),
+        "screen": str(screen),
+        "words": [("Bună.", 1.0, 1.4)],
+    }]
+    code, out, summary = run_case(tmp_path, capsys, sessions)
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    by_id = {}
+    for slot in edit["video"]:
+        by_id.setdefault(slot["id"], []).append(slot)
+    for slots in by_id.values():
+        screen_slot = next(slot for slot in slots if slot["clip"] == screen.name)
+        camera_slot = next(slot for slot in slots if slot["clip"] == camera.name)
+        assert abs(screen_slot["in_s"] - (camera_slot["in_s"] + 0.7)) < 0.02
+    manifest = yaml.safe_load((tmp_path / "sessions.yaml").read_text(encoding="utf-8"))
+    entry = manifest["sessions"][0]
+    assert abs(entry["sync_offset_s"] - 0.7) < 0.02
+    assert entry["sync_offset_confidence"] >= 0.5
+    validate_or_raise(manifest, "sessions")
+
+
+def test_weak_audio_falls_back_to_name_offset_and_records_it(tmp_path, capsys):
+    rng = np.random.default_rng(11)
+    screen = write_wav(tmp_path / "2026-10-17 22-25-44.wav", rng.uniform(-0.5, 0.5, RATE * 6))
+    camera = write_wav(tmp_path / "camera 2026-10-17 22-25-45.wav", rng.uniform(-0.5, 0.5, RATE * 6))
+    sessions = [{
+        "camera": str(camera),
+        "screen": str(screen),
+        "words": [("Bună.", 1.0, 1.4)],
+    }]
+    code, out, summary = run_case(tmp_path, capsys, sessions)
+    assert code == 0
+    assert any("weak audio correlation" in warning for warning in summary["warnings"])
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    screen_slot, camera_slot = edit["video"]
+    assert abs(screen_slot["in_s"] - (camera_slot["in_s"] + 1.0)) < 0.02
+    manifest = yaml.safe_load((tmp_path / "sessions.yaml").read_text(encoding="utf-8"))
+    entry = manifest["sessions"][0]
+    assert abs(entry["sync_offset_s"] - 1.0) < 0.02
+    assert entry["sync_offset_confidence"] < rc.AUDIO_SYNC_MIN_CONFIDENCE
 
 
 def test_written_edit_validates_against_schema(tmp_path, capsys):

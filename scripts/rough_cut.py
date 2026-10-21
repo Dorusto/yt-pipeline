@@ -29,6 +29,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 from common.config import ConfigError
@@ -41,6 +42,10 @@ SCHEMA_VERSION = "0.1"
 SENTENCE_ENDINGS = (".", "!", "?", "…")
 RUN_PRIORITY = {"retake": 0, "filler": 1, "pause": 2, "lead-in": 3, "tail": 4}
 CUT_KINDS = ("pause", "filler", "retake")
+AUDIO_SYNC_SAMPLE_RATE = 16000
+AUDIO_SYNC_MAX_S = 60.0
+AUDIO_SYNC_MAX_LAG_S = 5.0
+AUDIO_SYNC_MIN_CONFIDENCE = 0.2
 
 DEFAULT_CONFIG = {
     "pause_gap_s": 0.6,
@@ -219,8 +224,53 @@ def absolute_start(path, start_time_s):
     return stamp + timedelta(seconds=start_time_s)
 
 
-def compute_sync_offset(camera, screen, warnings):
-    """Compute ``abs_start(camera) - abs_start(screen)``; 0.0 with a warning when unknown."""
+def extract_audio_mono16k(path, max_s=AUDIO_SYNC_MAX_S):
+    """Return the first ``max_s`` seconds of audio as mono 16 kHz floats, or None."""
+    command = [
+        "ffmpeg", "-v", "error", "-nostdin", "-i", str(path),
+        "-vn", "-ac", "1", "-ar", str(AUDIO_SYNC_SAMPLE_RATE),
+        "-t", f"{max_s:g}", "-f", "f32le", "-",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    samples = np.frombuffer(result.stdout or b"", dtype=np.float32)
+    if samples.size < AUDIO_SYNC_SAMPLE_RATE:
+        return None
+    return samples
+
+
+def measure_audio_offset(camera, screen):
+    """Cross-correlate the two voice tracks; return ``(offset_s, confidence)`` or None.
+
+    The offset is ``camera_start - screen_start`` in seconds (the value added to a
+    camera time to get the screen time); confidence is the normalised correlation
+    peak in ``[0, 1]``.
+    """
+    camera_audio = extract_audio_mono16k(camera)
+    screen_audio = extract_audio_mono16k(screen)
+    if camera_audio is None or screen_audio is None:
+        return None
+    norms = float(np.linalg.norm(screen_audio) * np.linalg.norm(camera_audio))
+    if norms <= 0.0:
+        return None
+    size = screen_audio.size + camera_audio.size - 1
+    nfft = 1 << (size - 1).bit_length()
+    spectrum = np.conj(np.fft.rfft(screen_audio, nfft)) * np.fft.rfft(camera_audio, nfft)
+    correlation = np.fft.irfft(spectrum, nfft)
+    max_lag = int(AUDIO_SYNC_MAX_LAG_S * AUDIO_SYNC_SAMPLE_RATE)
+    window = np.concatenate([correlation[-max_lag:], correlation[: max_lag + 1]])
+    peak_index = int(np.argmax(np.abs(window)))
+    offset_s = (peak_index - max_lag) / float(AUDIO_SYNC_SAMPLE_RATE)
+    confidence = float(min(1.0, abs(window[peak_index]) / norms))
+    return round(offset_s, 4), round(confidence, 4)
+
+
+def name_sync_offset(camera, screen, warnings):
+    """Return ``abs_start(camera) - abs_start(screen)``; 0.0 with a warning when unknown."""
     _, camera_start = probe_media(camera)
     _, screen_start = probe_media(screen)
     camera_abs = absolute_start(camera, camera_start)
@@ -231,6 +281,54 @@ def compute_sync_offset(camera, screen, warnings):
         )
         return 0.0
     return (camera_abs - screen_abs).total_seconds()
+
+
+def compute_sync_offset(camera, screen, warnings):
+    """Return ``(offset_s, confidence)`` for one camera/screen pair.
+
+    The offset is measured by cross-correlating the voice tracks when both files
+    carry audio; a weak correlation (confidence below
+    ``AUDIO_SYNC_MIN_CONFIDENCE``) warns and falls back to the name timestamps
+    plus the container start time. Confidence is ``None`` when nothing was
+    measured (no audio), and the fallback is used.
+    """
+    measured = measure_audio_offset(camera, screen)
+    if measured is not None:
+        offset_s, confidence = measured
+        if confidence >= AUDIO_SYNC_MIN_CONFIDENCE:
+            return offset_s, confidence
+        warnings.append(
+            f"weak audio correlation (confidence {confidence:.2f}) for '{Path(screen).name}': "
+            "falling back to the name offset"
+        )
+        return name_sync_offset(camera, screen, warnings), confidence
+    return name_sync_offset(camera, screen, warnings), None
+
+
+def record_sync_offset(sessions_path, index, offset_s, confidence):
+    """Record the measured sync offset and its confidence in the sessions manifest."""
+    path = Path(sessions_path).expanduser()
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        return
+    sessions = document.get("sessions")
+    if not isinstance(sessions, list) or index < 0 or index >= len(sessions):
+        return
+    entry = sessions[index]
+    if not isinstance(entry, dict):
+        return
+    entry["sync_offset_s"] = round(float(offset_s), 4)
+    entry["sync_offset_confidence"] = round(float(confidence), 4)
+    text = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+    handle, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+        raise
 
 
 def split_sentences(words, pause_gap_s):
@@ -535,7 +633,7 @@ def process_session(session, config, warnings, state, camera_duration, review_ro
         if session.get("sync_offset_s") is not None:
             sync_offset = float(session["sync_offset_s"])
         else:
-            sync_offset = compute_sync_offset(camera, screen, warnings)
+            sync_offset, _ = compute_sync_offset(camera, screen, warnings)
     else:
         sync_offset = None
 
@@ -687,7 +785,7 @@ def run(sessions_path, out_path, config_path=None, use_llm=False, review_path=No
     cuts = {kind: 0 for kind in CUT_KINDS}
     kept_words = []
 
-    for session in sessions:
+    for index, session in enumerate(sessions):
         camera = session["camera"]
         screen = session.get("screen")
         camera_duration, _ = probe_media(camera)
@@ -705,6 +803,11 @@ def run(sessions_path, out_path, config_path=None, use_llm=False, review_path=No
                 "duration_s": screen_duration,
                 "media_type": "video",
             })
+            if session.get("sync_offset_s") is None:
+                sync_offset, confidence = compute_sync_offset(camera, screen, warnings)
+                session["sync_offset_s"] = sync_offset
+                if confidence is not None:
+                    record_sync_offset(sessions_path, index, sync_offset, confidence)
         result = process_session(session, config, warnings, state, camera_duration, review_rows, review_state)
         video.extend(result["slots"])
         decisions.extend(result["decisions"])

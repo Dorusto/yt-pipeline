@@ -23,7 +23,7 @@ the camera on `Camera 1`, the same cuts on both, ready for a human edit.
   --review cut_review.yaml --json
 ```
 
-- `sessions.yaml` is the session manifest, validated against `schemas/sessions.schema.json`: one entry per session with `camera`, optional `screen`, `words` (the Whisper word JSON) and optional `sync_offset_s` (seconds added to a camera time to get the screen time; `mode_b.py` never writes it — `rough_cut.py` computes it from the file name timestamps plus the container start time when omitted).
+- `sessions.yaml` is the session manifest, validated against `schemas/sessions.schema.json`: one entry per session with `camera`, optional `screen`, `words` (the Whisper word JSON) and optional `sync_offset_s` (seconds added to a camera time to get the screen time) with `sync_offset_confidence` (0-1). `mode_b.py` never writes them; `rough_cut.py` measures the offset by sound on first use and records both (see "Camera → screen sync" below).
 - `--out` is the `edit.json` to write (atomic replace; re-running with the same inputs rewrites the same edit, only `generated_at` changes).
 - `--config` overrides the cut rules; without it the built-in defaults apply (the committed `scripts/rough_cut_config_example.yaml` ships them).
 - `--review FILE` reads the phone cut review `cut_review.yaml` (written by `serve.py` from the Cuts tab). A row with `action: keep` whose `id` matches a cut run and whose `window_in_s`/`window_out_s` overlaps that run keeps the material in: the run is not removed, the kept windows merge across it, the absorbing window's `reason` becomes `kept by review`, and the run's `decisions[]` entry becomes `status: used` / `reason: kept by review` with the absorbing window's slot id. A row with `action: cut` changes nothing (the run is cut as usual). A row whose window does not overlap any run is warned and ignored. Run ids (`c001`, `c002`, …) are assigned before the review is applied, so a keep never shifts the ids of later cuts.
@@ -37,6 +37,10 @@ the camera on `Camera 1`, the same cuts on both, ready for a human edit.
 - **Filler cuts**: a token in `fillers.always` is dropped whenever it stands alone; a token in `fillers.repeated` is dropped only when it repeats within `repeat_window_s` (a stutter). Isolated occurrences are kept.
 - **Retake cuts**: a sentence restarted by a later sentence within `retake_window_s` (normalised-word prefix similarity `>= retake_similarity`, at least `retake_min_words`) is cut, so the last take survives. Chains work naturally.
 - Every kept window carries a reason (`start: session`, `cut: pause 1.2 s`, `cut: filler 'deci'`, `cut: retake of w007`); every merged cut run gets a `decisions[]` entry with its reason.
+
+### Camera → screen sync
+
+When a session has a screen file and the manifest carries no `sync_offset_s`, `rough_cut.py` computes the offset in one place: it cross-correlates the two voice tracks (ffmpeg → mono 16 kHz, search window ±5 s, first 60 s of overlap) and records the measured offset plus its confidence (`sync_offset_confidence`, the normalised correlation peak) back into `sessions.yaml`. A weak correlation (confidence below 0.2) warns (`weak audio correlation`) and falls back to the file-name timestamps plus the container start time — that fallback is recorded too, with its low confidence. When either file has no usable audio (or no file on disk) the name fallback is used without recording, so the manifest stays free of unmeasured values. A manifest `sync_offset_s` (hand-written or previously recorded) always wins and is used as is.
 
 ### Paired slots
 

@@ -43,7 +43,16 @@
               "number",
               "null"
             ],
-            "description": "seconds to add to a camera time to get the screen time; computed from the file name timestamps plus the container start time when omitted"
+            "description": "seconds to add to a camera time to get the screen time; rough_cut.py measures it from the voice tracks when both files carry audio and records it here, else it is computed from the file name timestamps plus the container start time"
+          },
+          "sync_offset_confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "confidence (0-1) of the recorded sync offset: the voice-track correlation peak when the offset was measured by sound; below the threshold the recorded offset is the file-name fallback"
           }
         }
       }
