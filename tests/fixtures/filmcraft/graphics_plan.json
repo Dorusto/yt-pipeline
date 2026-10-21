@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-10-21T00:00:00+00:00",
+  "tool": "tests/fixtures/filmcraft",
+  "entries": [
+    {
+      "id": "g1",
+      "time_s": 0.5,
+      "duration_s": 2.0,
+      "template": "lower_third",
+      "props": {
+        "name": "Doru",
+        "role": "creator"
+      },
+      "reason": "introduce the host",
+      "approved": true
+    },
+    {
+      "id": "g2",
+      "time_s": 5.0,
+      "duration_s": 2.0,
+      "template": "counter",
+      "props": {
+        "number": "42",
+        "label": "clips"
+      },
+      "reason": "not approved yet",
+      "approved": false
+    }
+  ]
+}

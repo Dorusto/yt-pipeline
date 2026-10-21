@@ -283,6 +283,24 @@ See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured,
 
 ---
 
+## FilmCraft export (export_filmcraft.py)
+
+`export_filmcraft.py` turns an `edit.json` edit list into an editable FilmCraft `.fcproj` project. It writes the project JSON directly (route `json`) with the exact shapes a real FilmCraft save produces, so no FilmCraft is needed at export time. Media is referenced by path, never embedded. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj --json
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+  --graphics-plan graphics_plan.json --graphics-dir overlays/ --sequence Main
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `export_filmcraft.py` | `edit.json` (+ optional `graphics_plan.json` + overlays) | `.fcproj` project (atomic replace, re-run safe) |
+
+Video slots go on `Camera 1`, screen slots on `Screen 1`, each video slot's audio on `Audio 1`, overlays on `Graphics 1` above the picture. One Green marker per used slot carries its reason; a slot flagged for a human check (`centred` or a speed ramp) gets a Rose "to redo" marker instead; each placed overlay gets a Mango marker. Missing media is a warning (the project opens with offline media), photo slots export as stills with a "Ken Burns not exported" warning and speed ramps export at real time with a warning. `filmcraft-cli` is only needed to open or inspect the result (`$FILMCRAFT_CLI` or PATH). `--json` reports the placed counts, marker counts, missing media and warnings.
+
+---
+
 ## Loudness (loudness.py)
 
 `loudness.py` applies the audio loudness recipe as one command, with two backends. Skill: `yt-filmcraft`.

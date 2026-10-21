@@ -69,6 +69,29 @@ medium (`clarity.enabled`, `clarity.dynamics.on`, `clarity.dynamics.amount: 5`).
 - `--dry-run` prints the exact command lines and skips the copy, without needing `filmcraft-cli` installed; `--json` then has `commands` and `dry_run: true`.
 - `--json` reports `output`, `backend: "filmcraft"`, `sequence`, `track`, `clips`, `measured` (or `null` on `--dry-run`), `target_lufs`, `commands`, `wall_time_s`, `llm_cost_usd`.
 
+## Export an edit to FilmCraft (`export_filmcraft.py`)
+
+Turns an `edit.json` edit list into an editable FilmCraft `.fcproj` project. The
+tool writes the project JSON directly (route `json`), using the exact envelope,
+item, track and clip shapes a real FilmCraft save produces — no FilmCraft is
+needed at export time, so it runs in CI and is unit-testable. Media is
+referenced by path, never embedded.
+
+```bash
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj --json
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+  --graphics-plan graphics_plan.json --graphics-dir overlays/ --sequence Main
+```
+
+- `--out` is required and written atomically (temp file + `os.replace`), so re-running is safe; an `--out` that would overwrite a source file is refused (exit 2).
+- `--graphics-plan` places the `approved: true` entries as overlays; `--graphics-dir` holds the rendered `<entry id>.mov` files. `--sequence` (default `Main`), `--width`/`--height`/`--fps` (default `1920`/`1080`/`25`) set the sequence. `--screen FILE` (repeatable) marks a source as screen capture; a clip whose name contains `screen` is treated as screen too.
+- Track layout: `Camera 1` (video slots), `Screen 1` (screen slots), `Audio 1` (each video slot's own audio), `Graphics 1` (overlays) above the picture.
+- Markers: one Green marker per used slot with a reason, at the slot's timeline in-point; a slot flagged for a human check (`centred: true` or a speed ramp) gets a Rose "to redo" marker **instead of** its Green; one Mango marker per placed overlay. Rejected `decisions[]` have no timeline position and get no marker. `fcproj_markers.py` maps the colours into `markers.json`/`todo.md` (Rose = the redo list).
+- Missing media is a **warning**, not an error: the project still opens with offline media. Photo slots export as stills with a "Ken Burns not exported" warning; speed ramps export at real time with a warning.
+- `filmcraft-cli` is only needed to OPEN or inspect the result (resolved from `$FILMCRAFT_CLI` else PATH); the export itself never calls it.
+- `--json` reports `output`, `sequence`, `tracks`, `slots_placed`, `photos_placed`, `overlays_placed`, `markers` (`green`/`rose`/`mango`), `missing_media`, `warnings`, `route: "json"`, `wall_time_s`, `llm_cost_usd` (`0.0`).
+- On this machine the scripts need `.venv/bin/python` — the system `python3` has no `jsonschema`.
+
 ## What is out of scope
 
 - Importing subtitles into the FilmCraft caption track.
