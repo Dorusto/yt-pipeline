@@ -28,9 +28,11 @@ chapters (lot 2) and Shorts ranking (lot 3) on top of the S56 Mode B flow.
   `shorts_candidates.json`), `shorts_generator.py --candidates` (segments from
   the file instead of `shorts_config.yaml`) and `export_filmcraft.py
   --shorts-candidates` (one Mango marker per top-3 candidate, `markers.shorts`).
-  51 targeted tests in the three files (`tests/test_shorts_rank.py` 16,
+  52 targeted tests green in the three files (`tests/test_shorts_rank.py` 17,
   `tests/test_export_filmcraft.py` +3, `tests/test_shorts_generator.py` 6), full
-  suite 1541. Smoke on an invented fixture with `llm_backend: mock`:
+  suite 1542. Audit fix on the coder's round: score rows for unknown candidate
+  ids are ignored as model noise (a missing row stays fatal). Smoke on an
+  invented fixture with `llm_backend: mock`:
   `shorts_rank.py` scored 14 candidates and wrote the top 5;
   `export_filmcraft.py --shorts-candidates` placed 3 Mango markers
   (`markers.shorts == 3`, `short 1`…`short 3`); `shorts_generator.py
