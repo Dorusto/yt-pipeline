@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Analizează un fișier .srt și generează:
   - Capitole YouTube
@@ -20,14 +21,20 @@ import unicodedata
 from pathlib import Path
 
 import yaml
-from openai import OpenAI
+
+from common.config import ConfigError
+from common.llm import LLMError, make_client
 
 BATCH_CHARS = 80000
 
-client = OpenAI(
-    api_key=os.environ["OPENROUTER_API_KEY"],
-    base_url="https://openrouter.ai/api/v1",
-)
+_client = None
+
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = make_client()
+    return _client
 
 
 def parse_srt(path):
@@ -106,12 +113,12 @@ FORMAT RĂSPUNS:
   ]
 }}"""
 
-    response = client.chat.completions.create(
-        model="deepseek/deepseek-v4-flash",
-        messages=[{"role": "user", "content": prompt}],
+    response = get_client().complete(
+        "analyze",
+        [{"role": "user", "content": prompt}],
         temperature=0.3,
     )
-    raw = response.choices[0].message.content.strip()
+    raw = response.text.strip()
     raw = re.sub(r"^```(?:json)?\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
     return json.loads(raw)
@@ -164,12 +171,12 @@ Returnează EXCLUSIV JSON valid:
 TRANSCRIPT:
 {transcript}"""
 
-    response = client.chat.completions.create(
-        model="deepseek/deepseek-v4-flash",
-        messages=[{"role": "user", "content": prompt}],
+    response = get_client().complete(
+        "analyze",
+        [{"role": "user", "content": prompt}],
         temperature=0.3,
     )
-    raw = response.choices[0].message.content.strip()
+    raw = response.text.strip()
     raw = re.sub(r"^```(?:json)?\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
     return json.loads(raw)
@@ -336,79 +343,87 @@ def main():
     out_dir = make_output_dir(video_file)
     shorts_dir = out_dir / "shorts"
 
-    # --- Metadata per short din config ---
-    if shorts_config_path:
-        print(f"\nGenerez metadata per short din {shorts_config_path}...")
-        generate_shorts_metadata(srt_file, shorts_config_path, shorts_dir, youtube_url)
-        print(f"\nMetadata shorturi salvate în: {shorts_dir}/")
-        return
-
-    basename = srt_file.stem
-
-    print(f"Parsez {srt_file}...")
-    segments = parse_srt(srt_file)
-    print(f"  {len(segments)} segmente găsite")
-
-    transcript = format_transcript(segments)
-    if len(transcript) > BATCH_CHARS:
-        print(f"  Transcript lung ({len(transcript)} chars) — trimit primele {BATCH_CHARS} chars")
-        transcript = transcript[:BATCH_CHARS]
-
-    print("Trimit la DeepSeek pentru analiză...")
-    result = analyze_with_deepseek(transcript)
-
-    # --- Metadata video principal ---
-    chapters = result.get("chapters", [])
-    meta_file = save_video_metadata(result, chapters, out_dir, basename)
-    print("\n" + "=" * 50)
-    print(f"VIDEO METADATA → {meta_file}")
-    print("=" * 50)
-    video = result.get("video", {})
-    print(f"Titlu : {video.get('title', '—')}")
-    chapters_text = "\n".join(f"{ch['timestamp']} {ch['title']}" for ch in chapters)
-    print(f"\nCapitole:\n{chapters_text}")
-
-    # --- Shorts candidate: afișează rankat + salvează ---
-    shorts = result.get("shorts", [])
-    shorts_sorted = sorted(shorts, key=lambda x: x.get("score", 0), reverse=True)
-
-    print(f"\n{'=' * 50}")
-    print(f"SEGMENTE CANDIDATE SHORTS ({len(shorts_sorted)} găsite, rankat după potențial)")
-    print("=" * 50)
-    lines = []
-    for i, s in enumerate(shorts_sorted, 1):
-        print(f"\n[{i}] ★{s.get('score', '?')}/10  {s['start']} → {s['end']}")
-        print(f"    {s['title']}")
-        print(f"    Hook   : {s.get('hook', '—')}")
-        print(f"    Motiv  : {s.get('reason', '—')}")
-        lines.append(f"[{i}] ★{s.get('score', '?')}/10  {s['start']} → {s['end']}")
-        lines.append(f"    {s['title']}")
-        lines.append(f"    Hook   : {s.get('hook', '—')}")
-        lines.append(f"    Motiv  : {s.get('reason', '—')}")
-        lines.append("")
-
-    candidates_file = out_dir / f"{basename}_shorts_candidates.txt"
-    with open(candidates_file, "w", encoding="utf-8") as f:
-        f.write(f"SHORTURI CANDIDATE — {basename}\n")
-        f.write("=" * 50 + "\n\n")
-        f.write("\n".join(lines))
-    print(f"\nCandidați salvați → {candidates_file.name}")
-
-    # --- Confirmare tăiere ---
     try:
-        selected = ask_selection(shorts_sorted)
-    except EOFError:
-        print("Mod non-interactiv — nicio tăiere. Gata.")
-        return
-    if not selected:
-        print("Nicio tăiere. Gata.")
-        return
+        # --- Metadata per short din config ---
+        if shorts_config_path:
+            print(f"\nGenerez metadata per short din {shorts_config_path}...")
+            generate_shorts_metadata(srt_file, shorts_config_path, shorts_dir, youtube_url)
+            print(f"\nMetadata shorturi salvate în: {shorts_dir}/")
+            print(f"LLM cost: ${get_client().spent_usd:.4f}")
+            return
 
-    print(f"\n{'=' * 50}")
-    print(f"TĂIERE {len(selected)} SHORTS")
-    print("=" * 50)
-    cut_shorts(selected, video_file, youtube_url, out_dir)
-    print(f"\nShorts salvate în: {out_dir}/shorts/")
+        basename = srt_file.stem
+
+        print(f"Parsez {srt_file}...")
+        segments = parse_srt(srt_file)
+        print(f"  {len(segments)} segmente găsite")
+
+        transcript = format_transcript(segments)
+        if len(transcript) > BATCH_CHARS:
+            print(f"  Transcript lung ({len(transcript)} chars) — trimit primele {BATCH_CHARS} chars")
+            transcript = transcript[:BATCH_CHARS]
+
+        print("Trimit la DeepSeek pentru analiză...")
+        result = analyze_with_deepseek(transcript)
+
+        # --- Metadata video principal ---
+        chapters = result.get("chapters", [])
+        meta_file = save_video_metadata(result, chapters, out_dir, basename)
+        print("\n" + "=" * 50)
+        print(f"VIDEO METADATA → {meta_file}")
+        print("=" * 50)
+        video = result.get("video", {})
+        print(f"Titlu : {video.get('title', '—')}")
+        chapters_text = "\n".join(f"{ch['timestamp']} {ch['title']}" for ch in chapters)
+        print(f"\nCapitole:\n{chapters_text}")
+
+        # --- Shorts candidate: afișează rankat + salvează ---
+        shorts = result.get("shorts", [])
+        shorts_sorted = sorted(shorts, key=lambda x: x.get("score", 0), reverse=True)
+
+        print(f"\n{'=' * 50}")
+        print(f"SEGMENTE CANDIDATE SHORTS ({len(shorts_sorted)} găsite, rankat după potențial)")
+        print("=" * 50)
+        lines = []
+        for i, s in enumerate(shorts_sorted, 1):
+            print(f"\n[{i}] ★{s.get('score', '?')}/10  {s['start']} → {s['end']}")
+            print(f"    {s['title']}")
+            print(f"    Hook   : {s.get('hook', '—')}")
+            print(f"    Motiv  : {s.get('reason', '—')}")
+            lines.append(f"[{i}] ★{s.get('score', '?')}/10  {s['start']} → {s['end']}")
+            lines.append(f"    {s['title']}")
+            lines.append(f"    Hook   : {s.get('hook', '—')}")
+            lines.append(f"    Motiv  : {s.get('reason', '—')}")
+            lines.append("")
+
+        candidates_file = out_dir / f"{basename}_shorts_candidates.txt"
+        with open(candidates_file, "w", encoding="utf-8") as f:
+            f.write(f"SHORTURI CANDIDATE — {basename}\n")
+            f.write("=" * 50 + "\n\n")
+            f.write("\n".join(lines))
+        print(f"\nCandidați salvați → {candidates_file.name}")
+
+        # --- Confirmare tăiere ---
+        try:
+            selected = ask_selection(shorts_sorted)
+        except EOFError:
+            print("Mod non-interactiv — nicio tăiere. Gata.")
+            print(f"LLM cost: ${get_client().spent_usd:.4f}")
+            return
+        if not selected:
+            print("Nicio tăiere. Gata.")
+            print(f"LLM cost: ${get_client().spent_usd:.4f}")
+            return
+
+        print(f"\n{'=' * 50}")
+        print(f"TĂIERE {len(selected)} SHORTS")
+        print("=" * 50)
+        cut_shorts(selected, video_file, youtube_url, out_dir)
+        print(f"\nShorts salvate în: {out_dir}/shorts/")
+        print(f"LLM cost: ${get_client().spent_usd:.4f}")
+    except (ConfigError, LLMError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

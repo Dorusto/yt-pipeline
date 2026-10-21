@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """ffmpeg helpers: locate the binary, choose a usable H.264 encoder, build args.
 
 The build machine has no GPU, so nothing may assume nvenc. Encoders are chosen

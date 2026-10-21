@@ -52,6 +52,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Vision default: GLM 5.3 Flash (fallback DeepSeek V4.1 Flash); the backend is a config value, never code. — 2026-10-13
 - Local Qwen3.8 27B (4-bit, RTX 3090, vLLM) takes over for private footage. — 2026-10-12
 - Every LLM call goes through `scripts/common/llm.py`: `usage.cost` charged per call (missing cost raises), a per-project spend ledger caps the whole job; stop and report at the budget cap. — 2026-10-12
+- Transcriber (`scripts/transcribe.py`): openai-whisper (turbo on GPU, tiny on CPU) behind a `Transcriber` interface, `--backend mock` for tests and offline runs, lazy torch/whisper imports; its `_words.json` is the Whisper shape that `subs_from_edit.py --words-dir` reads. — 2026-10-20
 - `config.yaml` holds model ids per role and the per-run budget; `llm_backend: mock` for offline runs; no secrets in the file. — 2026-10-12
 - Music: YuE2 first (editable ABC score → cuts land on beats by construction), ACE-Step 1.5 fallback; excluded for licence: MusicGen, AudioGen, MMAudio, HunyuanVideo-Foley. — 2026-10-13
 - No ComfyUI: music, SFX and clean-up are plain Python tools, one model loaded at a time. — 2026-10-13
@@ -65,7 +66,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - CI runs the suite on ubuntu, macos and windows (`fail-fast: false`); `needs_melt` / `needs_footage` tests run on the ubuntu job only, deselected with `-m` on the others. — 2026-10-14
 - Feedback is append-only JSON lines per workspace (`feedback.jsonl`, ~200 bytes/action), never footage or frames; the per-user profile is rebuilt from those files. — 2026-10-14
 - Every `--json` summary reports wall time and LLM cost (USD). — 2026-10-13
-- Watchdog every 30 min: $3/day spend, 2 h stall, no-commit alerts; the architect notifies on the second failed audit of a task or two empty coder replies. — 2026-10-13
+- Watchdog every 30 min: $3/day spend, 2 h stall, no-commit alerts; the architect notifies on the second failed audit of a task or two empty coder replies. Per-run spend cap (S51 lot 0): `--run-cap` measures spend since the run started from the run-spend ledger (`~/.cache/yt-pipeline/run-spend.json`, OpenRouter daily-usage deltas), ntfy `Budget` at 80 % and stop + ntfy `Blocked` at 100 % naming `--lot`. — 2026-10-13 / 2026-10-20
 - Skills live in `.claude/skills/` and change together with their scripts in the same commit. — 2026-09-22
 - Short docstrings on public functions and modules allowed; inline comments not. — 2026-10-13
 - WhisperX forced alignment on the corrected SRT is the word-timestamp source of truth; never re-run Whisper for timings. — 2026-06-18

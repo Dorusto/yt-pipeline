@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """LLM client for OpenRouter with job-level spend tracking and a mock backend.
 
 The backend is chosen by ``llm_backend`` in ``config.yaml`` and every model id
@@ -285,11 +286,19 @@ class MockClient(LLMClient):
         config=None,
         cost_per_call=0.0,
         text="mock response",
+        texts=None,
         ledger_path=None,
     ):
         super().__init__(budget_usd=budget_usd, config=config, ledger_path=ledger_path)
         self.cost_per_call = cost_per_call
+        self._default_text = text
         self.text = text
+        self.texts = dict(texts or {})
+
+    def complete(self, role, messages, model=None, **kwargs):
+        """Return the canned text for ``role`` (``texts[role]``, else the default)."""
+        self.text = self.texts.get(role, self._default_text)
+        return super().complete(role, messages, model=model, **kwargs)
 
     def _create(self, model, messages, **kwargs):
         usage = SimpleNamespace(
@@ -306,7 +315,12 @@ def make_client(config=None, ledger_path=None):
     budget = config.get("llm_budget_usd")
     backend = config.get("llm_backend")
     if backend == "mock":
-        return MockClient(budget_usd=budget, config=config, ledger_path=ledger_path)
+        mock_text = config.get("llm_mock_text")
+        text = mock_text if isinstance(mock_text, str) else "mock response"
+        texts = mock_text if isinstance(mock_text, dict) else None
+        return MockClient(
+            budget_usd=budget, config=config, ledger_path=ledger_path, text=text, texts=texts
+        )
     if backend == "openrouter":
         return OpenRouterClient(budget_usd=budget, config=config, ledger_path=ledger_path)
     raise LLMError(f"unknown llm_backend '{backend}'")

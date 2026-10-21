@@ -7,8 +7,18 @@ models:
   coder: deepseek/deepseek-v4.1-flash
   coder_fallback: z-ai/glm-5.3-flash
   director: deepseek/deepseek-v4.1-flash
+  graphics: deepseek/deepseek-v4.1-flash
   vision: z-ai/glm-5.3-flash
   vision_fallback: deepseek/deepseek-v4.1-flash
+  translate: deepseek/deepseek-v4.1-flash
+  analyze: deepseek/deepseek-v4.1-flash
+  summary: deepseek/deepseek-v4.1-flash
+  metadata: deepseek/deepseek-v4.1-flash
+
+# Names thanked verbatim in the publish description (the channel members
+# sentence). Never commit real names; config.yaml is git-ignored.
+channel:
+  members: "Andrei, Mihai și Maria"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.

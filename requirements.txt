@@ -1,5 +1,6 @@
 opencv-python-headless
 openai
+openai-whisper
 pillow
 pillow-heif
 psd-tools
@@ -11,4 +12,5 @@ psutil
 rembg[cpu]
 torch
 torchaudio
+torchvision
 whisperx

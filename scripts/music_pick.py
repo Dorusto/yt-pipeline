@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Pick a music track from a library by the brief and the shot tags.
 
 Usage:

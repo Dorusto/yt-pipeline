@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Web app for recap workspaces, bound to the tailnet address only.
 
 Usage:

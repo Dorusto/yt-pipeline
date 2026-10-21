@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Generate a .kdenlive project timeline from a YAML list of source fragments.
 
 Each fragment is (source video file, in timecode, out timecode). One <chain>

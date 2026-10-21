@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Check that this machine can run the recap pipeline and print what to fix.
 
 Usage:
     python scripts/doctor.py --source ~/media/raw
     python scripts/doctor.py --source ~/media/raw --workspace /tmp/recap --json
 
-The tool runs ten setup checks in a fixed order: python dependencies,
+The tool runs thirteen setup checks in a fixed order: python dependencies,
 ``ffmpeg`` and ``ffprobe``, the project config, the models the recap chain
 calls, the OpenRouter API key, free disk space, write access to the workspace,
-that the workspace is outside the originals and that the originals folder is
-read-only. It calls no model and never prints a secret. It reads paths and
-writes only a tiny probe file inside the workspace, removed right after; it
-never writes under ``--source``.
+that the workspace is outside the originals, that the originals folder is
+read-only, that the publish CLIs answer ``--help``, that the whisper package is
+present and that the config carries the publish roles and ``channel.members``.
+It calls no model and never prints a secret. It reads paths and writes only a
+tiny probe file inside the workspace, removed right after; it never writes
+under ``--source``.
 """
 
 import argparse
-import importlib
+import importlib.util
 import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -27,8 +31,16 @@ from pathlib import Path
 from common.config import ConfigError
 
 TOOL = "scripts/doctor.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_IMPORTS = ("cv2", "numpy", "yaml", "jsonschema", "openai")
 MODEL_ROLES = ("vision", "director")
+PUBLISH_CLIS = (
+    "scripts/subs_from_edit.py",
+    "scripts/transcribe.py",
+    "scripts/metadata.py",
+    "scripts/publish.py",
+)
+PUBLISH_ROLES = ("translate", "metadata")
 DISK_WARN_GB = 5.0
 DISK_FAIL_GB = 2.0
 PROBE_NAME = ".doctor-probe"
@@ -41,6 +53,12 @@ FFMPEG_FIX = "install ffmpeg (for example: apt install ffmpeg)"
 CONFIG_FIX = "copy config.yaml.example to config.yaml and set the models you use"
 API_KEY_FIX = "export OPENROUTER_API_KEY=... (get one at https://openrouter.ai/keys)"
 OUTSIDE_FIX = "choose a --workspace outside --source"
+PUBLISH_CHAIN_FIX = "re-run from the repo root with the repo .venv"
+WHISPER_FIX = (
+    "pip install openai-whisper (or run the chain with --transcribe-backend mock"
+    " / word JSONs from the edit)"
+)
+PUBLISH_CONFIG_FIX = "set them in config.yaml (see config.yaml.example)"
 
 
 class DoctorError(RuntimeError):
@@ -218,8 +236,51 @@ def check_originals_read_only(source):
     return result("originals_read_only", "ok", "read-only")
 
 
+def check_publish_chain():
+    for script in PUBLISH_CLIS:
+        path = REPO_ROOT / script
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(path), "--help"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            return result("publish_chain", "fail", f"{script}: {exc}", PUBLISH_CHAIN_FIX)
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            detail = f"{script} exited {proc.returncode}"
+            if tail:
+                detail += f": {tail[-1]}"
+            return result("publish_chain", "fail", detail, PUBLISH_CHAIN_FIX)
+    return result("publish_chain", "ok", "4 publish CLIs answer --help")
+
+
+def check_whisper_package():
+    if importlib.util.find_spec("whisper") is None:
+        return result("whisper_package", "warn", "whisper not installed", WHISPER_FIX)
+    return result("whisper_package", "ok", "whisper importable")
+
+
+def check_publish_config(config):
+    models = (config or {}).get("models") or {}
+    channel = (config or {}).get("channel") or {}
+    missing = []
+    for role in PUBLISH_ROLES:
+        if not models.get(role):
+            missing.append(f"models.{role}")
+    members = channel.get("members")
+    if not (isinstance(members, str) and members.strip()):
+        missing.append("channel.members")
+    if missing:
+        detail = "missing: " + ", ".join(missing)
+        return result("publish_config", "warn", detail, PUBLISH_CONFIG_FIX)
+    return result("publish_config", "ok", "publish roles and channel.members set")
+
+
 def run_checks(source, workspace):
-    """Run all ten checks in order and return the list of check objects."""
+    """Run all thirteen checks in order and return the list of check objects."""
     config, config_check = evaluate_config()
     return [
         check_python_deps(),
@@ -232,6 +293,9 @@ def run_checks(source, workspace):
         check_workspace_writable(workspace),
         check_workspace_outside_source(workspace, source),
         check_originals_read_only(source),
+        check_publish_chain(),
+        check_whisper_package(),
+        check_publish_config(config),
     ]
 
 

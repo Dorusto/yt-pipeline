@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Generates 9:16 Shorts / Reels from 1920x1080 videos.
 Run from the shorts-generator folder — no arguments needed.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Generate a retimed .srt for a rough-cut assembled by kdenlive_from_fragments.py.
 
 Takes the same fragments YAML (file, in, out, in beat/timeline order) plus the

@@ -1,0 +1,44 @@
+{
+ "text": "Alfa beta gama. delta epsilon",
+ "language": "ro",
+ "segments": [
+  {
+   "id": 0,
+   "start": 10.2,
+   "end": 20.8,
+   "text": "Alfa beta gama. delta epsilon",
+   "words": [
+    {
+     "word": " Alfa",
+     "start": 10.2,
+     "end": 10.7,
+     "probability": 0.9
+    },
+    {
+     "word": " beta",
+     "start": 11.0,
+     "end": 11.5,
+     "probability": 0.9
+    },
+    {
+     "word": " gama.",
+     "start": 12.0,
+     "end": 12.6,
+     "probability": 0.9
+    },
+    {
+     "word": " delta",
+     "start": 13.5,
+     "end": 14.0,
+     "probability": 0.9
+    },
+    {
+     "word": " epsilon",
+     "start": 20.1,
+     "end": 20.8,
+     "probability": 0.9
+    }
+   ]
+  }
+ ]
+}

@@ -2,6 +2,8 @@
 
 CLI pipeline for processing YouTube clips: transcription → correction → translation → metadata → 9:16 shorts with karaoke subtitles.
 
+Licensed under [AGPL-3.0-or-later](LICENSE); external contributions need a signed CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 **Use it from an AI agent** (Claude Code or opencode): see [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md).
 
 ## Quickstart — folder + brief to recap
@@ -162,6 +164,48 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ---
 
+## Background removal (matte.py)
+
+`matte.py` cuts a talking-head clip out of its background with RobustVideoMatting (RVM, loaded through `torch.hub` — never vendored) and writes a ProRes 4444 `.mov` with alpha, ready to place over screen capture. It runs on CUDA when present, else on CPU, and processes only the `--start`/`--end` range. Skill: `yt-matte`.
+
+```bash
+.venv/bin/python scripts/matte.py clip.mp4 --start 10 --end 40 --ratio 0.25 --out clip_matte.mov --json
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `matte.py` | `clip.mp4` (+ `--start`/`--end`) | `clip_matte.mov` — ProRes 4444 with alpha, video only |
+
+`--ratio` is RVM's `downsample_ratio` (default 0.6, steadier edges; 0.25 is faster). The output keeps the input resolution and fps and has no audio (the editor keeps the original's). Re-running overwrites the output; an `--out` that would overwrite the input is refused. The first run downloads the RVM code and weights into `~/.cache/torch/hub/`.
+
+---
+
+## Graphics overlays (graphics.py)
+
+`graphics.py` renders branded graphic overlays (lower third, counter, callout) as ProRes 4444 `.mov` files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0): a composition HTML per template in `assets/graphics/` is filled with the brand values from `brand.json` and the entry props, then rendered by the pinned `hyperframes@0.8.181` CLI. Skill: `yt-graphics`.
+
+`graphics_plan.py` reads a timeline words JSON (flat or Whisper shape) and, optionally, a `markers.json` (only `Mango` markers become candidates), and has the `graphics` model propose where overlays belong into `graphics_plan.json` for human approval. Every entry starts `approved: false`; a human flips the ones to render and `graphics.py --plan` renders only those.
+
+```bash
+.venv/bin/python scripts/graphics_plan.py words.json --markers markers.json \
+    --context context.md --max-entries 3 --json
+.venv/bin/python scripts/graphics.py --template lower_third \
+    --props '{"name":"Doru","role":"creator"}' --out /tmp/lt.mov --json
+.venv/bin/python scripts/graphics.py --template counter \
+    --props '{"number":"42","label":"clips"}' --out /tmp/counter.mov --duration 3
+.venv/bin/python scripts/graphics.py --template callout \
+    --props '{"text":"echo hello","style":"terminal"}' --out /tmp/callout.mov
+.venv/bin/python scripts/graphics.py --plan graphics_plan.json --out-dir overlays/ --json
+```
+
+- `graphics_plan.py` accepts both words shapes (`words_shape` `flat`/`whisper`), caps the entries with `--max-entries` (default 4, `>= 0`; zero is valid) and validates the plan against `schemas/graphics_plan.schema.json`; an invalid model answer is retried once, then exits 2. `--json` reports `output`, `entries`, `approved`, `markers_used`, `words_shape`, `model`, `wall_time_s`, `llm_cost_usd`.
+- `--template` is `lower_third` (`name`, `role`), `counter` (`number`, `label`) or `callout` (`text`, optional `style` `text`/`terminal`). `--width`/`--height`/`--fps`/`--duration` default to `1920`/`1080`/`30`/`3.0` (`--duration` `> 0` and `<= 15`).
+- `--plan` renders only the `approved: true` entries of a `graphics_plan.json` (validated against `schemas/graphics_plan.schema.json`), one `<id>.mov` per entry in `--out-dir`.
+- `--backend hyperframes` (default) needs Node.js 22+ and npx; `--backend mock` is deterministic and offline (composed `index.html` + an ffmpeg transparent MOV). Every output is checked with ffprobe for an alpha pixel format (`yuva444p10le`/`yuva444p12le`).
+- The look comes from `brand.json` via `--brand`; a missing font file is a hard error naming the path and the brand key. The HyperFrames agent skills are not committed (the published set is ~19 MB); install them with `GIT_CLONE_PROTECTION_ACTIVE=0 npx skills add heygen-com/hyperframes --all` (pinned commit `908f2d095bba4e2b97363c5533e2702f1e92505d`).
+
+---
+
 ## Director (AI Director, phase S1)
 
 `director.py` turns the workspace `motion/` and `quality/` labels into an
@@ -219,6 +263,53 @@ Fragments are placed on the timeline in the order they appear in the YAML. Each 
 **Why this isn't part of the main correct→translate→analyze→shorts pipeline:** it operates on *raw, uncut* footage before an editing decision has been made, not on the *final exported* video. It's a pre-editing step, used once per clip to skip manual scrubbing — not a repeated per-clip pipeline stage like the scripts above.
 
 See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured, and `docs/DECISIONS.md` for why several non-obvious choices were made (video/audio track split, explicit stream indices, subtitle approach).
+
+---
+
+## Timeline markers (fcproj_markers.py)
+
+`fcproj_markers.py` reads the sequence-level markers of a FilmCraft `.fcproj` project (read-only) and writes two files next to it: `markers.json` in the shape `graphics_plan.py --markers` already consumes, and `todo.md` holding only the Rose markers — the redo list outside the editor. FilmCraft need not be installed. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/fcproj_markers.py project.fcproj --json
+.venv/bin/python scripts/fcproj_markers.py project.fcproj --sequence Main --out markers.json --todo todo.md
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `fcproj_markers.py` | `.fcproj` project | `markers.json` (all markers) + `todo.md` (Rose markers) |
+
+`--sequence` is required when the project has more than one sequence. Each marker carries `time_s` (ticks / 254016000000), `timecode` (`HH:MM:SS:FF` at the sequence frame rate), `name`, `comment`, `colour` and `kind`, sorted by time. Clip-level markers are counted and reported as `clip_markers_ignored`, never mapped. `--json` reports `output`, `todo`, `sequence`, `markers`, `rose`, `clip_markers_ignored`, `wall_time_s`, `llm_cost_usd`.
+
+---
+
+## Loudness (loudness.py)
+
+`loudness.py` applies the audio loudness recipe as one command, with two backends. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/loudness.py --video clip.mp4 --json
+.venv/bin/python scripts/loudness.py --fcproj project.fcproj --sequence Main --json
+.venv/bin/python scripts/loudness.py --fcproj project.fcproj --dry-run
+```
+
+- `--video` runs an ffmpeg two-pass `loudnorm` to the YouTube targets (`I=-14 LUFS`, `TP=-1 dBTP`, `LRA 11` by default, set with `--target-i`/`--target-tp`/`--target-lra`), copies the video stream and re-encodes the audio as AAC 320k. `--out` defaults to `<stem>_loud.mp4` (or the input's own suffix); writing onto the input is refused.
+- `--fcproj` applies the Essential Sound recipe (Dialogue type, Auto-Match loudness, Clarity Dynamics medium) to the voice clips of one audio track through the headless `filmcraft-cli` (`$FILMCRAFT_CLI` or PATH). The input project is never modified unless `--in-place` is given; without it the tool works on a copy (`<stem>_loudness.fcproj`). `--dry-run` prints the commands without running them.
+- Both backends report `wall_time_s` and `llm_cost_usd` (`0.0`); `--json` adds the measured and target loudness values.
+
+---
+
+## Publish kit (publish.py)
+
+`publish.py` chains the publish stations for a finished edit (subtitles → corrections → a human-review stop → EN translation → thumbnail → metadata) and, with `--kit`, builds `<project>/publish-kit/` for a manual YouTube Studio upload: the final video (optionally through the lot 5 `loudness.py` pass with `--kit-loudness`), `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. Skill: `yt-publish`.
+
+```bash
+.venv/bin/python scripts/publish.py --project out/ --context ctx.md \
+  --fcproj project.fcproj --sequence Main --words-dir words/ --resume \
+  --kit --final-video final.mp4 --kit-loudness --json
+```
+
+`--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500). There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
 
 ---
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared length helpers for the directors and the web app.
 
 ``estimate_all_good`` answers "how long would the edit be with every good

@@ -19,7 +19,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 .venv/bin/python scripts/correct_srt.py raw.srt Clip_RO.srt
 ```
 
-- Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, copy `scripts/corrections_example.txt` to `scripts/corrections.txt` first; the script crashes with FileNotFoundError without it. The example has no active corrections, so a fresh copy changes nothing.
+- Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, the script prints a warning and falls back to `scripts/corrections_example.txt` (0 active corrections), so it never crashes and always writes the output. Copy the example to `scripts/corrections.txt` to add your own corrections.
 - Without the second argument the output is `<input>_corectat.srt`.
 - Matching is a plain, case-sensitive text replace over the whole file, timestamps included. Do not add very short patterns.
 - It prints `Corecturi încărcate: N` and `Termeni înlocuiți: M`. M counts distinct wrong terms that were found, not occurrences. N = 0 means the list is empty; M = 0 with N > 0 means nothing matched.
@@ -30,7 +30,7 @@ The corrected .srt is the single source of truth for everything downstream: tran
 
 ## Step 3: translate RO to EN
 
-Needs `OPENROUTER_API_KEY` in the environment (the script fails with KeyError without it) and uses a small amount of API credit. Tell the user before running.
+Needs `OPENROUTER_API_KEY` in the environment for real runs (a missing key prints `[error] ...` and exits 2) and uses a small amount of API credit. Tell the user before running.
 
 ```bash
 # explicit output path (recommended)
@@ -43,6 +43,7 @@ Needs `OPENROUTER_API_KEY` in the environment (the script fails with KeyError wi
 - Naming: with a `.mp4` second argument (any letter case) the file is written next to the video as `<input name>_EN.srt`, so `Clip_RO.srt` becomes `Clip_RO_EN.srt`, not `Clip_EN.srt`. The same suffix rule applies when the second argument is omitted. Pass an explicit output path when the exact name matters.
 - Batches of 20 blocks. The file is written only after all batches succeed, so an API error leaves no partial file.
 - A multi-line block becomes a single line in English. Blocks with no text are dropped.
+- The model id comes from the `translate` role in `config.yaml` (`models:`), and the deprecated `analyze_srt.py` from the `analyze` role; a missing role or a budget error prints `[error] ...` and exits 2.
 
 ## Step 4: verify the translation
 

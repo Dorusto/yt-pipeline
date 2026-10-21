@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Measure footage quality per segment and label each segment with a role.
 
 Usage:

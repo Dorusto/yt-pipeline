@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Check a workspace edit.json against a YAML of human edit expectations.
 
 Usage:

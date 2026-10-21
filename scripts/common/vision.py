@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Vision model interface: JPEG frames and a prompt in, model text out.
 
 Model backends are config, not code (VISION, principle 6): ``llm_backend`` in

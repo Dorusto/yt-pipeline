@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Follow the subject of a clip with a moving crop window and write a crop path.
 
 Usage:

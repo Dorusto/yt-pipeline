@@ -1,0 +1,74 @@
+{
+ "text": "Unu doi trei patru cinci. șase șapte opt nouă. zece",
+ "language": "ro",
+ "segments": [
+  {
+   "id": 0,
+   "start": 0.5,
+   "end": 12.0,
+   "text": "Unu doi trei patru cinci. șase șapte opt nouă. zece",
+   "words": [
+    {
+     "word": " Unu",
+     "start": 0.5,
+     "end": 0.9,
+     "probability": 0.9
+    },
+    {
+     "word": " doi",
+     "start": 1.2,
+     "end": 1.6,
+     "probability": 0.9
+    },
+    {
+     "word": " trei",
+     "start": 2.0,
+     "end": 2.5,
+     "probability": 0.9
+    },
+    {
+     "word": " patru",
+     "start": 3.0,
+     "end": 3.6,
+     "probability": 0.9
+    },
+    {
+     "word": " cinci.",
+     "start": 4.2,
+     "end": 4.8,
+     "probability": 0.9
+    },
+    {
+     "word": " șase",
+     "start": 5.5,
+     "end": 6.0,
+     "probability": 0.9
+    },
+    {
+     "word": " șapte",
+     "start": 8.6,
+     "end": 9.4,
+     "probability": 0.9
+    },
+    {
+     "word": " opt",
+     "start": 9.8,
+     "end": 10.2,
+     "probability": 0.9
+    },
+    {
+     "word": " nouă.",
+     "start": 10.5,
+     "end": 11.0,
+     "probability": 0.9
+    },
+    {
+     "word": " zece",
+     "start": 11.5,
+     "end": 12.0,
+     "probability": 0.9
+    }
+   ]
+  }
+ ]
+}

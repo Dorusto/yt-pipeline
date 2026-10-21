@@ -1911,3 +1911,125 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not B:** permissive licence, but per-frame ViTMatte flickers (1.7x the edge noise of Sammie) and a temporal EMA that hides it leaves ghost halos around moving hands.
 
 **Consequence:** prototypes live outside the repo in `~/Proiecte-AI/YouTube/roto-lab/` (`rvm_test.py`, `matanyone2_test.py`, `edgetam_vitmatte.py`); the pipeline step (`scripts/matte.py <video> --start/--end --backend rvm|matanyone2`) is built when the Second Brain edit needs it. The repo still has no LICENSE file; one must be chosen before any commercial use. FilmCraft's native rotoscoping (#2122, #406) is being followed and may replace this step for manual work.
+
+---
+
+## [2026-10-20] Watchdog: per-run spend cap from a run-spend ledger (S51 lot 0)
+
+**Context:** the agent budgets are per run (per brief / per lot), but the watchdog only knew "spend today" from the OpenRouter key. A run that started at $0 and a day already at $2.90 looked the same. Issue #51 lot 0 asks for spend since the run started, a `--run-cap` from the brief, an ntfy at 80 % (`Budget`) and a stop at 100 % (`Blocked`).
+
+**Options:** (A) baseline `usage_daily` at run start and measure the delta on every cron pass, nothing on disk; (B) the same delta, but appended to a per-run spend ledger file (`entries[].cost_usd`, the `common/llm.py` entry shape) that the watchdog sums since `run_started_at`; (C) read the opencode session DB for per-message model cost.
+
+**Decision:** B. `agent_watchdog.py --run-cap USD --lot "S51 lot 1" [--ledger PATH] [--start-run]`. The watchdog keeps `~/.cache/yt-pipeline/run-spend.json` itself: every invocation appends the OpenRouter daily-usage delta since its previous observation as one `openrouter-delta` entry, so everything billed to the key (script calls through `common/llm.py` and agent model calls) is counted exactly once. A run starts with `--start-run` or implicitly the first time the agent is seen running after being absent; `run_spend_usd` sums the entries since then. 80 % of the cap sends `--title Budget` (never stops); 100 % stops the agent and sends `--title Blocked` naming the lot and the reason (independent of `--kill-over-usd`, which stays daily). `--dry-run` writes neither ledger nor state.
+
+**Why not A:** nothing survives a watchdog restart and two cron passes cannot agree on the baseline. **Why not C:** the opencode DB schema is internal and does not cover script spend on the same key.
+
+**Consequence:** the architect checks `run_spend_usd` before every expensive step (vision run, director run, coder round); the daily `--spend-usd` check is unchanged. Implemented by the architect after two empty coder replies (upstream rate limit).
+
+---
+
+## [2026-10-20] Transcription: openai-whisper behind a Transcriber interface (S51 lot 1)
+
+**Context:** The publish chain needs per-source word timestamps when there is no edit project (`transcribe.py`), and the word JSONs it writes must be exactly what `subs_from_edit.py --words-dir` reads. The build LXC has no torch/whisper and must stay that way for the test suite.
+
+**Options:** (A) `openai-whisper` (MIT, maintained reference implementation) — the one the sprint brief names: turbo on GPU, `--model tiny` on CPU; (B) `faster-whisper` (MIT, CTranslate2, faster on CPU, already on the real machine transitively via whisperx); (C) whisper.cpp binding (no Python wheel story here).
+
+**Decision:** A, per issue #51 lot 1. `Transcriber` interface with `WhisperTranscriber` and `MockTranscriber` lives inside `scripts/transcribe.py` (the sprint puts `GraphicsEngine` in `scripts/graphics.py` the same way; it moves to `scripts/common/` when a second consumer appears). `torch`/`whisper` import lazily inside the whisper backend only, a missing import is a clear error naming the pip package, and `openai-whisper` joins `requirements.txt` for the real machine without being installed on the LXC. `--backend mock` is the deterministic offline run. The `_words.json` from `transcribe.py` is the Whisper result shape (`text`, `language`, `segments[].words[]`) — exactly the `subs_from_edit.py` input — while `subs_from_edit.py` writes the flat timeline list (`[{word, start, end}]`, the `shorts_generator.py` shape). Both are documented in the `yt-publish` skill.
+
+**Why not B:** the brief names openai-whisper; faster-whisper stays the next candidate if CPU transcription speed ever matters.
+
+**Consequence:** real runs need `pip install openai-whisper` on the laptop; tests and offline runs use `--backend mock` and never touch a model. Word times from this run are the initial transcript only — the Shorts flow still takes word timing from WhisperX forced alignment on the corrected SRT.
+
+---
+
+## [2026-10-20] Offline mock text per role and a YT_CONFIG override (S51 lot 1)
+
+**Context:** `publish.py` must run end-to-end on the fixture with a mock LLM (issue #51 lot 1 acceptance). `llm_backend: mock` returned one fixed string, so structured consumers (`metadata.py` JSON, `translate_srt.py` `[N]` lines) could not run offline, and tests could not point a subprocess at a test config.
+
+**Options:** (A) recorder-style chain tests only (what `test_recap.py` does) and per-tool mock tests; (B) `llm_mock_text` in the config (a string for all roles or a role→text mapping) plus a `YT_CONFIG` env override in `resolve_config_path`; (C) a `--mock` flag on every tool.
+
+**Decision:** B. `MockClient` picks `texts[role]` and falls back to its default text; `make_client` wires `llm_mock_text` through; `YT_CONFIG` wins over the repo `config.yaml` and `config.yaml.example` (same pattern as `YT_SPEND_LEDGER`/`YT_WORKSPACE`). A chain test can now run `publish.py` as a real subprocess against the fixture with a canned metadata JSON and translate lines.
+
+**Why not A:** it would not exercise the real output handoff between stations. **Why not C:** the backend is config, never code.
+
+**Consequence:** offline end-to-end runs of any LLM tool work with one config file; production configs simply omit `llm_mock_text`.
+
+---
+
+## [2026-10-20] Metadata draft carries structured thumbnail photo concepts (S51 lot 1 addendum)
+
+**Context:** The lot 1 addendum to issue #51 (Doru, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
+
+**Options:** (A) the model writes the `## Thumbnail` section as free-form markdown in its JSON; (B) a structured `thumbnail_concepts` key (2-3 objects with `name`/`pose`/`emotion`/`text{title,keyword,kicker}`/`theme`/`source{kind,timecode}`) validated like `chapters` and rendered by the tool; (C) no section for now — frame picking is issue #52's vision pass.
+
+**Decision:** B. The tool validates the shape (2-3 concepts, non-empty name/pose/emotion, non-empty title and keyword, `theme` in `tech`/`creator`, `source.kind` in `clip_frame`/`new_photo`, a clip-frame timecode normalized and inside the transcript) and renders the section with the exact `thumbnail.py --photo --title --keyword --kicker --theme` command line per concept. Content quality (a real emotion, the text saying the same as the titles) stays the model's job, steered by `prompts/metadata.md` — same split as the CTA rules. The old one-line "Thumbnail text:" note is folded into the section; the `--json` summary reports `thumbnail_concepts` and every canned mock JSON in the tests carries the new key.
+
+**Why not A:** free-form markdown cannot be checked and does not map to the `thumbnail.py` flags. **Why not C:** the addendum is in this sprint; #52 later picks candidate frames with the vision model on top of these concepts.
+
+**Consequence:** `metadata.md` grows a `## Thumbnail` section whose concepts can be executed as-is (grab the frame or shoot the photo, then run the listed `thumbnail.py` command). The model contract (`prompts/metadata.md` + `validate_model_json`) changed in a backwards-incompatible way: old canned model JSON without `thumbnail_concepts` is rejected by design.
+
+---
+
+## [2026-10-20] matte.py: RVM through torch.hub, own frame loop, ProRes 4444 export (S51 lot 2)
+
+**Context:** Issue #50 scope 1-2 / sprint lot 2: talking-head clip in, ProRes 4444 `.mov` with alpha out, only a time range processed, RVM as the default backend (decision 2026-10-19) and its code never vendored into this repo.
+
+**Options (inference loop):** (A) the hub's `convert_video` converter API (whole-file, its own reader and outputs); (B) our own loop — `cv2.VideoCapture` plus the official recurrent call `fgr, pha, *rec = model(src, *rec, downsample_ratio)`, two PNG sequences and one ffmpeg `alphamerge` export; (C) TorchScript/ONNX backends instead of the hub.
+
+**Decision:** B. `scripts/matte.py` validates every user error before the lazy `torch` import (so a missing torch never masks a bad argument), seeks with `CAP_PROP_POS_MSEC`, carries the 4 recurrent states across frames, writes `fgr/%05d.png` + `pha/%05d.png` in a temp dir and encodes with the issue #50 recipe (`prores_ks -profile:v 4444`, `alphamerge,format=yuva444p10le`) to an atomically replaced output. The model is `torch.hub.load("PeterL1n/RobustVideoMatting", "resnet50", trust_repo=True)` — `trust_repo=True` because a CLI must never block on the hub's interactive trust prompt; the clone and `rvm_resnet50.pth` land in `~/.cache/torch/hub/`. `--ratio` (`downsample_ratio`) defaults to 0.6 (steadier edges, the band issue #50 measured) with 0.25 documented as the faster option. The output is video-only (the editor keeps the original's audio). Unit tests run without torch; one integration test skips through `pytest.importorskip("torch")` and asserts the alpha on a generated clip. `torchvision` joins `requirements.txt` (hub dependency).
+
+**Probes say `yuva444p12le` on ffmpeg >= 6.0:** issue #50 and the sprint acceptance name `ffprobe pix_fmt yuva444p10le`, but ProRes 4444 (`ap4h`) is a 12-bit codec — ffmpeg < 6.0 reported `yuva444p10le` for it and ffmpeg >= 6.0 decodes it as `yuva444p12le`. The encoder recipe is unchanged and the file is the same ProRes 4444 with alpha that FilmCraft 0.9.0 reads (tested on the Sammie exports); the integration test accepts both strings.
+
+**Why not A:** `convert_video` owns its own reader and whole-file range, needs `av tqdm pims`, and still leaves the ProRes export to us. **Why not C:** no second model format is needed this sprint.
+
+**Consequence:** `python3 scripts/matte.py clip.mp4 [--start S] [--end E] [--ratio R] [--out FILE] [--json]` produces the composite-ready matte on GPU when present, on CPU otherwise (build LXC: 3 s 640x360 at ratio 0.6 in ~45 s). The settings used on the real Second Brain clip are added to issue #50 as a comment after Doru's run; MatAnyone2 stays out of the repo (scope 3, personal-use only).
+
+---
+
+## [2026-10-21] HyperFrames is the graphics engine; Remotion left the plan (S51 lot 3)
+
+**Context:** The D4 bake-off (Remotion vs HyperFrames) is cancelled. Remotion's licence is free only up to 3 people and paid above, which does not fit a pipeline that may be sold; HyperFrames is Apache-2.0 and already renders ProRes 4444 MOV overlays via `npx hyperframes render --format mov`. EffectCraft stays the option for hand-made brand assets via Lottie. Issue #51 lot 3 needs one CLI that turns a template plus props into a transparent overlay at timeline resolution.
+
+**Decision:** `GraphicsEngine` interface in `scripts/graphics.py` with `HyperFramesEngine` (composition templates in `assets/graphics/` filled through `data-composition-variables`, rendered by the pinned `hyperframes@0.8.181` CLI) and `MockEngine` (composed HTML plus an ffmpeg transparent MOV, for tests and offline runs). Templates use `brand.json` values only; `graphics.py` holds no colour, font family or size constant. The CLI is pinned (`npx --yes hyperframes@0.8.181`), never a floating `npx hyperframes`. The HyperFrames agent skills are **not committed**: the published set is ~19 MB (~3.2 MB of markdown, 330 files) and carries no licence file beside it, over the 2 MB limit; the install command (`GIT_CLONE_PROTECTION_ACTIVE=0 npx skills add heygen-com/hyperframes --all`) and the pinned upstream commit `908f2d095bba4e2b97363c5533e2702f1e92505d` are documented in `yt-graphics` and the README. The runtime code does not depend on the skill files.
+
+**What the render run taught us:** (1) The GSAP CDN (`cdn.jsdelivr.net/npm/gsap@3.14.2`) loads in the render on this machine, so the templates keep the CDN script and register a paused timeline on `window.__timelines`. (2) `@font-face` with an **absolute** path or a `file://` URL does not load in the HyperFrames render (the page is served from the project root); a path relative to the project root does. `graphics.py` therefore resolves the brand font to an absolute path (hard error naming path and brand key when missing), copies it into the render work dir under `fonts/` and references it relatively — a deliberate deviation from the brief's "absolute paths", documented here. (3) Number variables arrive as unitless CSS custom properties, so `font-size: var(--title_size_px)` is invalid; the templates use `calc(var(--title_size_px) * 1px)` and `calc(var(--tracking_em) * 1em)`. (4) `--strict-variables` passes when only declared keys are sent; `graphics.py` sends exactly the declared ids. (5) The plan schema's `allOf` requires props per template for **every** entry, including rejected ones; to honour the brief's "a rejected entry is never validated against props", `run_plan` filters out schema errors whose path is `entries/<i>/props` for a rejected entry, while still validating the rest of the plan.
+
+**Why not Remotion:** paid above 3 people, and the bake-off is no longer needed once HyperFrames renders the alpha MOV the editor reads. **Why not commit the skills:** over the 2 MB markdown budget and no licence file beside them; they are agent knowledge, not a runtime dependency.
+
+**Consequence:** `python3 scripts/graphics.py --template {lower_third,counter,callout} --props JSON --out OUT.mov [--width W] [--height H] [--fps FPS] [--duration SEC] [--brand brand.json] [--backend {hyperframes,mock}] [--json]` and `--plan graphics_plan.json --out-dir DIR` produce ProRes 4444 `.mov` overlays with alpha at timeline resolution; every output is checked with ffprobe for `yuva444p10le`/`yuva444p12le`. D4's graphics station builds on this `GraphicsEngine`; the plan tool (`graphics_plan.py`) is the next task.
+
+---
+
+## [2026-10-21] Licence: AGPL-3.0-or-later with a CLA (S51 lot 4)
+
+**Context:** The repo was public with no `LICENSE` (RISKS #10). The pipeline may be sold, and it must survive on AGPL-compatible dependencies: RVM is GPL-3.0 but is loaded through `torch.hub` and never vendored; HyperFrames is Apache-2.0; the brand fonts are SIL OFL.
+
+**Decision:** `LICENSE` is the GNU AGPL v3 text; every script carries `# SPDX-License-Identifier: AGPL-3.0-or-later`. External contributions are accepted only with a signed CLA granting the copyright holder the right to relicense the contribution, so dual licensing (e.g. a commercial closed-source edition) stays possible. `CONTRIBUTING.md` carries the CLA form.
+
+**Why not MIT:** a permissive licence alone cannot keep a commercial edition closed — anyone could take the code and ship it under any terms, including a competing closed product.
+
+**Consequence:** SPDX headers in every script under `scripts/` (including `scripts/common/`), `CONTRIBUTING.md` carries the CLA, RISKS #10 is closed.
+
+---
+
+## [2026-10-21] S51 sprint order and caps (issue #51)
+
+**Context:** Issue #51 is the publish-kit sprint. It runs on one branch, `sprint-publish-kit`, with one PR to master at the end that Doru merges.
+
+**Decision:** Lots run 0 → 1 → 2 → 3 → 4 with per-lot caps of 1 / 6 / 4 / 8 / 1 USD and a ceiling of 25 USD. Lot 3 (HyperFrames graphics) was the first to be cut if the total ran short — it did not have to be. Doru added lots 5 (FilmCraft bridge, 5 USD) and 6 (publish kit for manual upload, 4 USD) on 2026-10-21; they run after lot 4 on the same branch and PR. Lot 6 is variant B per Doru's 2026-10-21 comment: the API upload is parked because an unaudited Google project cannot make videos public.
+
+**Why not split the sprint into separate PRs:** one branch and one PR keep the sprint reviewable as a whole and match the issue's plan.
+
+**Consequence:** Nothing from D3 or the rest of D6 beyond the listed scope is in this sprint; D2-20 (issue #47) stays paused.
+
+---
+
+## [2026-10-21] Publish kit instead of API upload (S51 lot 6, variant B)
+
+**Context:** YouTube locks every video uploaded through the Data API from an **unaudited** Google project as private and it cannot go public before the project passes the YouTube API audit (same for TikTok's Content Posting API); Doru changed lot 6 on 2026-10-21 accordingly.
+
+**Decision:** No `yt_upload.py`; `publish.py --kit` writes `<project>/publish-kit/` (video + RO/EN SRTs + thumbnail + `studio.md` copy-ready blocks and a Studio-order checklist) with loud checks (title 100, description 5000, EN subtitles present, thumbnail <= 2 MB and 1280x720, tags <= 500); `metadata.py` writes `metadata.json` so the kit is deterministic from the validated model JSON; the lot 5 `loudness.py --video` pass is opt-in via `--kit-loudness`.
+
+**Why not the API upload:** the audit gate above.
+
+**Consequence:** The manual upload is 3-5 minutes in Studio; the API upload can come back after a Google project audit (parked, not deleted from the plan — see the issue comment).

@@ -118,3 +118,32 @@ def test_committed_example_loads():
     assert config.model_for(loaded, "vision_fallback") == "deepseek/deepseek-v4.1-flash"
     assert loaded["llm_budget_usd"] == 5.0
     assert loaded["llm_backend"] == "openrouter"
+
+
+def test_yt_config_env_wins(tmp_path, monkeypatch):
+    env_config = write_config(tmp_path, with_value("llm_backend", "mock"), name="env.yaml")
+    local = write_config(tmp_path, VALID, name="config.yaml")
+    monkeypatch.setattr(config, "CONFIG_PATH", local)
+    monkeypatch.setenv("YT_CONFIG", str(env_config))
+    assert config.resolve_config_path() == env_config
+    assert config.load_config()["llm_backend"] == "mock"
+
+
+def test_yt_config_env_missing_file_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("YT_CONFIG", str(tmp_path / "nope.yaml"))
+    with pytest.raises(config.ConfigError) as exc:
+        config.resolve_config_path()
+    assert "nope.yaml" in str(exc.value)
+
+
+def test_llm_mock_text_string_and_mapping_pass():
+    assert config._validate(with_value("llm_mock_text", "canned"))["llm_mock_text"] == "canned"
+    mapping = with_value("llm_mock_text", {"metadata": "{}", "translate": "[1] x"})
+    assert config._validate(mapping)["llm_mock_text"]["metadata"] == "{}"
+
+
+def test_llm_mock_text_wrong_type_raises():
+    with pytest.raises(config.ConfigError):
+        config._validate(with_value("llm_mock_text", 5))
+    with pytest.raises(config.ConfigError):
+        config._validate(with_value("llm_mock_text", {"metadata": 5}))

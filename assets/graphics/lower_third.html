@@ -1,0 +1,88 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[
+    {"id":"name","type":"string","label":"Name","default":"Doru"},
+    {"id":"role","type":"string","label":"Role","default":"creator"},
+    {"id":"accent","type":"color","label":"Accent","default":"#E8A25A"},
+    {"id":"fg","type":"color","label":"Foreground","default":"#EDEBE6"},
+    {"id":"bg","type":"color","label":"Plate","default":"#0F1218"},
+    {"id":"muted","type":"color","label":"Muted","default":"#9A9890"},
+    {"id":"title_font","type":"string","label":"Title font","default":"Montserrat Black"},
+    {"id":"mono_font","type":"string","label":"Mono font","default":"JetBrains Mono"},
+    {"id":"title_size_px","type":"number","label":"Title size","default":96},
+    {"id":"kicker_size_px","type":"number","label":"Kicker size","default":26},
+    {"id":"tracking_em","type":"number","label":"Tracking","default":-0.02}
+  ]'
+>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face { font-family: "__TITLE_FAMILY__"; src: url("__TITLE_FONT_URL__"); }
+      @font-face { font-family: "__MONO_FAMILY__"; src: url("__MONO_FONT_URL__"); }
+      html, body { margin: 0; padding: 0; background: transparent; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #plate { position: absolute; left: 96px; bottom: 120px; }
+      #plate-bg {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+        opacity: 0.85;
+        border-left: 8px solid var(--accent);
+      }
+      #content { position: relative; padding: 28px 48px 30px 40px; }
+      #name {
+        font-family: var(--title_font);
+        font-size: calc(var(--title_size_px) * 1px);
+        letter-spacing: calc(var(--tracking_em) * 1em);
+        line-height: 1.05;
+        color: var(--fg);
+      }
+      #role {
+        font-family: var(--mono_font);
+        font-size: calc(var(--kicker_size_px) * 1px);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="lower_third"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-fps="30"
+      data-duration="3"
+    >
+      <div id="plate" class="clip" data-start="0" data-duration="3" data-track-index="0">
+        <div id="plate-bg"></div>
+        <div id="content">
+          <div id="name" data-var-text="name">Doru</div>
+          <div id="role" data-var-text="role">creator</div>
+        </div>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      (function () {
+        var root = document.getElementById("root");
+        var duration = parseFloat(root.getAttribute("data-duration")) || 3;
+        var outAt = Math.max(0.4, duration - 0.4);
+        var timeline = gsap.timeline({ paused: true });
+        timeline.fromTo(
+          "#plate",
+          { opacity: 0, x: -140 },
+          { opacity: 1, x: 0, duration: 0.4, ease: "power3.out" },
+          0
+        );
+        timeline.to("#plate", { opacity: 0, x: -140, duration: 0.4, ease: "power2.in" }, outAt);
+        window.__timelines = window.__timelines || {};
+        window.__timelines.lower_third = timeline;
+      })();
+    </script>
+  </body>
+</html>

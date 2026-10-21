@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared code for yt-pipeline tools.
 
 Only infrastructure that more than one tool needs lives here: notifications,

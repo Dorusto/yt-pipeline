@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/graphics_plan.schema.json",
+  "title": "graphics_plan",
+  "description": "The graphics plan written by scripts/graphics_plan.py: where a graphic overlay should appear on the final timeline, which template it uses and with what props. A human approves or rejects each entry (approved) before scripts/graphics.py --plan renders the approved ones as ProRes 4444 .mov overlays with alpha. Entries may come from the model or from Mango markers in markers.json (lot 5, scripts/fcproj_markers.py).",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "entries"],
+  "additionalProperties": false,
+  "$defs": {
+    "template": {
+      "type": "string",
+      "enum": ["lower_third", "counter", "callout"],
+      "description": "graphics.py template name"
+    },
+    "props": {
+      "type": "object",
+      "description": "template props; the required keys depend on the entry's template (see oneOf below)",
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "description": "lower_third: person or thing name"},
+        "role": {"type": "string", "minLength": 1, "description": "lower_third: role or subtitle line under the name"},
+        "number": {"type": ["string", "number"], "description": "counter: the number shown (kept as written, e.g. '42' or '4.2')"},
+        "label": {"type": "string", "minLength": 1, "description": "counter: the label under the number"},
+        "text": {"type": "string", "minLength": 1, "description": "callout: the short text or terminal line"},
+        "style": {
+          "type": "string",
+          "enum": ["text", "terminal"],
+          "default": "text",
+          "description": "callout: plain text or a terminal line typed out"
+        }
+      },
+      "additionalProperties": false
+    },
+    "marker_ref": {
+      "type": "object",
+      "description": "origin of the entry when it came from a markers.json Mango marker (scripts/fcproj_markers.py output)",
+      "required": ["time_s"],
+      "additionalProperties": false,
+      "properties": {
+        "time_s": {"type": "number", "minimum": 0},
+        "name": {"type": ["string", "null"]},
+        "comment": {"type": ["string", "null"]},
+        "colour": {"type": ["string", "null"]},
+        "kind": {"type": ["string", "null"]}
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": ["id", "time_s", "duration_s", "template", "props", "reason", "approved"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "stable entry id, unique inside the plan (e.g. g1, g2)"
+        },
+        "time_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "timeline time in seconds where the graphic enters"
+        },
+        "duration_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 15,
+          "description": "how long the graphic stays on screen"
+        },
+        "template": {"$ref": "#/$defs/template"},
+        "props": {"$ref": "#/$defs/props"},
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "why this graphic belongs at this time"
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "false until a human flips it; graphics.py --plan renders approved entries only"
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["model", "marker"],
+          "default": "model"
+        },
+        "hint": {
+          "type": ["string", "null"],
+          "description": "the marker name/comment or other hint the model proposed from"
+        },
+        "marker": {"$ref": "#/$defs/marker_ref"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"template": {"const": "lower_third"}}},
+          "then": {"properties": {"props": {"required": ["name", "role"]}}}
+        },
+        {
+          "if": {"properties": {"template": {"const": "counter"}}},
+          "then": {"properties": {"props": {"required": ["number", "label"]}}}
+        },
+        {
+          "if": {"properties": {"template": {"const": "callout"}}},
+          "then": {"properties": {"props": {"required": ["text"]}}}
+        },
+        {
+          "if": {"required": ["origin"], "properties": {"origin": {"const": "marker"}}},
+          "then": {"required": ["marker"]}
+        }
+      ]
+    }
+  },
+  "properties": {
+    "schema_version": {"type": "string", "minLength": 1},
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the plan"
+    },
+    "tool": {"type": "string"},
+    "source_words": {
+      "type": ["string", "null"],
+      "description": "path of the words JSON the plan was generated from"
+    },
+    "markers_path": {
+      "type": ["string", "null"],
+      "description": "path of the markers.json the plan was generated from, if any"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 0,
+      "items": {"$ref": "#/$defs/entry"}
+    }
+  }
+}

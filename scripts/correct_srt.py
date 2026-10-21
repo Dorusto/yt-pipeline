@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Corectează termenii greșiți dintr-un fișier .srt folosind o listă de corecturi.
 
@@ -11,6 +12,7 @@ Dacă nu specifici output, generează automat: input_corectat.srt
 Fișierul de corecturi: corrections.txt (în același folder cu scriptul)
 Format corrections.txt: gresit|corect  (câte o corecție per linie)
 Liniile care încep cu # sunt ignorate.
+Dacă corrections.txt lipsește, se folosește corrections_example.txt (0 corecturi).
 """
 
 import sys
@@ -18,6 +20,7 @@ import re
 from pathlib import Path
 
 CORRECTIONS_FILE = Path(__file__).parent / "corrections.txt"
+CORRECTIONS_EXAMPLE_FILE = Path(__file__).parent / "corrections_example.txt"
 
 
 def load_corrections(path: Path) -> list[tuple[str, str]]:
@@ -31,6 +34,20 @@ def load_corrections(path: Path) -> list[tuple[str, str]]:
             if len(parts) == 2:
                 corrections.append((parts[0], parts[1]))
     return corrections
+
+
+def resolve_corrections_file(path: Path) -> Path | None:
+    """Return the corrections file to read, falling back to the example when missing."""
+    if path.exists():
+        return path
+    print(
+        f"[warning] Fișierul de corecturi lipsește: {path}. "
+        f"Folosesc exemplul: {CORRECTIONS_EXAMPLE_FILE}",
+        file=sys.stderr,
+    )
+    if CORRECTIONS_EXAMPLE_FILE.exists():
+        return CORRECTIONS_EXAMPLE_FILE
+    return None
 
 
 def apply_corrections(text: str, corrections: list[tuple[str, str]]) -> str:
@@ -47,7 +64,8 @@ def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2] if len(sys.argv) > 2 else input_file.replace(".srt", "_corectat.srt")
 
-    corrections = load_corrections(CORRECTIONS_FILE)
+    corrections_path = resolve_corrections_file(CORRECTIONS_FILE)
+    corrections = load_corrections(corrections_path) if corrections_path else []
     print(f"Corecturi încărcate: {len(corrections)}")
 
     with open(input_file, encoding="utf-8") as f:

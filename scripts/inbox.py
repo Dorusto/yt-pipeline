@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Watch an inbox folder and turn each day of new clips into a recap project.
 
 Usage:

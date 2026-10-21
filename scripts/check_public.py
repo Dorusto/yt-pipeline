@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Refuse commits that would publish private material in this public repository.
 
 Checks the files staged for commit (or the paths given) for:

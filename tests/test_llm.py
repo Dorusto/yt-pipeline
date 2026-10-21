@@ -468,3 +468,26 @@ def test_ledger_lock_creates_missing_parent_directory(tmp_path):
     with ledger_lock(ledger):
         assert lock_path.exists()
         assert lock_path.parent == ledger.parent
+
+
+def test_mock_texts_per_role_with_default():
+    client = MockClient(text="fallback", texts={"metadata": "{}", "translate": "[1] x"})
+    assert client.complete("metadata", MESSAGES).text == "{}"
+    assert client.complete("translate", MESSAGES).text == "[1] x"
+    assert client.complete("vision", MESSAGES).text == "fallback"
+
+
+def test_make_client_mock_reads_llm_mock_text_mapping():
+    config = config_with(backend="mock")
+    config["llm_mock_text"] = {"vision": '{"titles": []}'}
+    client = make_client(config)
+    assert client.complete("vision", MESSAGES).text == '{"titles": []}'
+    assert client.complete("architect", MESSAGES).text == "mock response"
+
+
+def test_make_client_mock_reads_llm_mock_text_string():
+    config = config_with(backend="mock")
+    config["llm_mock_text"] = "canned"
+    client = make_client(config)
+    assert client.complete("vision", MESSAGES).text == "canned"
+    assert client.complete("architect", MESSAGES).text == "canned"

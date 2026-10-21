@@ -20,6 +20,9 @@ EXPECTED_NAMES = [
     "workspace_writable",
     "workspace_outside_source",
     "originals_read_only",
+    "publish_chain",
+    "whisper_package",
+    "publish_config",
 ]
 
 
@@ -187,6 +190,93 @@ def test_all_good_prints_all_good(monkeypatch, capsys):
         "disk_usage",
         lambda path: types.SimpleNamespace(total=0, used=0, free=100 * 1024 ** 3),
     )
+    config = clean_config()
+    config["models"]["translate"] = "deepseek/deepseek-v4.1-flash"
+    config["models"]["metadata"] = "deepseek/deepseek-v4.1-flash"
+    config["channel"] = {"members": "Andrei, Mihai"}
+    patch_config(monkeypatch, config)
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
     code, out, err = run_main(capsys, [])
     assert code == 0
     assert out.rstrip().splitlines()[-1] == "all good"
+
+
+def test_publish_chain_ok_for_real_clis(capsys):
+    code, out, err = run_main(capsys, ["--json"])
+    check = find_check(json.loads(out), "publish_chain")
+    assert check["status"] == "ok"
+    assert check["detail"] == "4 publish CLIs answer --help"
+
+
+def test_publish_chain_fails_when_script_missing(monkeypatch, capsys):
+    monkeypatch.setattr(doctor, "PUBLISH_CLIS", ("scripts/does_not_exist.py",))
+    code, out, err = run_main(capsys, ["--json"])
+    summary = json.loads(out)
+    check = find_check(summary, "publish_chain")
+    assert check["status"] == "fail"
+    assert "scripts/does_not_exist.py" in check["detail"]
+    assert summary["ok"] is False
+    assert code == 1
+
+
+def test_whisper_package_warns_without_module(monkeypatch, capsys):
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: None)
+    code, out, err = run_main(capsys, ["--json"])
+    summary = json.loads(out)
+    check = find_check(summary, "whisper_package")
+    assert check["status"] == "warn"
+    assert "openai-whisper" in check["fix"]
+    assert summary["ok"] is True
+    assert code == 0
+
+
+def test_whisper_package_ok_when_found(monkeypatch, capsys):
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: object())
+    code, out, err = run_main(capsys, ["--json"])
+    check = find_check(json.loads(out), "whisper_package")
+    assert check["status"] == "ok"
+
+
+def test_publish_config_warns_listing_missing(monkeypatch, capsys):
+    patch_config(monkeypatch, clean_config())
+    code, out, err = run_main(capsys, ["--json"])
+    summary = json.loads(out)
+    check = find_check(summary, "publish_config")
+    assert check["status"] == "warn"
+    assert "models.translate" in check["detail"]
+    assert "models.metadata" in check["detail"]
+    assert "channel.members" in check["detail"]
+    assert summary["ok"] is True
+    assert code == 0
+
+
+def test_publish_config_ok_with_all_keys(monkeypatch, capsys):
+    config = clean_config()
+    config["models"]["translate"] = "deepseek/deepseek-v4.1-flash"
+    config["models"]["metadata"] = "deepseek/deepseek-v4.1-flash"
+    config["channel"] = {"members": "Andrei, Mihai"}
+    patch_config(monkeypatch, config)
+    code, out, err = run_main(capsys, ["--json"])
+    check = find_check(json.loads(out), "publish_config")
+    assert check["status"] == "ok"
+    assert check["detail"] == "publish roles and channel.members set"
+
+
+def test_publish_config_warns_on_empty_members(monkeypatch, capsys):
+    config = clean_config()
+    config["models"]["translate"] = "deepseek/deepseek-v4.1-flash"
+    config["models"]["metadata"] = "deepseek/deepseek-v4.1-flash"
+    config["channel"] = {"members": "   "}
+    patch_config(monkeypatch, config)
+    code, out, err = run_main(capsys, ["--json"])
+    check = find_check(json.loads(out), "publish_config")
+    assert check["status"] == "warn"
+    assert "channel.members" in check["detail"]
+
+
+def test_warn_alone_keeps_ok(monkeypatch, capsys):
+    monkeypatch.setattr(doctor.importlib.util, "find_spec", lambda name: None)
+    code, out, err = run_main(capsys, ["--json"])
+    summary = json.loads(out)
+    assert summary["ok"] is True
+    assert code == 0

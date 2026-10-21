@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Analyse camera motion in clips with sparse optical flow on the CPU.
 
 Usage:

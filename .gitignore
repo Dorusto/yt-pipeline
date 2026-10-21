@@ -25,6 +25,7 @@ corrections.txt
 *.heic
 *.srt
 *.html
+!assets/graphics/*.html
 *.kdenlive
 *.onnx
 *.rnnn

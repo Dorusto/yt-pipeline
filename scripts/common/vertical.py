@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Helpers for the vertical 9:16 render: crop path to ffmpeg expression, file names, frame sizes.
 
 ``scripts/reframe.py`` writes one crop path per clip (``t_s`` -> window top-left

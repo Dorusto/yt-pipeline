@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Build the edit.json ``decisions`` list: every candidate used or rejected.
 
 The directors call :func:`build_decisions` with the shotlog, the slots they
