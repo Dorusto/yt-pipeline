@@ -210,6 +210,30 @@ def test_computed_offset_missing_media_is_zero_with_warning(tmp_path, capsys):
     assert any("missing media" in warning for warning in summary["warnings"])
 
 
+def test_computed_offset_without_manifest_value_includes_container_start(tmp_path, capsys, monkeypatch):
+    starts = {
+        "camera 2026-10-17 22-25-45.mp4": 0.7,
+        "2026-10-17 22-25-44.mp4": 0.0,
+    }
+    monkeypatch.setattr(
+        rc,
+        "probe_media",
+        lambda path: (None, starts.get(Path(path).name, 0.0)),
+    )
+    sessions = [{
+        "camera": "/rec/camera 2026-10-17 22-25-45.mp4",
+        "screen": "/rec/2026-10-17 22-25-44.mp4",
+        "words": [("Bună.", 1.0, 1.4)],
+    }]
+    code, out, summary = run_case(tmp_path, capsys, sessions)
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    screen_slot, camera_slot = edit["video"]
+    assert screen_slot["id"] == camera_slot["id"] == "w001"
+    assert screen_slot["in_s"] == camera_slot["in_s"] + 1.7
+    assert screen_slot["out_s"] == camera_slot["out_s"] + 1.7
+
+
 def test_written_edit_validates_against_schema(tmp_path, capsys):
     sessions = [{"camera": "/rec/cam.mp4", "words": [("Bună.", 0.0, 0.4)]}]
     code, out, summary = run_case(tmp_path, capsys, sessions)

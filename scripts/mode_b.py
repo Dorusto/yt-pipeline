@@ -21,32 +21,31 @@ and an ``ecran/`` (or ``screen/``) folder; the flat layout keeps the camera and
 screen files directly in ``FOLDER``. A camera file is paired with the screen
 file whose name timestamp is nearest within ``pair_tolerance_s`` (default
 10 s), so the screen recording that starts a second or two before the camera
-still pairs; the measured offset is written to the manifest as
-``sync_offset_s``.
+still pairs. The camera-to-screen sync offset is computed in one place,
+``rough_cut.py`` (sound measurement when the voice tracks correlate, else the
+name timestamps plus the container start time); the manifest never carries a
+name-only ``sync_offset_s``.
 """
 
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime
 from pathlib import Path
 
 import yaml
 
+from common.media import parse_stamp, stem_timestamp, video_files
+
 TOOL = "scripts/mode_b.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CAMERA_PREFIX = "camera "
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v"}
 BACKENDS = ("whisper", "mock")
-FILENAME_TIMESTAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})")
 WORDS_SUFFIXES = ("_words.json", ".json")
-MATTE_SUFFIXES = ("-Alpha", "_matte")
 SCREEN_DIR_CANDIDATES = ("ecran", "screen")
 DEFAULT_MODE_B_CONFIG = {
     "camera_dir": "camera",
@@ -58,27 +57,6 @@ DEFAULT_MODE_B_CONFIG = {
 
 class ModeBError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
-
-
-def is_matte_export(path):
-    """Return True for a derived matte export (``*-Alpha.mov``, ``*_matte.mov``)."""
-    return path.stem.endswith(MATTE_SUFFIXES)
-
-
-def video_files(directory):
-    """Return the video files directly inside ``directory``, matte exports excluded."""
-    if directory is None or not directory.is_dir():
-        return []
-    return sorted(
-        (
-            path
-            for path in directory.iterdir()
-            if path.is_file()
-            and path.suffix.lower() in VIDEO_EXTENSIONS
-            and not is_matte_export(path)
-        ),
-        key=lambda path: path.name,
-    )
 
 
 def load_mode_b_config(path=None):
@@ -136,36 +114,23 @@ def resolve_layout(folder, config):
 def layout_camera_files(kind, camera_dir, screen_dir):
     """Return the camera files for the resolved layout."""
     if kind == "subfolder":
-        return video_files(camera_dir)
-    return [path for path in video_files(camera_dir) if path.stem.startswith(CAMERA_PREFIX)]
+        return video_files(camera_dir, exclude_matte=True)
+    return [
+        path
+        for path in video_files(camera_dir, exclude_matte=True)
+        if path.stem.startswith(CAMERA_PREFIX)
+    ]
 
 
 def layout_screen_files(kind, camera_dir, screen_dir):
     """Return the screen files for the resolved layout."""
     if kind == "subfolder":
-        return video_files(screen_dir)
-    return [path for path in video_files(screen_dir) if not path.stem.startswith(CAMERA_PREFIX)]
-
-
-def parse_stamp(stem):
-    """Return the first ``YYYY-MM-DD HH-MM-SS`` in ``stem`` as a datetime, or None."""
-    match = FILENAME_TIMESTAMP.search(stem)
-    if not match:
-        return None
-    year, month, day, hour, minute, second = (int(group) for group in match.groups())
-    try:
-        return datetime(year, month, day, hour, minute, second)
-    except ValueError:
-        return None
-
-
-def stem_timestamp(stem):
-    """Return the first ``YYYY-MM-DD HH-MM-SS`` in ``stem`` as a sortable string."""
-    match = FILENAME_TIMESTAMP.search(stem)
-    if not match:
-        return None
-    year, month, day, hour, minute, second = match.groups()
-    return f"{year}-{month}-{day} {hour}-{minute}-{second}"
+        return video_files(screen_dir, exclude_matte=True)
+    return [
+        path
+        for path in video_files(screen_dir, exclude_matte=True)
+        if not path.stem.startswith(CAMERA_PREFIX)
+    ]
 
 
 def session_sort_key(session):
@@ -269,19 +234,12 @@ def scan_sessions(folder, out_dir, warnings, config=None):
             screen = exact_screen_for(camera, screens, used, warnings)
             if screen is not None:
                 used.add(screen)
-        sync_offset_s = None
-        if screen is not None:
-            camera_stamp = parse_stamp(camera.stem)
-            screen_stamp = parse_stamp(screen.stem)
-            if camera_stamp is not None and screen_stamp is not None:
-                sync_offset_s = (camera_stamp - screen_stamp).total_seconds()
         sessions.append(
             {
                 "stem": camera.stem,
                 "camera": camera,
                 "screen": screen,
                 "words": find_words(folder, words_dir, camera.stem, config["words_dir"]),
-                "sync_offset_s": sync_offset_s,
             }
         )
     for screen in screens:
@@ -326,8 +284,6 @@ def manifest_document(sessions):
         if session["screen"] is not None:
             entry["screen"] = str(session["screen"].resolve())
         entry["words"] = str(session["words"].resolve())
-        if session.get("sync_offset_s") is not None:
-            entry["sync_offset_s"] = session["sync_offset_s"]
         entries.append(entry)
     return {"sessions": entries}
 
@@ -571,7 +527,8 @@ def build_parser():
             "with the camera and screen files directly in FOLDER. A camera file is paired with "
             "the screen file whose name timestamp is nearest within pair_tolerance_s (default "
             "10 s), so a screen recording that starts a second or two before the camera still "
-            "pairs; the measured offset is written to the manifest as sync_offset_s."
+            "pairs; rough_cut.py computes the sync offset (by sound when possible, else the "
+            "name timestamps plus the container start time)."
         ),
         epilog=(
             "examples:\n"

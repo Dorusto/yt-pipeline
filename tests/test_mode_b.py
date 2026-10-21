@@ -189,6 +189,7 @@ def test_manifest_content(tmp_path, capsys):
     assert second["camera"] == str((folder / "camera 2026-10-18 09-00-00.mp4").resolve())
     assert all(Path(entry["camera"]).is_absolute() for entry in entries)
     assert all(Path(entry["words"]).is_absolute() for entry in entries)
+    assert all("sync_offset_s" not in entry for entry in entries)
 
 
 def test_second_run_skips_everything(tmp_path, capsys):
@@ -371,7 +372,7 @@ def make_subfolders(folder, camera_dir="camera", screen_dir="ecran"):
     return folder / camera_dir, folder / screen_dir
 
 
-def test_subfolder_layout_pairs_nearest_and_writes_sync_offset(tmp_path, capsys):
+def test_subfolder_layout_pairs_nearest_without_written_offset(tmp_path, capsys):
     folder = tmp_path / "obs"
     camera_dir, screen_dir = make_subfolders(folder)
     make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
@@ -381,7 +382,7 @@ def test_subfolder_layout_pairs_nearest_and_writes_sync_offset(tmp_path, capsys)
     manifest = yaml.safe_load((folder / "mode_b" / "sessions.yaml").read_text(encoding="utf-8"))
     entry = manifest["sessions"][0]
     assert entry["screen"].endswith("2026-09-29 20-58-35.mp4")
-    assert entry["sync_offset_s"] == 2.0
+    assert "sync_offset_s" not in entry
 
 
 def test_screen_folder_accepted_when_ecran_absent(tmp_path):
@@ -575,10 +576,8 @@ def test_reference_names_pairing(tmp_path, capsys):
     assert summary["sessions"] == 31
     assert summary["pairing"] == {"paired": 27, "camera_only": 4, "screen_only": 0}
     manifest = yaml.safe_load((tmp_path / "out" / "sessions.yaml").read_text(encoding="utf-8"))
-    offsets = {
-        Path(entry["camera"]).stem: entry.get("sync_offset_s")
-        for entry in manifest["sessions"]
-    }
-    assert offsets["camera 2026-09-29 20-58-37"] == 2.0
-    assert offsets["camera 2026-10-03 21-46-01"] == 1.0
-    assert offsets["camera 2026-10-17 23-05-15"] == 1.0
+    assert all("sync_offset_s" not in entry for entry in manifest["sessions"])
+    stems = {Path(entry["camera"]).stem for entry in manifest["sessions"]}
+    assert "camera 2026-09-29 20-58-37" in stems
+    assert "camera 2026-10-03 21-46-01" in stems
+    assert "camera 2026-10-17 23-05-15" in stems

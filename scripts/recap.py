@@ -28,8 +28,8 @@ import urllib.parse
 from pathlib import Path
 
 from common import notify, versions
+from common.media import video_files
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/recap.py"
 
@@ -218,21 +218,6 @@ def is_within(path, directory):
     path = Path(path).expanduser().resolve()
     directory = Path(directory).expanduser().resolve()
     return path == directory or directory in path.parents
-
-
-def video_files(directory):
-    """Return the video files directly inside ``directory``, sorted by name."""
-    directory = Path(directory)
-    if not directory.is_dir():
-        return []
-    return sorted(
-        (
-            path
-            for path in directory.iterdir()
-            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
-        ),
-        key=lambda path: path.name,
-    )
 
 
 def load_json(path):

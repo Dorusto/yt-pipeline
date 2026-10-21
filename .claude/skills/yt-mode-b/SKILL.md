@@ -23,7 +23,7 @@ the camera on `Camera 1`, the same cuts on both, ready for a human edit.
   --review cut_review.yaml --json
 ```
 
-- `sessions.yaml` is the session manifest, validated against `schemas/sessions.schema.json`: one entry per session with `camera`, optional `screen`, `words` (the Whisper word JSON) and optional `sync_offset_s` (seconds added to a camera time to get the screen time; computed from the file name timestamps plus the container start time when omitted).
+- `sessions.yaml` is the session manifest, validated against `schemas/sessions.schema.json`: one entry per session with `camera`, optional `screen`, `words` (the Whisper word JSON) and optional `sync_offset_s` (seconds added to a camera time to get the screen time; `mode_b.py` never writes it — `rough_cut.py` computes it from the file name timestamps plus the container start time when omitted).
 - `--out` is the `edit.json` to write (atomic replace; re-running with the same inputs rewrites the same edit, only `generated_at` changes).
 - `--config` overrides the cut rules; without it the built-in defaults apply (the committed `scripts/rough_cut_config_example.yaml` ships them).
 - `--review FILE` reads the phone cut review `cut_review.yaml` (written by `serve.py` from the Cuts tab). A row with `action: keep` whose `id` matches a cut run and whose `window_in_s`/`window_out_s` overlaps that run keeps the material in: the run is not removed, the kept windows merge across it, the absorbing window's `reason` becomes `kept by review`, and the run's `decisions[]` entry becomes `status: used` / `reason: kept by review` with the absorbing window's slot id. A row with `action: cut` changes nothing (the run is cut as usual). A row whose window does not overlap any run is warned and ignored. Run ids (`c001`, `c002`, …) are assigned before the review is applied, so a keep never shifts the ids of later cuts.
@@ -138,9 +138,9 @@ station CLIs as subprocesses and imports none of them.
   starts a second or two before the camera still pairs. Pairs are assigned
   greedily one-to-one; a camera with no candidate falls back to the exact stem
   (camera stem minus the `camera ` prefix), then runs camera-only. Every screen
-  left unpaired is a warning. The measured offset is written to the manifest as
-  `sync_offset_s` (`camera_stamp - screen_stamp`), omitted when a stamp is
-  missing.
+  left unpaired is a warning. `mode_b.py` never writes `sync_offset_s`: the
+  camera-to-screen offset is computed in one place, `rough_cut.py` (see the
+  sync section above).
 - **Words lookup.** `find_words` searches `FOLDER`, then `FOLDER/<words_dir>`
   (default `json`, where the real project keeps its Whisper JSONs), then
   `<out-dir>/words`. The chain always reads `<out-dir>/words`: every session's

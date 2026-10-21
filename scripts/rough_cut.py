@@ -21,7 +21,6 @@ import argparse
 import difflib
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -34,12 +33,12 @@ import yaml
 
 from common.config import ConfigError
 from common.llm import LLMError, make_client
+from common.media import parse_stamp
 from common.schema import SchemaError, validate_or_raise
 
 TOOL = "scripts/rough_cut.py"
 SCHEMA_VERSION = "0.1"
 SENTENCE_ENDINGS = (".", "!", "?", "…")
-FILENAME_TIMESTAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})")
 RUN_PRIORITY = {"retake": 0, "filler": 1, "pause": 2, "lead-in": 3, "tail": 4}
 CUT_KINDS = ("pause", "filler", "retake")
 
@@ -213,20 +212,8 @@ def probe_media(path):
     return duration_s, start_time_s
 
 
-def filename_timestamp(path):
-    """Parse the first ``YYYY-MM-DD HH-MM-SS`` in the file stem as local naive time."""
-    match = FILENAME_TIMESTAMP.search(Path(path).stem)
-    if not match:
-        return None
-    year, month, day, hour, minute, second = (int(part) for part in match.groups())
-    try:
-        return datetime(year, month, day, hour, minute, second)
-    except ValueError:
-        return None
-
-
 def absolute_start(path, start_time_s):
-    stamp = filename_timestamp(path)
+    stamp = parse_stamp(path)
     if stamp is None:
         return None
     return stamp + timedelta(seconds=start_time_s)
