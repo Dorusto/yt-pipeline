@@ -7,6 +7,19 @@ karaoke:
   safe_zone_frac: 0.33     # caption box bottom, fraction of the frame height above the bottom
   scale_active_word: false # gentle ASS scale (106%) on the active word
 
+# Frame layout (optional; default face)
+# face  — the reframe.py face crop (today's behaviour)
+# split — stack the face region over the screen region of the same 16:9 frame
+layout: face
+
+# Split layout fractions (optional; these are the defaults)
+split:
+  face_h_frac: 0.45    # face window height as a fraction of the source height
+  face_cell_frac: 0.33 # share of the 9:16 output height for the face cell
+  screen_h_frac: 0.75  # screen window height as a fraction of the source height
+  screen_x_frac: 0.5   # screen window centre x as a fraction of the source width
+  screen_y_frac: 0.5   # screen window centre y as a fraction of the source height
+
 segments:
   - name: "Hook"
     start: "00:00:00"
@@ -17,3 +30,8 @@ segments:
     start: "00:01:02"
     end: "00:01:52"
     x_offset: 800   # manual override — skip face detection, crop from pixel 800
+
+  - name: "ScreenDemo"
+    start: "00:02:00"
+    end: "00:02:40"
+    layout: split   # per-segment override; x_offset is ignored in split layout

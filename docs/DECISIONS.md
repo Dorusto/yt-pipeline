@@ -4,6 +4,22 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] Shorts split layout: face over screen (S59 lot 3c, issue #60)
+
+**Context:** For a face-over-screen recording (a screen capture with the presenter's face in it) the 9:16 Short cropped around the face and lost the screen content. The frame holds both regions, so they can be stacked instead of cropped.
+
+**Options:**
+- A) Keep only the `reframe.py` face crop
+- B) Add a `layout: split` option that stacks a face window (following the reframe path) over a static screen window of the same 16:9 frame
+
+**Decision:** B. `shorts_generator.py` resolves the layout per segment (segment key, then candidate `layout` in `--candidates` mode, then the top-level `layout:`, then `face`); a value outside `face`/`split` is a user error. `layout: split` builds one filtergraph: `split=2[fa][sc]`, a face crop whose centre follows the reframe path (clamped inside the source frame) scaled to the face cell, a static screen crop centred at `screen_x_frac`/`screen_y_frac` scaled to the screen cell, then `vstack`. The `split:` fractions (`face_h_frac`, `face_cell_frac`, `screen_h_frac`, `screen_x_frac`, `screen_y_frac`) are config, not code. `x_offset` is ignored in split layout with a warning; a failed reframe falls back to a still crop on the source centre. The `--json` summary gains a per-short `layout`.
+
+**Why not A:** the screen content is the point of a face-over-screen recording; cropping it away loses the demo.
+
+**Consequence:** `layout: face` is byte-for-byte today's behaviour; `layout: split` renders a 608x1080 Short with the face on top and the screen below. `scripts/common/`, `schemas/`, `brand.json` and `reframe.py` are unchanged.
+
+---
+
 ## [2026-10-21] Shorts karaoke: timeline word times and the brand look (S59 lot 3b, issue #60)
 
 **Context:** `shorts_generator.py` interpolated word times evenly inside each corrected `.srt` line, so the karaoke highlight drifted from the speech on lines with pauses, and it hardcoded an Arial/white/yellow look with three words per line. The publish chain already writes a timeline `_words.json` (`subs_from_edit.py`) with real word times, and `brand.json` is the brand kit the thumbnail already reads.

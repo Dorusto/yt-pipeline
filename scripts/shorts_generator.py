@@ -33,6 +33,7 @@ from common.timeline_words import TimelineWordsError, timeline_words_from_file
 CROP_W = 608
 CROP_H = 1080
 SRC_W = 1920
+SRC_H = 1080
 REFRAME_SCRIPT = Path(__file__).resolve().parent / "reframe.py"
 
 SCRIPT_DIR = Path(__file__).parent
@@ -45,6 +46,15 @@ LINE_MAX_CHARS = 18
 CAPTION_MAX_LINES = 2
 DEFAULT_SAFE_ZONE_FRAC = 0.33
 DEFAULT_SCALE_ACTIVE_WORD = False
+
+LAYOUTS = ("face", "split")
+DEFAULT_SPLIT = {
+    "face_h_frac": 0.45,
+    "face_cell_frac": 0.33,
+    "screen_h_frac": 0.75,
+    "screen_x_frac": 0.5,
+    "screen_y_frac": 0.5,
+}
 
 YAML_TEMPLATE = """\
 video: "MyVideo.mp4"
@@ -163,6 +173,7 @@ def load_candidates_segments(path: str) -> list:
             "name": f"short{candidate['rank']}",
             "start": format_time(candidate["start_s"]),
             "end": format_time(candidate["end_s"]),
+            **({"layout": candidate["layout"]} if candidate.get("layout") else {}),
         }
         for candidate in sorted(document["candidates"], key=lambda item: item["rank"])
     ]
@@ -223,6 +234,58 @@ def crop_filter_from_path(record) -> str:
     x_expr = str(points[0]["x"]) if len(xs) == 1 else f"'{piecewise_expression(points, 'x')}'"
     y_expr = str(points[0]["y"]) if len(ys) == 1 else f"'{piecewise_expression(points, 'y')}'"
     return f"crop={crop_w}:{crop_h}:{x_expr}:{y_expr}"
+
+
+def centre_crop_record() -> dict:
+    """A still crop path record on the source centre, the split layout's fallback."""
+    return {
+        "crop_w": CROP_W,
+        "crop_h": CROP_H,
+        "points": [{"t_s": 0.0, "x": (SRC_W - CROP_W) // 2, "y": (SRC_H - CROP_H) // 2}],
+    }
+
+
+def _coord_expr(points, key):
+    """Format a crop coordinate: a bare number when constant, else a quoted expression."""
+    values = {round(float(point[key]), 3) for point in points}
+    if len(values) == 1:
+        return f"{float(points[0][key]):.2f}"
+    return f"'{piecewise_expression(points, key)}'"
+
+
+def split_filter_from_path(record, split) -> str:
+    """Build the face-over-screen vstack filtergraph for a reframe crop path record."""
+    points = simplify_points(record.get("points") or [])
+    if not points:
+        raise RuntimeError("crop path has no points")
+    face_cell_h = round(CROP_H * split["face_cell_frac"])
+    screen_cell_h = CROP_H - face_cell_h
+    face_h = round(SRC_H * split["face_h_frac"])
+    face_w = round(face_h * CROP_W / face_cell_h)
+    screen_h = round(SRC_H * split["screen_h_frac"])
+    screen_w = round(screen_h * CROP_W / screen_cell_h)
+
+    face_points = []
+    for point in points:
+        centre_x = float(point["x"]) + CROP_W / 2
+        centre_y = float(point["y"]) + CROP_H / 2
+        face_points.append({
+            "t_s": point["t_s"],
+            "x": min(max(centre_x - face_w / 2, 0), SRC_W - face_w),
+            "y": min(max(centre_y - face_h / 2, 0), SRC_H - face_h),
+        })
+    face_x = _coord_expr(face_points, "x")
+    face_y = _coord_expr(face_points, "y")
+
+    screen_x = min(max(SRC_W * split["screen_x_frac"] - screen_w / 2, 0), SRC_W - screen_w)
+    screen_y = min(max(SRC_H * split["screen_y_frac"] - screen_h / 2, 0), SRC_H - screen_h)
+
+    return (
+        f"split=2[fa][sc];"
+        f"[fa]crop={face_w}:{face_h}:{face_x}:{face_y},scale={CROP_W}:{face_cell_h}[fc];"
+        f"[sc]crop={screen_w}:{screen_h}:{screen_x:.2f}:{screen_y:.2f},scale={CROP_W}:{screen_cell_h}[sc2];"
+        f"[fc][sc2]vstack"
+    )
 
 
 def reframe_crop_path(video_path: str, start: float, end: float, out_path) -> dict:
@@ -471,6 +534,27 @@ def karaoke_settings(config: dict):
     )
 
 
+def split_settings(config: dict) -> dict:
+    """Return the ``split:`` fractions, filling missing keys with the defaults."""
+    split = config.get("split")
+    if split is None:
+        return dict(DEFAULT_SPLIT)
+    if not isinstance(split, dict):
+        raise RuntimeError(
+            "'split:' must be a mapping with face_h_frac, face_cell_frac, screen_h_frac, "
+            "screen_x_frac and screen_y_frac"
+        )
+    return {key: split.get(key, default) for key, default in DEFAULT_SPLIT.items()}
+
+
+def resolve_layout(segment: dict, config: dict) -> str:
+    """Resolve a segment's layout: segment, then top-level config, then the face default."""
+    value = segment.get("layout") or config.get("layout") or "face"
+    if value not in LAYOUTS:
+        raise RuntimeError(f"unknown layout '{value}' (expected one of: {', '.join(LAYOUTS)})")
+    return value
+
+
 def generate_karaoke_ass(
     words: list,
     output_path: str,
@@ -678,6 +762,9 @@ def main(argv=None) -> int:
         encoder = args.encoder or os.environ.get("YT_VIDEO_ENCODER") or pick_video_encoder()
         segments = load_candidates_segments(args.candidates) if args.candidates else config["segments"]
         safe_zone_frac, scale_active_word = karaoke_settings(config)
+        split = split_settings(config)
+        for segment in segments:
+            resolve_layout(segment, config)
         brand, brand_path = load_brand_kit(args.brand)
         font_dir = resolve_caption_font_dir(brand, brand_path.parent)
 
@@ -716,7 +803,24 @@ def main(argv=None) -> int:
 
         log(f"\n[{i}/{len(segments)}] {name}  ({seg['start']} → {seg['end']})")
 
-        if "x_offset" in seg:
+        layout = resolve_layout(seg, config)
+
+        if layout == "split":
+            if "x_offset" in seg:
+                log("  → [warn] x_offset ignored in split layout")
+            log("  → reframe (subject tracking, split layout)...")
+            crop_path_file = auto_dir / f"{name}_reframe.json"
+            try:
+                record = reframe_crop_path(str(video_path), start, end, crop_path_file)
+                crop_filter = split_filter_from_path(record, split)
+                log(f"     crop path → {crop_path_file.name} ({len(record['points'])} points, split)")
+                x_offset = None
+            except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+                log(f"     [warn] {exc} — using centre crop")
+                crop_filter = split_filter_from_path(centre_crop_record(), split)
+                crop_path_file = None
+                x_offset = None
+        elif "x_offset" in seg:
             x_offset = int(seg["x_offset"])
             log(f"  → manual x_offset = {x_offset}px (from config)")
             crop_filter = fixed_crop_filter(x_offset)
@@ -770,6 +874,7 @@ def main(argv=None) -> int:
             "name": name,
             "start": seg["start"],
             "end": seg["end"],
+            "layout": layout,
             "x_offset": x_offset,
             "crop_path": str(crop_path_file) if crop_path_file else None,
             "words": len(words),

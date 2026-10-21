@@ -30,6 +30,15 @@ karaoke:
   safe_zone_frac: 0.33     # caption box bottom, fraction of the frame height above the bottom
   scale_active_word: false # gentle ASS scale (106%) on the active word
 
+layout: face               # face (default) or split
+
+split:
+  face_h_frac: 0.45    # face window height as a fraction of the source height
+  face_cell_frac: 0.33 # share of the 9:16 output height for the face cell
+  screen_h_frac: 0.75  # screen window height as a fraction of the source height
+  screen_x_frac: 0.5   # screen window centre x as a fraction of the source width
+  screen_y_frac: 0.5   # screen window centre y as a fraction of the source height
+
 segments:
   - name: "Hook"
     start: "00:00:00"
@@ -38,12 +47,18 @@ segments:
     start: "00:05:06"
     end: "00:05:46"
     x_offset: 800
+  - name: "ScreenDemo"
+    start: "00:06:00"
+    end: "00:06:40"
+    layout: split
 ```
 
 - `start` and `end` are `HH:MM:SS` (seconds may have decimals). End is not checked against start.
 - `name` becomes part of file names (`Short<N>-<name>.mp4`, `auto/<name>_karaoke.ass`). Use no spaces or slashes.
-- `x_offset` is optional: pixels from the left edge of the 1920-wide frame to the left edge of the crop, from 0 to 1312. Values outside that range make ffmpeg fail. A manual offset pins a fixed crop for that segment and skips subject tracking.
+- `x_offset` is optional: pixels from the left edge of the 1920-wide frame to the left edge of the crop, from 0 to 1312. Values outside that range make ffmpeg fail. A manual offset pins a fixed crop for that segment and skips subject tracking. It is ignored (with a warning) when the segment's layout is `split`.
 - `karaoke:` is optional. `safe_zone_frac` (default 0.33) sets the caption box bottom as a fraction of the frame height above the bottom, so the caption sits above the Shorts UI; `scale_active_word` (default false) adds a gentle 106% ASS scale to the active word. A non-mapping `karaoke:` value is a user error (exit 1).
+- `layout:` is optional: `face` (default) is the `reframe.py` face crop; `split` stacks the face region over the screen region of the same 16:9 frame (for a face-over-screen recording). It can be set per segment, per candidate (`shorts_candidates.json`), or top-level as the default; the first match wins. A value outside `face`/`split` is a user error (exit 1, naming the value).
+- `split:` is optional and only used by `layout: split`. `face_h_frac`/`screen_h_frac` are the source window heights as fractions of the source height, `face_cell_frac` is the face cell's share of the 9:16 output height, and `screen_x_frac`/`screen_y_frac` are the screen window centre as fractions of the source frame. A non-mapping `split:` value is a user error.
 - `video:` and `srt:` must be filled in or the script refuses to run, but the `video:` value is not used for anything. Do not add an `audio:` key; audio is not needed, and a missing audio file triggers an interactive prompt.
 - If `scripts/shorts_config.yaml` does not exist, the first run creates a template and exits with code 0 without rendering anything. In interactive mode config validation errors also exit with code 0, so read the output instead of trusting the exit code. Run with `--yes` in an agent context: then a missing or incomplete config, or a missing input file, exits with code 1 instead of prompting.
 
@@ -72,7 +87,7 @@ Then cut the ranked candidates with `--candidates`:
   --candidates shorts_candidates.json --yes
 ```
 
-- With `--candidates`, the segments come from the file instead of `shorts_config.yaml`'s `segments:` (the tool's own pick): each candidate becomes `short<rank>` with its start/end. `video:`/`srt:` in the config are still required; `segments:` is not.
+- With `--candidates`, the segments come from the file instead of `shorts_config.yaml`'s `segments:` (the tool's own pick): each candidate becomes `short<rank>` with its start/end and its optional `layout` (`face` or `split`). `video:`/`srt:` in the config are still required; `segments:` is not.
 - **Caveat:** the candidate times are the timeline seconds of the edit they were ranked on. Run the generator against a video with that same timeline (e.g. the rendered rough cut or the FilmCraft export that kept its timing), otherwise the cuts land on the wrong moments.
 - A bad candidates file is exit 1 with `[error] …`.
 
@@ -86,7 +101,7 @@ Then cut the ranked candidates with `--candidates`:
 - `--words FILE` burns the real word times of a timeline `_words.json` (the `subs_from_edit.py` output) instead of interpolating inside the `.srt` lines. For each segment it keeps the words whose midpoint lies in `[start, end)`, shifts them to segment time, merges hyphenated fragments and applies the corrections to the text (times unchanged). Without `--words` the SRT interpolation is used.
 - `--corrections FILE` is the `wrong|correct` list applied to the `--words` text (default `scripts/corrections.txt`; a missing file falls back to `corrections_example.txt` with a warning). It has no effect on the SRT fallback, which already reads the corrected `.srt`.
 - `--brand FILE` is the brand kit (default `brand.json` at the repo root). The caption font and colours come from it; a missing file or font is a hard error.
-- `--json` prints a machine-readable summary (one line per run) and, together with `--yes`, makes the run fully non-interactive. The summary lists, per short: name, start, end, x_offset (null for a tracked crop), crop_path (the reframe JSON, null for a fixed `x_offset`), word count, `words_source` (`words.json` or `srt`), output path and the encoder actually used; at the top level `wall_time_s` and `llm_cost_usd` (always 0.0, no model calls).
+- `--json` prints a machine-readable summary (one line per run) and, together with `--yes`, makes the run fully non-interactive. The summary lists, per short: name, start, end, `layout` (`face` or `split`), x_offset (null for a tracked crop or a split layout), crop_path (the reframe JSON, null for a fixed `x_offset`), word count, `words_source` (`words.json` or `srt`), output path and the encoder actually used; at the top level `wall_time_s` and `llm_cost_usd` (always 0.0, no model calls).
 - `--encoder libx264|h264_nvenc|h264_videotoolbox` forces an encoder; the `YT_VIDEO_ENCODER` environment variable does the same.
 - `--skip-alignment` is accepted but does nothing. Do not use it.
 - Keep the video path free of `:`, `,` and `'`. The path of the generated subtitle file is passed to ffmpeg inside a `-vf` filter string, so these characters are likely to break it (inferred from the code, not tested).
@@ -98,6 +113,16 @@ Then cut the ranked candidates with `--candidates`:
 - `N cuvinte`: the number of subtitle words found for the segment. 0 means no subtitle line falls inside the segment's time range. The Short is rendered with no subtitles. Check the segment times against the `.srt`.
 - Confirm each output exists and its duration is close to end minus start: `ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 shorts/Short1-Hook.mp4`.
 - You cannot judge framing or subtitle look from the files. Ask the user to watch the Shorts.
+
+## The split layout (`layout: split`)
+
+For a face-over-screen recording (a screen capture with the presenter's face in it) the 9:16 frame stacks two crops of the same 16:9 source instead of cropping around the face:
+
+- the **face cell** (top, `face_cell_frac` of the output height) follows the `reframe.py` path: the face centre of each path point is the centre of the 608x1080 crop window, and the face window is clamped inside the source frame;
+- the **screen cell** (bottom, the rest) is a static window centred at `screen_x_frac`/`screen_y_frac` of the source frame;
+- both windows keep the cell's aspect (no distortion) and are scaled to 608 wide, then `vstack`ed.
+
+`layout: split` still runs `reframe.py`; when it fails the face cell falls back to a still crop on the source centre (with a warning). `x_offset` is ignored in split layout (with a warning). The output is still 608x1080 and the `--json` summary reports `layout: "split"`.
 
 ## How the subtitles behave
 
