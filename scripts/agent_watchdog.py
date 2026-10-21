@@ -293,7 +293,7 @@ def check_spend(daily_usd, threshold, state, today):
 def last_commit_time(repo):
     """Return when a branch last moved (epoch seconds, from the ref files), 0 when unknown.
 
-    Commit dates are backdated by project rule, so the ref files' modification
+    Commit dates can differ from the wall clock, so the ref files' modification
     time is the real signal of a new commit.
     """
     git_dir = Path(repo).expanduser() / ".git"
