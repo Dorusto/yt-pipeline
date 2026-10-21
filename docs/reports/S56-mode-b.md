@@ -1,9 +1,10 @@
-# S56 — Mode B one-command flow (lot 3)
+# S56 — first Mode B slice (lots 1-3)
 
-Draft report for Doru to confirm. Scope: `scripts/mode_b.py` runs the whole Mode B
-flow on a folder of OBS recordings in one command (transcribe what has no words
-JSON yet → `rough_cut.py` → `export_filmcraft.py`), skipping any step whose output
-already exists, plus the sprint docs.
+Draft report for Doru to confirm. Scope: talking-head + screen OBS recordings to a
+FilmCraft rough cut a human finishes — `rough_cut.py` (cut model + paired slots),
+`eval_rough_cut.py` (scored against Doru's hand edit, thresholds tuned) and
+`mode_b.py` (one command: transcribe what is missing → rough cut → export,
+skipping any step whose output already exists).
 
 ## Works
 
@@ -11,7 +12,7 @@ already exists, plus the sprint docs.
   `handle_s` each side, standalone fillers dropped, restarted sentences cut keeping
   the last take; every cut run is a rejected `decisions[]` entry and the kept
   window's `reason` names the cut before it. Verified by `tests/test_rough_cut.py`
-  (18 tests) and the reference eval below.
+  (15 tests) and the reference eval below.
 - **Paired-slot export** (`export_filmcraft.py`, lot 1): two consecutive video slots
   sharing one `id` (screen first, then camera) are placed at one shared timeline
   start, one audio clip and one marker per pair. Verified by
