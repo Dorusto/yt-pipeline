@@ -17,6 +17,7 @@ import pysubs2
 import yaml
 
 from common.ffmpeg_tools import available_video_encoders, pick_video_encoder, video_encode_args
+from common.schema import SchemaError, validate_or_raise
 
 CROP_W = 608
 CROP_H = 1080
@@ -42,7 +43,7 @@ segments:
 # Setup & validation
 # ---------------------------------------------------------------------------
 
-def load_and_validate_config(interactive: bool = True) -> dict:
+def load_and_validate_config(interactive: bool = True, require_segments: bool = True) -> dict:
     if not CONFIG_PATH.exists():
         if not interactive:
             raise RuntimeError(f"{CONFIG_PATH.name} not found; create it before running non-interactively")
@@ -58,7 +59,7 @@ def load_and_validate_config(interactive: bool = True) -> dict:
         errors.append("  - 'video:' missing or not filled in")
     if not config.get("srt") or config["srt"] == "MyVideo_corrected.srt":
         errors.append("  - 'srt:' missing or not filled in")
-    if not config.get("segments"):
+    if require_segments and not config.get("segments"):
         errors.append("  - 'segments:' missing or empty")
 
     if errors:
@@ -114,6 +115,38 @@ def find_file(base_path: Path, filename: str, subfolder: str, interactive: bool 
 def parse_time(t: str) -> float:
     h, m, s = t.split(":")
     return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def format_time(seconds: float) -> str:
+    """Render timeline seconds as ``HH:MM:SS.d``, the shape ``parse_time`` reads."""
+    total = max(0.0, float(seconds))
+    hours = int(total // 3600)
+    minutes = int((total % 3600) // 60)
+    return f"{hours:02d}:{minutes:02d}:{total % 60:04.1f}"
+
+
+def load_candidates_segments(path: str) -> list:
+    """Read a shorts_candidates.json and turn its candidates into segment dicts."""
+    try:
+        document = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise RuntimeError(f"candidates file not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"candidates file is not valid JSON: {exc}")
+    except OSError as exc:
+        raise RuntimeError(f"cannot read candidates file '{path}': {exc}")
+    try:
+        validate_or_raise(document, "shorts_candidates")
+    except SchemaError as exc:
+        raise RuntimeError(f"invalid candidates file '{path}': {exc}")
+    return [
+        {
+            "name": f"short{candidate['rank']}",
+            "start": format_time(candidate["start_s"]),
+            "end": format_time(candidate["end_s"]),
+        }
+        for candidate in sorted(document["candidates"], key=lambda item: item["rank"])
+    ]
 
 
 def fixed_crop_filter(x_offset: int) -> str:
@@ -438,6 +471,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="never prompt; fail instead when a file or config entry is missing")
     parser.add_argument("--skip-alignment", action="store_true",
                         help="Use existing _words.json instead of re-running alignment")
+    parser.add_argument("--candidates", type=str, default=None,
+                        help="shorts_candidates.json; use its candidates as the segments instead of shorts_config.yaml")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -453,7 +488,7 @@ def main(argv=None) -> int:
     log("=== Shorts Generator ===")
 
     try:
-        config = load_and_validate_config(interactive=interactive)
+        config = load_and_validate_config(interactive=interactive, require_segments=args.candidates is None)
 
         if args.video:
             video_path = Path(args.video).expanduser().resolve()
@@ -478,6 +513,7 @@ def main(argv=None) -> int:
         )
 
         encoder = args.encoder or os.environ.get("YT_VIDEO_ENCODER") or pick_video_encoder()
+        segments = load_candidates_segments(args.candidates) if args.candidates else config["segments"]
     except RuntimeError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
@@ -497,7 +533,6 @@ def main(argv=None) -> int:
     log(f"Output:  {shorts_dir}")
     log(f"Encoder: {encoder}")
 
-    segments = config["segments"]
     results = []
     for i, seg in enumerate(segments, 1):
         name = seg["name"]

@@ -5,8 +5,8 @@
 Usage:
     python3 scripts/export_filmcraft.py edit.json --out project.fcproj
         [--graphics-plan FILE] [--graphics-dir DIR] [--chapters FILE]
-        [--sequence NAME] [--width W] [--height H] [--fps N]
-        [--screen FILE ...] [--json]
+        [--shorts-candidates FILE] [--sequence NAME] [--width W] [--height H]
+        [--fps N] [--screen FILE ...] [--json]
 
 The tool writes the project JSON directly (route ``json``), using the exact
 envelope, item, track and clip shapes a real FilmCraft save produces. Camera
@@ -15,9 +15,10 @@ and screen video sit on their own tracks, each video slot's own audio on
 overlays on ``Graphics 1`` above the picture. One marker per used slot carries
 its reason (Green), replaced by a Rose marker when the slot is flagged for a
 human check, plus one Mango marker per placed overlay. ``--chapters`` adds one
-Green section marker per chapter of a ``chapters.json``. Media is referenced by
-path, never embedded; a missing file is a warning, not an error. No model is
-called, so ``llm_cost_usd`` is always 0.0.
+Green section marker per chapter of a ``chapters.json``; ``--shorts-candidates``
+adds one Mango marker per top-3 candidate of a ``shorts_candidates.json``. Media
+is referenced by path, never embedded; a missing file is a warning, not an
+error. No model is called, so ``llm_cost_usd`` is always 0.0.
 """
 
 import argparse
@@ -109,6 +110,16 @@ def load_chapters(path):
     except SchemaError as exc:
         raise ExportError(f"invalid chapters '{path}': {exc}")
     return document["chapters"]
+
+
+def load_shorts_candidates(path):
+    """Load and validate a shorts_candidates.json; return its candidate list."""
+    document = load_json(path)
+    try:
+        validate_or_raise(document, "shorts_candidates")
+    except SchemaError as exc:
+        raise ExportError(f"invalid shorts candidates '{path}': {exc}")
+    return document["candidates"]
 
 
 def slot_length(slot):
@@ -335,7 +346,7 @@ def collect_overlays(document, timeline, graphics_plan_path, graphics_dir):
     return overlays
 
 
-def build_project(document, options, chapters=None):
+def build_project(document, options, chapters=None, shorts_candidates=None):
     """Build the FilmCraft project document and return ``(project, summary)``."""
     timeline = build_timeline(document)
     sources = {source["file"]: source for source in document.get("sources") or [] if source.get("file")}
@@ -497,6 +508,17 @@ def build_project(document, options, chapters=None):
         ))
         counter += 1
 
+    shorts_placed = 0
+    for candidate in sorted(shorts_candidates or [], key=lambda item: item["rank"])[:3]:
+        markers.append(make_marker(
+            counter, seconds_to_ticks(candidate["start_s"]),
+            f"short {candidate['rank']}",
+            f"score {candidate['score']}: {candidate['reason']}",
+            MANGO,
+        ))
+        counter += 1
+        shorts_placed += 1
+
     sequence_item = make_sequence_item(
         sequence_id, options["sequence"],
         sequence_settings(options["width"], options["height"], options["fps"]),
@@ -529,6 +551,8 @@ def build_project(document, options, chapters=None):
     }
     if chapters is not None:
         markers_summary["sections"] = len(chapters)
+    if shorts_candidates is not None:
+        markers_summary["shorts"] = shorts_placed
 
     summary = {
         "sequence": options["sequence"],
@@ -573,7 +597,12 @@ def run(edit_path, out_path, options):
     document = load_edit(edit_path)
     check_out(out_path, document)
     chapters = load_chapters(options["chapters"]) if options.get("chapters") else None
-    project, summary = build_project(document, options, chapters)
+    shorts_candidates = (
+        load_shorts_candidates(options["shorts_candidates"])
+        if options.get("shorts_candidates")
+        else None
+    )
+    project, summary = build_project(document, options, chapters, shorts_candidates)
     write_project(out_path, project)
     summary["output"] = str(Path(out_path).expanduser())
     summary["wall_time_s"] = round(time.monotonic() - started, 3)
@@ -598,6 +627,7 @@ def build_parser():
     parser.add_argument("--graphics-plan", help="graphics_plan.json; approved entries are placed as overlays")
     parser.add_argument("--graphics-dir", help="folder holding <entry id>.mov rendered overlays")
     parser.add_argument("--chapters", help="chapters.json; one Green section marker per chapter")
+    parser.add_argument("--shorts-candidates", help="shorts_candidates.json; one Mango marker per top-3 candidate")
     parser.add_argument("--sequence", default=DEFAULT_SEQUENCE, help=f"sequence name (default {DEFAULT_SEQUENCE})")
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help=f"frame width (default {DEFAULT_WIDTH})")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help=f"frame height (default {DEFAULT_HEIGHT})")
@@ -618,6 +648,7 @@ def main(argv=None):
         "graphics_plan": args.graphics_plan,
         "graphics_dir": args.graphics_dir,
         "chapters": args.chapters,
+        "shorts_candidates": args.shorts_candidates,
     }
     try:
         summary = run(args.edit, args.out, options)

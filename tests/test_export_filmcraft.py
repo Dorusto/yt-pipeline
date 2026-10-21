@@ -322,6 +322,68 @@ def test_bad_chapters_is_exit_2(tmp_path, capsys):
     assert "chapters" in capsys.readouterr().err
 
 
+def write_shorts_candidates(tmp_path, candidates):
+    path = tmp_path / "shorts_candidates.json"
+    path.write_text(
+        json.dumps({
+            "schema_version": "0.1",
+            "generated_at": "2026-10-21T00:00:00+00:00",
+            "tool": "scripts/shorts_rank.py",
+            "candidates": candidates,
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+def shorts_candidate(rank, start_s, score, reason):
+    return {
+        "rank": rank,
+        "start_s": start_s,
+        "end_s": start_s + 25.0,
+        "duration_s": 25.0,
+        "score": score,
+        "hook": score,
+        "payoff": score,
+        "reason": reason,
+        "chapter_start_s": None,
+        "chapter_title": None,
+    }
+
+
+def test_shorts_candidates_place_mango_markers(tmp_path, capsys):
+    candidates = write_shorts_candidates(tmp_path, [
+        shorts_candidate(1, 1.5, 88.0, "strong hook"),
+        shorts_candidate(2, 30.0, 80.0, "clear payoff"),
+        shorts_candidate(3, 60.0, 75.0, "nice close"),
+        shorts_candidate(4, 90.0, 60.0, "ok"),
+    ])
+    rc, out, summary, err = run_export(tmp_path, capsys, extra=["--shorts-candidates", str(candidates)])
+    assert rc == 0
+    assert summary["markers"]["shorts"] == 3
+    markers = markers_of(json.loads(out.read_text(encoding="utf-8")))
+    shorts = [marker for marker in markers if marker["name"].startswith("short ")]
+    assert [marker["name"] for marker in shorts] == ["short 1", "short 2", "short 3"]
+    assert all(marker["color"] == "Mango" for marker in shorts)
+    assert shorts[0]["comment"] == "score 88.0: strong hook"
+    assert shorts[0]["start"] == int(round(1.5 * TICKS))
+    assert shorts[2]["start"] == int(round(60.0 * TICKS))
+
+
+def test_without_shorts_candidates_no_shorts_key(tmp_path, capsys):
+    rc, out, summary, err = run_export(tmp_path, capsys)
+    assert rc == 0
+    assert "shorts" not in summary["markers"]
+
+
+def test_bad_shorts_candidates_is_exit_2(tmp_path, capsys):
+    bad = tmp_path / "bad_shorts.json"
+    bad.write_text('{"candidates": []}', encoding="utf-8")
+    rc = ef.main([str(EDIT), "--out", str(tmp_path / "o.fcproj"), "--shorts-candidates", str(bad), "--json"])
+    assert rc == 2
+    assert "shorts" in capsys.readouterr().err
+
+
 def test_missing_edit_is_exit_2(tmp_path, capsys):
     rc = ef.main([str(tmp_path / "nope.json"), "--out", str(tmp_path / "o.fcproj"), "--json"])
     assert rc == 2

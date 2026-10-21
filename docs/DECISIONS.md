@@ -2127,3 +2127,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** the publish kit would ask the model for the same chapters a second time and the two answers could disagree. **Why not C:** chapter times are a content judgement, not a cut artefact.
 
 **Consequence:** `chapters.json` is the chapter source of truth from `chapters.py`; the publish kit can read it instead of asking again (a later task), and the FilmCraft project opens with the chapters as Green section markers. `schemas/` and `scripts/common/` are unchanged.
+
+---
+
+## [2026-10-21] Shorts ranking writes shorts_candidates.json (S57 lot 3)
+
+**Context:** Issue #57 lot 3 needs the best Shorts spans of a Mode B rough cut as a file `shorts_generator.py` can cut and the FilmCraft export can mark, instead of the generator's own hand-written `shorts_config.yaml` pick. A Short is a self-contained 20-60 s span that opens with a hook and ends on a payoff.
+
+**Options:** (A) let the model propose spans freely from the transcript; (B) deterministic sentence-aligned candidates (20-60 s, inside one chapter) that the model only scores on hook and payoff; (C) a pure rules score with no model.
+
+**Decision:** B. `scripts/shorts_rank.py edit.json WORDS [--chapters chapters.json] [--out shorts_candidates.json] [--json]` maps the kept words onto the edit timeline (the `chapters.py` midpoint rule; a Mode B pair is one window and its words are counted once), splits them into sentences on pauses over 0.6 s and builds candidates: for every sentence start, the longest run of consecutive sentences inside one chapter whose span is 20-60 s. One `director` pass (temperature 0.3, retry once on unparseable output) scores every candidate on `hook` and `payoff` (0-100) with a one-line reason; `score = (hook + payoff) / 2`, ranked descending with the earlier start breaking ties, and the top 5 are written to `shorts_candidates.json` (validated against `schemas/shorts_candidates.schema.json` before the atomic write). `shorts_generator.py --candidates` cuts them (each candidate becomes `short<rank>`, no `x_offset`, so the existing auto reframe runs) and `export_filmcraft.py --shorts-candidates` marks the top 3 with Mango.
+
+**Why not A:** free spans can start mid-sentence or cross a chapter boundary, and the generator needs clean cut points. **Why not C:** hook and payoff are content judgements a rule cannot make; the model only ranks spans the rules already made safe.
+
+**Consequence:** `shorts_candidates.json` is the ranked Shorts list; the generator's own `segments:` pick stays the default and the file is opt-in. The candidate times are the timeline seconds of the edit they were ranked on, so the generator must run against a video with that same timeline. `schemas/` and `scripts/common/` are unchanged.

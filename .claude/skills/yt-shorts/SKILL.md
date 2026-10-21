@@ -1,6 +1,6 @@
 ---
 name: yt-shorts
-description: Generate vertical 9:16 Shorts / Reels (608x1080) with burnt-in karaoke-style subtitles from segments of a finished 1920x1080 video and its corrected Romanian .srt. Use when the user wants to cut Shorts or Reels, make vertical clips, or turn moments of a finished video into Shorts. Trigger phrases - "generează shorts pentru clipul X", "taie Shorts din video", "fă reels verticale cu subtitrări", "generate shorts from this video". For Short titles and descriptions see the yt-transcript skill, step 5 (it asks first).
+description: Generate vertical 9:16 Shorts / Reels (608x1080) with burnt-in karaoke-style subtitles from segments of a finished 1920x1080 video and its corrected Romanian .srt. Also ranks Shorts candidates from a rough cut (`shorts_rank.py` → `shorts_candidates.json`) and cuts them with `shorts_generator.py --candidates`. Use when the user wants to cut Shorts or Reels, make vertical clips, turn moments of a finished video into Shorts, or rank the best Shorts spans of an edit. Trigger phrases - "generează shorts pentru clipul X", "taie Shorts din video", "fă reels verticale cu subtitrări", "generate shorts from this video", "care sunt cele mai bune momente de Shorts", "rankează candidații de Shorts", "rank the Shorts candidates". For Short titles and descriptions see the yt-transcript skill, step 5 (it asks first).
 compatibility: Run from the repository root. Needs ffmpeg; uses h264_nvenc with an NVIDIA GPU, h264_videotoolbox on macOS, otherwise falls back to libx264 (works on CPU). Needs the repo .venv with requirements.txt installed. torch and whisperx are no longer needed (lazy import, only for the unused forced-alignment path).
 ---
 
@@ -40,6 +40,31 @@ segments:
 - `x_offset` is optional: pixels from the left edge of the 1920-wide frame to the left edge of the crop, from 0 to 1312. Values outside that range make ffmpeg fail. A manual offset pins a fixed crop for that segment and skips subject tracking.
 - `video:` and `srt:` must be filled in or the script refuses to run, but the `video:` value is not used for anything. Do not add an `audio:` key; audio is not needed, and a missing audio file triggers an interactive prompt.
 - If `scripts/shorts_config.yaml` does not exist, the first run creates a template and exits with code 0 without rendering anything. In interactive mode config validation errors also exit with code 0, so read the output instead of trusting the exit code. Run with `--yes` in an agent context: then a missing or incomplete config, or a missing input file, exits with code 1 instead of prompting.
+
+## Ranked candidates (`shorts_rank.py`)
+
+Instead of writing the segments by hand, `scripts/shorts_rank.py` ranks Shorts candidates from a rough cut and writes `shorts_candidates.json`:
+
+```bash
+.venv/bin/python scripts/shorts_rank.py edit.json words/ --chapters chapters.json --json
+```
+
+- `edit.json` is the edit list (validated against `schemas/edit.schema.json`); `words/` is a Whisper word JSON or a folder of them (`X.json` or `X_words.json`), the same convention `chapters.py` uses.
+- The tool maps the kept words onto the timeline, splits them into sentences on pauses over 0.6 s and builds deterministic candidates: runs of consecutive sentences inside one chapter whose span is 20-60 s. One `director` model pass scores every candidate on hook and payoff; the top 5 by `(hook + payoff) / 2` are written to `shorts_candidates.json` (validated against `schemas/shorts_candidates.schema.json`).
+- `--chapters chapters.json` keeps every candidate inside one chapter and fills `chapter_start_s`/`chapter_title`; without it the whole timeline is one chapter and those fields are `null`.
+- `--out` (default `shorts_candidates.json` next to the edit) is written atomically; re-running is safe.
+- `--json` reports `outputs.candidates`, `candidates_scored`, `written`, `warnings`, `wall_time_s`, `llm_cost_usd`. Exit codes: `0`, `2` user error (missing/invalid edit or words, empty kept transcript, a slot whose word times would not map linearly, unparseable model output after one retry, a missing/invalid score row — score rows for unknown candidate ids are ignored as model noise —, LLM budget reached, invalid chapters file).
+
+Then cut the ranked candidates with `--candidates`:
+
+```bash
+.venv/bin/python scripts/shorts_generator.py --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt \
+  --candidates shorts_candidates.json --yes
+```
+
+- With `--candidates`, the segments come from the file instead of `shorts_config.yaml`'s `segments:` (the tool's own pick): each candidate becomes `short<rank>` with its start/end. `video:`/`srt:` in the config are still required; `segments:` is not.
+- **Caveat:** the candidate times are the timeline seconds of the edit they were ranked on. Run the generator against a video with that same timeline (e.g. the rendered rough cut or the FilmCraft export that kept its timing), otherwise the cuts land on the wrong moments.
+- A bad candidates file is exit 1 with `[error] …`.
 
 ## Step 2: run
 
