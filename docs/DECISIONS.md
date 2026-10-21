@@ -2021,3 +2021,15 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not split the sprint into separate PRs:** one branch and one PR keep the sprint reviewable as a whole and match the issue's plan.
 
 **Consequence:** Nothing from D3 or the rest of D6 beyond the listed scope is in this sprint; D2-20 (issue #47) stays paused.
+
+---
+
+## [2026-10-21] Publish kit instead of API upload (S51 lot 6, variant B)
+
+**Context:** YouTube locks every video uploaded through the Data API from an **unaudited** Google project as private and it cannot go public before the project passes the YouTube API audit (same for TikTok's Content Posting API); Doru changed lot 6 on 2026-10-21 accordingly.
+
+**Decision:** No `yt_upload.py`; `publish.py --kit` writes `<project>/publish-kit/` (video + RO/EN SRTs + thumbnail + `studio.md` copy-ready blocks and a Studio-order checklist) with loud checks (title 100, description 5000, EN subtitles present, thumbnail <= 2 MB and 1280x720, tags <= 500); `metadata.py` writes `metadata.json` so the kit is deterministic from the validated model JSON; the lot 5 `loudness.py --video` pass is opt-in via `--kit-loudness`.
+
+**Why not the API upload:** the audit gate above.
+
+**Consequence:** The manual upload is 3-5 minutes in Studio; the API upload can come back after a Google project audit (parked, not deleted from the plan — see the issue comment).

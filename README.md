@@ -299,6 +299,20 @@ See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured,
 
 ---
 
+## Publish kit (publish.py)
+
+`publish.py` chains the publish stations for a finished edit (subtitles → corrections → a human-review stop → EN translation → thumbnail → metadata) and, with `--kit`, builds `<project>/publish-kit/` for a manual YouTube Studio upload: the final video (optionally through the lot 5 `loudness.py` pass with `--kit-loudness`), `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. Skill: `yt-publish`.
+
+```bash
+.venv/bin/python scripts/publish.py --project out/ --context ctx.md \
+  --fcproj project.fcproj --sequence Main --words-dir words/ --resume \
+  --kit --final-video final.mp4 --kit-loudness --json
+```
+
+`--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500). There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
+
+---
+
 ## Installation
 
 ```bash

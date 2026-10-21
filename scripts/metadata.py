@@ -6,7 +6,8 @@ The tool sends the prompt in ``prompts/metadata.md`` plus the context, the
 transcript and the links to the ``metadata`` model role, then assembles the
 description deterministically: the channel-members sentence and the closing are
 fixed and never taken from the model. A human reviews the draft; nothing is
-uploaded.
+uploaded. It also writes ``metadata.json`` next to ``metadata.md`` with the
+validated fields, so the publish kit is deterministic from the model JSON.
 
 Usage:
     python3 metadata.py SRT --context CONTEXT.md [--previous-url URL] [--repo-url URL]
@@ -417,6 +418,25 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
     output_file = out_path / "metadata.md"
     output_file.write_text(
         build_markdown(output_name, fields, chapters, ro_description, en_description),
+        encoding="utf-8",
+    )
+    json_file = out_path / "metadata.json"
+    json_file.write_text(
+        json.dumps(
+            {
+                "name": output_name,
+                "titles": fields["titles"],
+                "description_ro": ro_description,
+                "description_en": en_description,
+                "chapters": chapters,
+                "tags": fields["tags"],
+                "pinned_comment": fields["pinned_comment"],
+                "thumbnail_concepts": fields["thumbnail_concepts"],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
 

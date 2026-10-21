@@ -271,6 +271,42 @@ def test_json_summary(tmp_path, monkeypatch, capsys):
     assert summary["output"].endswith("metadata.md")
 
 
+def test_metadata_json_side_output(tmp_path, monkeypatch):
+    code, out = run_main(
+        tmp_path,
+        monkeypatch,
+        FULL,
+        extra=["--previous-url", "https://prev", "--repo-url", "https://repo"],
+    )
+    assert code == 0
+    data = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert set(data) == {
+        "name",
+        "titles",
+        "description_ro",
+        "description_en",
+        "chapters",
+        "tags",
+        "pinned_comment",
+        "thumbnail_concepts",
+    }
+    assert data["name"] == "clip"
+    assert data["titles"] == FULL["titles"]
+    assert data["tags"] == FULL["tags"]
+    assert data["pinned_comment"] == FULL["pinned_comment"]
+    assert data["chapters"] == [
+        {"timestamp": "00:00:00", "title": "Intro"},
+        {"timestamp": "00:00:02", "title": "Lume"},
+    ]
+    assert data["thumbnail_concepts"][0]["source"]["timecode"] == "00:00:02"
+
+    text = out.read_text(encoding="utf-8")
+    ro_section = text.split("## Description RO\n\n", 1)[1].split("\n\n## Description EN", 1)[0]
+    en_section = text.split("## Description EN\n\n", 1)[1].split("\n\n## Chapters", 1)[0]
+    assert data["description_ro"] == ro_section
+    assert data["description_en"] == en_section
+
+
 def test_fenced_json_is_parsed(tmp_path, monkeypatch):
     srt, context = write_inputs(tmp_path)
     client = MockClient(text="```json\n" + json.dumps(FULL) + "\n```", config=CONFIG)
