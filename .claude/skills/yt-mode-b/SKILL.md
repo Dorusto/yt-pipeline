@@ -56,6 +56,9 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 ```bash
 .venv/bin/python scripts/chapters.py edit.json words/ --json
 .venv/bin/python scripts/chapters.py edit.json words/ --out chapters.json
+.venv/bin/python scripts/chapters.py --fcproj project.fcproj --sequence Main \
+  --words-dir words/ --json
+.venv/bin/python scripts/chapters.py --timeline-words edit_words.json --json
 ```
 
 `chapters.py` turns the kept transcript of an edit into topic chapters with one
@@ -64,6 +67,12 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 kit can take its chapters from this file instead of asking the model again, and
 `export_filmcraft.py --chapters` places one Green section marker per chapter.
 
+- Three mutually exclusive input modes: the rough cut (`EDIT` + `WORDS`), the
+  final FilmCraft project (`--fcproj PROJ --sequence NAME --words-dir DIR`, with
+  optional `--track`, default `Audio 1` — the same inputs as
+  `subs_from_edit.py --fcproj`), or the timeline `_words.json` that
+  `subs_from_edit.py` already writes (`--timeline-words FILE`). All three use
+  the same mapping from `scripts/common/timeline_words.py`.
 - `edit.json` is the edit list (validated against `schemas/edit.schema.json`).
 - `WORDS` is a Whisper word JSON or a folder of them; for a slot whose `clip` is
   `X.mp4` the words file is `X.json` or `X_words.json` inside that folder.
@@ -76,15 +85,16 @@ kit can take its chapters from this file instead of asking the model again, and
   0 (snapped), starts never decrease, titles are at most 40 characters and mark
   real topic changes; each chapter carries a one-line summary (at most 200
   characters). The model output is retried once when it is not parseable JSON.
-- `--out` (default `chapters.json` next to the edit) is written atomically;
-  re-running with the same inputs rewrites the same file, only `generated_at`
-  changes.
+- `--out` (default `chapters.json` next to the primary input: the edit, the
+  `--fcproj` or the `--timeline-words` file) is written atomically; re-running
+  with the same inputs rewrites the same file, only `generated_at` changes.
 - `--json` reports `outputs.chapters`, `chapters`, `words_mapped`, `warnings`,
-  `wall_time_s`, `llm_cost_usd`.
+  `wall_time_s`, `llm_cost_usd`. `warnings` is empty in the final-project and
+  timeline-words modes (there are no edit slots to skip).
 - Exit codes: `0` success, `2` user error (missing/invalid edit, no words found,
   empty kept transcript, a chapter rule violation, unparseable model output
-  after one retry, LLM budget reached). Errors print `[error] <message>` on
-  stderr and write nothing.
+  after one retry, LLM budget reached, a bad input-mode combination). Errors
+  print `[error] <message>` on stderr and write nothing.
 
 ## Eval against a hand edit (`eval_rough_cut.py`)
 

@@ -1,17 +1,28 @@
 import json
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import shorts_rank
+import subs_from_edit
 from common.schema import validate_or_raise
+from fs_probe import safe_is_dir
 
 CONFIG = {
     "models": {"director": "mock-model"},
     "llm_budget_usd": None,
     "llm_backend": "mock",
 }
+
+MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mock_llm_config.yaml"
+REFERENCE_DIR = Path("/root/media/eval/second-brain")
+REFERENCE_FCPROJ = REFERENCE_DIR / "Second Brain.fcproj"
+REFERENCE_SEQUENCE = "Second Brain - 15 min"
+REFERENCE_WORDS = REFERENCE_DIR / "json"
+REFERENCE_END_S = 866.09
+TICKS = 254016000000
 
 SHORT_SENTENCES = [(0.0, 5.0), (6.0, 11.0), (12.0, 17.0), (18.0, 23.0), (24.0, 29.0), (30.0, 35.0)]
 LONG_SENTENCES = [(index * 6.0, index * 6.0 + 5.0) for index in range(17)]
@@ -385,3 +396,183 @@ def test_invalid_chapters_exit_2(tmp_path, monkeypatch, capsys):
     code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--chapters", str(bad)])
     assert code == 2
     assert "chapters" in capsys.readouterr().err
+
+
+def write_fcproj(path, sequence, clips):
+    items = {}
+    track_items = []
+    for index, clip in enumerate(clips, 1):
+        items[str(index)] = {
+            "id": index,
+            "name": clip["name"],
+            "kind": {"Media": {"media": {"File": {"path": clip["path"]}}}},
+        }
+        track_items.append({
+            "id": 100 + index,
+            "item": index,
+            "name": clip["name"],
+            "start": int(clip["start_s"] * TICKS),
+            "duration": int(clip["duration_s"] * TICKS),
+            "source_in": int(clip["source_in_s"] * TICKS),
+            "speed": 1.0,
+            "reverse": False,
+            "enabled": True,
+        })
+    items["10"] = {
+        "id": 10,
+        "name": sequence,
+        "kind": {"Sequence": {"audio_tracks": [{"name": "Audio 1", "items": track_items}]}},
+    }
+    path.write_text(
+        json.dumps({"format": "filmcraft-project", "schema_version": 1, "project": {"items": items}}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def long_fcproj_fixture(tmp_path):
+    fcproj = write_fcproj(
+        tmp_path / "long.fcproj", "Main",
+        [{"name": "cam.mp4", "path": "/footage/cam.mp4",
+          "start_s": 0.0, "duration_s": 40.0, "source_in_s": 0.0}],
+    )
+    words_dir = tmp_path / "words"
+    write_sentence_words(words_dir / "cam.json", SHORT_SENTENCES)
+    return fcproj, words_dir
+
+
+def test_fcproj_mode_matches_subs_from_edit(tmp_path, monkeypatch, capsys):
+    fcproj, words_dir = long_fcproj_fixture(tmp_path)
+    out_dir = tmp_path / "sfe"
+    rc = subs_from_edit.main([
+        "--fcproj", str(fcproj), "--sequence", "Main",
+        "--words-dir", str(words_dir), "--out-dir", str(out_dir), "--json",
+    ])
+    assert rc == 0
+    capsys.readouterr()
+    expected = json.loads((out_dir / "Main_words.json").read_text(encoding="utf-8"))
+
+    client = AutoScoreClient()
+    patch(monkeypatch, client)
+    out = tmp_path / "shorts_candidates.json"
+    code = shorts_rank.main([
+        "--fcproj", str(fcproj), "--sequence", "Main", "--words-dir", str(words_dir),
+        "--out", str(out), "--json",
+    ])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["candidates_scored"] > 0
+    assert summary["written"] == min(5, summary["candidates_scored"])
+    assert summary["warnings"] == []
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+
+    args = shorts_rank.build_parser().parse_args([
+        "--fcproj", str(fcproj), "--sequence", "Main", "--words-dir", str(words_dir),
+    ])
+    mapped, warnings, primary = shorts_rank.resolve_inputs(args)
+    assert warnings == []
+    assert mapped == expected
+    assert primary == fcproj
+
+
+def test_timeline_words_mode_matches_fcproj(tmp_path, monkeypatch, capsys):
+    fcproj, words_dir = long_fcproj_fixture(tmp_path)
+    args = shorts_rank.build_parser().parse_args([
+        "--fcproj", str(fcproj), "--sequence", "Main", "--words-dir", str(words_dir),
+    ])
+    mapped, _, _ = shorts_rank.resolve_inputs(args)
+    timeline = tmp_path / "timeline_words.json"
+    timeline.write_text(json.dumps(mapped, ensure_ascii=False), encoding="utf-8")
+
+    client = AutoScoreClient()
+    patch(monkeypatch, client)
+    out = tmp_path / "shorts_candidates.json"
+    code = shorts_rank.main(["--timeline-words", str(timeline), "--out", str(out), "--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["candidates_scored"] > 0
+    assert summary["written"] == min(5, summary["candidates_scored"])
+    assert summary["warnings"] == []
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+
+    args = shorts_rank.build_parser().parse_args(["--timeline-words", str(timeline)])
+    mapped2, warnings2, primary = shorts_rank.resolve_inputs(args)
+    assert warnings2 == []
+    assert mapped2 == mapped
+    assert primary == timeline
+    assert shorts_rank.build_candidates(mapped2, [{"start_s": 0.0, "title": None}]) == \
+        shorts_rank.build_candidates(mapped, [{"start_s": 0.0, "title": None}])
+
+
+@pytest.mark.parametrize("argv", [
+    ["edit.json", "words", "--fcproj", "p.fcproj", "--sequence", "Main", "--words-dir", "d"],
+    ["edit.json", "words", "--timeline-words", "t.json"],
+    ["--fcproj", "p.fcproj", "--timeline-words", "t.json"],
+    ["--fcproj", "p.fcproj", "--words-dir", "d"],
+    ["--fcproj", "p.fcproj", "--sequence", "Main"],
+    ["--sequence", "Main"],
+    ["--words-dir", "d"],
+    ["--track", "Audio 1"],
+    [],
+    ["edit.json"],
+])
+def test_mode_errors_exit_2(argv, monkeypatch, capsys):
+    client = AutoScoreClient()
+    patch(monkeypatch, client)
+    code = shorts_rank.main(argv)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "[error]" in err
+    assert "Traceback" not in err
+
+
+def test_mode_error_json_reports_not_ok(capsys):
+    code = shorts_rank.main(["--json"])
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]
+
+
+def test_help_lists_three_modes():
+    text = shorts_rank.build_parser().format_help()
+    assert "rough cut" in text
+    assert "final project" in text
+    assert "timeline words" in text
+
+
+@pytest.mark.skipif(not safe_is_dir(REFERENCE_DIR), reason="reference material not present")
+def test_reference_final_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("YT_CONFIG", str(MOCK_CONFIG))
+    monkeypatch.setattr(shorts_rank, "_client", None)
+    chapters_out = tmp_path / "chapters.json"
+    chapters_out.write_text(json.dumps({
+        "schema_version": "0.1",
+        "generated_at": "2026-10-21T00:00:00+00:00",
+        "tool": "scripts/chapters.py",
+        "chapters": [{"start_s": 0.0, "title": "Intro", "summary": "Start."}],
+    }), encoding="utf-8")
+    out = tmp_path / "shorts_candidates.json"
+    code = shorts_rank.main([
+        "--fcproj", str(REFERENCE_FCPROJ), "--sequence", REFERENCE_SEQUENCE,
+        "--words-dir", str(REFERENCE_WORDS), "--chapters", str(chapters_out),
+        "--out", str(out), "--json",
+    ])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["written"] == 5
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    for candidate in document["candidates"]:
+        assert 0 <= candidate["start_s"] <= REFERENCE_END_S
+        assert 0 <= candidate["end_s"] <= REFERENCE_END_S
+        assert 20.0 <= candidate["end_s"] - candidate["start_s"] <= 60.0
+        assert candidate["chapter_start_s"] == 0.0

@@ -43,17 +43,21 @@ segments:
 
 ## Ranked candidates (`shorts_rank.py`)
 
-Instead of writing the segments by hand, `scripts/shorts_rank.py` ranks Shorts candidates from a rough cut and writes `shorts_candidates.json`:
+Instead of writing the segments by hand, `scripts/shorts_rank.py` ranks Shorts candidates from a rough cut or a final edit and writes `shorts_candidates.json`:
 
 ```bash
 .venv/bin/python scripts/shorts_rank.py edit.json words/ --chapters chapters.json --json
+.venv/bin/python scripts/shorts_rank.py --fcproj project.fcproj --sequence Main \
+  --words-dir words/ --chapters chapters.json --json
+.venv/bin/python scripts/shorts_rank.py --timeline-words edit_words.json --json
 ```
 
+- Three mutually exclusive input modes: the rough cut (`EDIT` + `WORDS`), the final FilmCraft project (`--fcproj PROJ --sequence NAME --words-dir DIR`, with optional `--track`, default `Audio 1` — the same inputs as `subs_from_edit.py --fcproj`), or the timeline `_words.json` that `subs_from_edit.py` already writes (`--timeline-words FILE`). All three use the same mapping from `scripts/common/timeline_words.py`.
 - `edit.json` is the edit list (validated against `schemas/edit.schema.json`); `words/` is a Whisper word JSON or a folder of them (`X.json` or `X_words.json`), the same convention `chapters.py` uses.
 - The tool maps the kept words onto the timeline, splits them into sentences on pauses over 0.6 s and builds deterministic candidates: runs of consecutive sentences inside one chapter whose span is 20-60 s. One `director` model pass scores every candidate on hook and payoff; the top 5 by `(hook + payoff) / 2` are written to `shorts_candidates.json` (validated against `schemas/shorts_candidates.schema.json`).
 - `--chapters chapters.json` keeps every candidate inside one chapter and fills `chapter_start_s`/`chapter_title`; without it the whole timeline is one chapter and those fields are `null`.
-- `--out` (default `shorts_candidates.json` next to the edit) is written atomically; re-running is safe.
-- `--json` reports `outputs.candidates`, `candidates_scored`, `written`, `warnings`, `wall_time_s`, `llm_cost_usd`. Exit codes: `0`, `2` user error (missing/invalid edit or words, empty kept transcript, a slot whose word times would not map linearly, unparseable model output after one retry, a missing/invalid score row — score rows for unknown candidate ids are ignored as model noise —, LLM budget reached, invalid chapters file).
+- `--out` (default `shorts_candidates.json` next to the primary input: the edit, the `--fcproj` or the `--timeline-words` file) is written atomically; re-running is safe.
+- `--json` reports `outputs.candidates`, `candidates_scored`, `written`, `warnings`, `wall_time_s`, `llm_cost_usd`. `warnings` is empty in the final-project and timeline-words modes. Exit codes: `0`, `2` user error (missing/invalid edit or words, empty kept transcript, a slot whose word times would not map linearly, unparseable model output after one retry, a missing/invalid score row — score rows for unknown candidate ids are ignored as model noise —, LLM budget reached, invalid chapters file, a bad input-mode combination).
 
 Then cut the ranked candidates with `--candidates`:
 

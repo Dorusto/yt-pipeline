@@ -1,11 +1,14 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import chapters
+import subs_from_edit
 from common.llm import MockClient
 from common.schema import validate_or_raise
+from fs_probe import safe_is_dir
 
 CONFIG = {
     "models": {"metadata": "mock-model"},
@@ -14,6 +17,15 @@ CONFIG = {
 }
 
 VALID = {"chapters": [{"start_s": 0.0, "title": "Intro", "summary": "Start."}]}
+
+FIXTURES = Path(__file__).parent / "fixtures" / "publish"
+FCPROJ = FIXTURES / "fixture.fcproj"
+MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mock_llm_config.yaml"
+REFERENCE_DIR = Path("/root/media/eval/second-brain")
+REFERENCE_FCPROJ = REFERENCE_DIR / "Second Brain.fcproj"
+REFERENCE_SEQUENCE = "Second Brain - 15 min"
+REFERENCE_WORDS = REFERENCE_DIR / "json"
+REFERENCE_END_S = 866.09
 
 
 class FakeClient:
@@ -288,3 +300,124 @@ def test_non_linear_slot_exit_2(tmp_path, monkeypatch, capsys):
     code = run_main(tmp_path, monkeypatch, client, edit, words)
     assert code == 2
     assert "middle_speed" in capsys.readouterr().err
+
+
+def fcproj_args(extra=None):
+    argv = ["--fcproj", str(FCPROJ), "--sequence", "Main", "--words-dir", str(FIXTURES)]
+    if extra:
+        argv.extend(extra)
+    return argv
+
+
+def test_fcproj_mode_matches_subs_from_edit(tmp_path, monkeypatch, capsys):
+    out_dir = tmp_path / "sfe"
+    rc = subs_from_edit.main([
+        "--fcproj", str(FCPROJ), "--sequence", "Main",
+        "--words-dir", str(FIXTURES), "--out-dir", str(out_dir), "--json",
+    ])
+    assert rc == 0
+    capsys.readouterr()
+    expected = json.loads((out_dir / "Main_words.json").read_text(encoding="utf-8"))
+
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+    out = tmp_path / "chapters.json"
+    code = chapters.main(fcproj_args(["--out", str(out), "--json"]))
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["words_mapped"] == len(expected)
+    assert summary["warnings"] == []
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "chapters")
+
+    args = chapters.build_parser().parse_args(fcproj_args())
+    mapped, warnings, primary = chapters.resolve_inputs(args)
+    assert warnings == []
+    assert mapped == expected
+    assert primary == FCPROJ
+
+
+def test_timeline_words_mode_matches_fcproj(tmp_path, monkeypatch, capsys):
+    args = chapters.build_parser().parse_args(fcproj_args())
+    mapped, _, _ = chapters.resolve_inputs(args)
+    timeline = tmp_path / "timeline_words.json"
+    timeline.write_text(json.dumps(mapped, ensure_ascii=False), encoding="utf-8")
+
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+    out = tmp_path / "chapters.json"
+    code = chapters.main(["--timeline-words", str(timeline), "--out", str(out), "--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["words_mapped"] == len(mapped)
+    assert summary["warnings"] == []
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "chapters")
+
+    args = chapters.build_parser().parse_args(["--timeline-words", str(timeline)])
+    mapped2, warnings2, primary = chapters.resolve_inputs(args)
+    assert warnings2 == []
+    assert mapped2 == mapped
+    assert primary == timeline
+    assert chapters.format_timeline(mapped2) == chapters.format_timeline(mapped)
+
+
+@pytest.mark.parametrize("argv", [
+    ["edit.json", "words", "--fcproj", "p.fcproj", "--sequence", "Main", "--words-dir", "d"],
+    ["edit.json", "words", "--timeline-words", "t.json"],
+    ["--fcproj", "p.fcproj", "--timeline-words", "t.json"],
+    ["--fcproj", "p.fcproj", "--words-dir", "d"],
+    ["--fcproj", "p.fcproj", "--sequence", "Main"],
+    ["--sequence", "Main"],
+    ["--words-dir", "d"],
+    ["--track", "Audio 1"],
+    [],
+    ["edit.json"],
+])
+def test_mode_errors_exit_2(argv, monkeypatch, capsys):
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+    code = chapters.main(argv)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "[error]" in err
+    assert "Traceback" not in err
+
+
+def test_mode_error_json_reports_not_ok(capsys):
+    code = chapters.main(["--json"])
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]
+
+
+def test_help_lists_three_modes():
+    text = chapters.build_parser().format_help()
+    assert "rough cut" in text
+    assert "final project" in text
+    assert "timeline words" in text
+
+
+@pytest.mark.skipif(not safe_is_dir(REFERENCE_DIR), reason="reference material not present")
+def test_reference_final_project(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("YT_CONFIG", str(MOCK_CONFIG))
+    monkeypatch.setattr(chapters, "_client", None)
+    out = tmp_path / "chapters.json"
+    code = chapters.main([
+        "--fcproj", str(REFERENCE_FCPROJ), "--sequence", REFERENCE_SEQUENCE,
+        "--words-dir", str(REFERENCE_WORDS), "--out", str(out), "--json",
+    ])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["words_mapped"] == 1955
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.0
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "chapters")
+    for chapter in document["chapters"]:
+        assert 0 <= chapter["start_s"] <= REFERENCE_END_S

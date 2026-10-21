@@ -5,16 +5,22 @@
 Usage:
     python3 scripts/shorts_rank.py edit.json WORDS [--chapters chapters.json]
         [--out shorts_candidates.json] [--json]
+    python3 scripts/shorts_rank.py --fcproj PROJ --sequence NAME --words-dir DIR
+        [--chapters chapters.json] [--json]
+    python3 scripts/shorts_rank.py --timeline-words FILE [--chapters chapters.json] [--json]
 
 The tool maps the per-source Whisper word JSON files onto the cuts of an
 ``edit.json`` timeline (the same midpoint rule ``chapters.py`` uses), splits the
 kept transcript into sentences on pauses over 0.6 s and builds deterministic
 candidates: runs of consecutive sentences inside one chapter whose span is
-20-60 s. One ``director`` model pass scores every candidate on hook and payoff;
-the top 5 by ``(hook + payoff) / 2`` are written to ``shorts_candidates.json``
-(validated against ``schemas/shorts_candidates.schema.json``). The file is the
-input of ``shorts_generator.py --candidates`` and the top 3 become Mango markers
-in the FilmCraft export.
+20-60 s. The same mapping is available for a final FilmCraft project
+(``--fcproj``) or for the timeline ``_words.json`` that ``subs_from_edit.py``
+already writes (``--timeline-words``). One ``director`` model pass scores every
+candidate on hook and payoff; the top 5 by ``(hook + payoff) / 2`` are written
+to ``shorts_candidates.json`` (validated against
+``schemas/shorts_candidates.schema.json``). The file is the input of
+``shorts_generator.py --candidates`` and the top 3 become Mango markers in the
+FilmCraft export.
 """
 
 import argparse
@@ -30,12 +36,27 @@ from pathlib import Path
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
+from common.timeline_words import (
+    EPSILON,
+    PAUSE_SPLIT_S,
+    TimelineWordsError,
+    build_groups,
+    build_words_map,
+    check_linear,
+    collect_words,
+    format_stamp,
+    format_timeline,
+    load_source_words,
+    map_words,
+    plan_from_fcproj,
+    slot_length,
+    timeline_words_from_file,
+    words_member,
+)
 
 TOOL = "scripts/shorts_rank.py"
 SCHEMA_VERSION = "0.1"
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "shorts_rank.md"
-PAUSE_SPLIT_S = 0.6
-EPSILON = 1e-9
 MIN_DURATION_S = 20.0
 MAX_DURATION_S = 60.0
 MAX_CANDIDATES = 60
@@ -90,165 +111,41 @@ def load_chapters(path):
     return document["chapters"]
 
 
-def slot_length(slot):
-    if slot.get("kind") == "photo":
-        return float(slot.get("duration_s") or 0.0)
-    return float(slot["out_s"]) - float(slot["in_s"])
-
-
-def build_groups(document):
-    """Group consecutive video slots sharing one id; each group is one timeline window."""
-    groups = []
-    current = None
-    for slot in document.get("video") or []:
-        kind = slot.get("kind")
-        if kind not in (None, "video", "photo"):
-            continue
-        entry = {"slot": slot, "kind": "photo" if kind == "photo" else "video"}
-        slot_id = slot.get("id")
-        if (current is not None and entry["kind"] == "video" and current["kind"] == "video"
-                and slot_id is not None and slot_id == current["slots"][0]["slot"].get("id")):
-            current["slots"].append(entry)
-        else:
-            current = {"kind": entry["kind"], "slots": [entry]}
-            groups.append(current)
-    cursor = 0.0
-    for group in groups:
-        group["start_s"] = cursor
-        group["length_s"] = slot_length(group["slots"][0]["slot"])
-        cursor += group["length_s"]
-    return groups
-
-
-def build_words_map(words_path):
-    """Return ``(stem -> path, single_file)`` for a words file or a folder of them."""
-    path = Path(words_path).expanduser()
-    if path.is_dir():
-        mapping = {}
-        for candidate in sorted(path.iterdir()):
-            if candidate.suffix != ".json" or not candidate.is_file():
-                continue
-            stem = candidate.stem
-            if stem.endswith("_words"):
-                mapping[stem[: -len("_words")]] = candidate
-            else:
-                mapping.setdefault(stem, candidate)
-        return mapping, None
-    if path.is_file():
-        stem = path.stem
-        if stem.endswith("_words"):
-            stem = stem[: -len("_words")]
-        return {stem: path}, path
-    raise ShortsRankError(f"words path not found: {path}")
-
-
-def load_source_words(path):
-    """Return ``[{word, start, end}]`` for every word of a Whisper word JSON file."""
-    data = load_json(path)
-    words = []
-    for segment in data.get("segments") or []:
-        for word in segment.get("words") or []:
-            text = str(word.get("word", "")).strip()
-            if not text:
-                continue
-            try:
-                start = float(word["start"])
-                end = float(word["end"])
-            except (KeyError, TypeError, ValueError):
-                raise ShortsRankError(f"'{path}': a word entry has no numeric start/end")
-            words.append({"word": text, "start": start, "end": end})
-    return words
-
-
-def check_linear(slot):
-    """Refuse a slot whose word times would not map linearly onto the timeline."""
-    speed = float(slot.get("speed", 1.0) or 1.0)
-    if abs(speed - 1.0) > EPSILON:
+def resolve_inputs(args):
+    """Resolve the three input modes into ``(mapped, warnings, primary_input)``."""
+    has_positionals = args.edit is not None or args.words is not None
+    has_fcproj = args.fcproj is not None
+    has_timeline = args.timeline_words is not None
+    if has_positionals and (has_fcproj or has_timeline):
         raise ShortsRankError(
-            f"slot '{slot.get('id')}' ({slot.get('clip')}): speed {speed:g} is not 1.0, "
-            "word times would not map linearly"
+            "positional EDIT/WORDS cannot be combined with --fcproj or --timeline-words"
         )
-    middle = slot.get("middle_speed")
-    if middle is not None and abs(float(middle) - 1.0) > EPSILON:
+    if has_fcproj and has_timeline:
+        raise ShortsRankError("--fcproj and --timeline-words are mutually exclusive")
+    if not has_fcproj and (args.sequence or args.words_dir or args.track is not None):
+        raise ShortsRankError("--sequence, --words-dir and --track require --fcproj")
+    if has_fcproj:
+        if not args.sequence:
+            raise ShortsRankError("--fcproj requires --sequence")
+        if not args.words_dir:
+            raise ShortsRankError("--fcproj requires --words-dir")
+        plan = plan_from_fcproj(args.fcproj, args.sequence, args.track or "Audio 1")
+        mapped, _dropped = collect_words(plan, args.words_dir)
+        return mapped, [], Path(args.fcproj)
+    if has_timeline:
+        return timeline_words_from_file(args.timeline_words), [], Path(args.timeline_words)
+    if not has_positionals:
         raise ShortsRankError(
-            f"slot '{slot.get('id')}' ({slot.get('clip')}): middle_speed {float(middle):g} "
-            "is not 1.0, word times would not map linearly"
+            "no input given: pass EDIT WORDS, --fcproj PROJ --sequence NAME --words-dir DIR "
+            "or --timeline-words FILE"
         )
-    if slot.get("reverse", False):
-        raise ShortsRankError(
-            f"slot '{slot.get('id')}' ({slot.get('clip')}): reverse playback is not supported, "
-            "word times would not map linearly"
-        )
-
-
-def words_member(group, words_map, single_file, video_group_count):
-    """Return ``(member, words_file)`` for the angle whose clip stem matches a words file."""
-    for entry in group["slots"]:
-        if entry["kind"] != "video":
-            continue
-        clip = entry["slot"].get("clip")
-        if not clip:
-            continue
-        stem = Path(clip).stem
-        if stem in words_map:
-            return entry, words_map[stem]
-    if single_file is not None and video_group_count == 1:
-        return group["slots"][0], single_file
-    return None, None
-
-
-def map_words(groups, words_map, single_file):
-    """Map every kept word onto timeline time; return ``(mapped, warnings)``."""
-    video_groups = [group for group in groups if group["kind"] == "video"]
-    mapped = []
-    warnings = []
-    for group in groups:
-        if group["kind"] != "video":
-            continue
-        for entry in group["slots"]:
-            check_linear(entry["slot"])
-        member, words_file = words_member(group, words_map, single_file, len(video_groups))
-        if member is None:
-            warnings.append(
-                f"no words file for slot '{group['slots'][0]['slot'].get('id')}', skipped"
-            )
-            continue
-        in_s = float(member["slot"]["in_s"])
-        out_s = float(member["slot"]["out_s"])
-        shift = group["start_s"] - in_s
-        for word in load_source_words(words_file):
-            midpoint = (word["start"] + word["end"]) / 2
-            if in_s <= midpoint < out_s:
-                mapped.append({
-                    "word": word["word"],
-                    "start": round(word["start"] + shift, 3),
-                    "end": round(word["end"] + shift, 3),
-                })
-    mapped.sort(key=lambda item: (item["start"], item["end"]))
-    return mapped, warnings
-
-
-def format_stamp(seconds):
-    tenths = int(round(max(0.0, float(seconds)) * 10))
-    minutes, remainder = divmod(tenths, 600)
-    return f"{minutes:02d}:{remainder / 10:04.1f}"
-
-
-def format_timeline(words):
-    """Render the kept transcript as ``[MM:SS.d] words…`` lines split on pauses."""
-    lines = []
-    current = []
-    for word in words:
-        if current and word["start"] - current[-1]["end"] > PAUSE_SPLIT_S:
-            lines.append(current)
-            current = []
-        current.append(word)
-    if current:
-        lines.append(current)
-    return "\n".join(
-        f"[{format_stamp(line[0]['start'])}] " + " ".join(item["word"] for item in line)
-        for line in lines
-    )
+    if args.edit is None or args.words is None:
+        raise ShortsRankError("both EDIT and WORDS are required")
+    document = load_edit(args.edit)
+    groups = build_groups(document)
+    words_map, single_file = build_words_map(args.words)
+    mapped, warnings = map_words(groups, words_map, single_file)
+    return mapped, warnings, Path(args.edit)
 
 
 def split_sentences(words):
@@ -444,13 +341,9 @@ def write_json(path, document):
         raise
 
 
-def run(edit_path, words_path, chapters_path=None, out_path=None, prompt_path=None):
+def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prompt_path=None):
     """Rank the Shorts candidates and return the ``--json`` summary."""
     started = time.monotonic()
-    document = load_edit(edit_path)
-    groups = build_groups(document)
-    words_map, single_file = build_words_map(words_path)
-    mapped, warnings = map_words(groups, words_map, single_file)
     if not mapped:
         raise ShortsRankError("no words mapped: the kept transcript is empty")
 
@@ -505,7 +398,7 @@ def run(edit_path, words_path, chapters_path=None, out_path=None, prompt_path=No
     out = (
         Path(out_path).expanduser()
         if out_path
-        else Path(edit_path).expanduser().parent / "shorts_candidates.json"
+        else Path(primary_input).expanduser().parent / "shorts_candidates.json"
     )
     output = {
         "schema_version": SCHEMA_VERSION,
@@ -532,23 +425,35 @@ def run(edit_path, words_path, chapters_path=None, out_path=None, prompt_path=No
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="shorts_rank.py",
-        usage="shorts_rank.py edit.json WORDS [--chapters chapters.json] [--out shorts_candidates.json] [--json]",
+        usage=(
+            "shorts_rank.py [EDIT] [WORDS] [--chapters chapters.json] "
+            "[--out shorts_candidates.json] [--prompt FILE]\n"
+            "               [--fcproj PROJ --sequence NAME [--track TRACK] --words-dir DIR]\n"
+            "               [--timeline-words FILE] [--json]"
+        ),
         description=(
             "Rank Shorts candidates from the kept transcript of an edit with one LLM pass "
             "and write shorts_candidates.json."
         ),
         epilog=(
-            "examples:\n"
-            "  python3 scripts/shorts_rank.py edit.json words/ --json\n"
-            "  python3 scripts/shorts_rank.py edit.json words/ --chapters chapters.json\n"
+            "input modes:\n"
+            "  rough cut:      shorts_rank.py edit.json words/ --json\n"
+            "  final project:  shorts_rank.py --fcproj project.fcproj --sequence Main "
+            "--words-dir words/ --json\n"
+            "  timeline words: shorts_rank.py --timeline-words edit_words.json --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("edit", help="edit.json edit list (validated against schemas/edit.schema.json)")
-    parser.add_argument("words", help="a Whisper word JSON or a folder of them (X.json or X_words.json)")
+    parser.add_argument("edit", nargs="?", help="edit.json edit list (rough-cut mode)")
+    parser.add_argument("words", nargs="?", help="a Whisper word JSON or a folder of them (rough-cut mode)")
     parser.add_argument("--chapters", default=None, help="chapters.json; every candidate stays inside one chapter")
-    parser.add_argument("--out", default=None, help="the shorts_candidates.json to write (default: next to the edit)")
+    parser.add_argument("--out", default=None, help="the shorts_candidates.json to write (default: next to the primary input)")
     parser.add_argument("--prompt", default=None, help="alternative prompt file")
+    parser.add_argument("--fcproj", default=None, help="FilmCraft project file (final-project mode)")
+    parser.add_argument("--sequence", default=None, help="name of the sequence item to use (with --fcproj)")
+    parser.add_argument("--track", default=None, help="audio track name inside the sequence (default 'Audio 1')")
+    parser.add_argument("--words-dir", default=None, help="folder with one Whisper word JSON per source clip (with --fcproj)")
+    parser.add_argument("--timeline-words", default=None, help="a timeline _words.json written by subs_from_edit.py (timeline-words mode)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -556,8 +461,9 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary = run(args.edit, args.words, args.chapters, args.out, args.prompt)
-    except (ShortsRankError, ConfigError, LLMError) as exc:
+        mapped, warnings, primary_input = resolve_inputs(args)
+        summary = run(mapped, warnings, primary_input, args.chapters, args.out, args.prompt)
+    except (ShortsRankError, ConfigError, LLMError, TimelineWordsError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
