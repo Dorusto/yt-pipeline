@@ -1,6 +1,6 @@
 ---
 name: yt-mode-b
-description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Also writes the edit's topic chapters (chapters.py, one LLM pass, chapters.json) and scores a rough cut against a hand-made FilmCraft edit of the same material (precision/recall, the sessions and sections the reference did not use, the biggest disagreements). Also runs the whole flow on a folder of OBS recordings in one command (mode_b.py transcribes what has no words JSON yet, rough-cuts it, writes chapters.json and exports the FilmCraft project). Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, write the chapters of a rough cut, run the whole Mode B flow on a folder in one command, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "fă capitolele montajului", "chapters.json", "rulează tot fluxul Mode B", "mode_b.py", "one command Mode B", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
+description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Also writes the edit's topic chapters (chapters.py, one LLM pass, chapters.json) and scores a rough cut against a hand-made FilmCraft edit of the same material (precision/recall, the sessions and sections the reference did not use, the biggest disagreements). Also runs the whole flow on a folder of OBS recordings in one command (mode_b.py transcribes what has no words JSON yet, pairs each camera file with the screen file whose name timestamp is nearest, rough-cuts it, writes chapters.json and exports the FilmCraft project). Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, write the chapters of a rough cut, run the whole Mode B flow on a folder in one command, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "fă capitolele montajului", "chapters.json", "rulează tot fluxul Mode B", "mode_b.py", "one command Mode B", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
 compatibility: Run from the repository root. Needs the repo .venv, PyYAML and ffprobe (for media duration and container start time; missing media is a warning, not an error). No model is called unless --llm is given, and --llm only proposes cuts for human approval — it never changes the edit.
 ---
 
@@ -113,26 +113,45 @@ kit can take its chapters from this file instead of asking the model again, and
 .venv/bin/python scripts/mode_b.py FOLDER --backend mock --force --json
 ```
 
-`mode_b.py` is the Mode B front door: it scans `FOLDER` for `camera ...` files
-(plus an optional sibling screen file whose stem is the camera stem without the
-`camera ` prefix), transcribes every session with no words JSON yet, writes
-`<out-dir>/sessions.yaml`, runs `rough_cut.py`, writes `<out-dir>/chapters.json`
-with `chapters.py` and exports `project.fcproj` (passing `--chapters` when the
-file exists). It chains the station CLIs as subprocesses and imports none of
-them.
+`mode_b.py` is the Mode B front door: it scans `FOLDER`, transcribes every
+session with no words JSON yet, writes `<out-dir>/sessions.yaml`, runs
+`rough_cut.py`, writes `<out-dir>/chapters.json` with `chapters.py` and exports
+`project.fcproj` (passing `--chapters` when the file exists). It chains the
+station CLIs as subprocesses and imports none of them.
 
+- **Folder layouts.** The subfolder layout has a `camera/` folder and an
+  `ecran/` (or `screen/`) folder; the flat layout keeps the camera and screen
+  files directly in `FOLDER` (camera files start with `camera `). Derived matte
+  exports (`*-Alpha.mov`, `*_matte.mov`) are never camera or screen candidates.
+- **Pairing.** A camera file pairs with the screen file whose name timestamp is
+  nearest within `pair_tolerance_s` (default 10 s), so a screen recording that
+  starts a second or two before the camera still pairs. Pairs are assigned
+  greedily one-to-one; a camera with no candidate falls back to the exact stem
+  (camera stem minus the `camera ` prefix), then runs camera-only. Every screen
+  left unpaired is a warning. The measured offset is written to the manifest as
+  `sync_offset_s` (`camera_stamp - screen_stamp`), omitted when a stamp is
+  missing.
+- **Words lookup.** `find_words` searches `FOLDER`, then `FOLDER/<words_dir>`
+  (default `json`, where the real project keeps its Whisper JSONs), then
+  `<out-dir>/words`. The chain always reads `<out-dir>/words`: every session's
+  words JSON found elsewhere is copied there (the manifest keeps the found
+  path), so `chapters.py` sees every session.
 - `--out-dir` (default `<FOLDER>/mode_b/`) holds `words/`, `sessions.yaml`,
   `edit.json`, `chapters.json`, `project.fcproj` and (with `--llm`)
   `rough_cut_proposals.json`.
 - `--backend` is passed to `transcribe.py` (`mock` for offline runs).
-- `--config` and `--llm` are passed to `rough_cut.py`.
+- `--config` carries the `mode_b:` keys (`camera_dir`, `screen_dir`,
+  `words_dir`, `pair_tolerance_s`) and is passed to `rough_cut.py`, which
+  ignores the keys it does not know. `--llm` is passed to `rough_cut.py`.
 - Skip rule: a step is skipped when its output exists (`--force` re-runs every
   step). A failing step stops the run (exit `2`) and the next run resumes at it.
 - `--json` reports `outputs` (`words_dir`, `sessions`, `edit`, `chapters`,
-  `project`), `sessions`, `transcribed`, `skipped` (`transcribe` count,
+  `project`), `sessions`, `pairing` (`paired`/`camera_only`/`screen_only`
+  counts), `transcribed`, `skipped` (`transcribe` count,
   `rough_cut`/`export` bools, `chapters` count), `warnings`, `wall_time_s`,
   `llm_cost_usd` (the rough-cut and chapters child costs added up). On success
   the last human line is `project: <path>`.
 - Exit codes: `0` success, `2` user error (missing folder, no camera files, a
-  failing step). Errors print `[error] <message>` on stderr and write nothing.
+  bad `mode_b:` config, a failing step). Errors print `[error] <message>` on
+  stderr and write nothing.
 

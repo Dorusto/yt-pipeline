@@ -1,4 +1,11 @@
 # Cut rules for scripts/rough_cut.py (Mode B rough cut).
+# mode_b.py reads the mode_b: section below; rough_cut.py ignores keys it does not know.
+mode_b:
+  camera_dir: camera        # subfolder holding the camera files (default "camera")
+  screen_dir: ecran         # subfolder holding the screen files (default: first existing of "ecran", "screen")
+  words_dir: json           # subfolder holding the Whisper JSONs (default "json")
+  pair_tolerance_s: 10.0    # a camera pairs with the screen whose name timestamp is nearest within this many seconds
+
 pause_gap_s: 0.6        # gaps between words longer than this are cut
 handle_s: 0.12          # material kept on each side of a pause cut so words are not clipped
 retake_window_s: 60.0   # a restart within this many seconds of the earlier sentence's start counts

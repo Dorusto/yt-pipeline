@@ -1,12 +1,18 @@
 import json
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 import yaml
 
 import mode_b
+from fs_probe import safe_is_dir
 
 MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mode_b" / "mock_config.yaml"
+REFERENCE_DIR = Path("/root/media/eval/second-brain")
+REFERENCE_FCPROJ = "Second Brain.fcproj"
+REFERENCE_MEDIA = re.compile(r'"([^"]+\.(?:mp4|mov|mkv|m4v))"', re.IGNORECASE)
 
 
 @pytest.fixture(autouse=True)
@@ -217,14 +223,32 @@ def test_transcribe_only_missing_words(tmp_path, capsys):
     folder.mkdir()
     make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
     make_camera(folder, "camera 2026-10-18 09-00-00.mp4")
-    make_words(folder / "camera 2026-10-17 22-25-44_words.json")
+    source = make_words(folder / "camera 2026-10-17 22-25-44_words.json")
     code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
     assert code == 0
     summary = json.loads(out)
     assert summary["transcribed"] == 1
     assert summary["skipped"]["transcribe"] == 1
-    assert not (folder / "mode_b" / "words" / "camera 2026-10-17 22-25-44_words.json").is_file()
-    assert (folder / "mode_b" / "words" / "camera 2026-10-18 09-00-00_words.json").is_file()
+    words_dir = folder / "mode_b" / "words"
+    found_copy = words_dir / "camera 2026-10-17 22-25-44_words.json"
+    assert found_copy.is_file()
+    assert (words_dir / "camera 2026-10-18 09-00-00_words.json").is_file()
+    assert found_copy.read_bytes() == source.read_bytes()
+
+
+def test_mixed_found_and_transcribed_words_all_visible(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(camera_dir, "camera 2026-09-29 21-00-00.mp4")
+    make_words(folder / "json" / "camera 2026-09-29 20-58-37.json")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert not any("no words file for slot" in warning for warning in summary["warnings"])
+    words_dir = folder / "mode_b" / "words"
+    assert (words_dir / "camera 2026-09-29 20-58-37.json").is_file()
+    assert (words_dir / "camera 2026-09-29 21-00-00_words.json").is_file()
 
 
 def test_printed_project_path(tmp_path, capsys):
@@ -339,3 +363,222 @@ def test_failing_chapters_step_exit_2(tmp_path, capsys, monkeypatch):
     assert "[error]" in err
     assert "chapters failed" in err
     assert json.loads(out)["ok"] is False
+
+
+def make_subfolders(folder, camera_dir="camera", screen_dir="ecran"):
+    (folder / camera_dir).mkdir(parents=True)
+    (folder / screen_dir).mkdir()
+    return folder / camera_dir, folder / screen_dir
+
+
+def test_subfolder_layout_pairs_nearest_and_writes_sync_offset(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(screen_dir, "2026-09-29 20-58-35.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    manifest = yaml.safe_load((folder / "mode_b" / "sessions.yaml").read_text(encoding="utf-8"))
+    entry = manifest["sessions"][0]
+    assert entry["screen"].endswith("2026-09-29 20-58-35.mp4")
+    assert entry["sync_offset_s"] == 2.0
+
+
+def test_screen_folder_accepted_when_ecran_absent(tmp_path):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder, screen_dir="screen")
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(screen_dir, "2026-09-29 20-58-35.mp4")
+    warnings = []
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", warnings)
+    assert sessions[0]["screen"].name == "2026-09-29 20-58-35.mp4"
+    assert warnings == []
+
+
+def test_subfolder_camera_without_screen_is_camera_only(tmp_path):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    warnings = []
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", warnings)
+    assert sessions[0]["screen"] is None
+    assert warnings == []
+
+
+def test_orphan_screen_warns_and_is_not_a_session(tmp_path):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(screen_dir, "2026-09-29 21-30-00.mp4")
+    warnings = []
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", warnings)
+    assert len(sessions) == 1
+    assert sessions[0]["screen"] is None
+    assert any("unpaired screen file" in warning for warning in warnings)
+
+
+def test_greedy_one_to_one_nearest_takes_the_screen(tmp_path):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(camera_dir, "camera 2026-09-29 20-58-40.mp4")
+    make_camera(screen_dir, "2026-09-29 20-58-35.mp4")
+    warnings = []
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", warnings)
+    by_stem = {session["stem"]: session for session in sessions}
+    assert by_stem["camera 2026-09-29 20-58-37"]["screen"] is not None
+    assert by_stem["camera 2026-09-29 20-58-40"]["screen"] is None
+
+
+def test_config_changes_folder_names_and_tolerance(tmp_path):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder, camera_dir="cam", screen_dir="scr")
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(screen_dir, "2026-09-29 20-58-22.mp4")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"mode_b": {"camera_dir": "cam", "screen_dir": "scr", "pair_tolerance_s": 10.0}}
+        ),
+        encoding="utf-8",
+    )
+    sessions = mode_b.scan_sessions(
+        folder, tmp_path / "out", [], mode_b.load_mode_b_config(config_path)
+    )
+    assert sessions[0]["screen"] is None
+    config_path.write_text(
+        yaml.safe_dump(
+            {"mode_b": {"camera_dir": "cam", "screen_dir": "scr", "pair_tolerance_s": 20.0}}
+        ),
+        encoding="utf-8",
+    )
+    sessions = mode_b.scan_sessions(
+        folder, tmp_path / "out", [], mode_b.load_mode_b_config(config_path)
+    )
+    assert sessions[0]["screen"] is not None
+
+
+def test_non_mapping_mode_b_config_is_user_error(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump({"mode_b": "camera"}), encoding="utf-8")
+    code, out, err = run_main(
+        [str(folder), "--backend", "mock", "--config", str(config_path), "--json"], capsys
+    )
+    assert code == 2
+    assert "mode_b must be a mapping" in err
+
+
+def test_words_in_json_subfolder_skip_transcribe(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_words(folder / "json" / "camera 2026-09-29 20-58-37.json")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["transcribed"] == 0
+    assert summary["skipped"]["transcribe"] == 1
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["skipped"]["transcribe"] == 1
+
+
+def test_matte_exports_are_never_sessions(tmp_path):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37-Claude-RVM-Alpha.mov")
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37_matte.mov")
+    sessions = mode_b.scan_sessions(folder, tmp_path / "out", [])
+    assert [session["stem"] for session in sessions] == ["camera 2026-09-29 20-58-37"]
+
+
+def test_json_reports_pairing_counts(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    make_camera(camera_dir, "camera 2026-09-29 20-58-37.mp4")
+    make_camera(camera_dir, "camera 2026-09-29 21-00-00.mp4")
+    make_camera(screen_dir, "2026-09-29 20-58-35.mp4")
+    make_camera(screen_dir, "2026-09-29 22-00-00.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["pairing"] == {"paired": 1, "camera_only": 1, "screen_only": 1}
+
+
+def test_fixture_40_camera_32_screen(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    camera_dir, screen_dir = make_subfolders(folder)
+    base = datetime(2026, 9, 29, 20, 0, 0)
+    for index in range(40):
+        stamp = base + timedelta(minutes=index)
+        make_camera(camera_dir, f"camera {stamp:%Y-%m-%d %H-%M-%S}.mp4")
+    for index in range(31):
+        stamp = base + timedelta(minutes=index, seconds=-1)
+        make_camera(screen_dir, f"{stamp:%Y-%m-%d %H-%M-%S}.mp4")
+    orphan = base + timedelta(minutes=100)
+    make_camera(screen_dir, f"{orphan:%Y-%m-%d %H-%M-%S}.mp4")
+    code, out, err = run_main([str(folder), "--backend", "mock", "--json"], capsys)
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["sessions"] == 40
+    assert summary["pairing"] == {"paired": 31, "camera_only": 9, "screen_only": 1}
+    assert any("unpaired screen file" in warning for warning in summary["warnings"])
+
+
+def reference_camera_stems():
+    json_dir = REFERENCE_DIR / "json"
+    return sorted(
+        path.stem
+        for path in json_dir.glob("*.json")
+        if not path.name.startswith("_")
+    )
+
+
+def reference_screen_names():
+    text = (REFERENCE_DIR / REFERENCE_FCPROJ).read_text(encoding="utf-8")
+    names = set()
+    for match in REFERENCE_MEDIA.finditer(text):
+        name = Path(match.group(1)).name
+        if not name.startswith("camera "):
+            names.add(name)
+    return sorted(names)
+
+
+@pytest.mark.skipif(not safe_is_dir(REFERENCE_DIR), reason="reference recordings not present")
+def test_reference_names_pairing(tmp_path, capsys):
+    folder = tmp_path / "second-brain"
+    camera_dir, screen_dir = make_subfolders(folder)
+    for stem in reference_camera_stems():
+        (camera_dir / f"{stem}.mp4").write_bytes(b"")
+    for name in reference_screen_names():
+        (screen_dir / name).write_bytes(b"")
+    code, out, err = run_main(
+        [
+            str(folder),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--backend",
+            "mock",
+            "--config",
+            str(MOCK_CONFIG),
+            "--json",
+        ],
+        capsys,
+    )
+    assert code == 0
+    summary = json.loads(out)
+    assert summary["sessions"] == 31
+    assert summary["pairing"] == {"paired": 27, "camera_only": 4, "screen_only": 0}
+    manifest = yaml.safe_load((tmp_path / "out" / "sessions.yaml").read_text(encoding="utf-8"))
+    offsets = {
+        Path(entry["camera"]).stem: entry.get("sync_offset_s")
+        for entry in manifest["sessions"]
+    }
+    assert offsets["camera 2026-09-29 20-58-37"] == 2.0
+    assert offsets["camera 2026-10-03 21-46-01"] == 1.0
+    assert offsets["camera 2026-10-17 23-05-15"] == 1.0

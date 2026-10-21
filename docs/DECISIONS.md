@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] Mode B real folder layout and nearest-timestamp pairing
+
+**Context:** The Second Brain recordings live in a `camera/` + `ecran/` folder pair, not the flat folder `mode_b.py` assumed, and the OBS screen recording starts 1-2 s before the camera, so exact name matching pairs only 24 of the 31 sessions. The Whisper JSONs sit in a `json/` subfolder.
+
+**Options:**
+- A) Keep the flat layout and require the user to rename files so the stems match exactly
+- B) Accept both layouts and pair by the nearest name timestamp within a tolerance, falling back to the exact stem
+
+**Decision:** B — detect the subfolder layout (`camera/` plus `ecran/` or `screen/`, names configurable under `mode_b:`), pair each camera with the screen whose parsed name timestamp is nearest within `pair_tolerance_s` (default 10 s) assigned greedily one-to-one, fall back to the exact stem, and write the measured `camera_stamp - screen_stamp` to the manifest as `sync_offset_s`. Unpaired cameras run camera-only; unpaired screens are warnings. `find_words` also searches `FOLDER/<words_dir>` (default `json`).
+
+**Why not:** A) forces manual renames on every recording and loses the real offset; the schema already carries `sync_offset_s`, so the measured value belongs in the manifest.
+
+**Consequence:** `mode_b.py` reads a `mode_b:` mapping from the same YAML it passes to `rough_cut.py` (which ignores unknown keys); the `--json` summary gains a `pairing` object. Words found outside `<out-dir>/words` are copied into it (the manifest keeps the found path), so `chapters.py` sees every session. No schema change. The reference check pairs 27 of 31 sessions (the old exact-name rule paired 24).
+
 ## [2026-06-18] WhisperX forced alignment instead of re-running Whisper
 
 **Context:** `shorts_generator.py` was running Whisper a second time on the audio segment for word timestamps, independently of the first SRT-generating run.

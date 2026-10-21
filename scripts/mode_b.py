@@ -7,25 +7,34 @@ Usage:
         [--config FILE] [--llm] [--force] [--json]
 
 ``mode_b.py`` is the single entry point for the Mode B flow: it scans a folder
-of OBS recordings (a ``camera ...`` file plus an optional sibling screen file),
-transcribes every session that has no words JSON yet, writes the sessions
-manifest, runs ``rough_cut.py``, writes ``chapters.json`` with
+of OBS recordings, transcribes every session that has no words JSON yet, writes
+the sessions manifest, runs ``rough_cut.py``, writes ``chapters.json`` with
 ``chapters.py`` and exports the result with ``export_filmcraft.py``. It chains
 the station CLIs as subprocesses and imports none of them. Every step is
 skipped when its output already exists (``--force`` re-runs everything); a
 failing step stops the run and the next run resumes at it. Originals are
 read-only; everything is written under ``--out-dir`` (default
 ``<FOLDER>/mode_b/``).
+
+Two folder layouts are accepted. The subfolder layout has a ``camera/`` folder
+and an ``ecran/`` (or ``screen/``) folder; the flat layout keeps the camera and
+screen files directly in ``FOLDER``. A camera file is paired with the screen
+file whose name timestamp is nearest within ``pair_tolerance_s`` (default
+10 s), so the screen recording that starts a second or two before the camera
+still pairs; the measured offset is written to the manifest as
+``sync_offset_s``.
 """
 
 import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -37,56 +46,117 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v"}
 BACKENDS = ("whisper", "mock")
 FILENAME_TIMESTAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})")
 WORDS_SUFFIXES = ("_words.json", ".json")
+MATTE_SUFFIXES = ("-Alpha", "_matte")
+SCREEN_DIR_CANDIDATES = ("ecran", "screen")
+DEFAULT_MODE_B_CONFIG = {
+    "camera_dir": "camera",
+    "screen_dir": None,
+    "words_dir": "json",
+    "pair_tolerance_s": 10.0,
+}
 
 
 class ModeBError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
 
 
-def camera_files(folder):
-    """Return the camera files directly inside ``folder``, sorted by name."""
+def is_matte_export(path):
+    """Return True for a derived matte export (``*-Alpha.mov``, ``*_matte.mov``)."""
+    return path.stem.endswith(MATTE_SUFFIXES)
+
+
+def video_files(directory):
+    """Return the video files directly inside ``directory``, matte exports excluded."""
+    if directory is None or not directory.is_dir():
+        return []
     return sorted(
         (
             path
-            for path in folder.iterdir()
+            for path in directory.iterdir()
             if path.is_file()
-            and path.stem.startswith(CAMERA_PREFIX)
             and path.suffix.lower() in VIDEO_EXTENSIONS
+            and not is_matte_export(path)
         ),
         key=lambda path: path.name,
     )
 
 
-def screen_for(camera, folder, warnings):
-    """Return the sibling screen file for ``camera``, or None when there is none."""
-    screen_stem = camera.stem[len(CAMERA_PREFIX):]
-    matches = sorted(
-        (
-            path
-            for path in folder.iterdir()
-            if path.is_file()
-            and path.stem == screen_stem
-            and path.suffix.lower() in VIDEO_EXTENSIONS
-        ),
-        key=lambda path: path.name,
-    )
-    if not matches:
+def load_mode_b_config(path=None):
+    """Return the ``mode_b:`` settings from the config YAML, or the defaults."""
+    config = dict(DEFAULT_MODE_B_CONFIG)
+    if path is None:
+        return config
+    path = Path(path)
+    if not path.is_file():
+        raise ModeBError(f"config not found: {path}")
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ModeBError(f"config '{path}': {exc}") from exc
+    if data is None:
+        return config
+    if not isinstance(data, dict):
+        raise ModeBError(f"config '{path}': root must be a mapping")
+    section = data.get("mode_b")
+    if section is None:
+        return config
+    if not isinstance(section, dict):
+        raise ModeBError(f"config '{path}': mode_b must be a mapping")
+    for key in ("camera_dir", "screen_dir", "words_dir"):
+        if key in section:
+            value = section[key]
+            if not isinstance(value, str) or not value:
+                raise ModeBError(f"config '{path}': mode_b.{key} must be a non-empty string")
+            config[key] = value
+    if "pair_tolerance_s" in section:
+        value = section["pair_tolerance_s"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ModeBError(
+                f"config '{path}': mode_b.pair_tolerance_s must be a non-negative number"
+            )
+        config["pair_tolerance_s"] = float(value)
+    return config
+
+
+def resolve_layout(folder, config):
+    """Return ``(kind, camera_dir, screen_dir)`` for the folder layout."""
+    camera_dir = folder / config["camera_dir"]
+    if camera_dir.is_dir():
+        screen_name = config["screen_dir"]
+        if screen_name is None:
+            for candidate in SCREEN_DIR_CANDIDATES:
+                if (folder / candidate).is_dir():
+                    screen_name = candidate
+                    break
+        screen_dir = folder / screen_name if screen_name else None
+        return "subfolder", camera_dir, screen_dir
+    return "flat", folder, folder
+
+
+def layout_camera_files(kind, camera_dir, screen_dir):
+    """Return the camera files for the resolved layout."""
+    if kind == "subfolder":
+        return video_files(camera_dir)
+    return [path for path in video_files(camera_dir) if path.stem.startswith(CAMERA_PREFIX)]
+
+
+def layout_screen_files(kind, camera_dir, screen_dir):
+    """Return the screen files for the resolved layout."""
+    if kind == "subfolder":
+        return video_files(screen_dir)
+    return [path for path in video_files(screen_dir) if not path.stem.startswith(CAMERA_PREFIX)]
+
+
+def parse_stamp(stem):
+    """Return the first ``YYYY-MM-DD HH-MM-SS`` in ``stem`` as a datetime, or None."""
+    match = FILENAME_TIMESTAMP.search(stem)
+    if not match:
         return None
-    if len(matches) > 1:
-        warnings.append(
-            f"several screen files match '{camera.name}': using '{matches[0].name}'"
-        )
-    return matches[0]
-
-
-def find_words(folder, words_dir, stem):
-    """Return the session's words JSON from the folder or the words dir, or None."""
-    for directory in (folder, words_dir):
-        for suffix in WORDS_SUFFIXES:
-            candidate = directory / f"{stem}{suffix}"
-            if candidate.is_file():
-                return candidate
-    return None
+    year, month, day, hour, minute, second = (int(group) for group in match.groups())
+    try:
+        return datetime(year, month, day, hour, minute, second)
+    except ValueError:
+        return None
 
 
 def stem_timestamp(stem):
@@ -106,22 +176,146 @@ def session_sort_key(session):
     return (0, stamp, session["stem"])
 
 
-def scan_sessions(folder, out_dir, warnings):
-    """Return the sessions in the folder: camera, optional screen and words JSON."""
+def pair_screens(camera_files, screen_files, tolerance, warnings):
+    """Pair cameras with the nearest screen by name timestamp; return ``(pairs, used)``."""
+    camera_stamps = {camera: parse_stamp(camera.stem) for camera in camera_files}
+    screen_stamps = {screen: parse_stamp(screen.stem) for screen in screen_files}
+    candidates = []
+    for camera in camera_files:
+        camera_stamp = camera_stamps[camera]
+        if camera_stamp is None:
+            continue
+        for screen in screen_files:
+            screen_stamp = screen_stamps[screen]
+            if screen_stamp is None:
+                continue
+            delta = abs((camera_stamp - screen_stamp).total_seconds())
+            if delta <= tolerance:
+                candidates.append(
+                    (delta, camera_stamp, screen_stamp, camera.name, screen.name, camera, screen)
+                )
+    candidates.sort(key=lambda item: item[:5])
+    pairs = {}
+    used = set()
+    for _, _, _, _, _, camera, screen in candidates:
+        if camera in pairs or screen in used:
+            continue
+        pairs[camera] = screen
+        used.add(screen)
+    for camera, screen in pairs.items():
+        camera_stamp = camera_stamps[camera]
+        deltas = sorted(
+            abs((camera_stamp - screen_stamps[other]).total_seconds())
+            for other in screen_files
+            if screen_stamps[other] is not None
+            and abs((camera_stamp - screen_stamps[other]).total_seconds()) <= tolerance
+        )
+        if len(deltas) > 1 and deltas[0] == deltas[1]:
+            warnings.append(
+                f"several screen files match '{camera.name}': using '{screen.name}'"
+            )
+    return pairs, used
+
+
+def exact_screen_for(camera, screen_files, used, warnings):
+    """Return the screen whose stem equals the camera stem minus the prefix, or None."""
+    if camera.stem.startswith(CAMERA_PREFIX):
+        screen_stem = camera.stem[len(CAMERA_PREFIX):]
+    else:
+        screen_stem = camera.stem
+    matches = sorted(
+        (
+            screen
+            for screen in screen_files
+            if screen not in used and screen.stem == screen_stem
+        ),
+        key=lambda path: path.name,
+    )
+    if not matches:
+        return None
+    if len(matches) > 1:
+        warnings.append(
+            f"several screen files match '{camera.name}': using '{matches[0].name}'"
+        )
+    return matches[0]
+
+
+def find_words(folder, words_dir, stem, words_subdir="json"):
+    """Return the session's words JSON from the folder, its words dir or the out dir."""
+    directories = [folder]
+    if words_subdir:
+        directories.append(folder / words_subdir)
+    directories.append(words_dir)
+    for directory in directories:
+        for suffix in WORDS_SUFFIXES:
+            candidate = directory / f"{stem}{suffix}"
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def scan_sessions(folder, out_dir, warnings, config=None):
+    """Return the sessions in the folder: camera, optional screen, words and offset."""
+    config = config or dict(DEFAULT_MODE_B_CONFIG)
+    kind, camera_dir, screen_dir = resolve_layout(folder, config)
+    cameras = layout_camera_files(kind, camera_dir, screen_dir)
+    screens = layout_screen_files(kind, camera_dir, screen_dir)
+    pairs, used = pair_screens(cameras, screens, config["pair_tolerance_s"], warnings)
     words_dir = out_dir / "words"
     sessions = []
-    for camera in camera_files(folder):
-        stem = camera.stem
+    for camera in cameras:
+        screen = pairs.get(camera)
+        if screen is None:
+            screen = exact_screen_for(camera, screens, used, warnings)
+            if screen is not None:
+                used.add(screen)
+        sync_offset_s = None
+        if screen is not None:
+            camera_stamp = parse_stamp(camera.stem)
+            screen_stamp = parse_stamp(screen.stem)
+            if camera_stamp is not None and screen_stamp is not None:
+                sync_offset_s = (camera_stamp - screen_stamp).total_seconds()
         sessions.append(
             {
-                "stem": stem,
+                "stem": camera.stem,
                 "camera": camera,
-                "screen": screen_for(camera, folder, warnings),
-                "words": find_words(folder, words_dir, stem),
+                "screen": screen,
+                "words": find_words(folder, words_dir, camera.stem, config["words_dir"]),
+                "sync_offset_s": sync_offset_s,
             }
         )
+    for screen in screens:
+        if screen not in used:
+            warnings.append(f"unpaired screen file: '{screen.name}'")
     sessions.sort(key=session_sort_key)
     return sessions
+
+
+def pairing_summary(sessions, folder, config):
+    """Return the pairing counts after the scan."""
+    kind, camera_dir, screen_dir = resolve_layout(folder, config)
+    screens = layout_screen_files(kind, camera_dir, screen_dir)
+    paired_screens = {
+        session["screen"] for session in sessions if session["screen"] is not None
+    }
+    return {
+        "paired": sum(1 for session in sessions if session["screen"] is not None),
+        "camera_only": sum(1 for session in sessions if session["screen"] is None),
+        "screen_only": sum(1 for screen in screens if screen not in paired_screens),
+    }
+
+
+def consolidate_words(sessions, words_dir):
+    """Copy every session's words JSON into ``words_dir`` when it lives elsewhere."""
+    for session in sessions:
+        source = session["words"]
+        if source is None or source.parent == words_dir:
+            continue
+        stem = session["stem"]
+        if any((words_dir / f"{stem}{suffix}").is_file() for suffix in WORDS_SUFFIXES):
+            continue
+        words_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, words_dir / source.name)
 
 
 def manifest_document(sessions):
@@ -132,6 +326,8 @@ def manifest_document(sessions):
         if session["screen"] is not None:
             entry["screen"] = str(session["screen"].resolve())
         entry["words"] = str(session["words"].resolve())
+        if session.get("sync_offset_s") is not None:
+            entry["sync_offset_s"] = session["sync_offset_s"]
         entries.append(entry)
     return {"sessions": entries}
 
@@ -257,11 +453,13 @@ def chapters_command(edit_path, words_dir, chapters_path):
     ]
 
 
-def run(folder, out_dir, backend, config, use_llm, force):
+def run(folder, out_dir, backend, config, use_llm, force, mode_b_config=None):
     """Run the Mode B chain and return the ``--json`` summary object."""
     started = time.monotonic()
     warnings = []
-    sessions = scan_sessions(folder, out_dir, warnings)
+    mode_b_config = mode_b_config or dict(DEFAULT_MODE_B_CONFIG)
+    sessions = scan_sessions(folder, out_dir, warnings, mode_b_config)
+    pairing = pairing_summary(sessions, folder, mode_b_config)
     words_dir = out_dir / "words"
     transcribed = 0
     skipped_transcribe = 0
@@ -275,6 +473,8 @@ def run(folder, out_dir, backend, config, use_llm, force):
             transcribed += 1
         else:
             skipped_transcribe += 1
+
+    consolidate_words(sessions, words_dir)
 
     sessions_path = out_dir / "sessions.yaml"
     write_manifest(sessions_path, sessions)
@@ -333,6 +533,7 @@ def run(folder, out_dir, backend, config, use_llm, force):
             "project": str(project_path),
         },
         "sessions": len(sessions),
+        "pairing": pairing,
         "transcribed": transcribed,
         "skipped": {
             "transcribe": skipped_transcribe,
@@ -365,16 +566,28 @@ def build_parser():
         ),
         description=(
             "Run the whole Mode B flow on a folder of OBS recordings: transcribe what has no "
-            "words JSON yet, rough-cut it and export a FilmCraft project."
+            "words JSON yet, rough-cut it and export a FilmCraft project. Two layouts are "
+            "accepted: a camera/ folder plus an ecran/ (or screen/) folder, or the flat layout "
+            "with the camera and screen files directly in FOLDER. A camera file is paired with "
+            "the screen file whose name timestamp is nearest within pair_tolerance_s (default "
+            "10 s), so a screen recording that starts a second or two before the camera still "
+            "pairs; the measured offset is written to the manifest as sync_offset_s."
         ),
         epilog=(
             "examples:\n"
             "  python3 scripts/mode_b.py ~/media/obs --json\n"
             "  python3 scripts/mode_b.py ~/media/obs --backend mock --force --json\n"
+            "  python3 scripts/mode_b.py ~/media/second-brain --config config.yaml --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("folder", help="folder with the OBS recordings (camera + optional screen files)")
+    parser.add_argument(
+        "folder",
+        help=(
+            "folder with the OBS recordings: a camera/ folder plus an ecran/ (or screen/) "
+            "folder, or the flat layout with the camera and screen files directly inside"
+        ),
+    )
     parser.add_argument("--out-dir", default=None, help="output folder (default: <FOLDER>/mode_b)")
     parser.add_argument(
         "--backend",
@@ -382,7 +595,11 @@ def build_parser():
         metavar="{whisper,mock}",
         help="transcribe.py backend: whisper (real model) or mock (deterministic, offline); default: whisper",
     )
-    parser.add_argument("--config", default=None, help="cut-rules YAML passed to rough_cut.py")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="YAML with the mode_b: folder/pairing keys and the cut rules passed to rough_cut.py",
+    )
     parser.add_argument("--llm", action="store_true", help="propose extra cuts in rough_cut.py (never applied)")
     parser.add_argument("--force", action="store_true", help="re-run every step even when its output exists")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -397,13 +614,15 @@ def main(argv=None):
             raise ModeBError(f"folder not found: {folder}")
         if not folder.is_dir():
             raise ModeBError(f"not a folder: {folder}")
-        if not camera_files(folder):
+        config = Path(args.config).expanduser() if args.config else None
+        mode_b_config = load_mode_b_config(config)
+        kind, camera_dir, screen_dir = resolve_layout(folder, mode_b_config)
+        if not layout_camera_files(kind, camera_dir, screen_dir):
             raise ModeBError(f"no camera files in {folder}")
         out_dir = (
             Path(args.out_dir).expanduser().resolve() if args.out_dir else folder / "mode_b"
         )
-        config = Path(args.config).expanduser() if args.config else None
-        summary = run(folder, out_dir, args.backend, config, args.llm, args.force)
+        summary = run(folder, out_dir, args.backend, config, args.llm, args.force, mode_b_config)
     except ModeBError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
