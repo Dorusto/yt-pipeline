@@ -97,7 +97,7 @@ ARTIFACT_LABELS = (
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
-TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"))
+TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 DEFAULT_XFADE_S = 0.3
@@ -128,6 +128,11 @@ SHOT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,63}$")
 EXPECTATION_KINDS = ("must_include", "wrong_label")
 NOTE_MAX_CHARS = 200
 EXPECTATIONS_FILE = "expectations.yaml"
+CUT_REVIEW_FILE = "cut_review.yaml"
+CUT_PREVIEW_DIR = "cut_previews"
+CUT_ACTIONS = ("keep", "cut")
+CUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
+MODE_B_TOOL = "scripts/rough_cut.py"
 
 
 def brand_progress_color(brand_path):
@@ -186,6 +191,30 @@ bar.appendChild(btn);});
 var main=document.querySelector('main');if(main)main.parentNode.insertBefore(bar,main);}})();
 """
 
+CUTS_STYLE = """
+.cut-row{border-top:1px solid var(--rope);padding:12px 0}
+.cut-row:last-child{border-bottom:1px solid var(--rope)}
+.cut-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+.cut-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sea)}
+.cut-reason{color:var(--stone)}
+.cut-meta{color:var(--haze);font-size:.85rem}
+.cut-words{color:var(--haze);font-size:.9rem;margin:4px 0;overflow-wrap:anywhere}
+.cut-actions{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 0}
+.cut-actions button{min-height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--rope);
+background:var(--water);color:var(--stone);font:inherit;font-size:.85rem;cursor:pointer}
+.cut-actions button.on{background:var(--sea);color:var(--water)}
+.cut-audio{margin-top:8px;width:100%}
+@media (max-width:600px){.cut-head{display:block}.cut-meta{display:block;margin-top:2px}}
+"""
+
+CUTS_SCRIPT = """
+(function(){var base=window.location.pathname.split('?')[0].replace(/\\/$/,'');
+[].forEach.call(document.querySelectorAll('.cut-row'),function(row){var id=row.dataset.id;
+[].forEach.call(row.querySelectorAll('.cut-actions button'),function(btn){
+btn.addEventListener('click',function(){var body=new URLSearchParams();body.set('id',id);body.set('action',btn.dataset.action);
+fetch(base+'/cut-review',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(function(res){if(res.ok){[].forEach.call(row.querySelectorAll('.cut-actions button'),function(other){other.classList.remove('on');});btn.classList.add('on');}});});});});})();
+"""
+
 
 def edit_decisions(directory):
     """``{shot id: {status, slot, reason}}`` from the workspace's edit.json, or an empty dict."""
@@ -202,6 +231,44 @@ def edit_decisions(directory):
                 "slot": row.get("slot"),
                 "reason": row.get("reason"),
             }
+    return result
+
+
+def is_mode_b(directory):
+    """True when the workspace is a Mode B project: sessions.yaml or a rough_cut edit.json."""
+    directory = Path(directory)
+    if (directory / "sessions.yaml").is_file():
+        return True
+    try:
+        document = json.loads((directory / "edit.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    meta = document.get("meta") if isinstance(document, dict) else None
+    return isinstance(meta, dict) and meta.get("tool") == MODE_B_TOOL
+
+
+def cut_decisions(directory):
+    """The cut rows of a Mode B edit.json: rejected cuts plus kept-by-review keeps."""
+    try:
+        document = json.loads((Path(directory) / "edit.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = document.get("decisions") if isinstance(document, dict) else None
+    result = []
+    for row in rows or []:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        status = row.get("status")
+        reason = row.get("reason")
+        if status == "rejected" or (status == "used" and reason == "kept by review"):
+            result.append({
+                "id": str(row["id"]),
+                "status": status,
+                "reason": reason,
+                "clip": row.get("clip"),
+                "window_in_s": row.get("window_in_s"),
+                "window_out_s": row.get("window_out_s"),
+            })
     return result
 
 
@@ -940,13 +1007,58 @@ def render_iframe_panel(directory, artifact, empty_text):
     return f'<p class="empty">{html_escape(empty_text)}</p>'
 
 
+def render_cuts_panel(directory, name):
+    """The Cuts tab: one row per automatic cut with a keep/cut toggle and an audio preview."""
+    directory = Path(directory)
+    decisions = cut_decisions(directory)
+    if not decisions:
+        return '<p class="empty">No cuts to review yet. Run scripts/rough_cut.py first.</p>'
+    actions = cut_review_actions(directory / CUT_REVIEW_FILE)
+    rows = []
+    for decision in decisions:
+        cut_id = html_escape(decision["id"])
+        reason = html_escape(decision.get("reason") or "")
+        clip = html_escape(decision.get("clip") or "")
+        start = decision.get("window_in_s")
+        end = decision.get("window_out_s")
+        span = f"{format_timecode(start)}\u2013{format_timecode(end)}"
+        length = ""
+        if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+            length = f"{end - start:.1f} s"
+        words = html_escape(cut_words_text(directory, decision))
+        current = actions.get(decision["id"])
+        buttons = []
+        for action in CUT_ACTIONS:
+            on = " on" if current == action else ""
+            buttons.append(
+                f'<button type="button" class="cut-{action}{on}" data-action="{action}">{action}</button>'
+            )
+        rows.append(
+            f'<article class="cut-row" data-id="{cut_id}">'
+            f'<div class="cut-head"><span class="cut-id">{cut_id}</span>'
+            f'<span class="cut-reason">{reason}</span>'
+            f'<span class="cut-meta num">{clip} \u00b7 {span} \u00b7 {length}</span></div>'
+            f'<p class="cut-words">{words}</p>'
+            f'<div class="cut-actions">{"".join(buttons)}</div>'
+            f'<audio class="cut-audio" controls preload="none" '
+            f'src="/{html_escape(name)}/cut-audio?id={cut_id}"></audio>'
+            f'</article>'
+        )
+    return f'<style>{CUTS_STYLE}</style><div class="cuts">{"".join(rows)}</div>'
+
+
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
+    mode_b = is_mode_b(directory)
+    if tab == "cuts" and not mode_b:
+        tab = "recap"
     status = project_status(directory)
     report = run_report(directory)
     tab_links = []
     for key, label in TABS:
+        if key == "cuts" and not mode_b:
+            continue
         active = ' class="active"' if key == tab else ""
         tab_links.append(
             f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(label)}</a>'
@@ -964,6 +1076,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             "No shot list yet. It appears when the analysis finishes.",
         ),
     }
+    if mode_b:
+        panels["cuts"] = render_cuts_panel(directory, name)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
     if estimate and estimate["shots"]:
@@ -979,6 +1093,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f"{render_reedit(name, music_tracks)}"
     )
     script = (STRIP_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
+    if tab == "cuts":
+        script += CUTS_SCRIPT
     refresh = 20 if status == "running" else None
     return render_page(name, body, active="projects", script=script, refresh=refresh)
 
@@ -1495,6 +1611,203 @@ def append_expectation(path, kind, shot, note, now=None):
     return document
 
 
+def load_cut_review_document(path):
+    """The cut review YAML as a mapping with a ``review`` list, or an empty one when absent."""
+    path = Path(path)
+    if not path.is_file():
+        return {"review": []}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"cannot read cut review: {exc}") from exc
+    if data is None:
+        return {"review": []}
+    if not isinstance(data, dict):
+        raise ValueError("cut review must be a mapping")
+    rows = data.get("review")
+    if rows is None:
+        data["review"] = []
+    elif not isinstance(rows, list):
+        raise ValueError("cut review rows must be a list")
+    return data
+
+
+def cut_review_actions(path):
+    """``{cut id: action}`` from the workspace's cut_review.yaml, or an empty dict."""
+    try:
+        document = load_cut_review_document(path)
+    except ValueError:
+        return {}
+    actions = {}
+    for row in document.get("review") or []:
+        if isinstance(row, dict) and row.get("id"):
+            actions[str(row["id"])] = row.get("action")
+    return actions
+
+
+def append_cut_review(path, cut_id, action, note, clip, window_in_s, window_out_s, now=None):
+    """Record one phone cut review tap idempotently and return the document."""
+    path = Path(path)
+    document = load_cut_review_document(path)
+    row = {
+        "id": cut_id,
+        "action": action,
+        "clip": clip,
+        "window_in_s": window_in_s,
+        "window_out_s": window_out_s,
+        "note": note,
+        "reviewed_at": expectation_stamp(now),
+    }
+    rows = document.get("review") or []
+    replaced = False
+    updated = []
+    for existing in rows:
+        if isinstance(existing, dict) and str(existing.get("id")) == cut_id:
+            updated.append(row)
+            replaced = True
+        else:
+            updated.append(existing)
+    if not replaced:
+        updated.append(row)
+    document["review"] = updated
+    text = (
+        "# Written by scripts/serve.py from phone cut review taps; machine-owned.\n"
+        + yaml.safe_dump(document, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    )
+    write_text_atomic(path, text)
+    return document
+
+
+def validate_cut_id(value):
+    """The cut id from a review tap, or a 400 when it is missing or malformed."""
+    cut_id = (value or "").strip()
+    if not CUT_ID_RE.match(cut_id):
+        raise UploadError(400, "invalid cut id")
+    return cut_id
+
+
+def validate_cut_action(value):
+    """The keep/cut action from a review tap, or a 400 when it is not one of the two."""
+    action = (value or "").strip()
+    if action not in CUT_ACTIONS:
+        raise UploadError(400, "invalid action")
+    return action
+
+
+def format_timecode(seconds):
+    """Seconds as ``MM:SS.d``."""
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return ""
+    if value < 0:
+        value = 0.0
+    minutes, rest = divmod(value, 60)
+    return f"{int(minutes):02d}:{rest:04.1f}"
+
+
+def load_sessions_words(directory):
+    """The sessions manifest of a workspace, or an empty list."""
+    try:
+        document = yaml.safe_load((Path(directory) / "sessions.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(document, dict):
+        return []
+    sessions = document.get("sessions")
+    return sessions if isinstance(sessions, list) else []
+
+
+def session_words_for_clip(sessions, clip):
+    """The word JSON path of the session whose camera file matches ``clip``, or None."""
+    if not clip:
+        return None
+    target_name = Path(str(clip)).name
+    target_stem = Path(str(clip)).stem
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        camera = Path(str(session.get("camera") or ""))
+        if camera.name == target_name or camera.stem == target_stem:
+            return session.get("words")
+    return None
+
+
+def cut_words_text(directory, decision):
+    """The words of a cut span as text, from the session's word JSON; empty when unknown."""
+    words_path = session_words_for_clip(load_sessions_words(directory), decision.get("clip"))
+    if not words_path:
+        return ""
+    try:
+        data = json.loads(Path(words_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    start = decision.get("window_in_s")
+    end = decision.get("window_out_s")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return ""
+    texts = []
+    for segment in data.get("segments") or []:
+        for word in segment.get("words") or []:
+            text = str(word.get("word", "")).strip()
+            if not text:
+                continue
+            word_start = word.get("start")
+            word_end = word.get("end")
+            if not isinstance(word_start, (int, float)) or not isinstance(word_end, (int, float)):
+                continue
+            if start <= (word_start + word_end) / 2.0 < end:
+                texts.append(text)
+    return " ".join(texts)
+
+
+def build_cut_preview(workspace, decision, cache):
+    """Cut the decision's span plus one second each side into a cached WAV."""
+    document = json.loads((Path(workspace) / "edit.json").read_text(encoding="utf-8"))
+    sources = document.get("sources") if isinstance(document, dict) else None
+    clip = decision.get("clip")
+    source = next(
+        (row for row in sources or [] if isinstance(row, dict) and row.get("file") == clip),
+        None,
+    )
+    if source is None:
+        raise ValueError("source not found")
+    media = Path(str(source.get("path") or ""))
+    if not media.is_file():
+        raise ValueError("media not found")
+    start = decision.get("window_in_s")
+    end = decision.get("window_out_s")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        raise ValueError("bad window")
+    span_start = max(0.0, float(start) - 1.0)
+    span_end = float(end) + 1.0
+    duration = source.get("duration_s")
+    if isinstance(duration, (int, float)) and duration > 0:
+        span_end = min(span_end, float(duration))
+    if span_end <= span_start:
+        raise ValueError("empty span")
+    cache = Path(cache)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache.with_name(cache.name + ".part")
+    command = [
+        "ffmpeg", "-y",
+        "-ss", f"{span_start:.3f}",
+        "-i", str(media),
+        "-t", f"{span_end - span_start:.3f}",
+        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+        "-f", "wav",
+        str(temporary),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True)
+        if result.returncode != 0 or not temporary.is_file():
+            raise ValueError("ffmpeg failed")
+        os.replace(temporary, cache)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def exact_length(value):
     """A typed length in whole seconds, or None when the box is empty or out of range."""
     try:
@@ -1597,6 +1910,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if len(segments) == 2 and segments[1] == "expectations":
             self.handle_expectations(segments[0])
+            return
+        if len(segments) == 2 and segments[1] == "cut-review":
+            self.handle_cut_review(segments[0])
             return
         self._method_not_allowed()
 
@@ -1711,6 +2027,71 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         self.send_json({"ok": True, "shot": shot, "kind": kind, "file": EXPECTATIONS_FILE})
 
+    def handle_cut_review(self, project):
+        """Record one phone cut review tap in the workspace's cut_review.yaml."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/x-www-form-urlencoded":
+            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.server.max_total_bytes:
+            self.send_error_text(413, "request body too large")
+            return
+        fields = parse_urlencoded(self.rfile.read(length))
+        try:
+            cut_id = validate_cut_id(fields.get("id"))
+            action = validate_cut_action(fields.get("action"))
+            note = validate_note(fields.get("note"))
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        decision = next((row for row in cut_decisions(workspace) if row["id"] == cut_id), None)
+        if decision is None:
+            self.send_error_text(400, "unknown cut")
+            return
+        try:
+            append_cut_review(
+                workspace / CUT_REVIEW_FILE,
+                cut_id,
+                action,
+                note,
+                decision.get("clip"),
+                decision.get("window_in_s"),
+                decision.get("window_out_s"),
+            )
+        except (OSError, ValueError):
+            self.send_error_text(400, "unreadable cut review")
+            return
+        self.send_json({"ok": True, "id": cut_id, "action": action, "file": CUT_REVIEW_FILE})
+
+    def handle_cut_audio(self, project, send_body):
+        """Serve a short WAV preview of one cut span, cached under cut_previews/."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        values = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("id", [])
+        raw_id = (values[0] if values else "").strip()
+        if not CUT_ID_RE.match(raw_id):
+            self.send_error_text(400, "invalid cut id")
+            return
+        decision = next((row for row in cut_decisions(workspace) if row["id"] == raw_id), None)
+        if decision is None:
+            self.send_error_text(404, "unknown cut")
+            return
+        cache = workspace / CUT_PREVIEW_DIR / f"{raw_id}.wav"
+        if not cache.is_file():
+            try:
+                build_cut_preview(workspace, decision, cache)
+            except (OSError, ValueError):
+                self.send_error_text(404, "cannot build the preview")
+                return
+        self.send_wav(cache, send_body)
+
     def _start_for(self, fields, source, folder, reedit=False):
         workspace = self.server.root / folder
         if project_status(workspace) == "running":
@@ -1809,6 +2190,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 send_body,
             )
             return
+        if len(segments) == 2 and segments[1] == "cut-audio":
+            self.handle_cut_audio(segments[0], send_body)
+            return
         if len(segments) == 2:
             artifact = segments[1]
             if artifact not in SERVED_FILES:
@@ -1892,6 +2276,16 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
+
+    def send_wav(self, path, send_body):
+        data = Path(path).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if send_body:
+            self.wfile.write(data)
 
 
 class WorkspaceServer(http.server.ThreadingHTTPServer):

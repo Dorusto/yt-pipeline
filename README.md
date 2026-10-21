@@ -78,7 +78,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons and the Mode B Cuts-tab cut review |
 
 ---
 
@@ -313,13 +313,14 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --json
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --config scripts/rough_cut_config_example.yaml
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --llm --json
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --review cut_review.yaml --json
 ```
 
 | Script | Input | Output |
 |:---|:---|:---|
 | `mode_b.py` | a folder of OBS recordings (`camera ...` files + optional sibling screen files) | `mode_b/words/`, `mode_b/sessions.yaml`, `mode_b/edit.json`, `mode_b/project.fcproj` (one command, skip rule, `--force`) |
-| `rough_cut.py` | `sessions.yaml` (camera + optional screen + Whisper words JSON) | `edit.json` rough cut (atomic replace, re-run safe) |
-| `eval_rough_cut.py` | `edit.json` + `sessions.yaml` + a reference `.fcproj` + `--words-dir` | precision/recall of the kept words vs a hand edit, the sessions/sections the reference did not use, the biggest disagreements, a `subs_from_edit.py` cross-check (table, or `--json`/`--out`) |
+| `rough_cut.py` | `sessions.yaml` (camera + optional screen + Whisper words JSON) | `edit.json` rough cut (atomic replace, re-run safe; `--review cut_review.yaml` honours the phone cut review) |
+| `eval_rough_cut.py` | `edit.json` + `sessions.yaml` + a reference `.fcproj` + `--words-dir` | precision/recall of the kept words vs a hand edit, the sessions/sections the reference did not use, the biggest disagreements, a `subs_from_edit.py` cross-check (table, or `--json`/`--out`); `--review cut_review.yaml` adds the phone cut review as ground truth |
 
 `mode_b.py` is the one-command front door: it transcribes every session with no words JSON yet (`--backend mock` for offline runs), writes the manifest, runs `rough_cut.py` and exports the FilmCraft project, skipping any step whose output already exists (`--force` re-runs everything). `--config` and `--llm` are passed to `rough_cut.py`; outputs go under `<folder>/mode_b/` and the last human line is `project: <path>`.
 

@@ -433,6 +433,64 @@ def test_until_s_nonpositive_is_exit_2(tmp_path, capsys):
         assert report == {"ok": False, "error": report["error"]}
 
 
+def write_review(tmp_path, rows):
+    path = tmp_path / "cut_review.yaml"
+    path.write_text(yaml.safe_dump({"review": rows}), encoding="utf-8")
+    return path
+
+
+def test_review_keep_moves_dropped_words_to_doru(tmp_path, capsys):
+    our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
+    code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
+    assert code == 0, err
+    assert report["doru"]["kept"] == 4
+    assert report["recall"] == pytest.approx(2 / 4, abs=1e-4)
+    assert "review_rows" not in report
+
+    review = write_review(tmp_path, [
+        {"id": "c001", "action": "keep", "clip": "camA.mp4",
+         "window_in_s": 3.0, "window_out_s": 4.0},
+    ])
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir,
+        extra=["--review", str(review)],
+    )
+    assert code == 0, err
+    assert report["doru"]["kept"] == 6
+    assert report["recall"] == pytest.approx(2 / 6, abs=1e-4)
+    assert report["review_rows"] == 1
+
+
+def test_review_cut_moves_kept_words_to_doru_dropped(tmp_path, capsys):
+    our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
+    code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
+    assert code == 0, err
+    assert report["precision"] == pytest.approx(2 / 6, abs=1e-4)
+
+    review = write_review(tmp_path, [
+        {"id": "c001", "action": "cut", "clip": "camA.mp4",
+         "window_in_s": 1.0, "window_out_s": 1.6},
+    ])
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir,
+        extra=["--review", str(review)],
+    )
+    assert code == 0, err
+    assert report["doru"]["kept"] == 3
+    assert report["precision"] == pytest.approx(1 / 6, abs=1e-4)
+    assert report["review_rows"] == 1
+
+
+def test_review_missing_file_is_exit_2(tmp_path, capsys):
+    our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
+    code, report, err = run_eval(
+        capsys, our_edit, sessions_path, fcproj, "Main", words_dir,
+        extra=["--review", str(tmp_path / "nope.yaml")],
+    )
+    assert code == 2
+    assert "nope.yaml" in err
+
+
 @needs_reference
 @pytest.mark.needs_reference
 def test_reference_cross_check(tmp_path, capsys):

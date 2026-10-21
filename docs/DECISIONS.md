@@ -2099,3 +2099,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** the headline numbers are the `--until-s 150` ones (precision_used 0.5619, recall_used 0.9629, F1_used 0.7097 for the final config); the full-sequence numbers are indicative only. `fillers.always` keeps `ok`; `retake_similarity` goes back to 0.75 because 0.55 costs 0.0133 recall_used for 0.0018 precision_used on the finished stretch.
 
 **Consequence:** the Mode B cut rules run with `retake_similarity: 0.75` and the `ok` filler; **the eval is rerun when the reference edit is final** and the thresholds may move again.
+
+---
+
+## [2026-10-21] Phone cut review writes cut_review.yaml (S57 lot 1)
+
+**Context:** Issue #57 lot 1 adds a Cuts view to the web app so Doru can approve or reject each automatic Mode B cut from the phone. The taps must feed back into `rough_cut.py` on a rerun and into `eval_rough_cut.py` as ground truth.
+
+**Options:** (A) reuse `expectations.yaml`; (B) a workspace-local `cut_review.yaml` written by `serve.py` and read by both Mode B tools; (C) only a UI log with no tool integration.
+
+**Decision:** B. `serve.py` gains a Cuts tab (Mode B projects only) and two routes: `POST /<project>/cut-review` (urlencoded `id`/`action`/optional `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET stays 404) appends idempotently per cut id to `<workspace>/cut_review.yaml` (atomic, machine-owned, header comment), and `GET /<project>/cut-audio?id=` serves a cached `audio/wav` of the cut span plus one second each side from the `sources[]` media. `rough_cut.py --review` keeps a `keep` run in the edit (reason `kept by review`, run id stable) and `eval_rough_cut.py --review` treats each row as extra ground truth that wins over the `--fcproj` reference inside its span.
+
+**Why not A:** expectations are per-shot edit checks; cut review is per-cut-run and needs the clip/window. **Why not C:** the taps would not change the next rough cut.
+
+**Consequence:** a phone review of the Cuts tab becomes a file both Mode B tools read; `schemas/` is unchanged (`decisions[]` stays frozen, cut words are derived at render time from `sessions.yaml` + the word JSONs).

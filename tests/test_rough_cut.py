@@ -249,3 +249,99 @@ def test_missing_words_file_is_exit_2(tmp_path, capsys):
     code = rc.main([str(sessions_path), "--out", str(tmp_path / "edit.json"), "--json"])
     assert code == 2
     assert "not found" in capsys.readouterr().err
+
+
+def write_review(tmp_path, rows):
+    path = tmp_path / "cut_review.yaml"
+    path.write_text(yaml.safe_dump({"review": rows}), encoding="utf-8")
+    return path
+
+
+def pause_session():
+    return [{"camera": "/rec/cam.mp4", "words": [
+        ("Bună", 0.0, 0.4), ("lume", 0.5, 0.9), ("Salut", 1.9, 2.3),
+        ("din", 2.4, 2.6), ("nou", 2.7, 2.9),
+    ]}]
+
+
+def test_review_keep_keeps_the_pause(tmp_path, capsys):
+    review = write_review(tmp_path, [
+        {"id": "c001", "action": "keep", "clip": "cam.mp4",
+         "window_in_s": 1.0, "window_out_s": 1.8},
+    ])
+    code, out, summary = run_case(tmp_path, capsys, pause_session(),
+                                  extra=["--review", str(review)])
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    assert windows_of(edit) == [(0.0, 3.02)]
+    assert edit["video"][0]["reason"] == "kept by review"
+    decision = next(row for row in edit["decisions"] if row["id"] == "c001")
+    assert decision["status"] == "used"
+    assert decision["reason"] == "kept by review"
+    assert decision["slot"] == "w001"
+    assert summary["review"] == {"keep": 1, "cut": 0, "ignored": 0}
+
+
+def test_review_cut_changes_nothing(tmp_path, capsys):
+    review = write_review(tmp_path, [
+        {"id": "c001", "action": "cut", "clip": "cam.mp4",
+         "window_in_s": 1.0, "window_out_s": 1.8},
+    ])
+    code, out, summary = run_case(tmp_path, capsys, pause_session(),
+                                  extra=["--review", str(review)])
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    assert windows_of(edit) == [(0.0, 1.02), (1.78, 3.02)]
+    assert summary["review"] == {"keep": 0, "cut": 1, "ignored": 0}
+
+
+def test_review_stale_row_warned_and_ignored(tmp_path, capsys):
+    review = write_review(tmp_path, [
+        {"id": "c001", "action": "keep", "clip": "cam.mp4",
+         "window_in_s": 50.0, "window_out_s": 51.0},
+    ])
+    code, out, summary = run_case(tmp_path, capsys, pause_session(),
+                                  extra=["--review", str(review)])
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    assert windows_of(edit) == [(0.0, 1.02), (1.78, 3.02)]
+    assert summary["review"] == {"keep": 0, "cut": 0, "ignored": 1}
+    assert any("does not overlap" in warning for warning in summary["warnings"])
+
+
+def test_review_keep_does_not_shift_later_run_ids(tmp_path, capsys):
+    sessions = [{"camera": "/rec/cam.mp4", "words": [
+        ("Bună", 0.0, 0.4), ("lume", 0.5, 0.9), ("Salut", 1.9, 2.3),
+        ("din", 2.4, 2.6), ("nou", 2.7, 2.9), ("Aici", 3.9, 4.3), ("final", 4.4, 4.8),
+    ]}]
+    review = write_review(tmp_path, [
+        {"id": "c001", "action": "keep", "clip": "cam.mp4",
+         "window_in_s": 1.0, "window_out_s": 1.8},
+    ])
+    code, out, summary = run_case(tmp_path, capsys, sessions,
+                                  extra=["--review", str(review)])
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    rejected = [row["id"] for row in rejected_of(edit)]
+    assert rejected == ["c002"]
+    assert next(row for row in edit["decisions"] if row["id"] == "c001")["status"] == "used"
+
+    code, out, summary = run_case(tmp_path, capsys, sessions)
+    assert code == 0
+    edit = json.loads(out.read_text(encoding="utf-8"))
+    assert [row["id"] for row in rejected_of(edit)] == ["c001", "c002"]
+
+
+def test_review_missing_file_is_exit_2(tmp_path, capsys):
+    words_path = tmp_path / "words.json"
+    words_path.write_text(json.dumps(words_document([("Bună", 0.0, 0.4)])), encoding="utf-8")
+    sessions_path = tmp_path / "sessions.yaml"
+    sessions_path.write_text(yaml.safe_dump({"sessions": [
+        {"camera": "/rec/cam.mp4", "words": str(words_path)}
+    ]}), encoding="utf-8")
+    code = rc.main([str(sessions_path), "--out", str(tmp_path / "edit.json"),
+                    "--review", str(tmp_path / "nope.yaml"), "--json"])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert err.strip()
+    assert "\n" not in err.strip()

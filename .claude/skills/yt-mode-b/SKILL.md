@@ -19,13 +19,16 @@ the camera on `Camera 1`, the same cuts on both, ready for a human edit.
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json \
   --config scripts/rough_cut_config_example.yaml
 .venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --llm --json
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json \
+  --review cut_review.yaml --json
 ```
 
 - `sessions.yaml` is the session manifest, validated against `schemas/sessions.schema.json`: one entry per session with `camera`, optional `screen`, `words` (the Whisper word JSON) and optional `sync_offset_s` (seconds added to a camera time to get the screen time; computed from the file name timestamps plus the container start time when omitted).
 - `--out` is the `edit.json` to write (atomic replace; re-running with the same inputs rewrites the same edit, only `generated_at` changes).
 - `--config` overrides the cut rules; without it the built-in defaults apply (the committed `scripts/rough_cut_config_example.yaml` ships them).
+- `--review FILE` reads the phone cut review `cut_review.yaml` (written by `serve.py` from the Cuts tab). A row with `action: keep` whose `id` matches a cut run and whose `window_in_s`/`window_out_s` overlaps that run keeps the material in: the run is not removed, the kept windows merge across it, the absorbing window's `reason` becomes `kept by review`, and the run's `decisions[]` entry becomes `status: used` / `reason: kept by review` with the absorbing window's slot id. A row with `action: cut` changes nothing (the run is cut as usual). A row whose window does not overlap any run is warned and ignored. Run ids (`c001`, `c002`, …) are assigned before the review is applied, so a keep never shifts the ids of later cuts.
 - `--llm` (off by default) runs one `director` pass over the kept transcript and writes extra-cut proposals to `<out-dir>/rough_cut_proposals.json` for human approval. The proposals are listed in the `--json` summary and are **never** applied to `edit.json`.
-- `--json` reports `outputs` (`edit`, `proposals`), `sessions`, `windows`, `slots`, `words_read`, `words_kept`, `cuts` (`pause`/`filler`/`retake`), `warnings`, `wall_time_s`, `llm_cost_usd`.
+- `--json` reports `outputs` (`edit`, `proposals`), `sessions`, `windows`, `slots`, `words_read`, `words_kept`, `cuts` (`pause`/`filler`/`retake`), `review` (`keep`/`cut`/`ignored`), `warnings`, `wall_time_s`, `llm_cost_usd`.
 - Exit codes: `0` success, `2` user error (missing/invalid manifest, missing words JSON, bad config, LLM budget reached). Errors print `[error] <message>` on stderr and write nothing.
 
 ### Cut rules
@@ -56,10 +59,14 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 .venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
   --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ \
   --section-min-s 30.0 --out report.json
+.venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
+  --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ \
+  --review cut_review.yaml --json
 ```
 
 - Compares the words `rough_cut.py` kept with the words a human kept in a FilmCraft project of the same material. Both sides use the same midpoint rule (`(start + end) / 2` in `[in, out)`); a word is identified by `(stem, flat index)`.
 - `--edit` is the `edit.json` `rough_cut.py` wrote; `--sessions` is the same manifest (validated against `schemas/sessions.schema.json`); `--fcproj` + `--sequence` name the reference project and the sequence to read (its `Audio 1` track); `--words-dir` holds one words JSON per source stem.
+- `--review FILE` reads the phone cut review `cut_review.yaml` and treats each row as extra ground truth that wins over the `--fcproj` reference inside its span: a `keep` row adds the words of its window to Doru-kept (recall drops when our edit cut them), a `cut` row removes them from Doru-kept (precision drops when our edit kept them). The report gains `review_rows` (the number of rows applied) only when the flag is given.
 - `--until-s S` scores only the first S seconds of the reference timeline (float, must be `> 0`): the reference clips are trimmed at S, the kept set is built from the trimmed windows, and a word counts on either side only when its stem has a counted clip and its midpoint lies inside that stem's covered source span. Stems the reference uses only after S land in `bucket.session_words`. The `subs_from_edit.py` cross-check stays full-sequence whatever `--until-s` says. The report carries `until_s` (`null` when the flag is absent).
 - Reports `precision`/`recall` and `precision_used`/`recall_used` (the same numbers minus the bucket: words in sessions the reference did not use at all, plus dropped runs spanning `--section-min-s`), the ten biggest disagreement runs with timecodes, and a `subs_from_edit.py` cross-check of `words_kept` against our `|doru|`.
 - `--json` prints the report object; `--out` also writes it atomically. Exit codes: `0` success (the eval has no pass/fail gate), `2` user error (missing file, bad sequence, a clip with `speed != 1.0` or `reverse`, a non-positive `--until-s`). No model is called (`llm_cost_usd` is always `0.0`).

@@ -95,6 +95,71 @@ def load_edit(path):
     return document
 
 
+def load_review(path):
+    """Load the phone cut review rows; a missing or unreadable file is a hard error."""
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        raise EvalError(f"review '{path}': root must be a mapping")
+    rows = document.get("review")
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        raise EvalError(f"review '{path}': review must be a list")
+    result = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cut_id = row.get("id")
+        action = row.get("action")
+        if not isinstance(cut_id, str) or action not in ("keep", "cut"):
+            continue
+        result.append({
+            "id": cut_id,
+            "action": action,
+            "clip": row.get("clip"),
+            "window_in_s": row.get("window_in_s"),
+            "window_out_s": row.get("window_out_s"),
+        })
+    return result
+
+
+def apply_review(rows, sessions, words_by_stem, doru, doru_kept_by_stem):
+    """Apply the phone review rows as extra ground truth; return the number of rows applied."""
+    clip_to_stem = {}
+    for session in sessions:
+        camera = Path(str(session["camera"]))
+        clip_to_stem[camera.name] = camera.stem
+        clip_to_stem[camera.stem] = camera.stem
+    applied = 0
+    for row in rows:
+        clip = row.get("clip")
+        if not isinstance(clip, str):
+            continue
+        stem = clip_to_stem.get(Path(clip).name) or clip_to_stem.get(Path(clip).stem)
+        if stem is None or stem not in words_by_stem:
+            continue
+        start = row.get("window_in_s")
+        end = row.get("window_out_s")
+        if not is_number(start) or not is_number(end):
+            continue
+        words = words_by_stem[stem]
+        indices = {
+            index for index, word in enumerate(words)
+            if float(start) <= (word["start"] + word["end"]) / 2.0 < float(end)
+        }
+        kept = doru_kept_by_stem.setdefault(stem, set())
+        if row["action"] == "keep":
+            for index in indices:
+                doru.add((stem, index))
+                kept.add(index)
+        else:
+            for index in indices:
+                doru.discard((stem, index))
+                kept.discard(index)
+        applied += 1
+    return applied
+
+
 def flatten_words(path):
     """Return the flat ``[{word, start, end}]`` list of a Whisper word JSON, in file order."""
     data = load_json(path)
@@ -342,7 +407,7 @@ def cross_check(fcproj, sequence, words_dir, doru_kept_merged):
     return {"subs_from_edit_words_kept": kept, "agrees": kept == doru_kept_merged}
 
 
-def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s, until_s=None):
+def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s, until_s=None, review_rows=None):
     """Compare the kept words of the edit and the reference and build the report object."""
     our_windows_by_stem = our_windows(edit, sessions)
     full_windows_by_stem, full_clips = doru_windows(fcproj, sequence, track)
@@ -379,6 +444,10 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s, 
         for index in kept:
             doru.add((stem, index))
 
+    review_applied = apply_review(
+        review_rows or [], sessions, words_by_stem, doru, doru_kept_by_stem
+    )
+
     full_kept_by_stem = {}
     for stem, windows in full_windows_by_stem.items():
         full_kept_by_stem[stem] = kept_indices(words_by_stem[stem], windows)
@@ -409,7 +478,7 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s, 
     precision_used = intersect_used / len(ours_used) if ours_used else 0.0
     recall_used = intersect_used / len(doru_used) if doru_used else 0.0
 
-    return {
+    report = {
         "ok": True,
         "until_s": until_s,
         "ours": {"kept": len(ours), "sessions": len(sessions)},
@@ -436,6 +505,9 @@ def evaluate(edit, sessions, fcproj, sequence, track, words_dir, section_min_s, 
         "wall_time_s": 0.0,
         "llm_cost_usd": 0.0,
     }
+    if review_rows is not None:
+        report["review_rows"] = review_applied
+    return report
 
 
 def format_table(report):
@@ -497,6 +569,8 @@ def build_parser():
             "--fcproj REF.fcproj --sequence 'Main' --words-dir words/ --json\n"
             "  python3 scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml "
             "--fcproj REF.fcproj --sequence 'Main' --words-dir words/ --out report.json\n"
+            "  python3 scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml "
+            "--fcproj REF.fcproj --sequence 'Main' --words-dir words/ --review cut_review.yaml --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -509,6 +583,7 @@ def build_parser():
                         help=f"a dropped run spanning at least this many seconds is a section (default {DEFAULT_SECTION_MIN_S:g})")
     parser.add_argument("--until-s", type=float, default=None,
                         help="only the first S seconds of the reference timeline count (default: no limit)")
+    parser.add_argument("--review", help="cut_review.yaml from the phone review; its rows are extra ground truth")
     parser.add_argument("--out", help="also write the full report object to FILE (atomic replace)")
     parser.add_argument("--json", action="store_true", help="print the machine-readable report object")
     return parser
@@ -522,11 +597,12 @@ def main(argv=None):
             raise EvalError(f"--until-s must be > 0 (got {args.until_s:g})")
         edit = load_edit(args.edit)
         sessions = load_sessions(args.sessions)
+        review_rows = load_review(args.review) if args.review else None
         words_dir = Path(args.words_dir).expanduser()
         if not words_dir.is_dir():
             raise EvalError(f"words dir not found: {words_dir}")
         report = evaluate(edit, sessions, args.fcproj, args.sequence, DEFAULT_TRACK, words_dir,
-                          args.section_min_s, args.until_s)
+                          args.section_min_s, args.until_s, review_rows)
         report["wall_time_s"] = round(time.monotonic() - started, 3)
     except (EvalError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)

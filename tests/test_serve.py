@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -1378,4 +1379,217 @@ def test_shots_tab_keeps_the_filter_bar_with_an_edit(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def make_mode_b_root(tmp_path, media=None, duration=30.0):
+    root = tmp_path / "projects"
+    project = root / "mode-b"
+    project.mkdir(parents=True, exist_ok=True)
+    words = {
+        "segments": [{
+            "id": 0,
+            "start": 0.0,
+            "end": 20.5,
+            "text": "unu doi trei patru cinci",
+            "words": [
+                {"word": "unu", "start": 0.0, "end": 0.5},
+                {"word": "doi", "start": 0.6, "end": 1.0},
+                {"word": "trei", "start": 12.4, "end": 12.9},
+                {"word": "patru", "start": 13.0, "end": 13.5},
+                {"word": "cinci", "start": 20.0, "end": 20.5},
+            ],
+        }]
+    }
+    (project / "words.json").write_text(json.dumps(words), encoding="utf-8")
+    (project / "sessions.yaml").write_text(
+        yaml.safe_dump({"sessions": [
+            {"camera": "/footage/cam.mp4", "words": str(project / "words.json")}
+        ]}),
+        encoding="utf-8",
+    )
+    clip = media.name if media is not None else "cam.mp4"
+    path = str(media) if media is not None else "/footage/cam.mp4"
+    edit = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-21T00:00:00+00:00",
+        "tool": "scripts/rough_cut.py",
+        "brief": {"text": "mode b"},
+        "sources": [{"file": clip, "path": path, "duration_s": duration, "media_type": "video"}],
+        "video": [],
+        "decisions": [
+            {"id": "w001", "status": "used", "reason": "kept speech", "slot": "w001",
+             "score": 1.0, "clip": clip, "window_in_s": 0.0, "window_out_s": 12.4},
+            {"id": "c001", "status": "rejected", "reason": "pause 1.2 s", "slot": None,
+             "score": None, "clip": clip, "window_in_s": 12.4, "window_out_s": 13.6},
+            {"id": "c002", "status": "rejected", "reason": "filler 'deci'", "slot": None,
+             "score": None, "clip": clip, "window_in_s": 14.0, "window_out_s": 14.5},
+            {"id": "c003", "status": "used", "reason": "kept by review", "slot": "w002",
+             "score": 1.0, "clip": clip, "window_in_s": 15.0, "window_out_s": 16.0},
+        ],
+        "meta": {"tool": "scripts/rough_cut.py", "wall_time_s": 0.1, "llm_cost_usd": 0.0},
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    return root
+
+
+def post_cut_review(server, project, fields):
+    return request(
+        server,
+        "POST",
+        f"/{project}/cut-review",
+        headers=form_headers(),
+        body=urllib.parse.urlencode(fields),
+    )
+
+
+def test_post_cut_review_writes_the_file(tmp_path):
+    root = make_mode_b_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = post_cut_review(server, "mode-b", {"id": "c001", "action": "keep"})
+        assert status == 200
+        assert headers["Content-Type"] == "application/json"
+        assert json.loads(body) == {
+            "ok": True, "id": "c001", "action": "keep", "file": "cut_review.yaml",
+        }
+        text = (root / "mode-b" / "cut_review.yaml").read_text(encoding="utf-8")
+        assert text.startswith(
+            "# Written by scripts/serve.py from phone cut review taps; machine-owned."
+        )
+        document = yaml.safe_load(text)
+        row = document["review"][0]
+        assert row["id"] == "c001"
+        assert row["action"] == "keep"
+        assert row["clip"] == "cam.mp4"
+        assert row["window_in_s"] == 12.4
+        assert row["window_out_s"] == 13.6
+        assert row["note"] == ""
+        assert row["reviewed_at"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_cut_review_replaces_the_row(tmp_path):
+    root = make_mode_b_root(tmp_path)
+    server = start_server(root)
+    try:
+        post_cut_review(server, "mode-b", {"id": "c001", "action": "keep"})
+        post_cut_review(server, "mode-b", {"id": "c001", "action": "cut"})
+        post_cut_review(server, "mode-b", {"id": "c002", "action": "keep"})
+        document = yaml.safe_load(
+            (root / "mode-b" / "cut_review.yaml").read_text(encoding="utf-8")
+        )
+        assert len(document["review"]) == 2
+        assert {row["id"]: row["action"] for row in document["review"]} == {
+            "c001": "cut", "c002": "keep",
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_cut_review_rejects_bad_input(tmp_path):
+    root = make_mode_b_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = post_cut_review(server, "mode-b", {"id": "c001", "action": "bogus"})
+        assert status == 400 and b"action" in body
+        status, _, body = post_cut_review(server, "mode-b", {"action": "keep"})
+        assert status == 400 and b"id" in body
+        status, _, _ = post_cut_review(server, "nope", {"id": "c001", "action": "keep"})
+        assert status == 404
+        status, _, _ = request(server, "GET", "/mode-b/cut-review")
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_cuts_tab_lists_the_cuts(tmp_path):
+    root = make_mode_b_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/mode-b/?tab=cuts")
+        page = body.decode()
+        assert status == 200
+        assert page.count('class="cut-row"') == 3
+        assert "trei patru" in page
+        assert 'data-action="keep"' in page and 'data-action="cut"' in page
+        assert "/mode-b/cut-audio?id=c001" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_mode_b_project_lists_the_cuts_tab(tmp_path):
+    root = make_mode_b_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/mode-b/")
+        assert status == 200
+        assert b'href="/mode-b/?tab=cuts"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_non_mode_b_project_has_no_cuts_tab(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b"?tab=cuts" not in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=cuts")
+        assert status == 200
+        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_cut_audio_serves_and_caches(tmp_path):
+    root = tmp_path / "projects"
+    project = root / "mode-b"
+    project.mkdir(parents=True)
+    media = project / "cam.wav"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=20",
+         "-c:a", "pcm_s16le", str(media)],
+        capture_output=True,
+        check=True,
+    )
+    root = make_mode_b_root(tmp_path, media=media, duration=20.0)
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/mode-b/cut-audio?id=c001")
+        assert status == 200
+        assert headers["Content-Type"] == "audio/wav"
+        assert body.startswith(b"RIFF")
+        cache = root / "mode-b" / "cut_previews" / "c001.wav"
+        assert cache.is_file()
+        first = cache.read_bytes()
+        status, headers, body = request(server, "GET", "/mode-b/cut-audio?id=c001")
+        assert status == 200 and body == first
+        status, _, _ = request(server, "GET", "/mode-b/cut-audio?id=nope")
+        assert status == 404
+        status, _, _ = request(server, "GET", "/mode-b/cut-audio")
+        assert status == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_cut_audio_missing_media_is_404(tmp_path):
+    root = make_mode_b_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, _ = request(server, "GET", "/mode-b/cut-audio?id=c001")
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
 

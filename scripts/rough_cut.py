@@ -111,6 +111,49 @@ def load_cut_config(path=None):
     return config
 
 
+def load_review(path):
+    """Load the phone cut review rows; a missing or unreadable file is a hard error."""
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        raise RoughCutError(f"review '{path}': root must be a mapping")
+    rows = document.get("review")
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        raise RoughCutError(f"review '{path}': review must be a list")
+    result = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cut_id = row.get("id")
+        action = row.get("action")
+        if not isinstance(cut_id, str) or action not in ("keep", "cut"):
+            continue
+        result.append({
+            "id": cut_id,
+            "action": action,
+            "clip": row.get("clip"),
+            "window_in_s": row.get("window_in_s"),
+            "window_out_s": row.get("window_out_s"),
+        })
+    return result
+
+
+def review_for_run(review_rows, run_id, run):
+    """The review row that applies to a run, or None when the id is absent or the span is stale."""
+    for row in review_rows:
+        if row["id"] != run_id:
+            continue
+        start = row.get("window_in_s")
+        end = row.get("window_out_s")
+        if not is_number(start) or not is_number(end):
+            return None
+        if float(start) < run["end"] and float(end) > run["start"]:
+            return row
+        return None
+    return None
+
+
 def load_words(path):
     """Load ``segments[].words[]`` in time order, skipping empty word strings."""
     try:
@@ -388,7 +431,7 @@ def final_sentence(index, retake_map):
     return index
 
 
-def process_session(session, config, warnings, state, camera_duration):
+def process_session(session, config, warnings, state, camera_duration, review_rows=None, review_state=None):
     """Cut one session and return its slots, decisions and counts."""
     camera = session["camera"]
     screen = session.get("screen")
@@ -406,6 +449,25 @@ def process_session(session, config, warnings, state, camera_duration):
     spans.extend(retake_spans)
     merged = merge_spans(spans)
 
+    review_rows = review_rows or []
+    review_state = review_state if review_state is not None else {"applied": set(), "keep": 0, "cut": 0}
+    run_ids = []
+    review_kept = []
+    removal_runs = []
+    for run in merged:
+        run_id = f"c{state['run']:03d}"
+        state["run"] += 1
+        run_ids.append((run_id, run))
+        row = review_for_run(review_rows, run_id, run)
+        if row is not None:
+            review_state["applied"].add(run_id)
+            if row["action"] == "keep":
+                review_state["keep"] += 1
+                review_kept.append({"id": run_id, "run": run})
+                continue
+            review_state["cut"] += 1
+        removal_runs.append(run)
+
     if words:
         tail_start = words[-1]["end"] + config["handle_s"]
         session_end = camera_duration if (camera_duration is not None and camera_duration > tail_start) else tail_start
@@ -413,7 +475,7 @@ def process_session(session, config, warnings, state, camera_duration):
         session_end = camera_duration or 0.0
 
     window_records = []
-    for window in kept_windows(merged, session_end):
+    for window in kept_windows(removal_runs, session_end):
         window_records.append({
             "id": f"w{state['window']:03d}",
             "start": window["start"],
@@ -430,16 +492,18 @@ def process_session(session, config, warnings, state, camera_duration):
                 kept_take_ids[span["detail"]] = record["id"]
                 break
 
+    kept_ids = {item["id"] for item in review_kept}
     run_records = []
-    for run in merged:
+    for run_id, run in run_ids:
+        if run_id in kept_ids:
+            continue
         run_records.append({
-            "id": f"c{state['run']:03d}",
+            "id": run_id,
             "start": run["start"],
             "end": run["end"],
             "kind": run_kind(run),
             "reason": run_reason(run, kept_take_ids),
         })
-        state["run"] += 1
 
     for index, record in enumerate(window_records):
         if index == 0:
@@ -452,6 +516,33 @@ def process_session(session, config, warnings, state, camera_duration):
             else:
                 break
         record["reason"] = f"cut: {preceding['reason']}" if preceding else "start: session"
+
+    review_kept_decisions = []
+    for item in review_kept:
+        run = item["run"]
+        midpoint = (run["start"] + run["end"]) / 2.0
+        absorbing = None
+        for record in window_records:
+            if record["start"] <= midpoint < record["end"]:
+                absorbing = record
+                break
+        if absorbing is None:
+            for record in window_records:
+                if record["start"] < run["end"] and record["end"] > run["start"]:
+                    absorbing = record
+                    break
+        if absorbing is not None:
+            absorbing["reason"] = "kept by review"
+        review_kept_decisions.append({
+            "id": item["id"],
+            "status": "used",
+            "reason": "kept by review",
+            "slot": absorbing["id"] if absorbing else None,
+            "score": 1.0,
+            "clip": Path(camera).name,
+            "window_in_s": run["start"],
+            "window_out_s": run["end"],
+        })
 
     if screen:
         if session.get("sync_offset_s") is not None:
@@ -512,6 +603,7 @@ def process_session(session, config, warnings, state, camera_duration):
             "window_in_s": run["start"],
             "window_out_s": run["end"],
         })
+    decisions.extend(review_kept_decisions)
     decisions.sort(key=lambda decision: decision["window_in_s"])
 
     words_kept = 0
@@ -590,11 +682,13 @@ def write_json(path, document):
         raise
 
 
-def run(sessions_path, out_path, config_path=None, use_llm=False):
+def run(sessions_path, out_path, config_path=None, use_llm=False, review_path=None):
     """Cut the sessions and write ``edit.json``; return the ``--json`` summary."""
     started = time.monotonic()
     config = load_cut_config(config_path)
     sessions = load_sessions(sessions_path)
+    review_rows = load_review(review_path) if review_path else []
+    review_state = {"applied": set(), "keep": 0, "cut": 0}
     warnings = []
     sources = []
     video = []
@@ -624,7 +718,7 @@ def run(sessions_path, out_path, config_path=None, use_llm=False):
                 "duration_s": screen_duration,
                 "media_type": "video",
             })
-        result = process_session(session, config, warnings, state, camera_duration)
+        result = process_session(session, config, warnings, state, camera_duration, review_rows, review_state)
         video.extend(result["slots"])
         decisions.extend(result["decisions"])
         windows_total += result["windows"]
@@ -633,6 +727,10 @@ def run(sessions_path, out_path, config_path=None, use_llm=False):
         kept_words.extend(result["kept_words"])
         for kind in cuts:
             cuts[kind] += result["cuts"][kind]
+
+    for row in review_rows:
+        if row["id"] not in review_state["applied"]:
+            warnings.append(f"review row '{row['id']}' does not overlap any cut: ignored")
 
     proposals = []
     proposals_path = None
@@ -688,6 +786,11 @@ def run(sessions_path, out_path, config_path=None, use_llm=False):
         "words_read": words_read,
         "words_kept": words_kept,
         "cuts": cuts,
+        "review": {
+            "keep": review_state["keep"],
+            "cut": review_state["cut"],
+            "ignored": len(review_rows) - len(review_state["applied"]),
+        },
         "warnings": warnings,
         "wall_time_s": wall_time_s,
         "llm_cost_usd": round(llm_cost, 8),
@@ -706,12 +809,14 @@ def build_parser():
             "  python3 scripts/rough_cut.py sessions.yaml --out edit.json --json\n"
             "  python3 scripts/rough_cut.py sessions.yaml --out edit.json --config rough_cut_config.yaml\n"
             "  python3 scripts/rough_cut.py sessions.yaml --out edit.json --llm --json\n"
+            "  python3 scripts/rough_cut.py sessions.yaml --out edit.json --review cut_review.yaml --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("sessions", help="session manifest YAML (validated against schemas/sessions.schema.json)")
     parser.add_argument("--out", required=True, help="the edit.json to write (atomic replace)")
     parser.add_argument("--config", help="cut-rules YAML; without it the built-in defaults apply")
+    parser.add_argument("--review", help="cut_review.yaml from the phone review; keep rows stay in the edit")
     parser.add_argument("--llm", action="store_true", help="propose extra cuts for human approval (never applied)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -720,7 +825,7 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary = run(args.sessions, args.out, args.config, args.llm)
+        summary = run(args.sessions, args.out, args.config, args.llm, args.review)
     except (RoughCutError, SchemaError, ConfigError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
