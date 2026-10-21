@@ -32,7 +32,8 @@
       "~/media/**": "allow",
       "/root/media/**": "allow",
       "/root/projects/yt-pipeline/**": "allow",
-      "/root/.cache/yt-pipeline/**": "allow"
+      "/root/.cache/yt-pipeline/**": "allow",
+      "/root/.local/**": "allow"
     },
     "doom_loop": "deny"
   },
