@@ -1997,3 +1997,27 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not Remotion:** paid above 3 people, and the bake-off is no longer needed once HyperFrames renders the alpha MOV the editor reads. **Why not commit the skills:** over the 2 MB markdown budget and no licence file beside them; they are agent knowledge, not a runtime dependency.
 
 **Consequence:** `python3 scripts/graphics.py --template {lower_third,counter,callout} --props JSON --out OUT.mov [--width W] [--height H] [--fps FPS] [--duration SEC] [--brand brand.json] [--backend {hyperframes,mock}] [--json]` and `--plan graphics_plan.json --out-dir DIR` produce ProRes 4444 `.mov` overlays with alpha at timeline resolution; every output is checked with ffprobe for `yuva444p10le`/`yuva444p12le`. D4's graphics station builds on this `GraphicsEngine`; the plan tool (`graphics_plan.py`) is the next task.
+
+---
+
+## [2026-10-21] Licence: AGPL-3.0-or-later with a CLA (S51 lot 4)
+
+**Context:** The repo was public with no `LICENSE` (RISKS #10). The pipeline may be sold, and it must survive on AGPL-compatible dependencies: RVM is GPL-3.0 but is loaded through `torch.hub` and never vendored; HyperFrames is Apache-2.0; the brand fonts are SIL OFL.
+
+**Decision:** `LICENSE` is the GNU AGPL v3 text; every script carries `# SPDX-License-Identifier: AGPL-3.0-or-later`. External contributions are accepted only with a signed CLA granting the copyright holder the right to relicense the contribution, so dual licensing (e.g. a commercial closed-source edition) stays possible. `CONTRIBUTING.md` carries the CLA form.
+
+**Why not MIT:** a permissive licence alone cannot keep a commercial edition closed — anyone could take the code and ship it under any terms, including a competing closed product.
+
+**Consequence:** SPDX headers in every script under `scripts/` (including `scripts/common/`), `CONTRIBUTING.md` carries the CLA, RISKS #10 is closed.
+
+---
+
+## [2026-10-21] S51 sprint order and caps (issue #51)
+
+**Context:** Issue #51 is the publish-kit sprint. It runs on one branch, `sprint-publish-kit`, with one PR to master at the end that Doru merges.
+
+**Decision:** Lots run 0 → 1 → 2 → 3 → 4 with per-lot caps of 1 / 6 / 4 / 8 / 1 USD and a ceiling of 25 USD. Lot 3 (HyperFrames graphics) was the first to be cut if the total ran short — it did not have to be. Doru added lots 5 (FilmCraft bridge, 5 USD) and 6 (publish kit for manual upload, 4 USD) on 2026-10-21; they run after lot 4 on the same branch and PR. Lot 6 is variant B per Doru's 2026-10-21 comment: the API upload is parked because an unaudited Google project cannot make videos public.
+
+**Why not split the sprint into separate PRs:** one branch and one PR keep the sprint reviewable as a whole and match the issue's plan.
+
+**Consequence:** Nothing from D3 or the rest of D6 beyond the listed scope is in this sprint; D2-20 (issue #47) stays paused.
