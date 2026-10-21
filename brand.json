@@ -28,6 +28,11 @@
       "path": "assets/fonts/JetBrainsMono-Regular.ttf",
       "family": "JetBrains Mono",
       "size_px": 24
+    },
+    "caption": {
+      "path": "assets/fonts/Montserrat-Black.ttf",
+      "family": "Montserrat Black",
+      "size_px": 48
     }
   },
   "layout": {

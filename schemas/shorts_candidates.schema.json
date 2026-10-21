@@ -96,6 +96,11 @@
             "minLength": 1,
             "maxLength": 40,
             "description": "title of that chapter, when chapters.json was given"
+          },
+          "layout": {
+            "type": "string",
+            "enum": ["face", "split"],
+            "description": "how shorts_generator.py builds the 9:16 frame: 'face' (default) is the reframe.py face crop; 'split' stacks the face region over the screen region of the same 16:9 frame"
           }
         }
       }

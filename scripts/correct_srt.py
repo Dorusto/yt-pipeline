@@ -16,47 +16,26 @@ Dacă corrections.txt lipsește, se folosește corrections_example.txt (0 corect
 """
 
 import sys
-import re
-from pathlib import Path
 
-CORRECTIONS_FILE = Path(__file__).parent / "corrections.txt"
-CORRECTIONS_EXAMPLE_FILE = Path(__file__).parent / "corrections_example.txt"
-
-
-def load_corrections(path: Path) -> list[tuple[str, str]]:
-    corrections = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split("|", 1)
-            if len(parts) == 2:
-                corrections.append((parts[0], parts[1]))
-    return corrections
-
-
-def resolve_corrections_file(path: Path) -> Path | None:
-    """Return the corrections file to read, falling back to the example when missing."""
-    if path.exists():
-        return path
-    print(
-        f"[warning] Fișierul de corecturi lipsește: {path}. "
-        f"Folosesc exemplul: {CORRECTIONS_EXAMPLE_FILE}",
-        file=sys.stderr,
-    )
-    if CORRECTIONS_EXAMPLE_FILE.exists():
-        return CORRECTIONS_EXAMPLE_FILE
-    return None
-
-
-def apply_corrections(text: str, corrections: list[tuple[str, str]]) -> str:
-    for wrong, correct in corrections:
-        text = text.replace(wrong, correct)
-    return text
+from common.corrections import (
+    CORRECTIONS_EXAMPLE_FILE,
+    CORRECTIONS_FILE,
+    CorrectionsError,
+    apply_corrections,
+    load_corrections,
+    resolve_corrections_file,
+)
 
 
 def main():
+    try:
+        run()
+    except CorrectionsError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(2)
+
+
+def run():
     if len(sys.argv) < 2:
         print("Utilizare: python3 correct_srt.py input.srt [output.srt]")
         sys.exit(1)
@@ -64,7 +43,7 @@ def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2] if len(sys.argv) > 2 else input_file.replace(".srt", "_corectat.srt")
 
-    corrections_path = resolve_corrections_file(CORRECTIONS_FILE)
+    corrections_path = resolve_corrections_file(CORRECTIONS_FILE, CORRECTIONS_EXAMPLE_FILE)
     corrections = load_corrections(corrections_path) if corrections_path else []
     print(f"Corecturi încărcate: {len(corrections)}")
 
