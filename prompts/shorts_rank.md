@@ -24,8 +24,8 @@ Return EXACTLY one JSON object and nothing else:
 ```json
 {
   "scores": [
-    {"id": 1, "hook": 80, "payoff": 70, "reason": "..."},
-    {"id": 2, "hook": 55, "payoff": 40, "reason": "..."}
+    {"id": 1, "hook": 80, "payoff": 70, "reason": "...", "title": "...", "description": "..."},
+    {"id": 2, "hook": 55, "payoff": 40, "reason": "...", "title": "...", "description": "..."}
   ]
 }
 ```
@@ -39,3 +39,7 @@ Field rules:
   a thought, land a joke or deliver the point?).
 - `reason` — one concrete line about that span: what the hook is and what the
   payoff is. No title.
+- `title` — the Short title, at most 60 characters, hook first: the grabbing
+  part in the first words. Natural Romanian.
+- `description` — exactly two sentences that tease the span WITHOUT spoiling the
+  payoff. Natural Romanian, at most 400 characters.

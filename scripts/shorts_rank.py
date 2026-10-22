@@ -16,11 +16,13 @@ The tool maps the per-source Whisper word JSON files onto the cuts of an
 ``edit.json`` timeline (the same midpoint rule ``chapters.py`` uses), splits the
 kept transcript into sentences on pauses over 0.6 s and builds deterministic
 candidates: runs of consecutive sentences inside one chapter whose span is
-20-60 s. The same mapping is available for a final FilmCraft project
-(``--fcproj``) or for the timeline ``_words.json`` that ``subs_from_edit.py``
-already writes (``--timeline-words``). One ``director`` model pass scores every
-candidate on hook and payoff; the top 5 by ``(hook + payoff) / 2`` are written
-to ``shorts_candidates.json`` (validated against
+20-60 s, never the edit's own opening cut and never a span that lies entirely
+inside the first 60 s. The same mapping is available for a final FilmCraft
+project (``--fcproj``) or for the timeline ``_words.json`` that
+``subs_from_edit.py`` already writes (``--timeline-words``). One ``director``
+model pass scores every candidate on hook and payoff and writes a title and a
+description; the top 5 by ``(hook + payoff) / 2`` that do not overlap by more
+than 20 % are written to ``shorts_candidates.json`` (validated against
 ``schemas/shorts_candidates.schema.json``). The file is the input of
 ``shorts_generator.py --candidates`` and the top 3 become Mango markers in the
 FilmCraft export.
@@ -57,13 +59,18 @@ from common.timeline_words import (
 )
 
 TOOL = "scripts/shorts_rank.py"
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "shorts_rank.md"
 MIN_DURATION_S = 20.0
 MAX_DURATION_S = 60.0
 MAX_CANDIDATES = 60
 TOP_N = 5
 MAX_REASON = 200
+MAX_TITLE = 60
+MAX_DESCRIPTION = 400
+MAX_OVERLAP_FRAC = 0.2
+INTRO_START_EPS = 0.5
+INTRO_END_S = 60.0
 LAYOUT_POLICIES = ("auto", "on", "off")
 
 _client = None
@@ -251,8 +258,28 @@ def chapter_index_for(start_s, chapter_starts):
     return index
 
 
-def build_candidates(mapped, chapters):
-    """Build the deterministic sentence-aligned 20-60 s candidates inside one chapter."""
+def is_standalone(start_s, end_s):
+    """True when a span is not the edit's opening cut and not only the first 60 s.
+
+    A span that starts at the very beginning is the edit's own opening cut; a
+    span that lies entirely inside the first 60 s is the intro block. Material
+    from the opening may appear in a candidate cut differently: it starts later
+    and runs past the intro block to its payoff.
+    """
+    if start_s <= INTRO_START_EPS:
+        return False
+    if start_s < INTRO_END_S and end_s <= INTRO_END_S:
+        return False
+    return True
+
+
+def build_candidates(mapped, chapters, stats=None):
+    """Build the deterministic sentence-aligned 20-60 s candidates inside one chapter.
+
+    Candidates that are the edit's opening cut or that lie entirely inside the
+    first 60 s are dropped; ``stats["dropped_intro"]`` counts them when a stats
+    dict is given.
+    """
     sentences = split_sentences(mapped)
     if not sentences:
         return []
@@ -260,7 +287,7 @@ def build_candidates(mapped, chapters):
     sentence_chapter = [
         chapter_index_for(sentence[0]["start"], chapter_starts) for sentence in sentences
     ]
-    candidates = []
+    generated = []
     for start_index in range(len(sentences)):
         chapter = sentence_chapter[start_index]
         chapter_end = (
@@ -289,13 +316,19 @@ def build_candidates(mapped, chapters):
             for sentence in sentences[start_index:best + 1]
             for word in sentence
         )
-        candidates.append({
+        generated.append({
             "start_s": round(start_s, 3),
             "end_s": round(end_s, 3),
             "chapter_start_s": round(chapter_starts[chapter], 3),
             "chapter_title": chapters[chapter]["title"],
             "text": text,
         })
+    candidates = [
+        candidate for candidate in generated
+        if is_standalone(candidate["start_s"], candidate["end_s"])
+    ]
+    if stats is not None:
+        stats["dropped_intro"] = len(generated) - len(candidates)
     candidates.sort(key=lambda candidate: candidate["start_s"])
     return candidates[:MAX_CANDIDATES]
 
@@ -321,25 +354,26 @@ def parse_scores(text):
     return scores
 
 
-def request_scores(client, message):
-    """Ask the model once, retry once on unparseable output, then give up."""
+def request_scores(client, message, candidate_ids):
+    """Ask the model, retry once on unparseable output or invalid rows, then give up."""
     last_error = None
     for _ in range(2):
         response = client.complete(
             "director", [{"role": "user", "content": message}], temperature=0.3
         )
         try:
-            return parse_scores(response.text)
+            return validate_scores(parse_scores(response.text), candidate_ids)
         except ShortsRankError as exc:
             last_error = exc
-    raise ShortsRankError(f"model output is not parseable after one retry: {last_error}")
+    raise ShortsRankError(f"model output is invalid after one retry: {last_error}")
 
 
 def validate_scores(scores, candidate_ids):
-    """Validate one score row per candidate id; return ``{id: {hook, payoff, reason}}``.
+    """Validate one score row per candidate id; return ``{id: {hook, payoff, reason, title, description}}``.
 
     Rows for ids the run never proposed are ignored as model noise; a missing
-    row, an out-of-range score or a bad reason is an error naming the id.
+    row, an out-of-range score, a bad reason, a bad title or a bad description
+    is an error naming the id.
     """
     by_id = {}
     for row in scores:
@@ -365,10 +399,35 @@ def validate_scores(scores, candidate_ids):
         reason = reason.strip()
         if not reason:
             raise ShortsRankError(f"candidate {candidate_id}: 'reason' is empty")
+        title = row.get("title")
+        if not isinstance(title, str):
+            raise ShortsRankError(f"candidate {candidate_id}: 'title' must be a string")
+        title = title.strip()
+        if not title:
+            raise ShortsRankError(f"candidate {candidate_id}: 'title' is empty")
+        if len(title) > MAX_TITLE:
+            raise ShortsRankError(
+                f"candidate {candidate_id}: 'title' is longer than {MAX_TITLE} characters"
+            )
+        description = row.get("description")
+        if not isinstance(description, str):
+            raise ShortsRankError(
+                f"candidate {candidate_id}: 'description' must be a string"
+            )
+        description = description.strip()
+        if not description:
+            raise ShortsRankError(f"candidate {candidate_id}: 'description' is empty")
+        if len(description) > MAX_DESCRIPTION:
+            raise ShortsRankError(
+                f"candidate {candidate_id}: 'description' is longer than "
+                f"{MAX_DESCRIPTION} characters"
+            )
         by_id[candidate_id] = {
             "hook": hook,
             "payoff": payoff,
             "reason": reason[:MAX_REASON],
+            "title": title,
+            "description": description,
         }
     for candidate_id in candidate_ids:
         if candidate_id not in by_id:
@@ -378,8 +437,21 @@ def validate_scores(scores, candidate_ids):
     return by_id
 
 
+def overlap_fraction(first, second):
+    """Overlap of two spans as a fraction of the shorter one."""
+    overlap_s = max(
+        0.0, min(first["end_s"], second["end_s"]) - max(first["start_s"], second["start_s"])
+    )
+    return overlap_s / min(first["duration_s"], second["duration_s"])
+
+
 def rank_candidates(candidates, scores):
-    """Score, rank and keep the top candidates; ties break on the earlier start."""
+    """Score, rank and greedily keep up to ``TOP_N`` candidates under the overlap cap.
+
+    Ties break on the earlier start. A candidate is accepted only when it does
+    not overlap an already accepted one by more than ``MAX_OVERLAP_FRAC``;
+    skipped candidates are counted in ``dropped_overlap``.
+    """
     ranked = []
     for candidate_id, candidate in enumerate(candidates, 1):
         row = scores[candidate_id]
@@ -392,11 +464,22 @@ def rank_candidates(candidates, scores):
             "hook": row["hook"],
             "payoff": row["payoff"],
             "reason": row["reason"],
+            "title": row["title"],
+            "description": row["description"],
             "chapter_start_s": candidate["chapter_start_s"],
             "chapter_title": candidate["chapter_title"],
         })
     ranked.sort(key=lambda item: (-item["score"], item["start_s"]))
-    return ranked[:TOP_N]
+    accepted = []
+    dropped_overlap = 0
+    for item in ranked:
+        if any(overlap_fraction(item, kept) > MAX_OVERLAP_FRAC for kept in accepted):
+            dropped_overlap += 1
+            continue
+        accepted.append(item)
+        if len(accepted) == TOP_N:
+            break
+    return accepted, dropped_overlap
 
 
 def build_message(prompt_text, transcript_text, candidate_lines):
@@ -420,7 +503,7 @@ def write_json(path, document):
 
 
 def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prompt_path=None, publish_dir=None, layout=None, spans=None, layout_policy="auto"):
-    """Rank the Shorts candidates and return the ``--json`` summary."""
+    """Rank the Shorts candidates and return ``(summary, ranked)``."""
     started = time.monotonic()
     if not mapped:
         raise ShortsRankError("no words mapped: the kept transcript is empty")
@@ -432,8 +515,14 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
         chapters = [{"start_s": 0.0, "title": None}]
         has_chapters = False
 
-    candidates = build_candidates(mapped, chapters)
+    stats = {}
+    candidates = build_candidates(mapped, chapters, stats)
     if not candidates:
+        if stats.get("dropped_intro"):
+            raise ShortsRankError(
+                "no standalone 20-60 s candidate found: every candidate was the edit's "
+                "opening cut or lay entirely inside the first 60 s"
+            )
         raise ShortsRankError(
             "no Shorts candidates found: no 20-60 s sentence-aligned span inside a chapter"
         )
@@ -454,9 +543,8 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
     message = build_message(prompt_text, format_timeline(mapped), candidate_lines)
 
     client = get_client()
-    scores = request_scores(client, message)
-    by_id = validate_scores(scores, list(range(1, len(candidates) + 1)))
-    ranked = rank_candidates(candidates, by_id)
+    by_id = request_scores(client, message, list(range(1, len(candidates) + 1)))
+    ranked, dropped_overlap = rank_candidates(candidates, by_id)
 
     output_candidates = []
     has_both = has_both_angles(spans or [])
@@ -470,6 +558,8 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
             "hook": item["hook"],
             "payoff": item["payoff"],
             "reason": item["reason"],
+            "title": item["title"],
+            "description": item["description"],
             "chapter_start_s": item["chapter_start_s"] if has_chapters else None,
             "chapter_title": item["chapter_title"] if has_chapters else None,
         }
@@ -501,16 +591,19 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
         raise ShortsRankError(f"shorts candidates do not match the schema: {exc}")
     write_json(out, output)
 
-    return {
+    summary = {
         "outputs": {"candidates": str(out)},
         "candidates_scored": len(candidates),
         "written": len(output_candidates),
+        "dropped_overlap": dropped_overlap,
+        "dropped_intro": stats.get("dropped_intro", 0),
         "layout": layout,
         "layout_policy": layout_policy,
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": round(client.spent_usd, 8),
     }
+    return summary, ranked
 
 
 def build_parser():
@@ -591,7 +684,7 @@ def main(argv=None):
             if args.fcproj and args.words_dir
             else None
         )
-        summary = run(
+        summary, ranked = run(
             mapped, warnings, primary_input, args.chapters, args.out, args.prompt,
             publish_dir, args.layout, spans=spans, layout_policy=layout_policy,
         )
@@ -604,6 +697,12 @@ def main(argv=None):
     if args.json:
         print(json.dumps({"ok": True, **summary}))
     else:
+        for rank, item in enumerate(ranked, 1):
+            print(
+                f"{rank}. {item['score']:.1f}  "
+                f"{format_stamp(item['start_s'])}-{format_stamp(item['end_s'])} "
+                f"({item['duration_s']:.1f}s) {item['title']}"
+            )
         print(
             f"written: {summary['outputs']['candidates']} "
             f"({summary['written']} of {summary['candidates_scored']} candidates)"

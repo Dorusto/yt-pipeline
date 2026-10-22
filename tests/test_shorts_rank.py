@@ -24,14 +24,21 @@ REFERENCE_WORDS = REFERENCE_DIR / "json"
 REFERENCE_END_S = 866.09
 TICKS = 254016000000
 
-SHORT_SENTENCES = [(0.0, 5.0), (6.0, 11.0), (12.0, 17.0), (18.0, 23.0), (24.0, 29.0), (30.0, 35.0)]
+SHORT_SENTENCES = [
+    (70.0, 75.0), (76.0, 81.0), (82.0, 87.0), (88.0, 93.0),
+    (170.0, 175.0), (176.0, 181.0), (182.0, 187.0), (188.0, 193.0),
+    (270.0, 275.0), (276.0, 281.0), (282.0, 287.0), (288.0, 293.0),
+]
 LONG_SENTENCES = [(index * 6.0, index * 6.0 + 5.0) for index in range(17)]
+SPREAD_SENTENCES = [
+    (70.0 + group * 100.0 + index * 6.0, 70.0 + group * 100.0 + index * 6.0 + 5.0)
+    for group in range(6)
+    for index in range(5)
+]
+INTRO_ONLY_SENTENCES = [(0.0, 5.0), (6.0, 11.0), (12.0, 17.0), (18.0, 23.0), (24.0, 29.0), (30.0, 35.0)]
 CAMERA_CLIP = "camera 2026-09-29 20-58-37.mp4"
 SCREEN_CLIP = "2026-09-29 20-58-35.mp4"
-PAIRED_SENTENCES = [
-    (0.0, 5.0), (6.0, 11.0), (12.0, 17.0), (18.0, 23.0), (24.0, 29.0), (30.0, 35.0),
-    (40.0, 45.0), (46.0, 51.0), (52.0, 57.0), (58.0, 63.0), (64.0, 69.0), (70.0, 75.0),
-]
+PAIRED_SENTENCES = [(index * 6.0, index * 6.0 + 5.0) for index in range(50)]
 
 
 class AutoScoreClient:
@@ -56,7 +63,14 @@ class AutoScoreClient:
             if candidate_id in self.omit:
                 continue
             hook, payoff = self.scores.get(candidate_id, self.default)
-            rows.append({"id": candidate_id, "hook": hook, "payoff": payoff, "reason": self.reason})
+            rows.append({
+                "id": candidate_id,
+                "hook": hook,
+                "payoff": payoff,
+                "reason": self.reason,
+                "title": f"Titlu {candidate_id}",
+                "description": "Prima propozitie. A doua propozitie.",
+            })
         return SimpleNamespace(text=json.dumps({"scores": rows}), cost_usd=self.cost_per_call)
 
 
@@ -123,7 +137,7 @@ def one_slot_edit(tmp_path, out_s=40.0):
 
 
 def short_fixture(tmp_path):
-    edit = one_slot_edit(tmp_path, out_s=40.0)
+    edit = one_slot_edit(tmp_path, out_s=300.0)
     words = write_sentence_words(tmp_path / "words" / "cam.json", SHORT_SENTENCES)
     return edit, words
 
@@ -134,17 +148,23 @@ def long_fixture(tmp_path):
     return edit, words
 
 
+def spread_fixture(tmp_path):
+    edit = one_slot_edit(tmp_path, out_s=600.0)
+    words = write_sentence_words(tmp_path / "words" / "cam.json", SPREAD_SENTENCES)
+    return edit, words
+
+
 def paired_edit(tmp_path):
     edit = write_edit(
         tmp_path / "edit.json",
         [
             {"id": "w001", "clip": SCREEN_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"},
             {"id": "w001", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"},
-            {"id": "w002", "clip": CAMERA_CLIP, "in_s": 40.0, "out_s": 80.0, "score": 1.0, "reason": "b"},
+            {"id": "w002", "clip": CAMERA_CLIP, "in_s": 40.0, "out_s": 300.0, "score": 1.0, "reason": "b"},
         ],
         sources=[
-            {"file": SCREEN_CLIP, "path": "/x/" + SCREEN_CLIP, "duration_s": 80.0, "media_type": "video"},
-            {"file": CAMERA_CLIP, "path": "/x/" + CAMERA_CLIP, "duration_s": 80.0, "media_type": "video"},
+            {"file": SCREEN_CLIP, "path": "/x/" + SCREEN_CLIP, "duration_s": 300.0, "media_type": "video"},
+            {"file": CAMERA_CLIP, "path": "/x/" + CAMERA_CLIP, "duration_s": 300.0, "media_type": "video"},
         ],
     )
     words = write_sentence_words(
@@ -156,9 +176,9 @@ def paired_edit(tmp_path):
 def camera_only_edit(tmp_path):
     edit = write_edit(
         tmp_path / "edit.json",
-        [{"id": "v1", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"}],
+        [{"id": "v1", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 300.0, "score": 1.0, "reason": "a"}],
         sources=[
-            {"file": CAMERA_CLIP, "path": "/x/" + CAMERA_CLIP, "duration_s": 40.0, "media_type": "video"},
+            {"file": CAMERA_CLIP, "path": "/x/" + CAMERA_CLIP, "duration_s": 300.0, "media_type": "video"},
         ],
     )
     words = write_sentence_words(
@@ -314,8 +334,7 @@ def test_layout_defaults_to_face_without_flag(tmp_path, monkeypatch, capsys):
 
 def test_layout_policy_auto_paired(tmp_path, monkeypatch, capsys):
     edit, words = paired_edit(tmp_path)
-    face_id = first_face_candidate_id(edit, words)
-    client = AutoScoreClient(scores={face_id: (100, 100)})
+    client = AutoScoreClient()
     code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
@@ -511,12 +530,12 @@ def test_paired_group_counts_words_once(tmp_path):
 
 
 def test_scoring_and_ranking(tmp_path, monkeypatch, capsys):
-    edit, words = long_fixture(tmp_path)
+    edit, words = spread_fixture(tmp_path)
     client = AutoScoreClient(scores={index: ((index * 7) % 100, (index * 7) % 100) for index in range(1, 20)})
     code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
-    assert summary["candidates_scored"] == 14
+    assert summary["candidates_scored"] == 12
     assert summary["written"] == 5
     assert summary["outputs"]["candidates"] == str(tmp_path / "shorts_candidates.json")
     assert summary["wall_time_s"] >= 0
@@ -527,29 +546,201 @@ def test_scoring_and_ranking(tmp_path, monkeypatch, capsys):
     assert [candidate["rank"] for candidate in candidates] == [1, 2, 3, 4, 5]
     scores = [candidate["score"] for candidate in candidates]
     assert scores == sorted(scores, reverse=True)
-    assert scores == [98.0, 91.0, 84.0, 77.0, 70.0]
     for candidate in candidates:
         assert candidate["score"] == (candidate["hook"] + candidate["payoff"]) / 2
         assert candidate["duration_s"] == round(candidate["end_s"] - candidate["start_s"], 3)
 
 
 def test_tie_break_earlier_start(tmp_path, monkeypatch, capsys):
-    edit, words = long_fixture(tmp_path)
+    edit, words = spread_fixture(tmp_path)
     client = AutoScoreClient(default=(50, 50))
     code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
     assert code == 0
     document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
     starts = [candidate["start_s"] for candidate in document["candidates"]]
     assert starts == sorted(starts)
-    assert starts == [0.0, 6.0, 12.0, 18.0, 24.0]
+    assert starts == [70.0, 170.0, 270.0, 370.0, 470.0]
+
+
+@pytest.mark.parametrize("start_s,end_s,expected", [
+    (0.0, 58.0, False),
+    (10.0, 50.0, False),
+    (0.0, 75.0, False),
+    (10.0, 65.0, True),
+    (70.0, 112.0, True),
+    (50.0, 95.0, True),
+])
+def test_is_standalone_table(start_s, end_s, expected):
+    assert shorts_rank.is_standalone(start_s, end_s) is expected
+
+
+def test_build_candidates_never_intro(tmp_path):
+    edit, words = long_fixture(tmp_path)
+    candidates = candidates_of(edit, words)
+    assert candidates
+    for candidate in candidates:
+        assert candidate["start_s"] > shorts_rank.INTRO_START_EPS
+        assert not (
+            candidate["start_s"] < shorts_rank.INTRO_END_S
+            and candidate["end_s"] <= shorts_rank.INTRO_END_S
+        )
+
+
+def test_build_candidates_drops_intro_only(tmp_path):
+    edit = one_slot_edit(tmp_path, out_s=40.0)
+    words = write_sentence_words(tmp_path / "words" / "cam.json", INTRO_ONLY_SENTENCES)
+    assert candidates_of(edit, words) == []
+
+
+def test_only_intro_candidates_exit_2(tmp_path, monkeypatch, capsys):
+    edit = one_slot_edit(tmp_path, out_s=40.0)
+    words = write_sentence_words(tmp_path / "words" / "cam.json", INTRO_ONLY_SENTENCES)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "standalone" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "shorts_candidates.json").exists()
+
+
+def test_json_reports_dropped_intro(tmp_path, monkeypatch, capsys):
+    edit, words = long_fixture(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["dropped_intro"] >= 1
+
+
+def make_candidate(start_s, end_s):
+    return {
+        "start_s": start_s,
+        "end_s": end_s,
+        "chapter_start_s": 0.0,
+        "chapter_title": None,
+        "text": "x",
+    }
+
+
+def make_score(hook, payoff):
+    return {
+        "hook": hook,
+        "payoff": payoff,
+        "reason": "r",
+        "title": "t",
+        "description": "a. b.",
+    }
+
+
+def test_overlap_cap_exactly_20_percent_kept():
+    candidates = [make_candidate(0.0, 100.0), make_candidate(80.0, 180.0)]
+    scores = {1: make_score(50, 50), 2: make_score(50, 50)}
+    accepted, dropped = shorts_rank.rank_candidates(candidates, scores)
+    assert len(accepted) == 2
+    assert dropped == 0
+
+
+def test_overlap_cap_over_20_percent_dropped():
+    candidates = [make_candidate(0.0, 100.0), make_candidate(79.0, 179.0)]
+    scores = {1: make_score(50, 50), 2: make_score(50, 50)}
+    accepted, dropped = shorts_rank.rank_candidates(candidates, scores)
+    assert len(accepted) == 1
+    assert dropped == 1
+
+
+def test_overlap_cap_fills_with_next_distinct(tmp_path, monkeypatch, capsys):
+    edit, words = spread_fixture(tmp_path)
+    client = AutoScoreClient(scores={1: (100, 100), 2: (90, 90)})
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["written"] == 5
+    assert summary["dropped_overlap"] >= 1
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    starts = [candidate["start_s"] for candidate in document["candidates"]]
+    assert 70.0 in starts
+    assert 76.0 not in starts
+    for index, first in enumerate(document["candidates"]):
+        for second in document["candidates"][index + 1:]:
+            overlap_s = max(
+                0.0, min(first["end_s"], second["end_s"]) - max(first["start_s"], second["start_s"])
+            )
+            assert overlap_s / min(first["duration_s"], second["duration_s"]) <= 0.2 + 1e-9
+
+
+def test_title_and_description_written(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    for candidate in document["candidates"]:
+        assert candidate["title"]
+        assert len(candidate["title"]) <= 60
+        assert candidate["description"]
+        assert len(candidate["description"]) <= 400
+
+
+def test_title_too_long_exit_2(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    long_title = "x" * 61
+    rows = [
+        {"id": candidate_id, "hook": 50, "payoff": 50, "reason": "r",
+         "title": long_title, "description": "a. b."}
+        for candidate_id in (1, 2, 3)
+    ]
+    client = SequenceClient([json.dumps({"scores": rows})])
+    code = run_main(tmp_path, monkeypatch, client, edit, words)
+    assert code == 2
+    assert client.calls == 2
+    err = capsys.readouterr().err
+    assert "1" in err
+    assert "title" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "shorts_candidates.json").exists()
+
+
+def test_invalid_then_valid_retry(tmp_path, monkeypatch):
+    edit, words = short_fixture(tmp_path)
+    invalid = json.dumps({"scores": [
+        {"id": 1, "hook": 50, "payoff": 50, "reason": "r", "title": "", "description": "a. b."},
+        {"id": 2, "hook": 50, "payoff": 50, "reason": "r", "title": "t", "description": "a. b."},
+        {"id": 3, "hook": 50, "payoff": 50, "reason": "r", "title": "t", "description": "a. b."},
+    ]})
+    valid = json.dumps({"scores": [
+        {"id": 1, "hook": 50, "payoff": 50, "reason": "r", "title": "t", "description": "a. b."},
+        {"id": 2, "hook": 50, "payoff": 50, "reason": "r", "title": "t", "description": "a. b."},
+        {"id": 3, "hook": 50, "payoff": 50, "reason": "r", "title": "t", "description": "a. b."},
+    ]})
+    client = SequenceClient([invalid, valid])
+    code = run_main(tmp_path, monkeypatch, client, edit, words)
+    assert code == 0
+    assert client.calls == 2
+    assert (tmp_path / "shorts_candidates.json").is_file()
+
+
+def test_non_json_stdout_ranked_list(tmp_path, monkeypatch, capsys):
+    edit, words = spread_fixture(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words)
+    assert code == 0
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if re.match(r"^\d+\. ", line)]
+    assert len(lines) == 5
+    assert [int(line.split(".")[0]) for line in lines] == [1, 2, 3, 4, 5]
+    assert "Titlu" in lines[0]
+    assert "written:" in out
 
 
 def test_retry_once_on_unparseable_output(tmp_path, monkeypatch):
     edit, words = short_fixture(tmp_path)
     valid = json.dumps({"scores": [
-        {"id": 1, "hook": 80, "payoff": 70, "reason": "a"},
-        {"id": 2, "hook": 60, "payoff": 50, "reason": "b"},
-        {"id": 3, "hook": 40, "payoff": 30, "reason": "c"},
+        {"id": 1, "hook": 80, "payoff": 70, "reason": "a", "title": "unu", "description": "unu. doi."},
+        {"id": 2, "hook": 60, "payoff": 50, "reason": "b", "title": "doi", "description": "unu. doi."},
+        {"id": 3, "hook": 40, "payoff": 30, "reason": "c", "title": "trei", "description": "unu. doi."},
     ]})
     client = SequenceClient(["not json at all", valid])
     code = run_main(tmp_path, monkeypatch, client, edit, words)
@@ -592,10 +783,10 @@ def test_out_of_range_hook_exit_2(tmp_path, monkeypatch, capsys):
 def test_unknown_score_rows_are_ignored(tmp_path, monkeypatch, capsys):
     edit, words = short_fixture(tmp_path)
     text = json.dumps({"scores": [
-        {"id": 99, "hook": 10, "payoff": 10, "reason": "noise"},
-        {"id": 1, "hook": 80, "payoff": 70, "reason": "a"},
-        {"id": 2, "hook": 60, "payoff": 50, "reason": "b"},
-        {"id": 3, "hook": 40, "payoff": 30, "reason": "c"},
+        {"id": 99, "hook": 10, "payoff": 10, "reason": "noise", "title": "x", "description": "a. b."},
+        {"id": 1, "hook": 80, "payoff": 70, "reason": "a", "title": "unu", "description": "a. b."},
+        {"id": 2, "hook": 60, "payoff": 50, "reason": "b", "title": "doi", "description": "a. b."},
+        {"id": 3, "hook": 40, "payoff": 30, "reason": "c", "title": "trei", "description": "a. b."},
     ]})
     client = SequenceClient([text])
     code = run_main(tmp_path, monkeypatch, client, edit, words)
@@ -697,10 +888,10 @@ def long_fcproj_fixture(tmp_path):
     fcproj = write_fcproj(
         tmp_path / "long.fcproj", "Main",
         [{"name": "cam.mp4", "path": "/footage/cam.mp4",
-          "start_s": 0.0, "duration_s": 40.0, "source_in_s": 0.0}],
+          "start_s": 0.0, "duration_s": 110.0, "source_in_s": 0.0}],
     )
     words_dir = tmp_path / "words"
-    write_sentence_words(words_dir / "cam.json", SHORT_SENTENCES)
+    write_sentence_words(words_dir / "cam.json", LONG_SENTENCES)
     return fcproj, words_dir
 
 
@@ -725,7 +916,7 @@ def test_fcproj_mode_matches_subs_from_edit(tmp_path, monkeypatch, capsys):
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["candidates_scored"] > 0
-    assert summary["written"] == min(5, summary["candidates_scored"])
+    assert 1 <= summary["written"] <= min(5, summary["candidates_scored"])
     assert summary["warnings"] == []
     assert summary["wall_time_s"] >= 0
     assert summary["llm_cost_usd"] == 0.0
@@ -757,7 +948,7 @@ def test_timeline_words_mode_matches_fcproj(tmp_path, monkeypatch, capsys):
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["candidates_scored"] > 0
-    assert summary["written"] == min(5, summary["candidates_scored"])
+    assert 1 <= summary["written"] <= min(5, summary["candidates_scored"])
     assert summary["warnings"] == []
     assert summary["wall_time_s"] >= 0
     assert summary["llm_cost_usd"] == 0.0

@@ -338,6 +338,8 @@ def shorts_candidate(rank, start_s, score, reason):
         "hook": score,
         "payoff": score,
         "reason": reason,
+        "title": f"Titlu {rank}",
+        "description": "Prima propozitie. A doua propozitie.",
         "chapter_start_s": None,
         "chapter_title": None,
     }

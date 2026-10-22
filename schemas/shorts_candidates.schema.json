@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/shorts_candidates.schema.json",
   "title": "shorts_candidates",
-  "description": "Ranked Shorts candidates of an edit, written by scripts/shorts_rank.py: self-contained spans of 20-60 seconds inside one chapter that start on a sentence start and end on a sentence end, scored by the model on hook and payoff. The top candidates are the input of shorts_generator.py (--candidates) and the top 3 become Mango markers in the FilmCraft export. Times are timeline seconds of the edit they were ranked on.",
+  "description": "Ranked Shorts candidates of an edit, written by scripts/shorts_rank.py: self-contained spans of 20-60 seconds inside one chapter that start on a sentence start and end on a sentence end, scored by the model on hook and payoff and carrying a title and a description from the same model pass. The top candidates are the input of shorts_generator.py (--candidates) and the top 3 become Mango markers in the FilmCraft export. Times are timeline seconds of the edit they were ranked on.",
   "type": "object",
   "required": [
     "schema_version",
@@ -40,7 +40,9 @@
           "score",
           "hook",
           "payoff",
-          "reason"
+          "reason",
+          "title",
+          "description"
         ],
         "additionalProperties": false,
         "properties": {
@@ -85,6 +87,18 @@
             "minLength": 1,
             "maxLength": 200,
             "description": "one line on why this span works as a Short"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "Short title from the same model pass: hook first, at most 60 characters"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "two sentences from the same model pass that tease the span without spoiling the payoff"
           },
           "chapter_start_s": {
             "type": ["number", "null"],
