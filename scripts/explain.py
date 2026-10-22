@@ -18,7 +18,6 @@ written atomically and skipped when it is newer than its inputs, unless
 """
 
 import argparse
-import base64
 import json
 import os
 import sys
@@ -26,15 +25,11 @@ import time
 from html import escape
 from pathlib import Path
 
-import cv2
-
-from common.frames import read_frame
+from common.frames import thumbnail_data_uri
 from common.moves import middle_speed_of
 from common.schema import SchemaError, validate
 
 HTML_NAME = "explain.html"
-THUMBNAIL_WIDTH = 320
-THUMBNAIL_QUALITY = 70
 
 
 class ExplainError(RuntimeError):
@@ -395,7 +390,7 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
         cut_text = f"photo {duration:.2f} s"
         move = (slot.get("ken_burns") or {}).get("move")
         move_html = f'<div class="meta-line">ken_burns {escape(str(move))}</div>' if move else ""
-        data_uri = _thumbnail_data_uri(path, 0.0)
+        data_uri = thumbnail_data_uri(path, 0.0)
     else:
         in_s = float(slot.get("in_s") or 0.0)
         out_s = float(slot.get("out_s") or 0.0)
@@ -409,7 +404,7 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
                 f'<div class="meta-line">centred on the best moment at '
                 f'{float(slot["peak_s"]):.1f} s (from {source})</div>'
             )
-        data_uri = _thumbnail_data_uri(path, (in_s + out_s) / 2.0)
+        data_uri = thumbnail_data_uri(path, (in_s + out_s) / 2.0)
     if window is not None:
         cut_text += f" of {window[0]:.2f}–{window[1]:.2f} s"
     if data_uri:
@@ -534,26 +529,6 @@ def _seconds_text(value):
     if not _is_number(value):
         return ""
     return f"{float(value):.2f} s"
-
-
-def _thumbnail_data_uri(path, t_s):
-    if not path:
-        return None
-    frame = read_frame(path, t_s)
-    if frame is None:
-        return None
-    return _encode_thumbnail(frame)
-
-
-def _encode_thumbnail(frame):
-    height, width = frame.shape[:2]
-    if width > THUMBNAIL_WIDTH:
-        scaled_height = max(1, int(round(height * THUMBNAIL_WIDTH / width)))
-        frame = cv2.resize(frame, (THUMBNAIL_WIDTH, scaled_height), interpolation=cv2.INTER_AREA)
-    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_QUALITY])
-    if not ok:
-        return None
-    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
 def _write_html(html_path, document):

@@ -1,11 +1,17 @@
 """Read sampled frames from a clip at given times (OpenCV).
 
 Shared by ``describe.py``, ``similarity.py``, ``mode_b.py``, ``explain.py`` and
-``index.py``: one ``VideoCapture`` seek loop. Frames stay in memory as BGR
-numpy arrays; the callers encode, resize or compare them.
+``index.py``: one ``VideoCapture`` seek loop plus the one JPEG thumbnail
+encoder. Frames stay in memory as BGR numpy arrays; the callers compare or
+resize them and use ``thumbnail_data_uri`` for the HTML contact sheets.
 """
 
+import base64
+
 import cv2
+
+THUMBNAIL_WIDTH = 320
+THUMBNAIL_QUALITY = 70
 
 
 class FramesError(Exception):
@@ -49,6 +55,28 @@ def read_frame(path, t_s):
         return _read_frame(capture, t_s)
     finally:
         capture.release()
+
+
+def thumbnail_data_uri(path, t_s):
+    """Return the frame at ``t_s`` as a JPEG base64 data URI, or None."""
+    if not path:
+        return None
+    frame = read_frame(path, t_s)
+    if frame is None:
+        return None
+    return encode_thumbnail(frame)
+
+
+def encode_thumbnail(frame):
+    """Encode a BGR frame as a width-capped JPEG base64 data URI, or None."""
+    height, width = frame.shape[:2]
+    if width > THUMBNAIL_WIDTH:
+        scaled_height = max(1, int(round(height * THUMBNAIL_WIDTH / width)))
+        frame = cv2.resize(frame, (THUMBNAIL_WIDTH, scaled_height), interpolation=cv2.INTER_AREA)
+    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_QUALITY])
+    if not ok:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
 def _read_frame(capture, t_s):

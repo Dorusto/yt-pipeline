@@ -26,7 +26,6 @@ outputs are written atomically.
 """
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -36,9 +35,7 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
-import cv2
-
-from common.frames import read_frame
+from common.frames import thumbnail_data_uri
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
@@ -67,8 +64,6 @@ PHOTO_CONFIDENCE = 0.7
 BURST_WINDOW_S = 30.0
 BURST_SHARPNESS_FLOOR = 0.7
 HOOK_WORDS = 8
-THUMBNAIL_WIDTH = 320
-THUMBNAIL_QUALITY = 70
 HTML_NAME = "shotlog.html"
 
 
@@ -963,30 +958,10 @@ def _thumbnail_html(shot, clip_paths):
         start = float(shot.get("start_s") or 0.0)
         end = float(shot.get("end_s") or 0.0)
         t_s = start + (end - start) / 2
-    data_uri = _thumbnail_data_uri(path, t_s)
+    data_uri = thumbnail_data_uri(path, t_s)
     if data_uri is None:
         return f'<div class="thumb placeholder">{escape(clip)}</div>'
     return f'<img class="thumb" src="{data_uri}" alt="{escape(clip)}">'
-
-
-def _thumbnail_data_uri(path, t_s):
-    if not path:
-        return None
-    frame = read_frame(path, t_s)
-    if frame is None:
-        return None
-    return _encode_thumbnail(frame)
-
-
-def _encode_thumbnail(frame):
-    height, width = frame.shape[:2]
-    if width > THUMBNAIL_WIDTH:
-        scaled_height = max(1, int(round(height * THUMBNAIL_WIDTH / width)))
-        frame = cv2.resize(frame, (THUMBNAIL_WIDTH, scaled_height), interpolation=cv2.INTER_AREA)
-    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_QUALITY])
-    if not ok:
-        return None
-    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
 def _score_text(shot):

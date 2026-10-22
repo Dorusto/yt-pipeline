@@ -803,6 +803,37 @@ def test_manifest_rewrite_keeps_offset_for_relative_camera(tmp_path, monkeypatch
     assert entry["sync_offset_confidence"] == 0.8
 
 
+def test_manifest_rewrite_keeps_offset_for_unresolved_camera(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    camera = folder / "camera 2026-10-17 22-25-44.mp4"
+    camera.write_bytes(b"")
+    words = make_words(tmp_path / "out" / "words" / "camera 2026-10-17 22-25-44_words.json")
+    sessions = [
+        {
+            "stem": "camera 2026-10-17 22-25-44",
+            "camera": Path("obs/../obs/camera 2026-10-17 22-25-44.mp4"),
+            "screen": None,
+            "words": words,
+        }
+    ]
+    previous = {
+        "sessions": [
+            {
+                "camera": "obs/../obs/camera 2026-10-17 22-25-44.mp4",
+                "sync_offset_s": -1.25,
+                "sync_offset_confidence": 0.8,
+            }
+        ]
+    }
+    document = mode_b.manifest_document(sessions, previous)
+    entry = document["sessions"][0]
+    assert entry["camera"] == str(camera.resolve())
+    assert entry["sync_offset_s"] == -1.25
+    assert entry["sync_offset_confidence"] == 0.8
+
+
 def test_second_run_keeps_hand_written_sync_offset(tmp_path, capsys):
     folder = tmp_path / "obs"
     folder.mkdir()
