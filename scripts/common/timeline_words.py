@@ -125,9 +125,8 @@ def media_item_path(item):
     return (media.get("File") or {}).get("path")
 
 
-def plan_from_fcproj(path, sequence, track):
-    """Build the timeline plan from a FilmCraft project's audio track."""
-    data = load_json(path)
+def _sequence_of(data, sequence):
+    """Return the named Sequence item of a FilmCraft project document."""
     items = (data.get("project") or {}).get("items") or {}
     sequences = {}
     for value in items.values():
@@ -137,7 +136,13 @@ def plan_from_fcproj(path, sequence, track):
     if sequence not in sequences:
         found = ", ".join(sorted(sequences)) or "none"
         raise TimelineWordsError(f"unknown sequence '{sequence}' (sequences found: {found})")
-    sequence_item = sequences[sequence]
+    return items, sequences[sequence]
+
+
+def plan_from_fcproj(path, sequence, track):
+    """Build the timeline plan from a FilmCraft project's audio track."""
+    data = load_json(path)
+    items, sequence_item = _sequence_of(data, sequence)
     audio_tracks = ((sequence_item.get("kind") or {}).get("Sequence") or {}).get("audio_tracks") or []
     tracks = {entry.get("name"): entry for entry in audio_tracks}
     if track not in tracks:
@@ -177,6 +182,32 @@ def plan_from_fcproj(path, sequence, track):
             "kept_words": 0,
         })
     return plan
+
+
+def video_spans_from_fcproj(path, sequence):
+    """Return ``[{name, timeline_start, timeline_end, enabled}]`` for every video clip.
+
+    The spans say which source file is on screen at which timeline second on
+    every video track of the sequence — the composite's coverage.
+    """
+    data = load_json(path)
+    items, sequence_item = _sequence_of(data, sequence)
+    video_tracks = ((sequence_item.get("kind") or {}).get("Sequence") or {}).get("video_tracks") or []
+    spans = []
+    for track in video_tracks:
+        for clip in sorted(track.get("items") or [], key=lambda entry: entry.get("start", 0)):
+            media_path = media_item_path(items.get(str(clip.get("item"))))
+            name = clip.get("name") or (Path(media_path).name if media_path else str(clip.get("item")))
+            start = float(clip.get("start", 0)) / TICKS_PER_SECOND
+            duration = float(clip.get("duration", 0)) / TICKS_PER_SECOND
+            spans.append({
+                "name": name,
+                "timeline_start": start,
+                "timeline_end": start + duration,
+                "enabled": bool(clip.get("enabled", True)),
+            })
+    spans.sort(key=lambda entry: (entry["timeline_start"], entry["timeline_end"]))
+    return spans
 
 
 def collect_words(plan, words_dir):

@@ -6,12 +6,33 @@ from pathlib import Path
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".avi", ".mts", ".insv"}
 MATTE_SUFFIXES = ("-Alpha", "_matte")
+CAMERA_PREFIX = "camera "
+SCREEN_TOKEN = "screen"
 FILENAME_TIMESTAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})")
 
 
 def is_matte_export(path):
     """Return True for a derived matte export (``*-Alpha.mov``, ``*_matte.mov``)."""
     return Path(path).stem.endswith(MATTE_SUFFIXES)
+
+
+def clip_kind(name):
+    """Return ``camera``, ``screen`` or None for a source clip's file name.
+
+    Mode B names are ``camera YYYY-MM-DD HH-MM-SS.mp4`` for the camera angle and
+    a bare ``YYYY-MM-DD HH-MM-SS`` stem (or a name carrying the ``screen``
+    token) for the screen recording. Anything else (Mode A footage) has no
+    angle and never takes part in a split layout.
+    """
+    stem = Path(str(name)).stem
+    lowered = stem.lower()
+    if lowered.startswith(CAMERA_PREFIX):
+        return "camera"
+    if SCREEN_TOKEN in lowered:
+        return "screen"
+    if stem_timestamp(name):
+        return "screen"
+    return None
 
 
 def video_files(directory, exclude_matte=False):
