@@ -291,22 +291,45 @@ def test_printed_project_path(tmp_path, capsys):
     assert any(line.startswith("[warn]") for line in lines)
 
 
-def test_missing_folder_exit_2(tmp_path, capsys):
+def test_missing_folder_exit_3(tmp_path, capsys):
     code, out, err = run_main([str(tmp_path / "nope"), "--json"], capsys)
-    assert code == 2
+    assert code == 3
     assert "[error]" in err
     payload = json.loads(out)
     assert payload["ok"] is False
     assert "folder not found" in payload["error"]
 
 
-def test_no_camera_files_exit_2(tmp_path, capsys):
+def test_not_a_folder_exit_3(tmp_path, capsys):
+    file_path = tmp_path / "not-a-folder"
+    file_path.write_bytes(b"")
+    code, out, err = run_main([str(file_path), "--json"], capsys)
+    assert code == 3
+    assert "[error]" in err
+    assert "not a folder" in err
+    assert json.loads(out)["ok"] is False
+
+
+def test_no_camera_files_exit_3(tmp_path, capsys):
     folder = tmp_path / "obs"
     folder.mkdir()
     (folder / "notes.mp4").write_bytes(b"")
     code, out, err = run_main([str(folder), "--json"], capsys)
-    assert code == 2
+    assert code == 3
     assert "no camera files" in err
+
+
+def test_missing_config_exit_3(tmp_path, capsys):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    make_camera(folder, "camera 2026-10-17 22-25-44.mp4")
+    code, out, err = run_main(
+        [str(folder), "--config", str(tmp_path / "nope.yaml"), "--json"], capsys
+    )
+    assert code == 3
+    assert "[error]" in err
+    assert "config not found" in err
+    assert json.loads(out)["ok"] is False
 
 
 def test_failing_step_exit_2(tmp_path, capsys):
@@ -497,7 +520,7 @@ def test_non_mapping_mode_b_config_is_user_error(tmp_path, capsys):
     code, out, err = run_main(
         [str(folder), "--backend", "mock", "--config", str(config_path), "--json"], capsys
     )
-    assert code == 2
+    assert code == 3
     assert "mode_b must be a mapping" in err
 
 

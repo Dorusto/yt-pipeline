@@ -36,8 +36,10 @@ summary sets ``screen_check_incomplete``. ``--check`` runs only these checks —
 no transcription, nothing written — so it is fast enough to run right after
 recording. Its exit codes are the contract: ``0`` all clear, ``1`` a suspect
 screen file was found, ``2`` the check could not run completely (the face
-detector could not load) or a user error (bad folder, no camera files). A
-suspect found while the detector is unavailable still exits ``2``.
+detector could not load), ``3`` a usage error (missing folder, not a folder, no
+camera files, bad ``--config``). A suspect found while the detector is
+unavailable still exits ``2``. A normal run exits ``0`` on success, ``2`` when
+a pipeline step failed and ``3`` on a usage error.
 """
 
 import argparse
@@ -83,7 +85,7 @@ DEFAULT_MODE_B_CONFIG = {
 
 
 class ModeBError(Exception):
-    """A user-facing error that exits with code 2 and writes nothing."""
+    """A user-facing error: validation exits 3, a failing step exits 2."""
 
 
 def load_mode_b_config(path=None):
@@ -803,11 +805,20 @@ def build_parser():
             "recording: a face in most sampled frames, or high frame similarity to the "
             "paired camera file); no transcription, nothing written; exit codes: 0 all "
             "clear, 1 a suspect was found, 2 the check could not run completely (face "
-            "detector unavailable) or a user error"
+            "detector unavailable), 3 a usage error (missing folder, not a folder, no "
+            "camera files, bad --config)"
         ),
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
+
+
+def report_error(exc, json_mode, code):
+    """Print a user-facing error and return its exit code."""
+    print(f"[error] {exc}", file=sys.stderr)
+    if json_mode:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+    return code
 
 
 def main(argv=None):
@@ -826,15 +837,16 @@ def main(argv=None):
         out_dir = (
             Path(args.out_dir).expanduser().resolve() if args.out_dir else folder / "mode_b"
         )
+    except ModeBError as exc:
+        return report_error(exc, args.json, 3)
+
+    try:
         if args.check:
             summary = check(folder, out_dir, mode_b_config)
         else:
             summary = run(folder, out_dir, args.backend, config, args.llm, args.force, mode_b_config)
     except ModeBError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return report_error(exc, args.json, 2)
 
     stream = sys.stderr if args.json else sys.stdout
     if args.json:

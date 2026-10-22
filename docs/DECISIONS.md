@@ -2275,3 +2275,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not A:** free spans can start mid-sentence or cross a chapter boundary, and the generator needs clean cut points. **Why not C:** hook and payoff are content judgements a rule cannot make; the model only ranks spans the rules already made safe.
 
 **Consequence:** `shorts_candidates.json` is the ranked Shorts list; the generator's own `segments:` pick stays the default and the file is opt-in. The candidate times are the timeline seconds of the edit they were ranked on, so the generator must run against a video with that same timeline. `schemas/` and `scripts/common/` are unchanged.
+
+---
+
+## [2026-10-22] mode_b.py --check exit codes 0/1/2/3
+
+**Context:** `mode_b.py --check` used exit code `2` for two different things: "the check could not run completely (the face detector unavailable)" and "usage error (missing folder, no camera files)". A caller could not tell a retryable incomplete check from a command that was called wrong.
+
+**Decision:** `0` all clear, `1` a suspect screen file was found, `2` the check could not run completely (the face detector could not load) or a failing step in a normal run, `3` a usage error (missing folder, not a folder, no camera files, bad `--config`). `ModeBError` raised by validation before any work starts exits `3`; `ModeBError` raised by a failing step inside `run()` exits `2`. The `--json` error object stays `{"ok": false, "error": ...}`.
+
+**Consequence:** `--check` callers can retry on `2` and fix the command on `3`; the module docstring, `ModeBError` docstring, `--help`, user guide, skill and tests state the four codes.

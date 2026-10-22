@@ -142,10 +142,11 @@ examples below use that layout; the agent-side eval copy of the clip lives at
   face-over-screen recording. Sample frames from a synthetic clip:
   `examples/s59-shorts-frames/`.
 - Exit codes. `--check`: `0` all clear, `1` a suspect screen file was found,
-  `2` the check could not run completely (the face detector could not load) or a
-  user error (bad folder, no camera files). A normal run exits `0` on success
-  and `2` on a user error or a failing step; when the face detector cannot load
-  the run still completes and exits `0`, but warns
+  `2` the check could not run completely (the face detector could not load),
+  `3` a usage error (missing folder, not a folder, no camera files, bad
+  `--config`). A normal run exits `0` on success, `2` when a pipeline step
+  failed and `3` on a usage error; when the face detector cannot load the run
+  still completes and exits `0`, but warns
   `screen check incomplete: face detector unavailable: …` and sets
   `screen_check_incomplete` in `--json`.
 

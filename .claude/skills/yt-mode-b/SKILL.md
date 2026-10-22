@@ -164,9 +164,11 @@ station CLIs as subprocesses and imports none of them.
 - `--check` runs only those checks — no transcription, nothing written, fast
   enough to run right after recording. Exit codes: `0` all clear, `1` a suspect
   screen file was found, `2` the check could not run completely (the face
-  detector could not load) or a user error. A suspect found while the detector
-  is unavailable still exits `2` (a partial check never looks like a clean `0`
-  or a normal `1`).
+  detector could not load), `3` a usage error (missing folder, not a folder, no
+  camera files, bad `--config`). A suspect found while the detector is
+  unavailable still exits `2` (a partial check never looks like a clean `0` or a
+  normal `1`). A normal run exits `0` on success, `2` when a pipeline step
+  failed and `3` on a usage error.
 - **Words lookup.** `find_words` searches `FOLDER`, then `FOLDER/<words_dir>`
   (default `json`, where the real project keeps its Whisper JSONs), then
   `<out-dir>/words`. The chain always reads `<out-dir>/words`: every session's
