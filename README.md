@@ -181,6 +181,27 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ---
 
+## Picture-in-picture finishing (finish_pip.py)
+
+`finish_pip.py` finishes a Mode B clip in the open FilmCraft project: from a sequence inspect JSON it finds the screen spans (only real screen video items — a still or a graphic on the screen track never makes a span), mattes the camera source ranges covering them and places the mattes as a bottom-right picture-in-picture, snapped to the span edges. Skill: `yt-finish-pip`.
+
+```bash
+.venv/bin/python scripts/finish_pip.py --sequence sequence.json \
+  --camera-dir ~/Videos/<clip>/camera --matte-dir ~/Videos/<clip>/matte \
+  --out-dir ~/Videos/<clip>/finish --bridge 127.0.0.1:7714 --dry-run
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `finish_pip.py` | `sequence.json` + `camera/` | `finish_pip.place.jsonl`, `finish_pip.animate.jsonl` |
+
+- The camera ranges are padded 0.5 s and merged under 2 s, one `matte.py` call each; the mattes go to `--matte-dir`, never into the camera folder (originals are read-only). A still or a graphic on the camera track is not a camera piece.
+- The PiP is 45 % of the frame (36 % over full-screen explainer scenes) with an eased entry (quick ease-out with slight overshoot) and a short anticipation exit.
+- `--dry-run` prints the plan; `--bridge` (or `--project` for a headless file) runs both phases through `filmcraft-cli run steps.jsonl`. `--json` reports `ranges[]` with `matted`/`placed`/`keyframed`, `edge_checks[]`, `nothing_to_do`, `wall_time_s` and `llm_cost_usd`.
+- Re-run safe: a re-run on a finished project prints `nothing to do`; when the placements exist but the animate phase is missing or failed it rewrites `finish_pip.animate.jsonl` instead. Exit codes: `0` ok, `2` usage error, `1` unexpected.
+
+---
+
 ## Graphics overlays (graphics.py)
 
 `graphics.py` renders branded graphic overlays (lower third, counter, callout) as ProRes 4444 `.mov` files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0): a composition HTML per template in `assets/graphics/` is filled with the brand values from `brand.json` and the entry props, then rendered by the pinned `hyperframes@0.8.181` CLI. Skill: `yt-graphics`.

@@ -155,6 +155,16 @@ alpha (camera picture-in-picture material). Its `--ratio` default now follows th
 input height — `0.25` at 1080p, `0.4` at 720p, `0.125` at 4K — with `--ratio` as
 the override.
 
+`scripts/finish_pip.py` finishes a Mode B clip in the open FilmCraft project: from
+a sequence inspect JSON it finds the screen spans, mattes the camera ranges that
+cover them and places the mattes as a bottom-right picture-in-picture with an
+eased entry and a short anticipation exit, snapped to the span edges. Run it with
+`--dry-run` first to read the plan, then with `--bridge` (or `--project` for a
+headless file) to run the two steps files it writes, `finish_pip.place.jsonl` and
+`finish_pip.animate.jsonl`. A re-run on a finished project prints `nothing to do`;
+when the placements exist but the animate phase is missing it rewrites
+`finish_pip.animate.jsonl` instead.
+
 ## Writing a brief
 
 Say what you want, not how to cut it. The router reads length, order, pacing, music and content type from it.

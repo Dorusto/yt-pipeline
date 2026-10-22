@@ -27,10 +27,10 @@ import os
 import sys
 import tempfile
 import time
-from fractions import Fraction
 from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
+from common.filmcraft import DEFAULT_FRAME_RATE, frame_rate_fraction
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import slot_length
 SCHEMA_VERSION = 15
@@ -38,7 +38,6 @@ GENERATOR = "yt-pipeline export_filmcraft.py"
 DEFAULT_SEQUENCE = "Main"
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
-DEFAULT_FPS = 25.0
 DEFAULT_STILL_DURATION_S = 5.0
 MEDIA_LABEL = "Iris"
 SEQUENCE_LABEL = "Forest"
@@ -75,11 +74,6 @@ class ExportError(Exception):
 
 def seconds_to_ticks(seconds):
     return int(round(float(seconds) * TICKS_PER_SECOND))
-
-
-def frame_rate_fraction(fps):
-    fraction = Fraction(float(fps)).limit_denominator(1001)
-    return {"num": fraction.numerator, "den": fraction.denominator}
 
 
 def load_json(path):
@@ -625,7 +619,7 @@ def build_parser():
     parser.add_argument("--sequence", default=DEFAULT_SEQUENCE, help=f"sequence name (default {DEFAULT_SEQUENCE})")
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH, help=f"frame width (default {DEFAULT_WIDTH})")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT, help=f"frame height (default {DEFAULT_HEIGHT})")
-    parser.add_argument("--fps", type=float, default=DEFAULT_FPS, help=f"frame rate (default {DEFAULT_FPS:g})")
+    parser.add_argument("--fps", type=float, default=DEFAULT_FRAME_RATE, help=f"frame rate (default {DEFAULT_FRAME_RATE:g})")
     parser.add_argument("--screen", action="append", default=[], help="source file name to treat as screen (repeatable)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser

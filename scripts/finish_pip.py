@@ -31,12 +31,11 @@ import time
 from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
-from common.filmcraft import cli_path
+from common.filmcraft import cli_path, parse_frame_rate
 from common.media import clip_kind, is_matte_export, is_video_name
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
-DEFAULT_FPS = 25.0
 DEFAULT_PAD_S = 0.5
 DEFAULT_MERGE_GAP_S = 2.0
 DEFAULT_SCALE = 45.0
@@ -137,14 +136,7 @@ def sequence_settings(sequence):
     settings = sequence.get("settings") or {}
     width = settings.get("width") or DEFAULT_WIDTH
     height = settings.get("height") or DEFAULT_HEIGHT
-    frame_rate = settings.get("frame_rate") or {}
-    num = frame_rate.get("num") or DEFAULT_FPS
-    den = frame_rate.get("den") or 1
-    try:
-        fps = float(num) / float(den)
-    except (TypeError, ValueError, ZeroDivisionError):
-        fps = DEFAULT_FPS
-    return {"width": int(width), "height": int(height), "fps": fps}
+    return {"width": int(width), "height": int(height), "fps": parse_frame_rate(settings)}
 
 
 def classify_track(track):
@@ -213,7 +205,9 @@ def camera_pieces(sequence, spans, pad_s):
     items = [
         item
         for item in track.get("items") or []
-        if item.get("enabled", True) and not is_matte_export(item.get("name") or "")
+        if item.get("enabled", True)
+        and not is_matte_export(item.get("name") or "")
+        and is_video_name(item.get("name") or "")
     ]
     pad = int(round(pad_s * TICKS_PER_SECOND))
     pieces = []
@@ -357,18 +351,72 @@ def find_pip_track(sequence):
     return None, None
 
 
-def already_placed(placement, pip_track):
-    """Return True when the PiP track already holds this matte at the same time."""
+def find_placed_item(placement, pip_track):
+    """Return the PiP track item holding this placement's matte at the same time, or None."""
     if pip_track is None:
-        return False
+        return None
     name = Path(placement["matte_out"]).name
     tolerance = TICKS_PER_SECOND // 10
+    best = None
     for item in pip_track.get("items") or []:
         if (item.get("name") or "") != name:
             continue
-        if abs(int(item.get("start", 0)) - placement["timeline_start"]) <= tolerance:
+        distance = abs(int(item.get("start", 0)) - placement["timeline_start"])
+        if distance <= tolerance and (best is None or distance < best[0]):
+            best = (distance, item)
+    return best[1] if best is not None else None
+
+
+def already_placed(placement, pip_track):
+    """Return True when the PiP track already holds this matte at the same time."""
+    return find_placed_item(placement, pip_track) is not None
+
+
+def animate_steps_cover_clip(out_dir, clip):
+    """Return True when the animate steps file holds a setParam step for this clip id."""
+    path = Path(out_dir) / ANIMATE_FILE
+    if not path.is_file():
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            step = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if step.get("id") == "effects.setParam" and (step.get("params") or {}).get("clip") == clip:
             return True
     return False
+
+
+def keyframes_in_place(item, out_dir):
+    """Return True when the placed PiP item shows the animate keyframes.
+
+    When the item exposes no ``effects`` key at all, fall back to the animate
+    steps file: it counts as keyframed when it holds a ``effects.setParam`` step
+    for the item's clip id. A placed item with no clip id is never keyframed.
+    """
+    if item is None:
+        return False
+    if "effects" in item:
+        for effect in item.get("effects") or []:
+            if effect.get("effect") != "motion":
+                continue
+            params = effect.get("params") or {}
+            scale = (params.get("scale") or {}).get("keyframes") or []
+            position = (params.get("position") or {}).get("keyframes") or []
+            if scale and position:
+                return True
+        return False
+    clip = item.get("clip")
+    if clip is None:
+        return False
+    return animate_steps_cover_clip(out_dir, clip)
 
 
 def attach_clips(sequence, placements):
@@ -381,24 +429,16 @@ def attach_clips(sequence, placements):
     _, pip_track = find_pip_track(sequence)
     if pip_track is None:
         return warnings
-    items = pip_track.get("items") or []
     for placement in placements:
-        name = Path(placement["matte_out"]).name
-        best = None
-        for item in items:
-            if (item.get("name") or "") != name:
-                continue
-            distance = abs(int(item.get("start", 0)) - placement["timeline_start"])
-            if best is None or distance < best[0]:
-                best = (distance, item)
-        if best is None:
+        item = find_placed_item(placement, pip_track)
+        if item is None:
             continue
-        clip = best[1].get("clip")
+        clip = item.get("clip")
         if clip is None:
-            warnings.append(f"placed matte has no clip id, keyframes skipped: {name}")
+            warnings.append(f"placed matte has no clip id, keyframes skipped: {Path(placement['matte_out']).name}")
             continue
         placement["clip"] = int(clip)
-        placement["clip_start"] = int(best[1].get("start", 0))
+        placement["clip_start"] = int(item.get("start", 0))
     return warnings
 
 
@@ -696,7 +736,8 @@ def print_plan(spans, ranges, placements, edge_checks, options, nothing_to_do):
         print(
             f"  {entry['source']} [{seconds(entry['start']):.3f}-{seconds(entry['end']):.3f}] "
             f"-> {entry['out']} matted={'yes' if entry.get('matted') else 'no'} "
-            f"placed={'yes' if entry.get('placed') else 'no'}"
+            f"placed={'yes' if entry.get('placed') else 'no'} "
+            f"keyframed={'yes' if entry.get('keyframed') else 'no'}"
         )
     if nothing_to_do:
         print("nothing to do")
@@ -765,7 +806,13 @@ def run(sequence_path, camera_dir, options):
         entry["matted"] = entry["out"].exists()
         group = [placement for placement in placements if placement["range"] is entry]
         entry["placed"] = all(already_placed(placement, pip_track) for placement in group)
-    nothing_to_do = not new_placements and all(entry["matted"] for entry in ranges)
+        entry["keyframed"] = entry["placed"] and all(
+            keyframes_in_place(find_placed_item(placement, pip_track), options["out_dir"])
+            for placement in group
+        )
+    nothing_to_do = not new_placements and all(
+        entry["matted"] and entry["keyframed"] for entry in ranges
+    )
 
     if options["dry_run"]:
         if not options["json"]:
@@ -796,25 +843,30 @@ def run(sequence_path, camera_dir, options):
     steps_files = []
 
     if options["bridge"] or options["project"]:
-        item_ids = import_mattes(matte_paths, options["bridge"], options["project"])
-        placeable = [placement for placement in new_placements if placement["matte_out"] in item_ids]
-        warned = set()
-        for placement in new_placements:
-            if placement["matte_out"] not in item_ids and placement["matte_out"] not in warned:
-                warned.add(placement["matte_out"])
-                warnings.append(f"matte not imported, placement skipped: {placement['matte_out']}")
+        if new_placements:
+            item_ids = import_mattes(matte_paths, options["bridge"], options["project"])
+            placeable = [placement for placement in new_placements if placement["matte_out"] in item_ids]
+            warned = set()
+            for placement in new_placements:
+                if placement["matte_out"] not in item_ids and placement["matte_out"] not in warned:
+                    warned.add(placement["matte_out"])
+                    warnings.append(f"matte not imported, placement skipped: {placement['matte_out']}")
 
-        place_steps = build_place_steps(placeable, item_ids, pip_index, pip_track is not None)
-        write_steps(out_dir / PLACE_FILE, place_steps)
-        steps_files.append(PLACE_FILE)
-        run_steps(out_dir / PLACE_FILE, options["bridge"], options["project"])
+            place_steps = build_place_steps(placeable, item_ids, pip_index, pip_track is not None)
+            write_steps(out_dir / PLACE_FILE, place_steps)
+            steps_files.append(PLACE_FILE)
+            run_steps(out_dir / PLACE_FILE, options["bridge"], options["project"])
 
         fresh = inspect_sequence(options["bridge"], options["project"])
         warnings.extend(attach_clips(fresh, placements))
         animate_steps = build_animate_steps(spans, placements, options)
         write_steps(out_dir / ANIMATE_FILE, animate_steps)
         steps_files.append(ANIMATE_FILE)
-        run_steps(out_dir / ANIMATE_FILE, options["bridge"], options["project"])
+        try:
+            run_steps(out_dir / ANIMATE_FILE, options["bridge"], options["project"])
+        except Exception:
+            (out_dir / ANIMATE_FILE).unlink(missing_ok=True)
+            raise
     elif not new_placements:
         warnings.extend(attach_clips(sequence, placements))
         animate_steps = build_animate_steps(spans, placements, options)
@@ -866,6 +918,7 @@ def build_summary(spans, ranges, placements, edge_checks, steps_files, warnings,
                 "out": str(entry["out"]),
                 "matted": bool(entry.get("matted", False)),
                 "placed": bool(entry.get("placed", False)),
+                "keyframed": bool(entry.get("keyframed", False)),
             }
             for entry in ranges
         ],

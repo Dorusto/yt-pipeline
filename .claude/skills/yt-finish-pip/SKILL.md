@@ -46,8 +46,8 @@ filmcraft-cli --bridge 127.0.0.1:7714 inspect sequence > sequence.json
   screen item name matches `--small-over` (default `(?i)(explainer|explica|grafic|anim)`).
 - `--force` re-runs `matte.py` even when the matte output already exists.
 - `--dry-run` prints the plan (spans, edge checks, camera ranges with their
-  `matted`/`placed` state, placements and keyframe poses) and writes nothing.
-  `--json` prints one summary object.
+  `matted`/`placed`/`keyframed` state, placements and keyframe poses) and writes
+  nothing. `--json` prints one summary object.
 
 ## What it does
 
@@ -59,9 +59,11 @@ filmcraft-cli --bridge 127.0.0.1:7714 inspect sequence > sequence.json
    never classifies a track. A span is a maximal run of enabled screen video items;
    items touching or overlapping (gap under 0.05 s) merge, a real gap ends the span.
    No screen track or no span → an empty plan, exit 0.
-2. **Camera ranges.** For every span, the source range of every enabled camera item
-   overlapping it is clipped to the span, mapped to source time, padded by `--pad-s`
-   and merged per source under `--merge-gap-s`. Each merged range is one `matte.py`
+2. **Camera ranges.** For every span, the source range of every enabled camera
+   video item overlapping it is clipped to the span, mapped to source time, padded
+   by `--pad-s` and merged per source under `--merge-gap-s`. A still image or a
+   graphic on the camera track is not a camera piece and never makes a range or a
+   placement. Each merged range is one `matte.py`
    call: `matte.py SOURCE --start A --end B --out <matte-dir>/<stem>_<A:07.2f>-<B:07.2f>.mov`
    (no `--ratio`; matte.py picks it from the input height). An existing output is
    skipped unless `--force`.
@@ -104,16 +106,25 @@ filmcraft-cli --bridge 127.0.0.1:7714 inspect sequence > sequence.json
 
 Re-run safe: existing matte outputs are skipped, already-placed PiP pieces are
 skipped, only the new placements' mattes are imported, the steps files are
-overwritten atomically. When there is no new placement and every range is already
-matted (vacuously true when there are no ranges at all), the plan prints
+overwritten atomically. A range is `keyframed` when it is placed and every
+placement shows the animate keyframes (a `motion` effect with non-empty `scale`
+and `position` keyframes, or — when the inspect shape exposes no `effects` — a
+`finish_pip.animate.jsonl` holding an `effects.setParam` step for the placed clip
+id). When there is no new placement and every range is already matted **and**
+keyframed (vacuously true when there are no ranges at all), the plan prints
 `nothing to do` instead of the placements and keyframes, and a non-dry-run writes
 no steps files and prints `nothing to do`; `--force` never overrides
-`nothing to do`. A second full run imports nothing and reports `placements: 0`.
+`nothing to do`. When the placements exist but the animate phase is missing or
+failed, a re-run rewrites `finish_pip.animate.jsonl` (and runs it with
+`--bridge`/`--project`, skipping the import and the place phase) instead of
+returning `nothing to do`; if the animate apply fails, the file is deleted so the
+next run rewrites it. A second full run imports nothing and reports
+`placements: 0`.
 
 ## `--json`
 
 `ok`, `spans` (`start_s`/`end_s`/`explainer`), `ranges` (`source`/`start_s`/`end_s`/
-`out`/`matted`/`placed`), `placements` (the new ones), `edge_checks`
+`out`/`matted`/`placed`/`keyframed`), `placements` (the new ones), `edge_checks`
 (`source`/`start_s`/`end_s`/`overlap_s`/`clip_s`/`verdict`/`reason`),
 `nothing_to_do`, `steps_files`, `warnings`, `wall_time_s`, `llm_cost_usd` (always
 `0.0`). On error: `{"ok": false, "error": ...}`.

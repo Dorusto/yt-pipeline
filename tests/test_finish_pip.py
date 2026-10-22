@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import finish_pip as fp
+from common.filmcraft import cli_path
 
 T = fp.TICKS_PER_SECOND
 SMALL_OVER = re.compile(fp.DEFAULT_SMALL_OVER)
@@ -67,6 +68,16 @@ def make_camera_dir(tmp_path, names):
     return directory
 
 
+def motion_effects():
+    return [{
+        "effect": "motion",
+        "params": {
+            "scale": {"keyframes": [{"time": 0, "value": {"Float": 45.0}}]},
+            "position": {"keyframes": [{"time": 0, "value": {"Float": [900.0, 700.0]}}]},
+        },
+    }]
+
+
 class FakeRun:
     def __init__(self, import_items=None, inspect=None):
         self.calls = []
@@ -103,6 +114,7 @@ def run_main(tmp_path, capsys, sequence, camera_names, extra=None, monkeypatch=N
     argv += extra
     if fake is not None and monkeypatch is not None:
         monkeypatch.setattr(fp.subprocess, "run", fake)
+        monkeypatch.setattr(fp, "cli_path", lambda: "filmcraft-cli")
     rc = fp.main(argv)
     captured = capsys.readouterr()
     summary = None
@@ -432,7 +444,10 @@ def test_second_run_with_everything_placed_does_not_import(tmp_path, capsys, mon
         "id": 19,
         "name": "Video 4",
         "items": [
-            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+            {
+                "clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T,
+                "enabled": True, "effects": motion_effects(),
+            },
         ],
     }
     sequence = make_sequence(
@@ -440,14 +455,20 @@ def test_second_run_with_everything_placed_does_not_import(tmp_path, capsys, mon
         [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
         extra_tracks=[pip_track],
     )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
     fake = FakeRun(import_items=[48], inspect=sequence)
     rc, summary, captured = run_main(
         tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
-        extra=["--json", "--bridge", "127.0.0.1:7714"], monkeypatch=monkeypatch, fake=fake,
+        extra=["--json", "--bridge", "127.0.0.1:7714", "--matte-dir", str(matte_dir)],
+        monkeypatch=monkeypatch, fake=fake,
     )
     assert rc == 0
     assert all("import" not in call for call in fake.calls)
     assert summary["placements"] == 0
+    assert summary["nothing_to_do"] is True
+    assert not (tmp_path / fp.PLACE_FILE).exists()
 
 
 def test_image_on_screen_track_makes_no_span(tmp_path, capsys, monkeypatch):
@@ -519,7 +540,10 @@ def test_rerun_nothing_to_do(tmp_path, capsys, monkeypatch):
         "id": 19,
         "name": "Video 4",
         "items": [
-            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+            {
+                "clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T,
+                "enabled": True, "effects": motion_effects(),
+            },
         ],
     }
     sequence = make_sequence(
@@ -538,6 +562,7 @@ def test_rerun_nothing_to_do(tmp_path, capsys, monkeypatch):
     assert rc == 0
     assert "nothing to do" in captured.out
     assert "placed=yes" in captured.out
+    assert "keyframed=yes" in captured.out
     assert fake.calls == []
 
     rc, summary, captured = run_main(
@@ -548,6 +573,177 @@ def test_rerun_nothing_to_do(tmp_path, capsys, monkeypatch):
     assert summary["nothing_to_do"] is True
     assert summary["placements"] == 0
     assert summary["ranges"][0]["placed"] is True
+    assert summary["ranges"][0]["keyframed"] is True
+
+
+def test_rerun_rewrites_animate_when_keyframes_missing(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    fake = FakeRun(import_items=[48], inspect=sequence)
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--bridge", "127.0.0.1:7714", "--matte-dir", str(matte_dir)],
+        monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["nothing_to_do"] is False
+    assert summary["ranges"][0]["keyframed"] is False
+    assert (tmp_path / fp.ANIMATE_FILE).is_file()
+    assert (tmp_path / fp.ANIMATE_FILE).read_text(encoding="utf-8") != ""
+    assert not (tmp_path / fp.PLACE_FILE).exists()
+    assert all("import" not in call for call in fake.calls)
+
+
+def test_rerun_rewrites_animate_when_effects_lack_keyframes(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    failed_effects = [{
+        "effect": "motion",
+        "params": {"scale": {"keyframes": []}, "position": {"keyframes": []}},
+    }]
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {
+                "clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T,
+                "enabled": True, "effects": failed_effects,
+            },
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    fake = FakeRun(import_items=[48], inspect=sequence)
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--bridge", "127.0.0.1:7714", "--matte-dir", str(matte_dir)],
+        monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["nothing_to_do"] is False
+    assert summary["ranges"][0]["keyframed"] is False
+    assert (tmp_path / fp.ANIMATE_FILE).read_text(encoding="utf-8") != ""
+
+
+def test_animate_failure_deletes_steps_file(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    fake = FakeRun(import_items=[48], inspect=sequence)
+
+    def failing_run_steps(path, bridge, project):
+        if Path(path).name == fp.ANIMATE_FILE:
+            raise fp.FinishPipRuntimeError("animate failed")
+
+    monkeypatch.setattr(fp, "run_steps", failing_run_steps)
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--bridge", "127.0.0.1:7714", "--matte-dir", str(matte_dir)],
+        monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 1
+    assert not (tmp_path / fp.ANIMATE_FILE).exists()
+
+
+def test_rerun_nothing_to_do_from_animate_steps_file(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    animate = tmp_path / fp.ANIMATE_FILE
+    sentinel = json.dumps({
+        "id": "effects.setParam",
+        "params": {"clip": 50, "effect": "motion", "param": "scale", "value": 45, "time": 0, "keyframe": True},
+    }) + "\n"
+    animate.write_text(sentinel, encoding="utf-8")
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--matte-dir", str(matte_dir)], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["nothing_to_do"] is True
+    assert summary["ranges"][0]["keyframed"] is True
+    assert summary["steps_files"] == []
+    assert fake.calls == []
+    assert animate.read_text(encoding="utf-8") == sentinel
+
+
+def test_still_on_camera_track_is_not_a_piece(tmp_path, capsys, monkeypatch):
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 0, 10)],
+        [
+            camera_item(9, 1, "fundal_intro.png", 0, 10),
+            camera_item(10, 2, "camera 2026-09-01 10-00-00.mp4", 0, 10),
+        ],
+    )
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert len(summary["ranges"]) == 1
+    assert summary["ranges"][0]["source"] == "camera 2026-09-01 10-00-00.mp4"
+    assert summary["placements"] == 1
+
+
+def test_camera_track_with_only_a_still_makes_no_ranges(tmp_path, capsys, monkeypatch):
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 0, 10)],
+        [camera_item(9, 1, "fundal_intro.png", 0, 10)],
+    )
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, [], extra=["--json"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["ranges"] == []
+    assert summary["placements"] == 0
 
 
 def test_attach_clips_skips_missing_clip_id(tmp_path, capsys, monkeypatch):
@@ -795,14 +991,7 @@ def test_refuses_output_inside_camera_dir(tmp_path, capsys):
     assert "inside the camera folder" in json.loads(captured.out.strip())["error"]
 
 
-def filmcraft_cli():
-    env = fp.os.environ.get("FILMCRAFT_CLI")
-    if env:
-        return env
-    return shutil.which("filmcraft-cli")
-
-
-needs_filmcraft = pytest.mark.skipif(filmcraft_cli() is None, reason="filmcraft-cli is not installed")
+needs_filmcraft = pytest.mark.skipif(cli_path() is None, reason="filmcraft-cli is not installed")
 
 
 def make_tiny_matte(path):
@@ -827,12 +1016,12 @@ def test_smoke_keyframes_land_on_the_clip(tmp_path):
     empty = tmp_path / "empty.jsonl"
     empty.write_text("", encoding="utf-8")
     subprocess.run(
-        [filmcraft_cli(), "--demo", "--save-as", str(project), "run", str(empty)],
+        [cli_path(), "--demo", "--save-as", str(project), "run", str(empty)],
         check=True, capture_output=True,
     )
     imported = tmp_path / "imported.fcproj"
     result = subprocess.run(
-        [filmcraft_cli(), "--project", str(project), "--save-as", str(imported), "--compact", "import", str(matte)],
+        [cli_path(), "--project", str(project), "--save-as", str(imported), "--compact", "import", str(matte)],
         capture_output=True, text=True, check=True,
     )
     item = json.loads(result.stdout.strip().splitlines()[-1])["items"][0]
@@ -848,11 +1037,11 @@ def test_smoke_keyframes_land_on_the_clip(tmp_path):
     )
     placed = tmp_path / "placed.fcproj"
     subprocess.run(
-        [filmcraft_cli(), "--project", str(imported), "--save-as", str(placed), "run", str(place)],
+        [cli_path(), "--project", str(imported), "--save-as", str(placed), "run", str(place)],
         check=True, capture_output=True,
     )
     inspected = subprocess.run(
-        [filmcraft_cli(), "--project", str(placed), "inspect", "sequence"],
+        [cli_path(), "--project", str(placed), "inspect", "sequence"],
         capture_output=True, text=True, check=True,
     )
     sequence = json.loads(inspected.stdout)
@@ -876,7 +1065,7 @@ def test_smoke_keyframes_land_on_the_clip(tmp_path):
     animate.write_text("\n".join(json.dumps(step) for step in steps) + "\n", encoding="utf-8")
     animated = tmp_path / "animated.fcproj"
     subprocess.run(
-        [filmcraft_cli(), "--project", str(placed), "--save-as", str(animated), "run", str(animate)],
+        [cli_path(), "--project", str(placed), "--save-as", str(animated), "run", str(animate)],
         check=True, capture_output=True,
     )
 

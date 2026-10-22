@@ -1,6 +1,4 @@
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -8,6 +6,7 @@ import pytest
 
 import export_filmcraft as ef
 import subs_from_edit as sfe
+from common.filmcraft import cli_path
 
 FIXTURES = Path(__file__).parent / "fixtures" / "filmcraft"
 EDIT = FIXTURES / "edit.json"
@@ -16,14 +15,7 @@ PLAN = FIXTURES / "graphics_plan.json"
 TICKS = 254016000000
 
 
-def filmcraft_cli():
-    env = os.environ.get("FILMCRAFT_CLI")
-    if env:
-        return env
-    return shutil.which("filmcraft-cli")
-
-
-needs_filmcraft = pytest.mark.skipif(filmcraft_cli() is None, reason="filmcraft-cli is not installed")
+needs_filmcraft = pytest.mark.skipif(cli_path() is None, reason="filmcraft-cli is not installed")
 
 
 def make_overlay_dir(tmp_path, ids=("g1",)):
@@ -417,7 +409,7 @@ def test_headless_open(tmp_path, capsys):
     rc, out, summary, err = run_export(tmp_path, capsys, extra=["--graphics-dir", str(overlays)])
     assert rc == 0
     project = subprocess.run(
-        [filmcraft_cli(), "inspect", "project", "--project", str(out)],
+        [cli_path(), "inspect", "project", "--project", str(out)],
         capture_output=True, text=True,
     )
     assert project.stdout.strip().startswith("{"), project.stdout + project.stderr
@@ -425,7 +417,7 @@ def test_headless_open(tmp_path, capsys):
     assert data["name"] == "Main"
     assert data["activeSequence"] is not None
     sequence = subprocess.run(
-        [filmcraft_cli(), "inspect", "sequence", "--project", str(out)],
+        [cli_path(), "inspect", "sequence", "--project", str(out)],
         capture_output=True, text=True,
     )
     assert sequence.stdout.strip().startswith("{"), sequence.stdout + sequence.stderr
