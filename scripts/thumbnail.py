@@ -136,6 +136,33 @@ def draw_tracked(draw, xy, text, font, fill, tracking_px):
         pen_x += font.getlength(char) + tracking_px
 
 
+def line_ink_band(line, font, tracking_px):
+    """Ink extent of one tracked line relative to its baseline: ``(top, bottom)`` inclusive."""
+    ascent, descent = font.getmetrics()
+    margin = 16
+    baseline = ascent + margin
+    width = int(math.ceil(tracked_width(line, font, tracking_px))) + 2 * margin
+    height = ascent + descent + 2 * margin
+    probe = Image.new("L", (max(1, width), max(1, height)), 0)
+    draw_tracked(ImageDraw.Draw(probe), (margin, baseline), line, font, 255, tracking_px)
+    bbox = probe.getbbox()
+    if bbox is None:
+        return 0, 0
+    return bbox[1] - baseline, bbox[3] - 1 - baseline
+
+
+def keyword_leading(lines, font, tracking_px, base_leading, min_gap_px=2):
+    """Effective leading keeping at least ``min_gap_px`` clear rows between consecutive lines."""
+    if len(lines) < 2:
+        return base_leading
+    bands = [line_ink_band(line, font, tracking_px) for line in lines]
+    required = max(
+        min_gap_px + 1 - bands[index + 1][0] + bands[index][1]
+        for index in range(len(lines) - 1)
+    )
+    return max(base_leading, math.ceil(required))
+
+
 def fit_title(text, font_path, spec, column_width):
     size = int(spec["size_px"])
     tracking_em = spec["tracking_em"]
@@ -443,7 +470,7 @@ def render_keyword(text, brand, font_path, theme, column_width):
     tracking_px = tracking_em * size
     origin_x = brand["layout"]["text_x"]
     baseline = brand["layout"]["keyword_baseline_y"]
-    leading = brand["layout"]["keyword_leading_px"]
+    leading = keyword_leading(lines, font, tracking_px, brand["layout"]["keyword_leading_px"])
     color = hex_to_rgb(brand["colors"][theme["keyword"]])
 
     def glyphs(draw, dx, dy, fill):

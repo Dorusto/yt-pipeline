@@ -15,7 +15,7 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
     --kicker "// homelab · automatizări" --theme tech --out thumb/
 ```
 
-- `--photo` (required) is the input portrait, read-only. `--title` (required) is one line; `--keyword` (required) is the big accented words, wrapped to at most 2 lines; `--kicker` is the small line above the title (skipped when empty).
+- `--photo` (required) is the input portrait, read-only. `--title` (required) is one line; `--keyword` (required) is the big accented words, wrapped to at most 2 lines; `--kicker` is the small line above the title (skipped when empty). When the keyword wraps to two lines, the line spacing grows automatically so the comma below a Ș/Ț on the first line never touches the second line's ink (the brand `keyword_leading_px` is kept when it already leaves room).
 - The tech theme generates the dark background (warm/cool glows, grid, vignette, grain). An optional `--background FRAME.jpg` replaces it with a cover-scaled, darkened frame.
 - Writes `thumb/thumbnail.jpg` (1280x720, JPEG quality 92), atomically and re-run safe.
 
