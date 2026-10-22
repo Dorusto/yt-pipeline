@@ -23,6 +23,13 @@ The API key is read from OPENROUTER_API_KEY or from --key-file
 With ``--run-cap`` the spend is measured since the run started (a run-spend
 ledger kept by this script), not per day: ntfy ``Budget`` at 80 % of the cap
 and ntfy ``Blocked`` plus a stop at 100 %.
+
+The no-commit clock starts at the later of the last commit and the agent start
+(the run marker, else the running ``opencode`` process start time), so a fresh
+run is never reported as a long no-commit stretch and a future-dated commit
+never reads as a negative age. A stop is claimed only after the process is
+re-checked. Every ntfy message is prefixed with ``--lot``, else the tmux
+session running the agent, else nothing.
 """
 
 import argparse
@@ -115,8 +122,130 @@ def stop_agent(timeout=10.0):
     return len(targets)
 
 
+def opencode_process_start():
+    """Return the start time (epoch seconds) of the running opencode process, or 0.0."""
+    names = {"opencode", "opencode.exe"} if IS_WINDOWS else {"opencode"}
+    try:
+        import psutil
+    except ImportError:
+        return 0.0
+    try:
+        for process in psutil.process_iter(["name"]):
+            try:
+                name = process.info.get("name")
+            except psutil.Error:
+                continue
+            if name and name.lower() in names:
+                try:
+                    return float(process.create_time())
+                except (psutil.Error, AttributeError, OSError):
+                    continue
+    except psutil.Error:
+        return 0.0
+    return 0.0
+
+
+def agent_start_time(state, running):
+    """Return the epoch second the current agent run started, or 0.0 when unknown."""
+    started = parse_ts(state.get("run_started_at"))
+    if started is not None:
+        return started
+    if running:
+        return opencode_process_start()
+    return 0.0
+
+
+def _session_for_process(process, panes):
+    seen = set()
+    current = process
+    while current is not None:
+        try:
+            pid = current.pid
+        except Exception:
+            return None
+        if pid in seen:
+            return None
+        seen.add(pid)
+        if pid in panes:
+            return panes[pid]
+        try:
+            current = current.parent()
+        except Exception:
+            return None
+    return None
+
+
+def tmux_session_for_agent():
+    """Return the tmux session whose pane runs the agent, or None when it cannot be found."""
+    executable = shutil.which("tmux")
+    if not executable:
+        return None
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        result = subprocess.run(
+            [executable, "list-panes", "-a", "-F", "#{session_name} #{pane_pid}"],
+            capture_output=True, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    panes = {}
+    for line in result.stdout.decode("utf-8", errors="ignore").splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            continue
+        panes[int(parts[1])] = parts[0]
+    if not panes:
+        return None
+    names = {"opencode", "opencode.exe"} if IS_WINDOWS else {"opencode"}
+    try:
+        for process in psutil.process_iter(["name"]):
+            try:
+                name = process.info.get("name")
+            except psutil.Error:
+                continue
+            if not name or name.lower() not in names:
+                continue
+            session = _session_for_process(process, panes)
+            if session:
+                return session
+    except psutil.Error:
+        return None
+    return None
+
+
+def resolve_label(args):
+    """Return the alert label: ``--lot``, else the tmux session running the agent, else None."""
+    if args.lot:
+        return args.lot
+    return tmux_session_for_agent()
+
+
+def labelled(message, label):
+    """Prefix a message with the label once, unless it already starts with it."""
+    if not label:
+        return message
+    prefix = f"{label}: "
+    if message.startswith(prefix):
+        return message
+    return prefix + message
+
+
+def strip_label(message, label):
+    """Remove a leading label prefix from a message."""
+    if label:
+        prefix = f"{label}: "
+        if message.startswith(prefix):
+            return message[len(prefix):]
+    return message
+
+
 def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_commit_hours,
-                run_spend=None, run_cap=None, lot=None):
+                run_spend=None, run_cap=None, lot=None, agent_start=0.0):
     """Why the agent must be stopped now, or None. All limits are off unless set."""
     if not running:
         return None
@@ -125,8 +254,9 @@ def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_com
         return f"{label}run spend ${run_spend:.2f} is over the run cap ${run_cap:.2f}"
     if kill_over_usd is not None and daily_usd is not None and daily_usd > kill_over_usd:
         return f"spend today ${daily_usd:.2f} is over the hard cap ${kill_over_usd:.2f}"
-    if kill_no_commit_hours is not None and last_commit > 0:
-        hours = (now - last_commit) / 3600
+    base = max(last_commit, agent_start)
+    if kill_no_commit_hours is not None and base > 0:
+        hours = max(0.0, now - base) / 3600
         if hours > kill_no_commit_hours:
             return f"no commit for {hours:.1f} h (hard limit {kill_no_commit_hours:.1f} h)"
     return None
@@ -305,19 +435,26 @@ def last_commit_time(repo):
     return max(times) if times else 0.0
 
 
-def check_no_progress(running, last_commit, now, limit_seconds, state):
+def check_no_progress(running, last_commit, now, limit_seconds, state, agent_start=0.0):
     """Return an alert when the agent runs but has not committed for too long, once per episode.
 
-    Catches loops that keep writing logs (so files change) without producing work.
+    The clock starts at the later of the last commit and the agent start, so a
+    fresh run is never reported as a long no-commit stretch and the age is never
+    negative. Catches loops that keep writing logs (so files change) without
+    producing work.
     """
-    if not running or last_commit <= 0:
+    if not running:
         return None
-    if now - last_commit <= limit_seconds:
+    base = max(last_commit, agent_start)
+    if base <= 0:
         return None
-    if state.get("progress_alerted_for") == last_commit:
+    age = max(0.0, now - base)
+    if age <= limit_seconds:
         return None
-    state["progress_alerted_for"] = last_commit
-    hours = (now - last_commit) / 3600
+    if state.get("progress_alerted_for") == base:
+        return None
+    state["progress_alerted_for"] = base
+    hours = age / 3600
     return f"Agent is running but made no commit for {hours:.1f} h. It may be looping; check tmux."
 
 
@@ -354,7 +491,7 @@ def build_parser():
     parser.add_argument("--run-cap", type=float, default=None,
                         help="hard cap in USD for the current agent run (default off)")
     parser.add_argument("--lot", default=None,
-                        help="label naming the lot/task, included in the Budget and Blocked alerts")
+                        help="label naming the lot/task, prefixed to every alert (else the tmux session)")
     parser.add_argument("--ledger", default=DEFAULT_LEDGER_FILE,
                         help=f"run-spend ledger (default {DEFAULT_LEDGER_FILE})")
     parser.add_argument("--start-run", action="store_true",
@@ -366,14 +503,16 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
+def main(argv=None, now=None):
     started = time.monotonic()
     args = build_parser().parse_args(argv)
-    now = time.time()
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    today = datetime.now(timezone.utc).date().isoformat()
+    now = time.time() if now is None else now
+    now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
+    now_iso = now_dt.isoformat(timespec="seconds")
+    today = now_dt.date().isoformat()
     state = load_state(args.state_file)
     errors = []
+    label = resolve_label(args)
 
     daily_usd = None
     api_key = read_api_key(args.key_file)
@@ -428,39 +567,49 @@ def main(argv=None):
         state["usage_daily_last_seen"] = daily_usd
 
     run_spend = run_spend_usd(entries, run_started_at, ledger_path)
+    agent_start = agent_start_time(state, running)
 
     notifications = []
     for message in (
         check_spend(daily_usd, args.spend_usd, state, today),
         check_stall(running, last_activity, now, args.stall_hours * 3600, state),
-        check_no_progress(running, last_commit, now, args.no_commit_hours * 3600, state),
+        check_no_progress(running, last_commit, now, args.no_commit_hours * 3600, state, agent_start),
     ):
         if message:
-            notifications.append(("yt-pipeline watchdog", message))
+            notifications.append(("yt-pipeline watchdog", labelled(message, label)))
     if args.run_cap is not None:
         budget_message = check_run_budget(run_spend, args.run_cap, state, args.lot)
         if budget_message:
-            notifications.append(("Budget", budget_message))
+            notifications.append(("Budget", labelled(budget_message, label)))
 
     reason = kill_reason(
         running, daily_usd, args.kill_over_usd, last_commit, now, args.kill_no_commit_hours,
-        run_spend=run_spend, run_cap=args.run_cap, lot=args.lot,
+        run_spend=run_spend, run_cap=args.run_cap, lot=args.lot, agent_start=agent_start,
     )
     stopped = 0
+    stop_verified = False
     if reason:
         if not args.dry_run:
             stopped = stop_agent()
+            stop_verified = not agent_running()
+        reason_text = strip_label(reason, label)
         if args.run_cap is not None and run_spend is not None and run_cap_reached(run_spend, args.run_cap):
             state.setdefault("run_alerted", []).append("blocked")
-            notifications.append((
-                "Blocked",
-                f"{reason} — the agent was stopped. Its changes stay in the working tree.",
-            ))
+            if args.dry_run:
+                blocked = f"{reason_text} — would stop the agent. Its changes stay in the working tree."
+            elif stop_verified:
+                blocked = f"{reason_text} — the agent was stopped. Its changes stay in the working tree."
+            else:
+                blocked = f"{reason_text} — tried to stop the agent but it is still running."
+            notifications.append(("Blocked", labelled(blocked, label)))
         else:
-            notifications.append((
-                "yt-pipeline watchdog",
-                f"Stopped the agent: {reason}. Its changes stay in the working tree.",
-            ))
+            if args.dry_run:
+                stop_message = f"Would stop the agent: {reason_text}. Its changes stay in the working tree."
+            elif stop_verified:
+                stop_message = f"Stopped the agent: {reason_text}. Its changes stay in the working tree."
+            else:
+                stop_message = f"Tried to stop the agent but it is still running: {reason_text}"
+            notifications.append(("yt-pipeline watchdog", labelled(stop_message, label)))
 
     alerts = [message for _, message in notifications]
     sent = 0
@@ -473,10 +622,11 @@ def main(argv=None):
                 errors.append(f"notify failed: {exc}")
         save_state(args.state_file, state)
 
+    commit_base = max(last_commit, agent_start)
     summary = {
         "agent_running": running,
-        "idle_hours": round((now - last_activity) / 3600, 2) if last_activity else None,
-        "hours_since_commit": round((now - last_commit) / 3600, 2) if last_commit else None,
+        "idle_hours": round(max(0.0, (now - last_activity) / 3600), 2) if last_activity else None,
+        "hours_since_commit": round(max(0.0, (now - commit_base) / 3600), 2) if commit_base else None,
         "spend_today_usd": daily_usd,
         "run_spend_usd": run_spend,
         "run_cap_usd": args.run_cap,
@@ -485,6 +635,8 @@ def main(argv=None):
         "alerts": alerts,
         "kill_reason": reason,
         "stopped": stopped,
+        "stop_verified": stop_verified,
+        "label": label,
         "sent": sent,
         "dry_run": args.dry_run,
         "errors": errors,

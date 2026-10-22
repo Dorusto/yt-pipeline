@@ -2299,3 +2299,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** `0` all clear, `1` a suspect screen file was found, `2` the check could not run completely (the face detector could not load) or a failing step in a normal run, `3` a usage error (missing folder, not a folder, no camera files, bad `--config`). `ModeBError` raised by validation before any work starts exits `3`; `ModeBError` raised by a failing step inside `run()` exits `2`. The `--json` error object stays `{"ok": false, "error": ...}`.
 
 **Consequence:** `--check` callers can retry on `2` and fix the command on `3`; the module docstring, `ModeBError` docstring, `--help`, user guide, skill and tests state the four codes.
+
+---
+
+## [2026-10-22] Watchdog no-commit clock starts at the agent start; "Stopped" only when verified (S60 lot 0)
+
+**Context:** A freshly started agent was alerted "no commit for 10.1 h" and "Stopped the agent" while it kept running: the clock measured from the last commit (ref-file mtimes, possibly hours old or re-dated into the future) and the stop message was built from the kill reason alone.
+
+**Decision:** The no-commit age is `max(0, now - max(last_commit, agent_start))`, with `agent_start` from the run marker (`run_started_at`) or the opencode process start time; ages are clamped at 0.0 so a future-dated commit never reads as negative. After a kill the agent is re-checked: "Stopped the agent" only when it really ended, otherwise the alert says the stop failed. Every ntfy message carries a label (`--lot`, else the tmux session of the agent). Tests use a fake clock.
+
+**Consequence:** The watchdog no longer false-alarms on a fresh run; the stop claim is honest; alerts name the lot or session they are about.
