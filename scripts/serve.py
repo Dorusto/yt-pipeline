@@ -101,7 +101,6 @@ ARTIFACT_LABELS = (
 TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
-DEFAULT_XFADE_S = 0.3
 VERSION_RE = re.compile(r"^v\d{1,4}$")
 RUN_MARKER = "=== recap run started"
 PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
@@ -712,7 +711,7 @@ def edit_summary(directory):
             continue
         label = slot.get("shot_key") or slot.get("photo") or slot.get("clip") or slot.get("id") or ""
         if blocks:
-            start -= fade_for_join(slot, blocks[-1]["end"] - blocks[-1]["start"], length, DEFAULT_XFADE_S)
+            start -= fade_for_join(slot, blocks[-1]["end"] - blocks[-1]["start"], length)
             blocks[-1]["end"] = start
         blocks.append({"start": start, "end": start + length, "kind": kind, "label": str(label)})
         start += length
