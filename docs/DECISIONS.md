@@ -4,6 +4,34 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-21] Shorts layout policy auto/on/off and the web override (S59 follow-up 2)
+
+**Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. Doru asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.
+
+**Options:** (A) an extra field in the existing `director` scoring pass judging whether the screen is shown; (B) deterministic timeline signals — which angle each source clip is and what covers the candidate window; (C) decode sample frames of the screen file at candidate times and measure activity.
+
+**Decision:** B. `scripts/shorts_rank.py --layout-policy {auto,on,off}` (default from the config key `shorts_layout`, else `auto`; `--layout {face,split}` stays the hard override that skips the signals). `common.media.clip_kind(name)` classifies a source file name as `camera` (`camera …`), `screen` (a bare `YYYY-MM-DD HH-MM-SS` stem or a `screen` token) or neither (Mode A footage never splits); `has_both` is the input timeline holding both kinds and `screen_during` a screen clip's span overlapping the candidate (`auto` splits iff both, `on` iff `has_both`, `off` never). Spans come from `common.timeline_words.build_groups` (rough cut — a Mode B pair is one window with both angles) or the new `common.timeline_words.video_spans_from_fcproj` (every video-track clip); `--timeline-words` has no spans and stays `face`. Under a policy every written candidate carries `layout`. In `serve.py` a **Shorts layout** select (`auto`/`on`/`off`, default from config) sits with the other run settings and is recorded in the run options, and a **Shorts** tab lists the candidates with a per-candidate `face`/`split` select that writes the key back through `POST /<project>/shorts-candidates` (atomic, one candidate, camera-only projects offer `face` only and refuse `split`).
+
+**Why not:** A) a model call to answer a fact the timeline already carries, and the pass would have to change shape; C) media decoding at ranking time for the same fact.
+
+**Consequence:** `shorts_candidates.json` always carries `layout: face|split`; camera-only and Mode A sessions never get `split`; the policy is one config key and one CLI flag. The split render's cell order is unchanged (S59 lot 3c: face cell over screen cell); Doru's note "(screen on top, camera below)" is an open question in the S59 follow-up 2 report.
+
+---
+
+## [2026-10-21] No private addresses in the public repo (S59 follow-up 2)
+
+**Context:** The repository is public but carried the homelab's IP in docs (ntfy and serve URLs, bind addresses), in `scripts/common/notify.py`'s default URL and in tests.
+
+**Options:** (A) keep them (the repo is "public" but unlisted); (B) placeholders in docs, env/config for code, loopback for tests, and a `check_public.py` rule.
+
+**Decision:** B. Docs name `<agent-host>` and `<ntfy-url>`; `common.notify.resolve_url` reads `--url`/the call argument, else `NTFY_URL`, else the config key `ntfy_url`, and raises `NotifyError` when none is set (`scripts/notify.py` exits 1 with the message) — `DEFAULT_NTFY_URL` is gone and nothing defaults to a private address; tests use `127.0.0.1` or `example.invalid`; `scripts/check_public.py` fails on any IPv4 in 10/8, 172.16/12 or 192.168/16 outside `.gitignored` files (loopback and public addresses fine).
+
+**Why not:** A) publishes the homelab topology from a repo anyone can clone.
+
+**Consequence:** a deployment sets `NTFY_URL` or `config.yaml` `ntfy_url` (documented in `config.yaml.example`); the pre-commit hook and CI catch a private address before it lands.
+
+---
+
 ## [2026-10-21] S59 follow-up answers: flat-layout screens, one lookup, check exit codes, candidates layout
 
 **Context:** The S59 reviews left open questions (matte exclusion, flat-layout screen candidates, the `find_words` suffix copy, `--check` when the face detector cannot load, the watchdog cron docs, the crossfade/word-midpoint/frame-reader copies, and the `layout` key no tool writes) and the final review section's problems 2-3 plus decision items 1-3.
