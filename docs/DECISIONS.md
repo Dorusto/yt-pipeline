@@ -2309,3 +2309,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** The no-commit age is `max(0, now - max(last_commit, agent_start))`, with `agent_start` from the run marker (`run_started_at`) or the opencode process start time; ages are clamped at 0.0 so a future-dated commit never reads as negative. After a kill the agent is re-checked: "Stopped the agent" only when it really ended, otherwise the alert says the stop failed. Every ntfy message carries a label (`--lot`, else the tmux session of the agent). Tests use a fake clock.
 
 **Consequence:** The watchdog no longer false-alarms on a fresh run; the stop claim is honest; alerts name the lot or session they are about.
+
+---
+
+## [2026-10-22] finish_pip.py: matte PiP over the screen spans in two steps files (S60 lot 1)
+
+**Context:** The by-hand finishing placed the matted camera as a picture-in-picture over the screen spans with an eased entry/exit. `filmcraft-cli run` assigns clip ids at run time (unpredictable: 50 then 52), so one steps file cannot keyframe clips it places itself.
+
+**Decision:** `scripts/finish_pip.py` writes `finish_pip.place.jsonl` (timeline.place of the mattes on one PiP track — first placement `track: "new"`, the rest `track: "V<n>"`) and `finish_pip.animate.jsonl` (motion keyframes on the placed clips, generated from a re-inspect after the place run). With `--bridge` (or `--project` for a headless file) the tool runs both phases itself; with neither it only mattes and plans, because `timeline.place` item ids come from the import into that same project. Spans snap to the screen span edges (a span ending mid camera-clip trims the placement), ranges are padded 0.5 s and merged under 2 s, PiP is 45 % bottom-right (36 % over full-screen explainer names) with a 0.30 s ease-out entry (slight overshoot) and a 0.25 s anticipation exit.
+
+**Consequence:** The picture-in-picture finishing is reproducible from one command and a steps file pair; the animate file always follows a place run or a fresh inspect JSON.
