@@ -1593,3 +1593,278 @@ def test_cut_audio_missing_media_is_404(tmp_path):
         server.server_close()
 
 
+def write_serve_config(tmp_path, shorts_layout=None):
+    lines = [
+        "models:",
+        "  director: mock-model",
+        "llm_budget_usd: null",
+        "llm_backend: mock",
+    ]
+    if shorts_layout is not None:
+        lines.append(f"shorts_layout: {shorts_layout}")
+    path = tmp_path / "config.yaml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+SHORTS_CANDIDATES = [
+    {
+        "rank": 1, "start_s": 0.0, "end_s": 30.0, "duration_s": 30.0, "score": 70.0,
+        "hook": 60, "payoff": 80, "reason": "strong open", "chapter_start_s": 0.0,
+        "chapter_title": "Intro", "layout": "split",
+    },
+    {
+        "rank": 2, "start_s": 40.0, "end_s": 65.0, "duration_s": 25.0, "score": 65.0,
+        "hook": 55, "payoff": 75, "reason": "nice payoff",
+    },
+]
+
+
+def write_shorts_candidates(project, candidates):
+    document = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-21T00:00:00+00:00",
+        "tool": "scripts/shorts_rank.py",
+        "candidates": candidates,
+    }
+    (project / "shorts_candidates.json").write_text(
+        json.dumps(document, indent=2) + "\n", encoding="utf-8"
+    )
+    return document
+
+
+def post_shorts_candidates(server, project, fields):
+    return request(
+        server,
+        "POST",
+        f"/{project}/shorts-candidates",
+        headers=form_headers(),
+        body=urllib.parse.urlencode(fields),
+    )
+
+
+def test_upload_and_reedit_forms_have_the_shorts_layout_select(tmp_path, monkeypatch):
+    monkeypatch.setenv("YT_CONFIG", str(write_serve_config(tmp_path)))
+    page = serve.render_upload([])
+    assert '<select name="shorts_layout">' in page
+    assert "Shorts layout" in page
+    assert '<option value="auto" selected>Auto</option>' in page
+    assert '<option value="on">on</option>' in page
+    assert '<option value="off">off</option>' in page
+    assert '<select name="shorts_layout">' in serve.render_reedit("2026-10-14", [])
+
+
+def test_shorts_layout_select_uses_the_config_value(tmp_path, monkeypatch):
+    monkeypatch.setenv("YT_CONFIG", str(write_serve_config(tmp_path, "off")))
+    page = serve.render_upload([])
+    select = page[page.index('<select name="shorts_layout">'):]
+    select = select[: select.index("</select>")]
+    assert '<option value="off" selected>off</option>' in select
+    assert '<option value="auto" selected>Auto</option>' not in select
+
+
+def test_shorts_layout_select_falls_back_to_auto_on_a_bad_config(tmp_path, monkeypatch):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("not: a valid config\n", encoding="utf-8")
+    monkeypatch.setenv("YT_CONFIG", str(bad))
+    page = serve.render_upload([])
+    assert '<option value="auto" selected>Auto</option>' in page
+
+
+def test_shorts_tab_lists_the_candidates(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_shorts_candidates(project, SHORTS_CANDIDATES)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b'href="/2026-10-14/?tab=shorts"' in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shorts")
+        page = body.decode()
+        assert status == 200
+        assert page.count('class="short-row"') == 2
+        assert "strong open" in page
+        assert "nice payoff" in page
+        assert "Intro" in page
+        assert '<option value="split" selected>split</option>' in page
+        assert '<option value="face" selected>face</option>' in page
+        assert "/shorts-candidates" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_without_shorts_candidates_has_no_shorts_tab(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b"?tab=shorts" not in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shorts")
+        assert status == 200
+        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_shorts_candidates_writes_the_layout(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    before = write_shorts_candidates(project, SHORTS_CANDIDATES)
+    server = start_server(root)
+    try:
+        status, headers, body = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "1", "layout": "face"}
+        )
+        assert status == 200
+        assert headers["Content-Type"] == "application/json"
+        assert json.loads(body) == {"ok": True, "rank": 1, "layout": "face"}
+        after = json.loads((project / "shorts_candidates.json").read_text(encoding="utf-8"))
+        assert after["candidates"][0]["layout"] == "face"
+        assert after["candidates"][1] == before["candidates"][1]
+        assert after["schema_version"] == before["schema_version"]
+        assert after["generated_at"] == before["generated_at"]
+        assert after["tool"] == before["tool"]
+        status, _, _ = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "1", "layout": "face"}
+        )
+        assert status == 200
+        again = json.loads((project / "shorts_candidates.json").read_text(encoding="utf-8"))
+        assert again == after
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_shorts_candidates_rejects_bad_input(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_shorts_candidates(project, SHORTS_CANDIDATES)
+    server = start_server(root)
+    try:
+        status, _, body = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "99", "layout": "face"}
+        )
+        assert status == 400 and b"rank" in body
+        status, _, body = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "1", "layout": "weird"}
+        )
+        assert status == 400 and b"layout" in body
+        status, _, _ = post_shorts_candidates(server, "nope", {"rank": "1", "layout": "face"})
+        assert status == 404
+        status, _, _ = request(server, "GET", "/2026-10-14/shorts-candidates")
+        assert status == 404
+        status, _, _ = request(
+            server, "PUT", "/2026-10-14/shorts-candidates", headers=form_headers(), body=b""
+        )
+        assert status == 405
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_shorts_candidates_missing_file_is_400(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "1", "layout": "face"}
+        )
+        assert status == 400
+        assert b"shorts candidates" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_shorts_candidates_refuses_split_on_a_camera_only_project(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_shorts_candidates(project, SHORTS_CANDIDATES)
+    edit = {
+        "sources": [
+            {
+                "file": "camera 2026-09-29 20-58-37.mp4",
+                "path": "/x/camera 2026-09-29 20-58-37.mp4",
+                "media_type": "video",
+            }
+        ]
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "1", "layout": "split"}
+        )
+        assert status == 400
+        assert b"split" in body
+        status, _, _ = post_shorts_candidates(
+            server, "2026-10-14", {"rank": "1", "layout": "face"}
+        )
+        assert status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_shorts_tab_offers_face_only_for_a_camera_only_project(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_shorts_candidates(project, SHORTS_CANDIDATES)
+    edit = {
+        "sources": [
+            {
+                "file": "camera 2026-09-29 20-58-37.mp4",
+                "path": "/x/camera 2026-09-29 20-58-37.mp4",
+                "media_type": "video",
+            }
+        ]
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shorts")
+        page = body.decode()
+        assert status == 200
+        assert '<option value="face"' in page
+        assert '<option value="split"' not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_shorts_tab_offers_both_layouts_for_two_angles(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_shorts_candidates(project, SHORTS_CANDIDATES)
+    edit = {
+        "sources": [
+            {
+                "file": "camera 2026-09-29 20-58-37.mp4",
+                "path": "/x/camera 2026-09-29 20-58-37.mp4",
+                "media_type": "video",
+            },
+            {
+                "file": "2026-09-29 20-58-35.mp4",
+                "path": "/x/2026-09-29 20-58-35.mp4",
+                "media_type": "video",
+            },
+        ]
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shorts")
+        page = body.decode()
+        assert status == 200
+        assert '<option value="face"' in page
+        assert '<option value="split"' in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+

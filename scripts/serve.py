@@ -38,6 +38,8 @@ from pathlib import Path
 
 import yaml
 
+from common.config import ConfigError, load_config
+from common.media import clip_kind
 from common.moves import slot_screen_length
 from common.timeline_words import fade_for_join
 from common.pacing import estimate_all_good
@@ -98,8 +100,11 @@ ARTIFACT_LABELS = (
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
-TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"))
+TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
 TAB_KEYS = tuple(key for key, _ in TABS)
+SHORTS_LAYOUT_POLICIES = ("auto", "on", "off")
+SHORTS_LAYOUTS = ("face", "split")
+SHORTS_CANDIDATES_FILE = "shorts_candidates.json"
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VERSION_RE = re.compile(r"^v\d{1,4}$")
 RUN_MARKER = "=== recap run started"
@@ -215,6 +220,26 @@ btn.addEventListener('click',function(){var body=new URLSearchParams();body.set(
 fetch(base+'/cut-review',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(function(res){if(res.ok){[].forEach.call(row.querySelectorAll('.cut-actions button'),function(other){other.classList.remove('on');});btn.classList.add('on');}});});});});})();
 """
 
+SHORTS_STYLE = """
+.short-row{border-top:1px solid var(--rope);padding:12px 0}
+.short-row:last-child{border-bottom:1px solid var(--rope)}
+.short-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+.short-rank{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sea)}
+.short-reason{color:var(--stone)}
+.short-meta{color:var(--haze);font-size:.85rem}
+.short-chapter{color:var(--haze);font-size:.9rem;margin:4px 0}
+.short-layout{display:flex;align-items:center;gap:8px;margin:6px 0 0}
+.short-layout select{width:auto;min-width:120px}
+"""
+
+SHORTS_SCRIPT = """
+(function(){var base=window.location.pathname.split('?')[0].replace(/\\/$/,'');
+[].forEach.call(document.querySelectorAll('.short-row'),function(row){var rank=row.dataset.rank;
+[].forEach.call(row.querySelectorAll('.short-layout select'),function(sel){
+sel.addEventListener('change',function(){var body=new URLSearchParams();body.set('rank',rank);body.set('layout',sel.value);
+fetch(base+'/shorts-candidates',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});});});});})();
+"""
+
 
 def edit_decisions(directory):
     """``{shot id: {status, slot, reason}}`` from the workspace's edit.json, or an empty dict."""
@@ -270,6 +295,66 @@ def cut_decisions(directory):
                 "window_out_s": row.get("window_out_s"),
             })
     return result
+
+
+def shorts_layout_default():
+    """The config's ``shorts_layout`` policy, or ``auto`` when it is missing or invalid."""
+    try:
+        value = load_config().get("shorts_layout", "auto")
+    except (ConfigError, OSError, ValueError):
+        return "auto"
+    if value is True:
+        value = "on"
+    elif value is False:
+        value = "off"
+    return value if value in SHORTS_LAYOUT_POLICIES else "auto"
+
+
+def load_shorts_candidates(directory):
+    """The candidate rows of a workspace's shorts_candidates.json, or an empty list."""
+    try:
+        document = json.loads((Path(directory) / SHORTS_CANDIDATES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    rows = document.get("candidates") if isinstance(document, dict) else None
+    return [row for row in rows or [] if isinstance(row, dict)]
+
+
+def shorts_layout_options(directory):
+    """The layout values offered for a project: ``face`` only for a camera-only session."""
+    try:
+        document = json.loads((Path(directory) / "edit.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return SHORTS_LAYOUTS
+    sources = document.get("sources") if isinstance(document, dict) else None
+    if not isinstance(sources, list):
+        return SHORTS_LAYOUTS
+    video_names = [
+        str(row.get("file") or "")
+        for row in sources
+        if isinstance(row, dict) and row.get("media_type") != "photo"
+    ]
+    if not video_names:
+        return SHORTS_LAYOUTS
+    if any(clip_kind(name) == "screen" for name in video_names):
+        return SHORTS_LAYOUTS
+    return ("face",)
+
+
+def set_candidate_layout(path, rank, layout):
+    """Rewrite one candidate's ``layout`` key atomically and return the document."""
+    path = Path(path)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError("shorts candidates must be a mapping")
+    rows = document.get("candidates")
+    if not isinstance(rows, list):
+        raise ValueError("candidates must be a list")
+    for row in rows:
+        if isinstance(row, dict) and row.get("rank") == rank:
+            row["layout"] = layout
+    write_text_atomic(path, json.dumps(document, indent=2) + "\n")
+    return document
 
 
 def shotlog_with_edit(path, decisions):
@@ -1033,17 +1118,64 @@ def render_cuts_panel(directory, name):
     return f'<style>{CUTS_STYLE}</style><div class="cuts">{"".join(rows)}</div>'
 
 
+def render_shorts_panel(directory, name):
+    """The Shorts tab: one row per ranked candidate with a face/split layout select."""
+    directory = Path(directory)
+    candidates = load_shorts_candidates(directory)
+    if not candidates:
+        return '<p class="empty">No Shorts candidates yet. Run scripts/shorts_rank.py first.</p>'
+    layouts = shorts_layout_options(directory)
+    rows = []
+    for candidate in candidates:
+        rank = candidate.get("rank")
+        start = candidate.get("start_s")
+        end = candidate.get("end_s")
+        span = f"{format_timecode(start)}\u2013{format_timecode(end)}"
+        duration = candidate.get("duration_s")
+        length = f"{float(duration):.1f} s" if isinstance(duration, (int, float)) else ""
+        score = candidate.get("score")
+        hook = candidate.get("hook")
+        payoff = candidate.get("payoff")
+        score_text = f"score {float(score):.1f}" if isinstance(score, (int, float)) else ""
+        hook_text = (
+            f"hook {float(hook):.0f} / payoff {float(payoff):.0f}"
+            if isinstance(hook, (int, float)) and isinstance(payoff, (int, float))
+            else ""
+        )
+        meta = " \u00b7 ".join(part for part in (f"[{span}]", length, score_text, hook_text) if part)
+        reason = html_escape(candidate.get("reason") or "")
+        chapter = candidate.get("chapter_title")
+        chapter_html = f'<p class="short-chapter">Chapter: {html_escape(chapter)}</p>' if chapter else ""
+        current = candidate.get("layout") if candidate.get("layout") in layouts else "face"
+        select = render_select("layout", [(value, value) for value in layouts], default=current)
+        rows.append(
+            f'<article class="short-row" data-rank="{html_escape(rank)}">'
+            f'<div class="short-head"><span class="short-rank">#{html_escape(rank)}</span>'
+            f'<span class="short-meta num">{meta}</span></div>'
+            f'<p class="short-reason">{reason}</p>'
+            f"{chapter_html}"
+            f'<div class="short-layout"><label>Layout {select}</label></div>'
+            f'</article>'
+        )
+    return f'<style>{SHORTS_STYLE}</style><div class="shorts">{"".join(rows)}</div>'
+
+
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
+    has_shorts = (directory / SHORTS_CANDIDATES_FILE).is_file()
     if tab == "cuts" and not mode_b:
+        tab = "recap"
+    if tab == "shorts" and not has_shorts:
         tab = "recap"
     status = project_status(directory)
     report = run_report(directory)
     tab_links = []
     for key, label in TABS:
         if key == "cuts" and not mode_b:
+            continue
+        if key == "shorts" and not has_shorts:
             continue
         active = ' class="active"' if key == tab else ""
         tab_links.append(
@@ -1064,6 +1196,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     }
     if mode_b:
         panels["cuts"] = render_cuts_panel(directory, name)
+    if has_shorts:
+        panels["shorts"] = render_shorts_panel(directory, name)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
     if estimate and estimate["shots"]:
@@ -1081,6 +1215,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     script = (STRIP_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
     if tab == "cuts":
         script += CUTS_SCRIPT
+    if tab == "shorts":
+        script += SHORTS_SCRIPT
     refresh = 20 if status == "running" else None
     return render_page(name, body, active="projects", script=script, refresh=refresh)
 
@@ -1140,6 +1276,14 @@ def option_fields(music_tracks):
                 "speed_ramp",
                 [("auto", "Auto (off)"), ("off", "off"), ("on", "on")],
                 default="auto",
+            ),
+        ),
+        (
+            "Shorts layout",
+            render_select(
+                "shorts_layout",
+                [("auto", "Auto"), ("on", "on"), ("off", "off")],
+                default=shorts_layout_default(),
             ),
         ),
         ("Music", render_select("music", music_options, default="auto")),
@@ -1680,6 +1824,25 @@ def validate_cut_action(value):
     return action
 
 
+def validate_rank(value):
+    """The candidate rank from a layout tap, or a 400 when it is missing or not a positive integer."""
+    text = (value or "").strip()
+    if not text.isdigit() or len(text) > 4:
+        raise UploadError(400, "invalid rank")
+    rank = int(text)
+    if rank < 1:
+        raise UploadError(400, "invalid rank")
+    return rank
+
+
+def validate_layout(value):
+    """The face/split layout from a layout tap, or a 400 when it is not one of the two."""
+    layout = (value or "").strip()
+    if layout not in SHORTS_LAYOUTS:
+        raise UploadError(400, "invalid layout")
+    return layout
+
+
 def format_timecode(seconds):
     """Seconds as ``MM:SS.d``."""
     try:
@@ -1900,6 +2063,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "cut-review":
             self.handle_cut_review(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "shorts-candidates":
+            self.handle_shorts_candidates(segments[0])
+            return
         self._method_not_allowed()
 
     def _boundary(self):
@@ -2053,6 +2219,44 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(400, "unreadable cut review")
             return
         self.send_json({"ok": True, "id": cut_id, "action": action, "file": CUT_REVIEW_FILE})
+
+    def handle_shorts_candidates(self, project):
+        """Rewrite one Shorts candidate's layout in the workspace's shorts_candidates.json."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/x-www-form-urlencoded":
+            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.server.max_total_bytes:
+            self.send_error_text(413, "request body too large")
+            return
+        fields = parse_urlencoded(self.rfile.read(length))
+        try:
+            rank = validate_rank(fields.get("rank"))
+            layout = validate_layout(fields.get("layout"))
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        path = workspace / SHORTS_CANDIDATES_FILE
+        if not path.is_file():
+            self.send_error_text(400, "no shorts candidates")
+            return
+        if not any(row.get("rank") == rank for row in load_shorts_candidates(workspace)):
+            self.send_error_text(400, "unknown rank")
+            return
+        if layout == "split" and "split" not in shorts_layout_options(workspace):
+            self.send_error_text(400, "split is not available for a camera-only project")
+            return
+        try:
+            set_candidate_layout(path, rank, layout)
+        except (OSError, ValueError):
+            self.send_error_text(400, "unreadable shorts candidates")
+            return
+        self.send_json({"ok": True, "rank": rank, "layout": layout})
 
     def handle_cut_audio(self, project, send_body):
         """Serve a short WAV preview of one cut span, cached under cut_previews/."""
