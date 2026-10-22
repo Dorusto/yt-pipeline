@@ -6,11 +6,11 @@ Usage:
     python3 scripts/finish_pip.py --sequence SEQ.json --camera-dir DIR [options]
 
 The tool reads a FilmCraft sequence inspect JSON, finds the spans where the
-screen track has content, lists and mattes the camera ranges that cover them
-(padded and merged) and writes the ``filmcraft-cli`` steps that put the matted
-person as a picture-in-picture bottom-right over each span with a quick eased
-entry and a short anticipation exit, snapped to the screen span edges. The place
-steps go to ``finish_pip.place.jsonl``; the motion keyframes go to
+screen track has video content, lists and mattes the camera ranges that cover
+them (padded and merged) and writes the ``filmcraft-cli`` steps that put the
+matted person as a picture-in-picture bottom-right over each span with a quick
+eased entry and a short anticipation exit, snapped to the screen span edges. The
+place steps go to ``finish_pip.place.jsonl``; the motion keyframes go to
 ``finish_pip.animate.jsonl`` and are generated from a re-inspect after the place
 run, because the engine assigns clip ids at run time. The place and animate
 phases run against a live FilmCraft with ``--bridge HOST:PORT`` or against a
@@ -24,7 +24,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,16 +31,21 @@ import time
 from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
-from common.media import clip_kind, is_matte_export
+from common.filmcraft import cli_path
+from common.media import clip_kind, is_matte_export, is_video_name
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
+DEFAULT_FPS = 25.0
 DEFAULT_PAD_S = 0.5
 DEFAULT_MERGE_GAP_S = 2.0
 DEFAULT_SCALE = 45.0
 DEFAULT_SCALE_SMALL = 36.0
 DEFAULT_SMALL_OVER = r"(?i)(explainer|explica|grafic|anim)"
 SPAN_GAP_S = 0.05
+EDGE_TOLERANCE_S = 0.05
+EDGE_MAX_OVERLAP_S = 1.0
+LEFTOVER_MIN_OVERLAP_S = 0.5
 MARGIN_FRACTION = 0.05
 ENTRY_TOTAL_S = 0.30
 ENTRY_OVERSHOOT_S = 0.18
@@ -56,7 +60,6 @@ EXIT_ANTICIPATION_OFFSET = 0.02
 EXIT_OUT_SCALE = 0.5
 PLACE_FILE = "finish_pip.place.jsonl"
 ANIMATE_FILE = "finish_pip.animate.jsonl"
-MATTE_RANGE_RE = re.compile(r"_\d+\.\d{2}-\d+\.\d{2}$")
 
 
 class FinishPipError(Exception):
@@ -102,14 +105,6 @@ def build_parser():
     return parser
 
 
-def filmcraft_cli():
-    """Return the filmcraft-cli binary from ``$FILMCRAFT_CLI`` or PATH, or None."""
-    env = os.environ.get("FILMCRAFT_CLI")
-    if env:
-        return env
-    return shutil.which("filmcraft-cli")
-
-
 def target_flags(bridge, project, save=False):
     """Return the filmcraft-cli target flags for a live bridge or a headless project file."""
     if bridge:
@@ -138,26 +133,28 @@ def load_sequence(path):
 
 
 def sequence_settings(sequence):
-    """Return the frame width and height from the sequence settings, defaulting to 1920x1080."""
+    """Return the frame size and rate from the sequence settings, with sane defaults."""
     settings = sequence.get("settings") or {}
     width = settings.get("width") or DEFAULT_WIDTH
     height = settings.get("height") or DEFAULT_HEIGHT
-    return {"width": int(width), "height": int(height)}
-
-
-def is_matte_item(name):
-    """Return True for a derived matte item name (``*-Alpha``, ``*_matte`` or a range export)."""
-    return is_matte_export(name) or bool(MATTE_RANGE_RE.search(Path(str(name)).stem))
+    frame_rate = settings.get("frame_rate") or {}
+    num = frame_rate.get("num") or DEFAULT_FPS
+    den = frame_rate.get("den") or 1
+    try:
+        fps = float(num) / float(den)
+    except (TypeError, ValueError, ZeroDivisionError):
+        fps = DEFAULT_FPS
+    return {"width": int(width), "height": int(height), "fps": fps}
 
 
 def classify_track(track):
-    """Return ``camera``, ``screen`` or None for a video track's enabled, non-matte items."""
+    """Return ``camera``, ``screen`` or None for a video track's enabled, non-matte video items."""
     kinds = set()
     for item in track.get("items") or []:
         if not item.get("enabled", True):
             continue
         name = item.get("name") or ""
-        if is_matte_item(name):
+        if is_matte_export(name) or not is_video_name(name):
             continue
         kind = clip_kind(name)
         if kind:
@@ -176,14 +173,20 @@ def find_track(sequence, kind):
 
 
 def screen_spans(sequence, small_over):
-    """Return the maximal runs of enabled screen items as spans with an explainer flag."""
+    """Return the maximal runs of enabled screen video items as spans with an explainer flag.
+
+    Only video clips make a span: a still image, a graphic or a nameless generator
+    item on the screen track is ignored and never classifies the track.
+    """
     track = find_track(sequence, "screen")
     if track is None:
         return []
     items = [
         item
         for item in track.get("items") or []
-        if item.get("enabled", True) and not is_matte_item(item.get("name") or "")
+        if item.get("enabled", True)
+        and not is_matte_export(item.get("name") or "")
+        and is_video_name(item.get("name") or "")
     ]
     items.sort(key=lambda item: int(item.get("start", 0)))
     gap = int(round(SPAN_GAP_S * TICKS_PER_SECOND))
@@ -210,7 +213,7 @@ def camera_pieces(sequence, spans, pad_s):
     items = [
         item
         for item in track.get("items") or []
-        if item.get("enabled", True) and not is_matte_item(item.get("name") or "")
+        if item.get("enabled", True) and not is_matte_export(item.get("name") or "")
     ]
     pad = int(round(pad_s * TICKS_PER_SECOND))
     pieces = []
@@ -233,8 +236,63 @@ def camera_pieces(sequence, spans, pad_s):
                 "raw_source_start": raw_start,
                 "padded_start": max(0, raw_start - pad),
                 "padded_end": raw_end + pad,
+                "clip_start": item_start,
+                "clip_end": item_end,
+                "overlap": overlap_end - overlap_start,
+                "clip_length": item_end - item_start,
             })
     return pieces
+
+
+def classify_edge_piece(piece):
+    """Return ``(verdict, reason)`` for a short piece at a span edge, or ``(None, None)``.
+
+    A piece is an edge piece when its clip straddles the span edge (tolerance
+    0.05 s) or its clip start/end sits within 0.05 s of that edge and its overlap
+    with the span is at most 1.0 s. A leftover is a fragment of the surrounding
+    full-screen stretch and is dropped; a seam is a real camera cut at the edge
+    and is kept.
+    """
+    tolerance = int(round(EDGE_TOLERANCE_S * TICKS_PER_SECOND))
+    max_overlap = int(round(EDGE_MAX_OVERLAP_S * TICKS_PER_SECOND))
+    min_overlap = int(round(LEFTOVER_MIN_OVERLAP_S * TICKS_PER_SECOND))
+    span = piece["span"]
+    straddles = piece["clip_start"] < span["start"] - tolerance or piece["clip_end"] > span["end"] + tolerance
+    near_edge = (
+        abs(piece["clip_start"] - span["start"]) <= tolerance
+        or abs(piece["clip_end"] - span["end"]) <= tolerance
+    )
+    if not (straddles or near_edge) or piece["overlap"] > max_overlap:
+        return None, None
+    if straddles and piece["overlap"] * 2 < piece["clip_length"]:
+        return "leftover", "straddles the span edge, overlap under half the clip"
+    if piece["overlap"] < min_overlap:
+        return "leftover", "overlap under 0.5 s (split artifact)"
+    return "seam", "camera cut at the span edge"
+
+
+def split_edge_pieces(pieces):
+    """Return ``(edge_checks, kept_pieces)``: the reported edge pieces and the pieces to matte."""
+    checks = []
+    kept = []
+    for piece in pieces:
+        verdict, reason = classify_edge_piece(piece)
+        if verdict is None:
+            kept.append(piece)
+            continue
+        checks.append({
+            "source": piece["source"],
+            "padded_start": piece["padded_start"],
+            "padded_end": piece["padded_end"],
+            "overlap": piece["overlap"],
+            "clip_length": piece["clip_length"],
+            "verdict": verdict,
+            "reason": reason,
+        })
+        if verdict == "seam":
+            kept.append(piece)
+    checks.sort(key=lambda check: (check["padded_start"], check["source"]))
+    return checks, kept
 
 
 def merge_ranges(pieces, merge_gap_s):
@@ -284,6 +342,7 @@ def build_placements(ranges):
                 "timeline_end": piece["timeline_end"],
                 "duration": piece["timeline_end"] - piece["timeline_start"],
                 "source_in": piece["raw_source_start"] - entry["start"],
+                "range": entry,
             })
     placements.sort(key=lambda placement: (placement["timeline_start"], placement["source"]))
     return placements
@@ -293,7 +352,7 @@ def find_pip_track(sequence):
     """Return ``(index, track)`` of the video track holding only matte items, or ``(None, None)``."""
     for index, track in enumerate(sequence.get("video") or [], start=1):
         items = track.get("items") or []
-        if items and all(is_matte_item(item.get("name") or "") for item in items):
+        if items and all(is_matte_export(item.get("name") or "") for item in items):
             return index, track
     return None, None
 
@@ -313,10 +372,15 @@ def already_placed(placement, pip_track):
 
 
 def attach_clips(sequence, placements):
-    """Attach the placed clip id and start to every placement found on the PiP track."""
+    """Attach the placed clip id and start to every placement found on the PiP track.
+
+    Returns a warning for every placement whose matte item carries no clip id, so
+    the animate phase skips its keyframes instead of crashing.
+    """
+    warnings = []
     _, pip_track = find_pip_track(sequence)
     if pip_track is None:
-        return
+        return warnings
     items = pip_track.get("items") or []
     for placement in placements:
         name = Path(placement["matte_out"]).name
@@ -327,9 +391,15 @@ def attach_clips(sequence, placements):
             distance = abs(int(item.get("start", 0)) - placement["timeline_start"])
             if best is None or distance < best[0]:
                 best = (distance, item)
-        if best is not None:
-            placement["clip"] = int(best[1].get("clip"))
-            placement["clip_start"] = int(best[1].get("start", 0))
+        if best is None:
+            continue
+        clip = best[1].get("clip")
+        if clip is None:
+            warnings.append(f"placed matte has no clip id, keyframes skipped: {name}")
+            continue
+        placement["clip"] = int(clip)
+        placement["clip_start"] = int(best[1].get("start", 0))
+    return warnings
 
 
 def final_pose(settings, scale):
@@ -474,6 +544,12 @@ def build_animate_steps(spans, placements, options):
     return steps
 
 
+def snap_source_in(ticks, fps):
+    """Snap a source offset to the frame grid, like the by-hand placement pass."""
+    seconds_value = ticks / TICKS_PER_SECOND
+    return int(round(round(seconds_value * fps) / fps * TICKS_PER_SECOND))
+
+
 def build_place_steps(placements, item_ids, pip_index, pip_exists):
     """Return the timeline.place steps for the new placements on one PiP track."""
     steps = []
@@ -543,7 +619,7 @@ def import_mattes(paths, bridge, project):
     """Import the matte files and return ``{path: item id}`` from the CLI reply."""
     if not paths:
         return {}
-    binary = filmcraft_cli()
+    binary = cli_path()
     if binary is None:
         raise FinishPipRuntimeError("filmcraft-cli not found on PATH (set $FILMCRAFT_CLI)")
     command = [binary] + target_flags(bridge, project, save=True)
@@ -566,7 +642,7 @@ def import_mattes(paths, bridge, project):
 
 def run_steps(path, bridge, project):
     """Run a steps file against the live FilmCraft through the bridge or a headless project file."""
-    binary = filmcraft_cli()
+    binary = cli_path()
     if binary is None:
         raise FinishPipRuntimeError("filmcraft-cli not found on PATH (set $FILMCRAFT_CLI)")
     command = [binary] + target_flags(bridge, project, save=True)
@@ -581,7 +657,7 @@ def run_steps(path, bridge, project):
 
 def inspect_sequence(bridge, project):
     """Re-inspect the sequence through the bridge or a headless project file and return the JSON."""
-    binary = filmcraft_cli()
+    binary = cli_path()
     if binary is None:
         raise FinishPipRuntimeError("filmcraft-cli not found on PATH (set $FILMCRAFT_CLI)")
     command = [binary] + target_flags(bridge, project)
@@ -602,18 +678,29 @@ def seconds(ticks):
     return round(ticks / TICKS_PER_SECOND, 3)
 
 
-def print_plan(spans, ranges, placements, options):
-    """Print the human plan: spans, camera ranges, placements and keyframe poses."""
+def print_plan(spans, ranges, placements, edge_checks, options, nothing_to_do):
+    """Print the human plan: spans, edge checks, camera ranges, placements and keyframe poses."""
     settings = options["settings"]
     print(f"spans: {len(spans)}")
     for span in spans:
         print(f"  [{seconds(span['start']):.3f}-{seconds(span['end']):.3f}] explainer={span['explainer']}")
+    print("edge checks:")
+    for check in edge_checks:
+        print(
+            f"  {check['source']} [{seconds(check['padded_start']):.3f}-{seconds(check['padded_end']):.3f}] "
+            f"overlap={seconds(check['overlap']):.3f}s clip={seconds(check['clip_length']):.3f}s "
+            f"-> {check['verdict']} ({check['reason']})"
+        )
     print(f"ranges: {len(ranges)}")
     for entry in ranges:
         print(
             f"  {entry['source']} [{seconds(entry['start']):.3f}-{seconds(entry['end']):.3f}] "
-            f"-> {entry['out']}"
+            f"-> {entry['out']} matted={'yes' if entry.get('matted') else 'no'} "
+            f"placed={'yes' if entry.get('placed') else 'no'}"
         )
+    if nothing_to_do:
+        print("nothing to do")
+        return
     print(f"placements: {len(placements)}")
     for placement in placements:
         span = placement["span"]
@@ -661,23 +748,32 @@ def run(sequence_path, camera_dir, options):
 
     spans = screen_spans(sequence, small_over)
     pieces = camera_pieces(sequence, spans, options["pad_s"])
-    ranges = merge_ranges(pieces, options["merge_gap_s"])
+    edge_checks, kept_pieces = split_edge_pieces(pieces)
+    ranges = merge_ranges(kept_pieces, options["merge_gap_s"])
     for entry in ranges:
         entry["out"] = matte_output(options["matte_dir"], entry["source"], entry["start"], entry["end"])
     placements = build_placements(ranges)
+    for placement in placements:
+        placement["source_in"] = snap_source_in(placement["source_in"], settings["fps"])
 
     video_count = len(sequence.get("video") or [])
     pip_index, pip_track = find_pip_track(sequence)
     if pip_index is None:
         pip_index = video_count + 1
     new_placements = [placement for placement in placements if not already_placed(placement, pip_track)]
+    for entry in ranges:
+        entry["matted"] = entry["out"].exists()
+        group = [placement for placement in placements if placement["range"] is entry]
+        entry["placed"] = all(already_placed(placement, pip_track) for placement in group)
+    nothing_to_do = not new_placements and all(entry["matted"] for entry in ranges)
 
     if options["dry_run"]:
-        for entry in ranges:
-            entry["matted"] = entry["out"].exists()
         if not options["json"]:
-            print_plan(spans, ranges, placements, options)
-        return build_summary(spans, ranges, new_placements, [], [], started)
+            print_plan(spans, ranges, new_placements, edge_checks, options, nothing_to_do)
+        return build_summary(spans, ranges, new_placements, edge_checks, [], [], started, nothing_to_do)
+
+    if nothing_to_do:
+        return build_summary(spans, ranges, new_placements, edge_checks, [], [], started, True)
 
     warnings = []
     for entry in ranges:
@@ -714,13 +810,13 @@ def run(sequence_path, camera_dir, options):
         run_steps(out_dir / PLACE_FILE, options["bridge"], options["project"])
 
         fresh = inspect_sequence(options["bridge"], options["project"])
-        attach_clips(fresh, placements)
+        warnings.extend(attach_clips(fresh, placements))
         animate_steps = build_animate_steps(spans, placements, options)
         write_steps(out_dir / ANIMATE_FILE, animate_steps)
         steps_files.append(ANIMATE_FILE)
         run_steps(out_dir / ANIMATE_FILE, options["bridge"], options["project"])
     elif not new_placements:
-        attach_clips(sequence, placements)
+        warnings.extend(attach_clips(sequence, placements))
         animate_steps = build_animate_steps(spans, placements, options)
         write_steps(out_dir / ANIMATE_FILE, animate_steps)
         steps_files.append(ANIMATE_FILE)
@@ -729,7 +825,7 @@ def run(sequence_path, camera_dir, options):
         if not options["json"]:
             print_next_steps(out_dir, ranges, options)
 
-    return build_summary(spans, ranges, new_placements, steps_files, warnings, started)
+    return build_summary(spans, ranges, new_placements, edge_checks, steps_files, warnings, started, False)
 
 
 def print_next_steps(out_dir, ranges, options):
@@ -754,7 +850,7 @@ def print_next_steps(out_dir, ranges, options):
     )
 
 
-def build_summary(spans, ranges, placements, steps_files, warnings, started):
+def build_summary(spans, ranges, placements, edge_checks, steps_files, warnings, started, nothing_to_do):
     """Return the machine-readable summary object."""
     return {
         "ok": True,
@@ -769,10 +865,24 @@ def build_summary(spans, ranges, placements, steps_files, warnings, started):
                 "end_s": seconds(entry["end"]),
                 "out": str(entry["out"]),
                 "matted": bool(entry.get("matted", False)),
+                "placed": bool(entry.get("placed", False)),
             }
             for entry in ranges
         ],
         "placements": len(placements),
+        "edge_checks": [
+            {
+                "source": check["source"],
+                "start_s": seconds(check["padded_start"]),
+                "end_s": seconds(check["padded_end"]),
+                "overlap_s": seconds(check["overlap"]),
+                "clip_s": seconds(check["clip_length"]),
+                "verdict": check["verdict"],
+                "reason": check["reason"],
+            }
+            for check in edge_checks
+        ],
+        "nothing_to_do": nothing_to_do,
         "steps_files": steps_files,
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 3),
@@ -812,7 +922,11 @@ def main(argv=None):
 
     if args.json:
         print(json.dumps(summary))
-    elif not args.dry_run:
+    elif args.dry_run:
+        pass
+    elif summary["nothing_to_do"]:
+        print("nothing to do")
+    else:
         print(f"written: {', '.join(summary['steps_files']) or 'nothing'} ({summary['placements']} placements)")
         for warning in summary["warnings"]:
             print(f"warning: {warning}")

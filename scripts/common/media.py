@@ -6,14 +6,25 @@ from pathlib import Path
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".avi", ".mts", ".insv"}
 MATTE_SUFFIXES = ("-Alpha", "_matte")
+MATTE_RANGE_RE = re.compile(r"_\d+\.\d{2}-\d+\.\d{2}$")
 CAMERA_PREFIX = "camera "
 SCREEN_TOKEN = "screen"
 FILENAME_TIMESTAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})")
 
 
 def is_matte_export(path):
-    """Return True for a derived matte export (``*-Alpha.mov``, ``*_matte.mov``)."""
-    return Path(path).stem.endswith(MATTE_SUFFIXES)
+    """Return True for a derived matte export.
+
+    Matches ``*-Alpha.mov`` and ``*_matte.mov`` exports and the by-hand range
+    export name ``<stem>_<A:07.2f>-<B:07.2f>.mov`` (one matted source range).
+    """
+    stem = Path(str(path)).stem
+    return stem.endswith(MATTE_SUFFIXES) or bool(MATTE_RANGE_RE.search(stem))
+
+
+def is_video_name(name):
+    """Return True when a sequence item's file name is a video clip, not a still or a graphic."""
+    return Path(str(name)).suffix.lower() in VIDEO_EXTENSIONS
 
 
 def clip_kind(name):

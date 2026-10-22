@@ -142,6 +142,15 @@ def test_spans_ignore_disabled_and_matte_items():
     assert [(span["start"], span["end"]) for span in spans] == [(2 * T, 5 * T)]
 
 
+def test_still_named_screen_does_not_classify_track():
+    sequence = make_sequence(
+        [screen_item(11, 3, "screen background.png", 0, 10)],
+        [],
+    )
+    assert fp.classify_track(sequence["video"][2]) is None
+    assert fp.screen_spans(sequence, SMALL_OVER) == []
+
+
 def test_no_screen_track_is_empty_plan(tmp_path, capsys):
     sequence = make_sequence([], [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10)])
     rc, summary, captured = run_main(tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"], extra=["--json"])
@@ -283,7 +292,7 @@ def test_placements_trimmed_to_span_and_tracks(tmp_path, capsys, monkeypatch):
     assert params["insert"] is False
     assert params["time"] == 2 * T
     assert params["duration"] == 4 * T
-    assert params["sourceIn"] == int(round(0.5 * T))
+    assert params["sourceIn"] == int(round(round(0.5 * 25) / 25 * T))
 
 
 def test_placements_second_uses_vn(tmp_path, capsys, monkeypatch):
@@ -441,6 +450,129 @@ def test_second_run_with_everything_placed_does_not_import(tmp_path, capsys, mon
     assert summary["placements"] == 0
 
 
+def test_image_on_screen_track_makes_no_span(tmp_path, capsys, monkeypatch):
+    sequence = make_sequence(
+        [
+            screen_item(11, 3, "fundal_intro.png", 0, 10),
+            screen_item(12, 4, "2026-09-01 10-00-00.mp4", 10, 20),
+        ],
+        [
+            camera_item(9, 1, "camera 2026-09-01 09-00-00.mp4", 0, 10),
+            camera_item(10, 2, "camera 2026-09-01 10-00-00.mp4", 10, 20),
+        ],
+    )
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence,
+        ["camera 2026-09-01 09-00-00.mp4", "camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["spans"] == [{"start_s": 10.0, "end_s": 20.0, "explainer": False}]
+    assert len(summary["ranges"]) == 1
+    assert summary["ranges"][0]["source"] == "camera 2026-09-01 10-00-00.mp4"
+    matte_calls = fake.matte_calls()
+    assert len(matte_calls) == 1
+    assert "09-00-00" not in " ".join(str(part) for part in matte_calls[0])
+
+
+def test_edge_piece_leftover_is_dropped(tmp_path, capsys, monkeypatch):
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 10, 20)],
+        [camera_item(9, 1, "camera 2026-09-01 09-00-00.mp4", 6, 10.04)],
+    )
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 09-00-00.mp4"],
+        extra=["--json"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["ranges"] == []
+    assert summary["placements"] == 0
+    assert len(summary["edge_checks"]) == 1
+    assert summary["edge_checks"][0]["verdict"] == "leftover"
+    assert summary["edge_checks"][0]["overlap_s"] == 0.04
+    assert fake.matte_calls() == []
+
+
+def test_edge_piece_seam_is_kept(tmp_path, capsys, monkeypatch):
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 10, 20)],
+        [camera_item(9, 1, "camera 2026-09-01 09-00-00.mp4", 10, 10.8)],
+    )
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 09-00-00.mp4"],
+        extra=["--json"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert len(summary["edge_checks"]) == 1
+    assert summary["edge_checks"][0]["verdict"] == "seam"
+    assert len(summary["ranges"]) == 1
+    assert summary["placements"] == 1
+    assert len(fake.matte_calls()) == 1
+
+
+def test_rerun_nothing_to_do(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--dry-run", "--matte-dir", str(matte_dir)], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert "nothing to do" in captured.out
+    assert "placed=yes" in captured.out
+    assert fake.calls == []
+
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--dry-run", "--json", "--matte-dir", str(matte_dir)], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["nothing_to_do"] is True
+    assert summary["placements"] == 0
+    assert summary["ranges"][0]["placed"] is True
+
+
+def test_attach_clips_skips_missing_clip_id(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert any("no clip id" in warning for warning in summary["warnings"])
+
+
 def test_bridge_and_project_are_mutually_exclusive(tmp_path, capsys):
     sequence = make_sequence([], [])
     seq_path = write_sequence(tmp_path, sequence)
@@ -498,8 +630,9 @@ def test_animate_keyframes_times_and_values(tmp_path, capsys, monkeypatch):
     assert values[5] == pytest.approx(45 * 0.5)
     interp = [step for step in steps if step["id"] == "effects.setInterpolation"]
     assert [step["params"]["interpolation"] for step in interp] == ["easeOut", "easeOut", "easeIn", "easeIn"]
-    assert interp[0]["params"]["mediaTime"] == int(round(0.5 * T))
-    assert interp[2]["params"]["mediaTime"] == int(round(3.5 * T))
+    snapped = int(round(round(0.5 * 25) / 25 * T))
+    assert interp[0]["params"]["mediaTime"] == snapped
+    assert interp[2]["params"]["mediaTime"] == 3 * T + snapped
 
 
 def test_animate_media_time_is_source_relative(tmp_path, capsys, monkeypatch):
@@ -527,15 +660,15 @@ def test_animate_media_time_is_source_relative(tmp_path, capsys, monkeypatch):
     assert len(interp) == 4
     placement = {
         "clip_start": 2 * T,
-        "source_in": int(round(0.5 * T)),
+        "source_in": int(round(round(0.5 * 25) / 25 * T)),
     }
     assert placement["source_in"] != 0
     assert interp[0]["params"]["mediaTime"] == fp.media_time(placement, 2 * T)
     assert interp[1]["params"]["mediaTime"] == fp.media_time(placement, 2 * T)
     assert interp[2]["params"]["mediaTime"] == fp.media_time(placement, 5 * T)
     assert interp[3]["params"]["mediaTime"] == fp.media_time(placement, 5 * T)
-    assert interp[0]["params"]["mediaTime"] == 2 * T - 2 * T + int(round(0.5 * T))
-    assert interp[2]["params"]["mediaTime"] == 5 * T - 2 * T + int(round(0.5 * T))
+    assert interp[0]["params"]["mediaTime"] == 2 * T - 2 * T + placement["source_in"]
+    assert interp[2]["params"]["mediaTime"] == 5 * T - 2 * T + placement["source_in"]
 
 
 def test_explainer_uses_small_scale(tmp_path, capsys, monkeypatch):

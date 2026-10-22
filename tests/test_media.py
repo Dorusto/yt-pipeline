@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from common.media import is_matte_export, parse_stamp, stem_timestamp, video_files
+from common.media import is_matte_export, is_video_name, parse_stamp, stem_timestamp, video_files
 
 
 def test_parse_stamp_from_stem_and_path():
@@ -32,6 +32,15 @@ def test_video_files_sorted_and_matte_filter(tmp_path):
     assert names == ["a.mov", "b.mp4"]
     assert is_matte_export(tmp_path / "clip-Alpha.mov")
     assert not is_matte_export(tmp_path / "b.mp4")
+    assert is_matte_export("camera 2026-09-29 21-14-12_0007.98-0028.82.mov")
+    assert is_matte_export(tmp_path / "camera 2026-09-29 21-14-12_0007.98-0028.82.mov")
+    assert not is_matte_export("camera 2026-09-29 21-14-12.mp4")
+    assert not is_matte_export("2026-09-29 21-14-12.mp4")
+    assert is_video_name("2026-09-29 21-14-12.mp4")
+    assert is_video_name("camera 2026-09-29 21-14-12.mov")
+    assert not is_video_name("fundal_intro.png")
+    assert not is_video_name("fade_stanga.jpg")
+    assert not is_video_name("Color Matte")
 
 
 def test_video_files_missing_directory(tmp_path):

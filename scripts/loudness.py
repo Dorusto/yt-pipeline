@@ -33,6 +33,7 @@ from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
 from common.ffmpeg_tools import ffmpeg_path
+from common.filmcraft import cli_path
 
 DEFAULT_TARGET_I = -14.0
 DEFAULT_TARGET_TP = -1.0
@@ -201,10 +202,7 @@ def resolve_cli(required=True):
     With ``required=False`` (``--dry-run``) a missing binary is not an error: the
     command lines print with the plain binary name.
     """
-    env = os.environ.get("FILMCRAFT_CLI")
-    if env:
-        return env
-    found = shutil.which("filmcraft-cli")
+    found = cli_path()
     if found:
         return found
     if not required:

@@ -9,7 +9,7 @@ compatibility: Run from the repository root. Needs the repo .venv with torch + t
 The by-hand finishing placed the matted camera as a picture-in-picture over the
 screen spans with an eased entry and exit. This tool does that from one command:
 it reads a FilmCraft sequence inspect JSON, finds the spans where the screen track
-has content, mattes the camera ranges that cover them (padded and merged) and
+has video content, mattes the camera ranges that cover them (padded and merged) and
 writes the `filmcraft-cli` steps that place the mattes bottom-right over each span.
 
 ## Step 1: save the sequence inspect JSON
@@ -45,36 +45,50 @@ filmcraft-cli --bridge 127.0.0.1:7714 inspect sequence > sequence.json
   (default `36`) is used over a full-screen explainer scene, a screen span whose
   screen item name matches `--small-over` (default `(?i)(explainer|explica|grafic|anim)`).
 - `--force` re-runs `matte.py` even when the matte output already exists.
-- `--dry-run` prints the plan (spans, camera ranges, matte outputs, placements and
-  keyframe poses) and writes nothing. `--json` prints one summary object.
+- `--dry-run` prints the plan (spans, edge checks, camera ranges with their
+  `matted`/`placed` state, placements and keyframe poses) and writes nothing.
+  `--json` prints one summary object.
 
 ## What it does
 
 1. **Screen spans.** The screen track is the video track whose item names classify
    as screen (`common.media.clip_kind`); the camera track is the one whose items
-   classify as camera. Disabled items and matte exports are ignored. A span is a
-   maximal run of enabled screen items; items touching or overlapping (gap under
-   0.05 s) merge, a real gap ends the span. No screen track or no span → an empty
-   plan, exit 0.
+   classify as camera. Disabled items and matte exports are ignored. Only video
+   clips make a span (`common.media.is_video_name`): a still image, a PNG/JPG
+   graphic or a nameless generator item on the screen track never makes a span and
+   never classifies a track. A span is a maximal run of enabled screen video items;
+   items touching or overlapping (gap under 0.05 s) merge, a real gap ends the span.
+   No screen track or no span → an empty plan, exit 0.
 2. **Camera ranges.** For every span, the source range of every enabled camera item
    overlapping it is clipped to the span, mapped to source time, padded by `--pad-s`
    and merged per source under `--merge-gap-s`. Each merged range is one `matte.py`
    call: `matte.py SOURCE --start A --end B --out <matte-dir>/<stem>_<A:07.2f>-<B:07.2f>.mov`
    (no `--ratio`; matte.py picks it from the input height). An existing output is
    skipped unless `--force`.
+   A short piece at a span edge (clip straddling the edge or its start/end within
+   0.05 s of it, overlap at most 1.0 s) is decided per piece: a **leftover** (the
+   clip straddles the edge with an overlap under half its length, or the overlap is
+   under 0.5 s) is a fragment of the surrounding full-screen stretch and is dropped;
+   a **seam** (a real camera cut at the edge) keeps its own matte range and
+   placement. Every edge piece is reported in the `edge checks:` section and in
+   `edge_checks` with its padded source range, overlap, clip length, verdict and
+   reason.
 3. **Place phase.** One `timeline.place` per (span, camera piece), trimmed to the
    span, on one PiP track above the screen track: the first placement uses
    `"track": "new"`, the rest `"track": "V<n>"` with n = the sequence's video track
-   count + 1. `audio: false`, `insert: false`. Only the mattes of the placements
-   that are actually new are imported (`filmcraft-cli --compact import`) to get
-   their item ids, so a full re-run imports nothing.
+   count + 1. `audio: false`, `insert: false`. `sourceIn` is the offset of the
+   clip's source start inside the matte, snapped to the frame grid with the
+   sequence's own `settings.frame_rate` (`num`/`den`). Only the mattes of the
+   placements that are actually new are imported (`filmcraft-cli --compact import`)
+   to get their item ids, so a full re-run imports nothing.
 4. **Animate phase.** All placements of one span share one pose: `--scale`
    (`--scale-small` on an explainer span) bottom-right, margin 5 % of the frame
    height. The entry (0.30 s) is a quick ease-out with a slight overshoot; the exit
    (0.25 s) is a short anticipation. Keyframes use `effects.setParam` (`motion`,
    `scale`/`position`, `keyframe: true`, `time` in timeline ticks) and
    `effects.setInterpolation` (`mediaTime` = the source-relative keyframe time =
-   timeline − clip start + sourceIn).
+   timeline − clip start + sourceIn). A placed matte item with no `clip` id is
+   skipped with a warning instead of crashing.
 
 ## The two steps files
 
@@ -90,14 +104,19 @@ filmcraft-cli --bridge 127.0.0.1:7714 inspect sequence > sequence.json
 
 Re-run safe: existing matte outputs are skipped, already-placed PiP pieces are
 skipped, only the new placements' mattes are imported, the steps files are
-overwritten atomically. A second full run imports nothing and reports
-`placements: 0`.
+overwritten atomically. When there is no new placement and every range is already
+matted (vacuously true when there are no ranges at all), the plan prints
+`nothing to do` instead of the placements and keyframes, and a non-dry-run writes
+no steps files and prints `nothing to do`; `--force` never overrides
+`nothing to do`. A second full run imports nothing and reports `placements: 0`.
 
 ## `--json`
 
 `ok`, `spans` (`start_s`/`end_s`/`explainer`), `ranges` (`source`/`start_s`/`end_s`/
-`out`/`matted`), `placements` (the new ones), `steps_files`, `warnings`,
-`wall_time_s`, `llm_cost_usd` (always `0.0`). On error: `{"ok": false, "error": ...}`.
+`out`/`matted`/`placed`), `placements` (the new ones), `edge_checks`
+(`source`/`start_s`/`end_s`/`overlap_s`/`clip_s`/`verdict`/`reason`),
+`nothing_to_do`, `steps_files`, `warnings`, `wall_time_s`, `llm_cost_usd` (always
+`0.0`). On error: `{"ok": false, "error": ...}`.
 
 Exit codes: `0` success, `2` user error (missing `--sequence`, unparseable sequence,
 missing `--camera-dir`), `1` unexpected runtime failure (`matte.py` or
@@ -108,7 +127,7 @@ missing `--camera-dir`), `1` unexpected runtime failure (`matte.py` or
 - Sources are read-only. Write `--matte-dir` and `--out-dir` into the project
   workspace, never into the footage folder.
 - The matte output name is the by-hand pass name (`<stem>_<A:07.2f>-<B:07.2f>.mov`),
-  which `common.media.is_matte_export` does not match; the tool also recognises that
-  range pattern so a re-run finds its own mattes.
+  which `common.media.is_matte_export` matches, so a re-run finds its own mattes and
+  the already-placed PiP pieces.
 - For a plain background removal without placing it, use `matte`; for the edit list
   use `director`/`llm_director`; for the MP4 use `render`.
