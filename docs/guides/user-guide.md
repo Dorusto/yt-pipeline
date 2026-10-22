@@ -84,26 +84,28 @@ Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `
 A talking-head recording with a screen capture (one `Start Recording` in OBS
 writes both files) is a different flow from a trip recap: you film, rough-cut
 the recording, finish the edit in FilmCraft and then publish. The Second Brain
-clip is the reference: its recordings live in a dated folder under `~/Videos/`
-(`camera/` + `ecran/`), the examples below run on the working copy
-`~/media/second-brain`, and the eval copy of the finished edit is
-`~/media/eval/second-brain`.
+clip is the reference: one dated clip folder per project under `~/Videos/`
+(e.g. `~/Videos/2026-09-second-brain/`) with `camera/`, `ecran/`,
+`transcrieri/` (the Whisper word JSONs) and the FilmCraft `.fcproj`. The
+examples below use that layout; the agent-side eval copy of the clip lives at
+`/root/media/eval/second-brain`.
 
 ```bash
 # 1. right after recording — is any "screen" file really a camera recording?
-.venv/bin/python scripts/mode_b.py ~/media/second-brain --check
+.venv/bin/python scripts/mode_b.py ~/Videos/2026-09-second-brain --check
 
 # 2. the whole flow on the folder (transcribe what has no words JSON, pair
 #    camera and screen, rough-cut the pauses/fillers/retakes, chapters,
 #    FilmCraft project):
-.venv/bin/python scripts/mode_b.py ~/media/second-brain --json
-# -> ~/media/second-brain/mode_b/ : sessions.yaml, edit.json, chapters.json,
-#    words/, project.fcproj
+.venv/bin/python scripts/mode_b.py ~/Videos/2026-09-second-brain --json
+# -> ~/Videos/2026-09-second-brain/mode_b/ : sessions.yaml, edit.json,
+#    chapters.json, words/, project.fcproj
 
-# 3. finish the edit in FilmCraft, then from the FINAL project:
-.venv/bin/python scripts/publish.py --project ~/media/second-brain \
+# 3. finish the edit in FilmCraft (the .fcproj sits in the clip folder), then
+#    from the FINAL project:
+.venv/bin/python scripts/publish.py --project ~/Videos/2026-09-second-brain \
   --context notes.md --fcproj project.fcproj --sequence "Second Brain - 15 min" \
-  --words-dir ~/media/second-brain/json --chapters chapters.json \
+  --words-dir ~/Videos/2026-09-second-brain/transcrieri --chapters chapters.json \
   --photo portrait.jpg --title "..." --keyword "..." --theme tech \
   --final-video final.mp4 --kit
 ```

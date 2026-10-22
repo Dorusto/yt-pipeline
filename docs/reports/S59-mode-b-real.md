@@ -23,10 +23,12 @@ from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
   nearest within `pair_tolerance_s` (greedy one-to-one, exact-stem fallback),
   runs unpaired cameras camera-only and warns for unpaired screens. Verified on
   a fixture with the real file names (40 camera / 32 screen style) and on the
-  real stems read from `/root/media/eval/second-brain/json/` (name strings only,
-  empty media): **31 sessions, 27 paired, 4 camera-only, 0 screen-only**
-  (`tests/test_mode_b.py::test_reference_names_pairing`). Derived matte exports
-  (`-Alpha`/`_matte`) are never candidates.
+  real stems of the agent-side eval copy `/root/media/eval/second-brain` (name
+  strings only, empty media): **31 sessions, 27 paired, 4 camera-only, 0
+  screen-only** (`tests/test_mode_b.py::test_reference_names_pairing`). Derived
+  matte exports (`-Alpha`/`_matte`) are never candidates. The clip folder layout
+  is `~/Videos/<YYYY-MM-name>/` with `camera/`, `ecran/`, `transcrieri/` and the
+  `.fcproj` (e.g. `~/Videos/2026-09-second-brain`).
 - **Sync by sound** (follow-up 1): `rough_cut.py` measures the camera-to-screen
   offset by voice cross-correlation (mono 16 kHz, ±5 s, first 60 s) and records
   `sync_offset_s` + `sync_offset_confidence` in `sessions.yaml` (new schema
@@ -82,12 +84,12 @@ from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
   phone browser session for the Cuts tab in this sprint.
 - The full `mode_b.py` chain on the real Second Brain recordings was never run
   here (originals are read-only): pairing was verified from the real file names
-  and the lot 2 tools from the real `.fcproj` + `json/` word files.
+  and the lot 2 tools from the real `.fcproj` + word JSON files.
 
 ## Doru, check this
 
 - The sample frames (karaoke + split layout): `examples/s59-shorts-frames/*.jpg`.
-- Run the checks on the real folder: `python3 scripts/mode_b.py ~/media/eval/second-brain --check --json`.
+- Run the checks on the real folder: `python3 scripts/mode_b.py ~/Videos/2026-09-second-brain --check --json`.
 - The devlog gate line and "Next" in `docs/ROADMAP.md` (lifted 2026-10-21 per your call).
 - The new "Mode B on a finished clip" section in `docs/guides/user-guide.md`.
 - `docs/DECISIONS.md` top entries (S59 follow-ups + review fixes; the lot 1 pairing entry was corrected in place).
