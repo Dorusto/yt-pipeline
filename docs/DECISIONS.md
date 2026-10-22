@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-22] Mode B finishing on the first talking-head clip: done by hand, to become tools
+
+**Context:** The first full talking-head clip was finished by hand — an assistant driving FilmCraft through `filmcraft-cli --bridge ... run steps.jsonl` — for every step the pipeline does not cover yet: camera picture-in-picture over screen spans (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes), intro layout (camera shifted right, brand background, fade, slide back), intro overlays synced to the speech (HyperFrames, left third), a hook cold open from the strongest sentence, SFX synced to animation events, background music under the intro and the outro at fixed levels (generated ducking overwrote the fades), the loudness recipe plus measurement of the final export, a supporters banner from one variable, the subtitle corrections list kept in `scripts/corrections.txt` plus lowercasing Whisper mid-sentence capitals except proper nouns, the thumbnail from the hook frame and the live-app batch path.
+
+**Options:** (A) keep the finishing steps as a documented manual recipe; (B) record them once as they were done and put every step on the roadmap as a tool to build.
+
+**Decision:** B. Every step goes to ROADMAP "Next → Mode B finishing" as an open item and becomes a tool; until then a human finishes a talking-head clip in FilmCraft. What was NOT through the pipeline this time is the gaps list: the graphics were hand-written HyperFrames compositions rendered with the HyperFrames CLI, not `graphics.py`/`graphics_plan.py`; the correction pass was a one-off script, not `correct_srt.py`; the picture-in-picture script lived outside the repo.
+
+**Why not:** A) leaves the finishing knowledge in an agent's working notes, which never leave that machine.
+
+**Consequence:** `scripts/corrections.txt` — the local, git-ignored list the tools read — carries the corrections approved on the clip (case-sensitive plain replaces, longer pattern first: `CloudCode|Claude Code`, `Cloud|Claude`, `cloud.md|CLAUDE.md`, `pasnicii|paznicii`, `notiților|notițelor`, `Arhives|Archives`, `să bilanotez|să le notez`); they are recorded here because the list itself stays out of the repo. The ROADMAP items are the backlog for the next Mode B sprint; no interface changes.
+
+---
+
 ## [2026-10-21] Shorts layout policy auto/on/off and the web override (S59 follow-up 2)
 
 **Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. Doru asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.

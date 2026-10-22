@@ -3,12 +3,12 @@
 Report for Doru to confirm. Scope: issue #60 on branch `s59-mode-b-real` — the
 real OBS folder layout and pairing (lot 1 + follow-ups), chapters and Shorts
 from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
-`layout: split` (lot 3), docs (lot 4), plus the review fixes of
-`review-s59-mode-b-real.md` (lots 1-3).
+`layout: split` (lot 3), docs (lot 4), plus the review fixes of the lots 1-3
+audit.
 
 ## Works
 
-- **Review answers** (follow-up, `review-s59-mode-b-real.md`): the flat layout
+- **Review answers** (follow-up): the flat layout
   ignores videos whose name carries no `YYYY-MM-DD HH-MM-SS` timestamp (silently);
   `find_words` uses `common.timeline_words.words_file_for`; a recorded
   `sync_offset_s` survives a manifest rewrite even when the hand-written `camera`
@@ -63,7 +63,7 @@ from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
   1920x1080 clip, frame grabs in `examples/s59-shorts-frames/` — captions burn at
   rows 596-702 (two lines), the active word reads `warm` (1.7-3.2 k warm pixels
   per frame) and the safe band below (rows 720-1080) stays empty by design.
-- **Review fixes** (`review-s59-mode-b-real.md`, commits `2c3dd0c`, `b2ac43a`):
+- **Review fixes** (commits `2c3dd0c`, `b2ac43a`):
   shared code only in `scripts/common/` (constants, `read_frame_pairs`, brand
   default + `parse_hex_color`, `word_in_window`, one word mapping incl. the
   crossfade overlap), `metadata.py --chapters` expands `~`, one mock config

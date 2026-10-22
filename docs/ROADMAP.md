@@ -61,3 +61,20 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 - Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
 - Mode B next: the remaining D3 light edits (trim per shot); run the whole chain on the Second Brain clip the day its edit is finished (S59 made the tools fit it); the devlog clip (gate lifted 2026-10-21) and the long-clip burned captions stay on the list.
+
+### Mode B finishing
+
+The first full talking-head clip was finished by hand (an assistant driving FilmCraft through `filmcraft-cli --bridge ... run steps.jsonl`); each manual step below becomes a tool:
+
+- Move the camera picture-in-picture over screen spans into a `scripts/` tool (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes).
+- Build the intro layout into the render (camera shifted right, brand background, fade, slide back).
+- Sync the intro overlays to the speech (HyperFrames, left third).
+- Open cold on the hook, cut from the strongest sentence.
+- Sync the SFX to the animation events.
+- Put background music under the intro and the outro at fixed levels (generated ducking overwrote the fades).
+- Apply the loudness recipe and measure the final export.
+- Generate the supporters banner from one variable.
+- Run the subtitle corrections through `correct_srt.py` with the local `scripts/corrections.txt` (the entries approved on the clip are in, listed in DECISIONS) and lowercase Whisper mid-sentence capitals except proper nouns.
+- Take the thumbnail from the hook frame.
+- Use the live-app batch path.
+- Route the hand-written HyperFrames compositions through `graphics.py`/`graphics_plan.py` (this clip's graphics were rendered straight from the HyperFrames CLI).
