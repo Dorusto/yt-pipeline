@@ -150,6 +150,11 @@ examples below use that layout; the agent-side eval copy of the clip lives at
   `screen check incomplete: face detector unavailable: …` and sets
   `screen_check_incomplete` in `--json`.
 
+`scripts/matte.py` cuts a time range out of a clip into a ProRes 4444 `.mov` with
+alpha (camera picture-in-picture material). Its `--ratio` default now follows the
+input height — `0.25` at 1080p, `0.4` at 720p, `0.125` at 4K — with `--ratio` as
+the override.
+
 ## Writing a brief
 
 Say what you want, not how to cut it. The router reads length, order, pacing, music and content type from it.

@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,30 @@ def make_clip(path, duration=1, rate=25, size="128x96"):
         ],
         check=True,
     )
+
+
+def run_with_fakes(monkeypatch, tmp_path, height, ratio=None):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"x")
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False)
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(matte, "load_model", lambda torch, device: None)
+    monkeypatch.setattr(matte, "process_frames", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(matte, "encode_prores", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        matte,
+        "probe_video",
+        lambda path: {
+            "duration": 1.0,
+            "fps": 25.0,
+            "fps_str": "25/1",
+            "width": 1920,
+            "height": height,
+        },
+    )
+    return matte.run(str(video), ratio=ratio)
 
 
 def test_help_exits_0_and_lists_flags(capsys):
@@ -78,6 +103,41 @@ def test_ratio_out_of_range_exits_2(tmp_path, capsys):
         rc = matte.main([str(video), "--ratio", bad, "--json"])
         assert rc == 2
         assert "ratio" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "height,expected",
+    [
+        (2160, 0.125),
+        (1600, 0.125),
+        (1080, 0.25),
+        (900, 0.25),
+        (720, 0.4),
+        (480, 0.4),
+    ],
+)
+def test_default_ratio_for_height(height, expected):
+    assert matte.default_ratio_for_height(height) == expected
+
+
+def test_auto_ratio_1080p(tmp_path, monkeypatch):
+    summary = run_with_fakes(monkeypatch, tmp_path, 1080)
+    assert summary["downsample_ratio"] == 0.25
+
+
+def test_auto_ratio_720p(tmp_path, monkeypatch):
+    summary = run_with_fakes(monkeypatch, tmp_path, 720)
+    assert summary["downsample_ratio"] == 0.4
+
+
+def test_auto_ratio_4k(tmp_path, monkeypatch):
+    summary = run_with_fakes(monkeypatch, tmp_path, 2160)
+    assert summary["downsample_ratio"] == 0.125
+
+
+def test_explicit_ratio_is_used_and_reported(tmp_path, monkeypatch):
+    summary = run_with_fakes(monkeypatch, tmp_path, 1080, ratio=0.6)
+    assert summary["downsample_ratio"] == 0.6
 
 
 def test_default_out_is_stem_matte_mov(tmp_path):

@@ -27,7 +27,11 @@ import cv2
 
 from common.ffmpeg_tools import ffmpeg_path
 
-DEFAULT_RATIO = 0.6
+RATIO_4K = 0.125
+RATIO_1080P = 0.25
+RATIO_720P = 0.4
+RATIO_4K_MIN_HEIGHT = 1600
+RATIO_1080P_MIN_HEIGHT = 900
 HUB_REPO = "PeterL1n/RobustVideoMatting"
 HUB_MODEL = "resnet50"
 MISSING_TORCH = (
@@ -65,8 +69,12 @@ def build_parser():
     parser.add_argument(
         "--ratio",
         type=float,
-        default=DEFAULT_RATIO,
-        help=f"RVM downsample_ratio, > 0 and <= 1 (default {DEFAULT_RATIO}; 0.25 is faster)",
+        default=None,
+        help=(
+            "RVM downsample_ratio, > 0 and <= 1; explicit override. "
+            "Default auto from the input height: 0.125 at 4K (>=1600), "
+            "0.25 at 1080p (>=900), 0.4 at 720p and smaller"
+        ),
     )
     parser.add_argument("--out", default=None, help="output .mov path (default <video parent>/<stem>_matte.mov)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -78,6 +86,15 @@ def resolve_output(video, out):
     if out:
         return Path(out).expanduser()
     return video.parent / f"{video.stem}_matte.mov"
+
+
+def default_ratio_for_height(height):
+    """Return the RVM downsample ratio for a video height (RVM guidance)."""
+    if height >= RATIO_4K_MIN_HEIGHT:
+        return RATIO_4K
+    if height >= RATIO_1080P_MIN_HEIGHT:
+        return RATIO_1080P
+    return RATIO_720P
 
 
 def parse_rate(value):
@@ -254,7 +271,7 @@ def encode_prores(fgr_dir, pha_dir, fps_str, output):
             tmp_output.unlink()
 
 
-def run(video, start=None, end=None, ratio=DEFAULT_RATIO, out=None):
+def run(video, start=None, end=None, ratio=None, out=None):
     """Remove the background of ``video`` over the range and write the matte .mov."""
     started = time.monotonic()
     video = Path(video).expanduser()
@@ -267,7 +284,7 @@ def run(video, start=None, end=None, ratio=DEFAULT_RATIO, out=None):
     if output.resolve() == video.resolve():
         raise MatteError(f"--out must not overwrite the input: {output}")
 
-    if not 0.0 < ratio <= 1.0:
+    if ratio is not None and not 0.0 < ratio <= 1.0:
         raise MatteError(f"--ratio must be > 0 and <= 1, got {ratio}")
 
     if start is not None and end is not None and start >= end:
@@ -288,6 +305,8 @@ def run(video, start=None, end=None, ratio=DEFAULT_RATIO, out=None):
             f"(need 0 <= start < end <= {duration})"
         )
 
+    effective_ratio = ratio if ratio is not None else default_ratio_for_height(info["height"])
+
     try:
         import torch
     except ImportError:
@@ -303,7 +322,7 @@ def run(video, start=None, end=None, ratio=DEFAULT_RATIO, out=None):
         fgr_dir.mkdir()
         pha_dir.mkdir()
         frames = process_frames(
-            torch, model, device, video, start_s, end_s, ratio, fgr_dir, pha_dir
+            torch, model, device, video, start_s, end_s, effective_ratio, fgr_dir, pha_dir
         )
         if frames == 0:
             raise MatteError(f"no frames read from {video} in range {start_s}-{end_s}s")
@@ -317,7 +336,7 @@ def run(video, start=None, end=None, ratio=DEFAULT_RATIO, out=None):
         "fps": info["fps"],
         "start_s": start_s,
         "end_s": end_s,
-        "downsample_ratio": ratio,
+        "downsample_ratio": effective_ratio,
         "device": device,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
