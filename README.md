@@ -91,7 +91,7 @@ Shared building blocks for the AI Director track (see `docs/VISION.md`). Indepen
 - `scripts/common/llm.py` — OpenRouter client with `llm_budget_usd` spend tracking against a per-project ledger file (`<workspace>/llm_spend.json`), role-to-model resolution and a mock backend for offline tests and dry runs. An OpenRouter response without `usage.cost` raises `MissingUsageCost` instead of counting as free.
 - `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`; `ingest.schema.json`, `motion.schema.json` and `quality.schema.json` describe the D1a analysis outputs; `reframe.schema.json` describes the crop path written by `reframe.py`.
 - `tests/` — pytest suite with tiny offline fixtures. Runs on a CPU-only machine (no GPU, no torch/whisperx).
-- `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`).
+- `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL` or the config key `ntfy_url` — no built-in default).
 
 ```bash
 .venv/bin/python -m pytest -q

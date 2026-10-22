@@ -143,7 +143,7 @@ echo "blocked on the vision model" | .venv/bin/python scripts/notify.py - --titl
 .venv/bin/python scripts/notify.py "test" --dry-run --json
 ```
 
-The server URL comes from `NTFY_URL` and defaults to `http://10.10.1.61:8090/opencode-doru`. `--json` prints a machine-readable result; `--dry-run` resolves the target without sending.
+The server URL comes from `NTFY_URL` or the config key `ntfy_url`; there is no built-in default, so set one of them (a private address stays out of this public repository — the docs use `<ntfy-url>`). `--json` prints a machine-readable result; `--dry-run` resolves the target without sending.
 
 ### Watchdog
 

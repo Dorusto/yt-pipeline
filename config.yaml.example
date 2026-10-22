@@ -34,6 +34,11 @@ llm_backend: openrouter
 # 'face'. Quote the value so YAML does not read on/off as booleans.
 # shorts_layout: "auto"
 
+# Optional ntfy server URL for scripts/notify.py and the watchdog (also read
+# from the NTFY_URL environment variable; no built-in default). Never commit a
+# private address — this public repository only names `<ntfy-url>`.
+# ntfy_url: http://ntfy.example.invalid/opencode-doru
+
 # Optional per-project spend ledger (JSON) so llm_budget_usd caps a whole job
 # across separate tool runs. Prefer the workspace copy: <workspace>/llm_spend.json.
 # Overridden by the YT_SPEND_LEDGER environment variable; when neither is set,

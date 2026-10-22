@@ -59,7 +59,7 @@ command per clip:
 
 ```bash
 .venv/bin/python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects \
-    --preview-base http://10.10.1.61:8091 --notify
+    --preview-base http://<agent-host>:8091 --notify
 ```
 
 - `--inbox DIR` is the watched folder (required, read-only). `--projects DIR`
@@ -99,7 +99,7 @@ command per clip:
 - `--new-edit` makes a new edit even when nothing changed (llm_director with `--force`, then explain and the renders); the web Re-edit button always sends it, so pressing Re-edit twice gives two versions.
 - `--force` re-runs every station.
 - `--notify` posts a short ntfy message with the preview link after a successful run (a fully skipped run says `Recap ready (cached)`); a failed run never notifies.
-- `--preview-base URL` is the base of the `serve.py` server (e.g. `http://10.10.1.61:8091`); the link is `<base>/<workspace folder name>/recap_720p.mp4`. Without it the message carries the workspace path and the summary's `preview_url` is `null`.
+- `--preview-base URL` is the base of the `serve.py` server (e.g. `http://<agent-host>:8091`); the link is `<base>/<workspace folder name>/recap_720p.mp4`. Without it the message carries the workspace path and the summary's `preview_url` is `null`.
 - `--json` prints one flat summary with `wall_time_s`, `llm_cost_usd` (this run) and `llm_spend_usd` (the workspace ledger).
 - `--brief-file PATH` reads the brief from a file instead of `--brief`.
 

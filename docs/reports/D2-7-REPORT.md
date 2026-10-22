@@ -89,7 +89,7 @@ times); T2, T3, T4, T5 came from the coder and passed audit.
 
 ## Doru, check this
 
-1. Open `http://10.10.1.61:<port>/` after `git pull` and
+1. Open `http://<agent-host>:<port>/` after `git pull` and
    `.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox` —
    upload a few phone clips and watch the Projects badge.
 2. The Why? tab on any project: `http://<ip>:<port>/<project>/?tab=why` — is the

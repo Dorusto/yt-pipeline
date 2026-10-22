@@ -77,7 +77,7 @@ WS=~/media/trip/workspace
 .venv/bin/python scripts/edit_to_fragments.py --edit $WS/edit.json --out $WS/fragments.yaml --source-dir ~/media/trip/raw --kdenlive-out $WS/recap.kdenlive
 ```
 
-Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `cd $WS && python3 -m http.server 8091 --bind 10.10.1.61`, then open `http://10.10.1.61:8091/shotlog.html` and the MP4.
+Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `cd $WS && python3 -m http.server 8091 --bind <agent-host>`, then open `http://<agent-host>:8091/shotlog.html` and the MP4.
 
 ## Mode B on a finished clip
 

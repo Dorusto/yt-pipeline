@@ -7,8 +7,8 @@ Usage:
     echo "blocked on vision model" | python scripts/notify.py - --title Blocked
     python scripts/notify.py "done" --json
 
-The server URL comes from NTFY_URL, default
-http://10.10.1.61:8090/opencode-doru.
+The server URL comes from NTFY_URL or the config key ``ntfy_url``; there is no
+built-in default (never a private address in this public repository).
 """
 
 import argparse
@@ -39,7 +39,14 @@ def main(argv=None):
     else:
         message = args.message
 
-    target = resolve_url(args.url)
+    try:
+        target = resolve_url(args.url)
+    except NotifyError as exc:
+        if args.json:
+            print(json.dumps({"sent": False, "url": None, "error": str(exc)}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        return 1
 
     if args.dry_run:
         summary = {"sent": False, "url": target, "message": message}

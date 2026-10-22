@@ -7,7 +7,8 @@ Checks the files staged for commit (or the paths given) for:
 - footage, audio, images, subtitles and model weights by extension;
 - files larger than 1 MB;
 - secrets: OpenRouter / OpenAI / GitHub / AWS keys and private key blocks;
-- embedded base64 images (frames or thumbnails pasted into text files).
+- embedded base64 images (frames or thumbnails pasted into text files);
+- private IPv4 addresses (10/8, 172.16/12, 192.168/16) outside .gitignored files.
 
 Usage:
     python scripts/check_public.py                 # staged files (pre-commit hook)
@@ -44,6 +45,7 @@ SECRET_PATTERNS = {
     "private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 }
 BASE64_IMAGE = re.compile(r"data:image/[a-z]+;base64,[A-Za-z0-9+/]{200,}")
+IPV4_CANDIDATE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
 
 
 def git_lines(*args):
@@ -53,6 +55,28 @@ def git_lines(*args):
 
 def staged_files():
     return git_lines("diff", "--cached", "--name-only", "--diff-filter=ACMR")
+
+
+def is_gitignored(path):
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def private_ipv4(text):
+    """Return the first private IPv4 address in ``text`` (10/8, 172.16/12, 192.168/16), or None."""
+    for match in IPV4_CANDIDATE.finditer(text):
+        octets = match.group(0).split(".")
+        if any(int(part) > 255 for part in octets):
+            continue
+        first, second = int(octets[0]), int(octets[1])
+        if first == 10 or (first == 172 and 16 <= second <= 31) or (first == 192 and second == 168):
+            return match.group(0)
+    return None
 
 
 def check_file(path):
@@ -77,6 +101,10 @@ def check_file(path):
             problems.append(f"{path}: looks like it contains a {name}")
     if BASE64_IMAGE.search(text):
         problems.append(f"{path}: contains an embedded base64 image (frame or thumbnail)")
+    if not is_gitignored(path):
+        address = private_ipv4(text)
+        if address:
+            problems.append(f"{path}: contains the private IPv4 address {address}")
     return problems
 
 

@@ -10,12 +10,12 @@ Phase LLM spend: **$0.043** (budget 1 USD).
 
 ## Works (verified in D2-4)
 
-- **`scripts/serve.py`** — read-only HTTP preview, bind `10.10.1.61:8091`
+- **`scripts/serve.py`** — read-only HTTP preview, bind `<agent-host>:8091`
   (tailnet address; `0.0.0.0`/`::` refused with an error). Allowlist routes:
   index, one page per project, and only `recap_720p.mp4` / `recap_final.mp4` /
   `shotlog.html` — proxies, `edit.json` and `source/` return 404. Range
   requests return 206 (phone browsers need this to play video). Live: `/`,
-  `/2026-10-14/`, preview and shotlog all **200** over `10.10.1.61`; traversal
+  `/2026-10-14/`, preview and shotlog all **200** over `<agent-host>`; traversal
   404, POST 405. 18 tests.
 - **`recap.py --notify`** — posts `Recap ready (720p)` / `Recap ready (cached)`
   to ntfy with the preview link `<preview-base>/<workspace>/recap_720p.mp4`;
@@ -57,7 +57,7 @@ Phase LLM spend: **$0.043** (budget 1 USD).
 
 1. Read `docs/guides/phone-flow.md` — are the Syncthing + Hermes steps the
    ones you want to run for the demo?
-2. Open `http://10.10.1.61:8091/2026-10-14/` on the phone (tailnet) — does the
+2. Open `http://<agent-host>:8091/2026-10-14/` on the phone (tailnet) — does the
    preview play in the phone browser? (`serve.py` is running now.)
 3. Watch `/root/media/projects/2026-10-14/recap_720p.mp4` (19.5 s, 5 clips,
    $0.043) — is this the phone-flow demo quality?

@@ -385,7 +385,7 @@ def test_recap_flags_forwarded(tmp_path, monkeypatch):
     extra = [
         "--notify",
         "--preview-base",
-        "http://10.10.1.61:8091",
+        "http://127.0.0.1:8091",
         "--budget-usd",
         "2.5",
         "--force",
@@ -394,7 +394,7 @@ def test_recap_flags_forwarded(tmp_path, monkeypatch):
     command = recorder.commands[0]
     assert "--notify" in command
     assert "--preview-base" in command
-    assert "http://10.10.1.61:8091" in command
+    assert "http://127.0.0.1:8091" in command
     assert "--budget-usd" in command
     assert "2.5" in command
     assert "--force" in command

@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import check_public
 
@@ -32,6 +33,29 @@ def test_blocks_large_files(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "big.txt").write_text("x" * 1_100_000)
     assert "MB" in check_public.check_file("big.txt")[0]
+
+
+def test_blocks_private_ipv4_outside_gitignored(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    home = ".".join(["192", "168", "1", "10"])
+    bind = ".".join(["10", "0", "0", "5"])
+    (tmp_path / "host.md").write_text(f"server http://{home}:8091\n")
+    (tmp_path / "range.md").write_text(f"bind {bind}\n")
+    (tmp_path / "public.md").write_text("open http://127.0.0.1:8091 and 8.8.8.8\n")
+    assert "private IPv4" in check_public.check_file("host.md")[0]
+    assert "private IPv4" in check_public.check_file("range.md")[0]
+    assert check_public.check_file("public.md") == []
+
+
+def test_allows_private_ipv4_in_gitignored_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q"], check=True)
+    bind = ".".join(["10", "0", "0", "5"])
+    (tmp_path / ".gitignore").write_text("local.yaml\n", encoding="utf-8")
+    (tmp_path / "local.yaml").write_text(f"ntfy: http://{bind}:8090\n", encoding="utf-8")
+    assert check_public.check_file("local.yaml") == []
+    (tmp_path / "shared.md").write_text(f"ntfy: http://{bind}:8090\n", encoding="utf-8")
+    assert "private IPv4" in check_public.check_file("shared.md")[0]
 
 
 def test_main_json_and_exit_code(tmp_path, monkeypatch, capsys):

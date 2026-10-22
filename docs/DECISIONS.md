@@ -453,7 +453,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - B) `urllib.request` from the standard library
 - C) A shell `curl` one-liner in the agent docs
 
-**Decision:** B. `scripts/common/notify.py` with `scripts/notify.py` as the CLI. URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`. Message is the POST body; title/priority/tags are ntfy headers.
+**Decision:** B. `scripts/common/notify.py` with `scripts/notify.py` as the CLI. URL from `NTFY_URL`, default `<ntfy-url>`. Message is the POST body; title/priority/tags are ntfy headers.
 
 **Rationale:** The notification is a single POST and must work even on a bare machine, so a new runtime dependency (A) is not justified. C is not testable and hides the target. Putting the function in `common/` lets later stages and the phase-report ritual share it without tool-to-tool imports.
 
@@ -1411,9 +1411,9 @@ only.
 **Acceptance (2026-10-14, budget 1 USD):** 5 clips copied (never moved) from
 `~/media/yt-test/raw` into `~/media/inbox-test/2026-10-14/` with a folder
 `brief.txt`; `inbox.py --once --quiet-minutes 0 --notify --preview-base
-http://10.10.1.61:8091` picked them up as project `2026-10-14` (brief_source
+http://<agent-host>:8091` picked them up as project `2026-10-14` (brief_source
 `folder`) and rendered `recap_720p.mp4` (1280x720, 19.5 s, 4 slots) for
-**$0.043** in 540 s. `serve.py --bind 10.10.1.61 --port 8091` lists the
+**$0.043** in 540 s. `serve.py --bind <agent-host> --port 8091` lists the
 project; index, project page, preview and shotlog all return 200 over the
 tailnet address, and the ntfy message (`Recap ready (720p)` + preview link)
 arrived with that exact URL. Second `--once` run: `skipped (nothing new)` at
