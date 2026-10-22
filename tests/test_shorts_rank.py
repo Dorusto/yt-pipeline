@@ -26,6 +26,12 @@ TICKS = 254016000000
 
 SHORT_SENTENCES = [(0.0, 5.0), (6.0, 11.0), (12.0, 17.0), (18.0, 23.0), (24.0, 29.0), (30.0, 35.0)]
 LONG_SENTENCES = [(index * 6.0, index * 6.0 + 5.0) for index in range(17)]
+CAMERA_CLIP = "camera 2026-09-29 20-58-37.mp4"
+SCREEN_CLIP = "2026-09-29 20-58-35.mp4"
+PAIRED_SENTENCES = [
+    (0.0, 5.0), (6.0, 11.0), (12.0, 17.0), (18.0, 23.0), (24.0, 29.0), (30.0, 35.0),
+    (40.0, 45.0), (46.0, 51.0), (52.0, 57.0), (58.0, 63.0), (64.0, 69.0), (70.0, 75.0),
+]
 
 
 class AutoScoreClient:
@@ -126,6 +132,61 @@ def long_fixture(tmp_path):
     edit = one_slot_edit(tmp_path, out_s=110.0)
     words = write_sentence_words(tmp_path / "words" / "cam.json", LONG_SENTENCES)
     return edit, words
+
+
+def paired_edit(tmp_path):
+    edit = write_edit(
+        tmp_path / "edit.json",
+        [
+            {"id": "w001", "clip": SCREEN_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"},
+            {"id": "w001", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"},
+            {"id": "w002", "clip": CAMERA_CLIP, "in_s": 40.0, "out_s": 80.0, "score": 1.0, "reason": "b"},
+        ],
+        sources=[
+            {"file": SCREEN_CLIP, "path": "/x/" + SCREEN_CLIP, "duration_s": 80.0, "media_type": "video"},
+            {"file": CAMERA_CLIP, "path": "/x/" + CAMERA_CLIP, "duration_s": 80.0, "media_type": "video"},
+        ],
+    )
+    words = write_sentence_words(
+        tmp_path / "words" / f"{Path(CAMERA_CLIP).stem}.json", PAIRED_SENTENCES
+    )
+    return edit, words
+
+
+def camera_only_edit(tmp_path):
+    edit = write_edit(
+        tmp_path / "edit.json",
+        [{"id": "v1", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"}],
+        sources=[
+            {"file": CAMERA_CLIP, "path": "/x/" + CAMERA_CLIP, "duration_s": 40.0, "media_type": "video"},
+        ],
+    )
+    words = write_sentence_words(
+        tmp_path / "words" / f"{Path(CAMERA_CLIP).stem}.json", SHORT_SENTENCES
+    )
+    return edit, words
+
+
+def write_config(tmp_path, shorts_layout):
+    lines = [
+        "models:",
+        "  director: mock-model",
+        "llm_budget_usd: null",
+        "llm_backend: mock",
+    ]
+    if shorts_layout is not None:
+        lines.append(f"shorts_layout: {shorts_layout}")
+    path = tmp_path / "config.yaml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def first_face_candidate_id(edit, words):
+    candidates = candidates_of(edit, words)
+    return next(
+        index for index, candidate in enumerate(candidates, 1)
+        if candidate["start_s"] >= 40.0
+    )
 
 
 def write_chapters(tmp_path, chapters):
@@ -237,16 +298,183 @@ def test_layout_split_written_on_every_candidate(tmp_path, monkeypatch, capsys):
     assert all(candidate["layout"] == "split" for candidate in document["candidates"])
 
 
-def test_layout_absent_without_flag(tmp_path, monkeypatch, capsys):
+def test_layout_defaults_to_face_without_flag(tmp_path, monkeypatch, capsys):
     edit, words = short_fixture(tmp_path)
     client = AutoScoreClient()
     code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["layout"] is None
+    assert summary["layout_policy"] == "auto"
     document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
     validate_or_raise(document, "shorts_candidates")
-    assert all("layout" not in candidate for candidate in document["candidates"])
+    assert document["candidates"]
+    assert all(candidate["layout"] == "face" for candidate in document["candidates"])
+
+
+def test_layout_policy_auto_paired(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    face_id = first_face_candidate_id(edit, words)
+    client = AutoScoreClient(scores={face_id: (100, 100)})
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout"] is None
+    assert summary["layout_policy"] == "auto"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert {candidate["layout"] for candidate in document["candidates"]} == {"split", "face"}
+    for candidate in document["candidates"]:
+        expected = "face" if candidate["start_s"] >= 40.0 else "split"
+        assert candidate["layout"] == expected
+
+
+def test_layout_policy_auto_camera_only(tmp_path, monkeypatch, capsys):
+    edit, words = camera_only_edit(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout_policy"] == "auto"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert document["candidates"]
+    assert all(candidate["layout"] == "face" for candidate in document["candidates"])
+
+
+def test_layout_policy_on_paired(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    face_id = first_face_candidate_id(edit, words)
+    client = AutoScoreClient(scores={face_id: (100, 100)})
+    code = run_main(
+        tmp_path, monkeypatch, client, edit, words,
+        extra=["--layout-policy", "on", "--json"],
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout_policy"] == "on"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert document["candidates"]
+    assert all(candidate["layout"] == "split" for candidate in document["candidates"])
+
+
+def test_layout_policy_on_camera_only(tmp_path, monkeypatch, capsys):
+    edit, words = camera_only_edit(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(
+        tmp_path, monkeypatch, client, edit, words,
+        extra=["--layout-policy", "on", "--json"],
+    )
+    assert code == 0
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    assert all(candidate["layout"] == "face" for candidate in document["candidates"])
+
+
+def test_layout_policy_off_paired(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(
+        tmp_path, monkeypatch, client, edit, words,
+        extra=["--layout-policy", "off", "--json"],
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout_policy"] == "off"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    assert all(candidate["layout"] == "face" for candidate in document["candidates"])
+
+
+def test_layout_flag_beats_policy(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(
+        tmp_path, monkeypatch, client, edit, words,
+        extra=["--layout", "split", "--layout-policy", "off", "--json"],
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout"] == "split"
+    assert summary["layout_policy"] == "off"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    assert all(candidate["layout"] == "split" for candidate in document["candidates"])
+
+
+def test_layout_policy_from_config(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    config = write_config(tmp_path, "off")
+    monkeypatch.setenv("YT_CONFIG", str(config))
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout_policy"] == "off"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    assert all(candidate["layout"] == "face" for candidate in document["candidates"])
+
+
+def test_layout_policy_flag_beats_config(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    config = write_config(tmp_path, "off")
+    monkeypatch.setenv("YT_CONFIG", str(config))
+    client = AutoScoreClient()
+    code = run_main(
+        tmp_path, monkeypatch, client, edit, words,
+        extra=["--layout-policy", "on", "--json"],
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout_policy"] == "on"
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    assert all(candidate["layout"] == "split" for candidate in document["candidates"])
+
+
+def test_bad_layout_policy_flag_exit_2(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    client = AutoScoreClient()
+    code = run_main(
+        tmp_path, monkeypatch, client, edit, words,
+        extra=["--layout-policy", "bogus"],
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "bogus" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "shorts_candidates.json").exists()
+
+
+def test_bad_layout_policy_config_exit_2(tmp_path, monkeypatch, capsys):
+    edit, words = paired_edit(tmp_path)
+    config = write_config(tmp_path, "bogus")
+    monkeypatch.setenv("YT_CONFIG", str(config))
+    client = AutoScoreClient()
+    code = run_main(tmp_path, monkeypatch, client, edit, words)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "bogus" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / "shorts_candidates.json").exists()
+
+
+def test_layout_policy_timeline_words_is_face(tmp_path, monkeypatch, capsys):
+    fcproj, words_dir = long_fcproj_fixture(tmp_path)
+    args = shorts_rank.build_parser().parse_args([
+        "--fcproj", str(fcproj), "--sequence", "Main", "--words-dir", str(words_dir),
+    ])
+    mapped, _, _ = shorts_rank.resolve_inputs(args)
+    timeline = tmp_path / "timeline_words.json"
+    timeline.write_text(json.dumps(mapped, ensure_ascii=False), encoding="utf-8")
+    client = AutoScoreClient()
+    patch(monkeypatch, client)
+    out = tmp_path / "shorts_candidates.json"
+    code = shorts_rank.main(["--timeline-words", str(timeline), "--out", str(out), "--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["layout_policy"] == "auto"
+    document = json.loads(out.read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert document["candidates"]
+    assert all(candidate["layout"] == "face" for candidate in document["candidates"])
 
 
 def test_json_reports_layout_in_both_cases(tmp_path, monkeypatch, capsys):

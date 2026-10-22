@@ -27,6 +27,13 @@ llm_budget_usd: 5.0
 # Backend used by scripts/common/llm.py: openrouter or mock.
 llm_backend: openrouter
 
+# Optional Shorts layout policy for scripts/shorts_rank.py: auto, on or off.
+# auto (default) writes 'split' only when the session has a camera and a screen
+# recording and the screen shows something during the candidate; on writes
+# 'split' for every candidate of a camera+screen session; off always writes
+# 'face'. Quote the value so YAML does not read on/off as booleans.
+# shorts_layout: "auto"
+
 # Optional per-project spend ledger (JSON) so llm_budget_usd caps a whole job
 # across separate tool runs. Prefer the workspace copy: <workspace>/llm_spend.json.
 # Overridden by the YT_SPEND_LEDGER environment variable; when neither is set,

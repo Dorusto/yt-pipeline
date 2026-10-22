@@ -4,11 +4,13 @@
 
 Usage:
     python3 scripts/shorts_rank.py edit.json WORDS [--chapters chapters.json]
-        [--out shorts_candidates.json] [--layout {face,split}] [--json]
+        [--out shorts_candidates.json] [--layout {face,split}]
+        [--layout-policy {auto,on,off}] [--json]
     python3 scripts/shorts_rank.py --fcproj PROJ --sequence NAME --words-dir DIR
-        [--chapters chapters.json] [--layout {face,split}] [--json]
+        [--chapters chapters.json] [--layout {face,split}]
+        [--layout-policy {auto,on,off}] [--json]
     python3 scripts/shorts_rank.py --timeline-words FILE [--chapters chapters.json]
-        [--layout {face,split}] [--json]
+        [--layout {face,split}] [--layout-policy {auto,on,off}] [--json]
 
 The tool maps the per-source Whisper word JSON files onto the cuts of an
 ``edit.json`` timeline (the same midpoint rule ``chapters.py`` uses), splits the
@@ -34,8 +36,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from common.config import ConfigError
+from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
+from common.media import clip_kind
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import (
     EPSILON,
@@ -50,6 +53,7 @@ from common.timeline_words import (
     plan_from_fcproj,
     publish_folder_for,
     timeline_words_from_file,
+    video_spans_from_fcproj,
 )
 
 TOOL = "scripts/shorts_rank.py"
@@ -60,6 +64,7 @@ MAX_DURATION_S = 60.0
 MAX_CANDIDATES = 60
 TOP_N = 5
 MAX_REASON = 200
+LAYOUT_POLICIES = ("auto", "on", "off")
 
 _client = None
 
@@ -144,6 +149,81 @@ def resolve_inputs(args):
     words_map, single_file = build_words_map(args.words)
     mapped, warnings, _dropped = map_words(groups, words_map, single_file)
     return mapped, warnings, Path(args.edit)
+
+
+def resolve_layout_policy(args):
+    """Return the layout policy: the flag, else the config key, else ``auto``.
+
+    YAML reads an unquoted ``on``/``off`` as a boolean, so those are mapped back
+    to the policy names before validation.
+    """
+    if args.layout_policy is not None:
+        value = args.layout_policy
+    else:
+        value = load_config().get("shorts_layout", "auto")
+    if value is True:
+        value = "on"
+    elif value is False:
+        value = "off"
+    if value not in LAYOUT_POLICIES:
+        raise ShortsRankError(
+            f"invalid layout policy '{value}': must be one of auto, on, off"
+        )
+    return value
+
+
+def collect_spans(args):
+    """Return the input timeline's spans ``[{name, timeline_start, timeline_end}]``.
+
+    The rough cut reads the video groups of the edit (a Mode B pair is one
+    window with both clip names); ``--fcproj`` reads every video-track clip;
+    ``--timeline-words`` has no spans.
+    """
+    if args.fcproj:
+        return video_spans_from_fcproj(args.fcproj, args.sequence)
+    if args.edit:
+        document = load_edit(args.edit)
+        spans = []
+        for group in build_groups(document):
+            if group["kind"] != "video":
+                continue
+            start = group["start_s"]
+            end = start + group["length_s"]
+            for entry in group["slots"]:
+                clip = entry["slot"].get("clip")
+                if clip:
+                    spans.append({
+                        "name": clip,
+                        "timeline_start": start,
+                        "timeline_end": end,
+                    })
+        return spans
+    return []
+
+
+def has_both_angles(spans):
+    """True when the timeline has at least one camera clip and one screen clip."""
+    kinds = {clip_kind(span["name"]) for span in spans}
+    return "camera" in kinds and "screen" in kinds
+
+
+def screen_during(spans, start_s, end_s):
+    """True when a screen clip's span overlaps ``[start_s, end_s]``."""
+    for span in spans:
+        if clip_kind(span["name"]) != "screen":
+            continue
+        if span["timeline_start"] < end_s and span["timeline_end"] > start_s:
+            return True
+    return False
+
+
+def candidate_layout(policy, has_both, screen_overlap):
+    """Return the layout for one candidate under the policy."""
+    if policy == "off":
+        return "face"
+    if policy == "on":
+        return "split" if has_both else "face"
+    return "split" if has_both and screen_overlap else "face"
 
 
 def split_sentences(words):
@@ -339,7 +419,7 @@ def write_json(path, document):
         raise
 
 
-def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prompt_path=None, publish_dir=None, layout=None):
+def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prompt_path=None, publish_dir=None, layout=None, spans=None, layout_policy="auto"):
     """Rank the Shorts candidates and return the ``--json`` summary."""
     started = time.monotonic()
     if not mapped:
@@ -379,6 +459,7 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
     ranked = rank_candidates(candidates, by_id)
 
     output_candidates = []
+    has_both = has_both_angles(spans or [])
     for rank, item in enumerate(ranked, 1):
         candidate = {
             "rank": rank,
@@ -394,6 +475,12 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
         }
         if layout is not None:
             candidate["layout"] = layout
+        else:
+            candidate["layout"] = candidate_layout(
+                layout_policy,
+                has_both,
+                screen_during(spans or [], item["start_s"], item["end_s"]),
+            )
         output_candidates.append(candidate)
 
     if out_path:
@@ -419,6 +506,7 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
         "candidates_scored": len(candidates),
         "written": len(output_candidates),
         "layout": layout,
+        "layout_policy": layout_policy,
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": round(client.spent_usd, 8),
@@ -432,7 +520,8 @@ def build_parser():
             "shorts_rank.py [EDIT] [WORDS] [--chapters chapters.json] "
             "[--out shorts_candidates.json] [--prompt FILE]\n"
             "               [--fcproj PROJ --sequence NAME [--track TRACK] --words-dir DIR]\n"
-            "               [--timeline-words FILE] [--layout {face,split}] [--json]"
+            "               [--timeline-words FILE] [--layout {face,split}] "
+            "[--layout-policy {auto,on,off}] [--json]"
         ),
         description=(
             "Rank Shorts candidates from the kept transcript of an edit with one LLM pass "
@@ -471,7 +560,20 @@ def build_parser():
         help=(
             "write this layout on every candidate: 'face' is the reframe.py face crop, "
             "'split' stacks the face region over the screen region of the same 16:9 frame "
-            "(default: no layout key)"
+            "(default: the --layout-policy decides per candidate)"
+        ),
+    )
+    parser.add_argument(
+        "--layout-policy",
+        default=None,
+        metavar="{auto,on,off}",
+        help=(
+            "how the layout is chosen per candidate when --layout is not given: 'auto' "
+            "(default) writes 'split' only when the session has a camera and a screen "
+            "recording and the screen shows something during the candidate, else 'face'; "
+            "'on' writes 'split' for every candidate of a camera+screen session; 'off' "
+            "always writes 'face'. Read from the config key 'shorts_layout' when the flag "
+            "is omitted. --layout overrides it."
         ),
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -482,12 +584,17 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         mapped, warnings, primary_input = resolve_inputs(args)
+        layout_policy = resolve_layout_policy(args)
+        spans = collect_spans(args) if args.layout is None else []
         publish_dir = (
             publish_folder_for(args.words_dir)
             if args.fcproj and args.words_dir
             else None
         )
-        summary = run(mapped, warnings, primary_input, args.chapters, args.out, args.prompt, publish_dir, args.layout)
+        summary = run(
+            mapped, warnings, primary_input, args.chapters, args.out, args.prompt,
+            publish_dir, args.layout, spans=spans, layout_policy=layout_policy,
+        )
     except (ShortsRankError, ConfigError, LLMError, TimelineWordsError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
