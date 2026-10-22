@@ -71,6 +71,37 @@ from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
   RULES/DECISIONS/skills in step with the code. Full suite **1642 tests green**
   (`-m "not needs_melt and not needs_footage"`).
 
+## S59 follow-up 2 (2026-10-21)
+
+- **Review fixes:** the watchdog thresholds live only in `docs/AGENT_SETUP.md` (the live
+  cron line) and `docs/RULES.md` points there; `serve.py` has no crossfade constant of its
+  own (`common.timeline_words.fade_for_join` carries the default; golden/render tests
+  byte-identical); `explain.py`/`index.py` share one JPEG thumbnail encoder
+  (`common.frames.thumbnail_data_uri`); the manifest sync offset survives an unresolved
+  `camera` path (new test with a `..` path on both sides).
+- **Docs:** the clip folder layout is `~/Videos/<YYYY-MM-name>/` (`camera/`, `ecran/`,
+  `transcrieri/` and the `.fcproj`) in the user guide and in this report; the agent-side
+  eval copy is named once as such.
+- **Shorts layout policy:** `shorts_rank.py --layout-policy {auto,on,off}` (config
+  `shorts_layout`, default `auto`; `--layout` the hard override) writes `layout:
+  face|split` on every candidate — `split` only for a camera+screen session whose screen
+  shows during the candidate (timeline signals via `common.media.clip_kind`, no model
+  call). The web app has the **Shorts layout** setting (auto/on/off, also from config) and
+  a **Shorts** tab with a per-candidate layout override
+  (`POST /<project>/shorts-candidates`); camera-only projects offer `face` only.
+- **Public repo hygiene:** no private IP addresses anywhere (docs use `<agent-host>` /
+  `<ntfy-url>`); `notify.py` reads `NTFY_URL` or config `ntfy_url` with no private default;
+  `check_public.py` fails on 10/8, 172.16/12, 192.168/16 outside `.gitignored` files.
+
+**Open questions (Doru):**
+
+1. `layout: split` still stacks the **face cell over the screen cell** (issue #60, S59 lot
+   3c). Your note says "(screen on top, camera below)" — flip the two cells? (one
+   filtergraph line + the docs).
+2. The Shorts layout setting is recorded with the run options and is what `shorts_rank.py
+   --layout-policy` takes; nothing runs `shorts_rank.py` from the web app yet. Should a
+   station chain it (publish / mode_b), or do you run it by hand as today?
+
 ## Mocked / not verified
 
 - LLM passes (`chapters`, `shorts_rank`, `metadata`) ran with `llm_backend:
