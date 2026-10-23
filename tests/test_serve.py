@@ -2039,3 +2039,9 @@ def test_upload_page_has_a_drop_zone_that_adds_files():
     assert "data-drop" in page
     assert 'name="files" multiple' in page
     assert "DataTransfer" in page
+
+
+def test_upload_page_shows_upload_progress():
+    page = serve.render_upload([])
+    assert 'class="upload-progress"' in page
+    assert "upload.onprogress" in page

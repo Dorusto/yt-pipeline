@@ -783,6 +783,23 @@ document.addEventListener('drop',function(e){e.preventDefault();z.classList.remo
 })();
 """
 
+# Upload progress: the form is sent with XMLHttpRequest so the page can show how
+# much has reached the server; without JavaScript the form posts as before.
+UPLOAD_PROGRESS_SCRIPT = """
+(function(){var f=document.querySelector('form[action="/upload"]');if(!f||!window.XMLHttpRequest||!window.FormData)return;
+var box=f.querySelector('.upload-progress'),bar=box.querySelector('progress'),st=box.querySelector('.upload-status'),btn=f.querySelector('button[type=submit]');
+function mb(n){return (n/1048576).toFixed(0)+' MB';}
+f.addEventListener('submit',function(e){e.preventDefault();var d=new FormData(f);d.append('submit','start');
+var x=new XMLHttpRequest();x.open('POST',f.action);box.hidden=false;btn.disabled=true;var t0=Date.now();
+x.upload.onprogress=function(ev){if(!ev.lengthComputable)return;var pc=Math.floor(ev.loaded*100/ev.total);bar.value=pc;
+var sec=(Date.now()-t0)/1000,rate=ev.loaded/Math.max(sec,1),left=(ev.total-ev.loaded)/Math.max(rate,1);
+st.textContent='Uploading: '+pc+'% ('+mb(ev.loaded)+' of '+mb(ev.total)+'), about '+Math.ceil(left/60)+' min left';};
+x.upload.onload=function(){bar.value=100;st.textContent='Upload complete, the server is checking the files...';};
+x.onload=function(){if(x.status>=200&&x.status<400){window.location=x.responseURL||'/';}else{btn.disabled=false;st.textContent='Upload failed ('+x.status+'): '+(x.responseText||'').replace(/<[^>]*>/g,' ').trim().slice(0,200);}};
+x.onerror=function(){btn.disabled=false;st.textContent='Upload interrupted: the connection to the server was lost. Pick the files again and retry.';};
+x.send(d);});})();
+"""
+
 STRIP_SCRIPT = """
 [].forEach.call(document.querySelectorAll('.player'),function(p){var v=p.querySelector('video');var b=[].slice.call(p.querySelectorAll('.strip-track button'));
 if(!v||!b.length)return;b.forEach(function(x){x.addEventListener('click',function(){v.currentTime=parseFloat(x.dataset.t);v.play();});});
@@ -1391,10 +1408,12 @@ def render_upload(music_tracks):
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
         '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
+        '<div class="upload-progress" hidden><progress max="100" value="0"></progress>'
+        '<p class="upload-status" aria-live="polite"></p></div>'
         "</form>"
     )
     return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
-                       script=LENGTH_SCRIPT + DROP_SCRIPT)
+                       script=LENGTH_SCRIPT + DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT)
 
 
 def render_reedit(name, music_tracks):
