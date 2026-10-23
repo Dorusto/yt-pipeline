@@ -2735,8 +2735,11 @@ def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
         page = body.decode()
         assert status == 200
         assert "Model cost of your clips" in page
-        assert "$7,50" in page
-        assert "$10,00" in page
+        assert "Your model cost to cover" in page
+        assert "The project's own costs" in page
+        assert "$2,00" in page
+        assert page.index("Your model cost to cover") < page.index("The project's own costs")
+        assert "Donations minus everything" not in page
     finally:
         server.shutdown()
         server.server_close()
@@ -3752,3 +3755,25 @@ def test_project_date_is_the_filming_date(tmp_path):
     )
     assert serve.project_date(project) == "2026-07-08"
     assert serve.project_date(tmp_path / "missing") == ""
+
+
+def test_instance_due_block_is_red_until_paid(monkeypatch):
+    monkeypatch.setattr(serve, "EUR_PER_USD", None)
+    open_block = serve.instance_due_block(3.0, 1.0, 5.0)
+    assert 'class="balance minus"' in open_block
+    assert "$2,00" in open_block and "Credit limit: $5,00" in open_block
+    paid_block = serve.instance_due_block(3.0, 3.0)
+    assert 'class="balance plus"' in paid_block and "Paid" in paid_block
+
+
+def test_instance_paid_sums_the_local_donations(tmp_path):
+    from common.costs import connect as connect_ledger, insert_entry
+
+    ledger = tmp_path / "costs.db"
+    assert serve.instance_paid(ledger) == 0.0
+    connection = connect_ledger(ledger)
+    insert_entry(connection, "2026-10-23", "donation", 2.5, "", None)
+    insert_entry(connection, "2026-10-24", "donation", 1.5, "", None)
+    connection.commit()
+    connection.close()
+    assert serve.instance_paid(ledger) == 4.0

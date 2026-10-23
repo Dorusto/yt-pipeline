@@ -130,9 +130,18 @@ of each instance shows that instance's own spend.
 ## Project costs on every instance
 
 The owner's instance serves `GET /costs.json` (the totals from
-`compute_totals`: per kind, monthly, development, donations, balance; no notes,
-no requests). An instance with `costs.project_totals_url`
-(`--project-totals-url`, else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the
-config) fetches it and its costs page shows two parts: "Project costs
-(everyone)" from that URL and "This instance" from its own ledger and projects.
-A failed fetch shows the part as unavailable.
+`compute_totals`, the fixed-cost notes and the donation list; no requests). An
+instance with `costs.project_totals_url` (`--project-totals-url`, else
+`YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it. Its Costs page
+shows, in order: the donation buttons, the person's own model cost to cover (the
+key usage minus the donations recorded in that instance's ledger, red while some
+is open), the project's costs as voluntary, their clips and the donation list. A
+failed fetch shows the project part as unavailable. Record a payment from that
+person on their container with `costs.py add --kind donation`.
+
+## Reaching the app over Tailscale
+
+`serve.py` binds one address and refuses the wildcard. By default it picks the
+primary LAN address, which a Tailscale node share cannot reach, so on a pilot
+container pass the container's Tailscale address in the service unit
+(`--bind <tailscale-ip>`) and set `YT_PIPELINE_SMOKE_URL` to the same address.

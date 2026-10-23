@@ -900,8 +900,11 @@ def signed_cost(usd):
     return ("\u2212" if usd < 0 else "") + format_cost(abs(usd))
 
 
-def totals_rows(totals, fixed_notes=()):
-    """The ledger totals: the balance as the headline, then what the project has cost, line by line."""
+def totals_rows(totals, fixed_notes=(), voluntary=False):
+    """The ledger totals: the balance as the headline, then what the project has cost, line by line.
+
+    With `voluntary` (a friend's instance) only the cost lines are shown, small, as the owner's costs anyone may help with.
+    """
     balance = totals["balance_usd"]
     state = "plus" if balance >= 0 else "minus"
     by_kind = totals.get("by_kind") or {}
@@ -929,6 +932,16 @@ def totals_rows(totals, fixed_notes=()):
         for name, value, why in lines
     )
     total = totals.get("total_cost_usd", api + totals.get("fixed_total_usd", 0.0))
+    if voluntary:
+        return (
+            '<section class="voluntary"><h2>The project\'s own costs</h2>'
+            "<p>Voluntary. Building and running the app costs the owner this much so far; "
+            "anything you give beyond your own model cost goes to developing the project.</p>"
+            '<table class="clip-costs cost-lines"><caption>What the project has cost</caption>'
+            f"<tbody>{rows}</tbody>"
+            f'<tfoot><tr><th scope="row">Total</th><td class="num cost">{format_cost(total)}</td></tr></tfoot>'
+            "</table></section>"
+        )
     return (
         f'<div class="balance {state}">'
         f'<span class="balance-label">Balance</span>'
@@ -944,6 +957,41 @@ def totals_rows(totals, fixed_notes=()):
         f"<tbody>{rows}</tbody>"
         f'<tfoot><tr><th scope="row">Total</th><td class="num cost">{format_cost(total)}</td></tr></tfoot>'
         "</table>"
+    )
+
+
+def instance_model_spend(costs):
+    """Sum of the per-clip model costs that could be read."""
+    return float(sum(cost for cost in costs if cost))
+
+
+def instance_paid(ledger):
+    """What this instance's person has paid back: the donations in its own ledger, 0 without one."""
+    if ledger is None or not Path(ledger).is_file():
+        return 0.0
+    try:
+        connection = connect_ledger(ledger)
+        try:
+            return float(sum(entry["amount_usd"] for entry in list_entries(connection, "donation")))
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError):
+        return 0.0
+
+
+def instance_due_block(spent_usd, paid_usd, limit_usd=None):
+    """A friend's headline: their own model cost minus what they paid back, red while some is still open."""
+    due = max(0.0, spent_usd - paid_usd)
+    state = "minus" if due >= 0.005 else "plus"
+    value = format_cost(due) if due >= 0.005 else "Paid"
+    limit = f" Credit limit: {format_cost(limit_usd)}." if limit_usd else ""
+    return (
+        f'<div class="balance {state}">'
+        '<span class="balance-label">Your model cost to cover</span>'
+        f'<span class="balance-value num">{value}</span>'
+        f'<span class="balance-note">The AI models behind your edits cost {format_cost(spent_usd)}; '
+        f'you have paid {format_cost(paid_usd)}.{limit}</span>'
+        "</div>"
     )
 
 
@@ -1308,13 +1356,14 @@ def render_index(entries, features=None, brand_logo=DEFAULT_BRAND_LOGO):
 
 def render_costs(server, thanks=False):
     """The read-only Costs page: per-clip model cost, ledger totals, donation link and the request form."""
-    rows = []
+    rows, rows_cost = [], []
     for name in discover_projects(server.root):
         directory = Path(server.root) / name
         try:
             cost = read_ledger(directory / "llm_spend.json")["total_usd"]
         except LLMError:
             cost = None
+        rows_cost.append(cost)
         versions = len(list_versions(directory))
         rows.append(
             f'<tr><th scope="row"><a href="/{html_escape(name)}/">{html_escape(name)}</a></th>'
@@ -1392,25 +1441,35 @@ def render_costs(server, thanks=False):
     # A friend's instance shows the shared project costs and donations from the
     # owner's instance, and only its own projects in the per-clip table.
     parts = []
+    limits = f"{storage_line(server)}{credit_line(server)}"
+    limits_box = f"<div class=limits>{limits}</div>" if limits else ""
     if server.project_totals_url:
+        spent, limit_usd = instance_model_spend(rows_cost), None
+        credit = model_credit(os.environ.get("OPENROUTER_API_KEY", "").strip())
+        if credit is not None and credit.get("usage") is not None:
+            spent, limit_usd = float(credit["usage"]), credit.get("limit")
+        parts.append(donation)
+        parts.append(instance_due_block(spent, instance_paid(server.ledger), limit_usd))
+        parts.append(limits_box)
         fetched = project_totals(server.project_totals_url)
         if fetched is None:
             parts.append('<p class="empty">Project costs are unavailable.</p>')
             donation_entries = None
         else:
-            parts.append(totals_rows(fetched, fetched.get("fixed_notes") or ()))
+            parts.append(totals_rows(fetched, fetched.get("fixed_notes") or (), voluntary=True))
             donation_entries = fetched.get("donations") or []
         parts.append(per_clip.replace("Model cost per clip", "Model cost of your clips"))
+        lede = "What your edits cost in AI models, and how to help with the rest."
     else:
         parts.append("".join(ledger_parts) + owner_time_block(owner_time()) + per_clip)
+        parts.append(limits_box)
+        parts.append(donation)
+        lede = "What this app has cost, who helped pay for it, and what you have left."
 
-    limits = f"{storage_line(server)}{credit_line(server)}"
     body = (
         "<h1>Costs</h1>"
-        '<p class="lede">What this app has cost, who helped pay for it, and what you have left.</p>'
+        f'<p class="lede">{lede}</p>'
         f'{"".join(parts)}'
-        f'{f"<div class=limits>{limits}</div>" if limits else ""}'
-        f"{donation}"
         f'{donations_list(donation_entries) if donation_entries is not None else ""}'
         '<section class="requests"><h2>Feedback and requests</h2>'
         "<p>Tell the owner what to fix or build next. Requests turn into planned work.</p>"

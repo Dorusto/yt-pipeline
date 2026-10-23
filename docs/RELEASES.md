@@ -2,9 +2,20 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
+## v0.1.1 (2026-10-23)
+
+A patch for friends' instances: the Costs page shows their own model cost first and the project's costs as voluntary. Stable and experimental lists as in v0.1.0.
+
+```stable-files
+scripts/serve.py
+scripts/recap.py
+scripts/common/versions.py
+scripts/quality.py
+```
+
 ## v0.1.0 (2026-10-23)
 
-**Candidate until the owner confirms the real test.** Nothing here is tagged yet.
+Released on 2026-10-23 after the owner's real test on phone and laptop.
 
 **Stable candidate** — the holiday flow in the web app:
 
