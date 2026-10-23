@@ -59,6 +59,7 @@ EXIT_ANTICIPATION_OFFSET = 0.02
 EXIT_OUT_SCALE = 0.5
 PLACE_FILE = "finish_pip.place.jsonl"
 ANIMATE_FILE = "finish_pip.animate.jsonl"
+APPLIED_FILE = "finish_pip.animate.applied"
 
 
 class FinishPipError(Exception):
@@ -373,7 +374,9 @@ def already_placed(placement, pip_track):
 
 
 def animate_steps_cover_clip(out_dir, clip):
-    """Return True when the animate steps file holds a setParam step for this clip id."""
+    """Return True when an applied animate steps file holds a setParam step for this clip id."""
+    if not (Path(out_dir) / APPLIED_FILE).is_file():
+        return False
     path = Path(out_dir) / ANIMATE_FILE
     if not path.is_file():
         return False
@@ -398,8 +401,9 @@ def keyframes_in_place(item, out_dir):
     """Return True when the placed PiP item shows the animate keyframes.
 
     When the item exposes no ``effects`` key at all, fall back to the animate
-    steps file: it counts as keyframed when it holds a ``effects.setParam`` step
-    for the item's clip id. A placed item with no clip id is never keyframed.
+    steps file: it counts as keyframed when it was applied and holds a
+    ``effects.setParam`` step for the item's clip id. A placed item with no clip
+    id is never keyframed.
     """
     if item is None:
         return False
@@ -633,6 +637,18 @@ def write_steps(path, steps):
         raise
 
 
+def write_animate_steps(out_dir, steps):
+    """Write the animate steps and clear the applied marker: the file is not applied yet."""
+    out_dir = Path(out_dir)
+    write_steps(out_dir / ANIMATE_FILE, steps)
+    (out_dir / APPLIED_FILE).unlink(missing_ok=True)
+
+
+def mark_animate_applied(out_dir):
+    """Mark the animate steps file as applied, so it counts as keyframe evidence."""
+    (Path(out_dir) / APPLIED_FILE).write_text("", encoding="utf-8")
+
+
 def run_matte(source, start_ticks, end_ticks, out):
     """Run matte.py over the source range and write the matte .mov."""
     command = [
@@ -761,6 +777,28 @@ def print_plan(spans, ranges, placements, edge_checks, options, nothing_to_do):
                 )
 
 
+def apply_run_state(ranges, placements, animate_applied):
+    """Set each range's placed/keyframed from what the run left behind.
+
+    A range is placed when every placement of it was already on the PiP track
+    before the run or was placed by this run. It is keyframed when it is placed
+    and every placement was already keyframed before the run or this run's
+    animate phase applied and the placement carries a clip id.
+    """
+    for entry in ranges:
+        group = [placement for placement in placements if placement["range"] is entry]
+        placed = all(
+            placement.get("placed_before") or placement.get("placed_this_run")
+            for placement in group
+        )
+        keyframed = placed and all(
+            placement.get("keyframed_before") or (animate_applied and "clip" in placement)
+            for placement in group
+        )
+        entry["placed"] = placed
+        entry["keyframed"] = keyframed
+
+
 def run(sequence_path, camera_dir, options):
     """Build the plan, matte the ranges, write the steps and return the summary."""
     started = time.monotonic()
@@ -802,14 +840,13 @@ def run(sequence_path, camera_dir, options):
     if pip_index is None:
         pip_index = video_count + 1
     new_placements = [placement for placement in placements if not already_placed(placement, pip_track)]
+    for placement in placements:
+        item = find_placed_item(placement, pip_track)
+        placement["placed_before"] = item is not None
+        placement["keyframed_before"] = item is not None and keyframes_in_place(item, options["out_dir"])
     for entry in ranges:
         entry["matted"] = entry["out"].exists()
-        group = [placement for placement in placements if placement["range"] is entry]
-        entry["placed"] = all(already_placed(placement, pip_track) for placement in group)
-        entry["keyframed"] = entry["placed"] and all(
-            keyframes_in_place(find_placed_item(placement, pip_track), options["out_dir"])
-            for placement in group
-        )
+    apply_run_state(ranges, placements, animate_applied=False)
     nothing_to_do = not new_placements and all(
         entry["matted"] and entry["keyframed"] for entry in ranges
     )
@@ -841,6 +878,7 @@ def run(sequence_path, camera_dir, options):
 
     out_dir = Path(options["out_dir"]).expanduser()
     steps_files = []
+    animate_applied = False
 
     if options["bridge"] or options["project"]:
         if new_placements:
@@ -856,27 +894,33 @@ def run(sequence_path, camera_dir, options):
             write_steps(out_dir / PLACE_FILE, place_steps)
             steps_files.append(PLACE_FILE)
             run_steps(out_dir / PLACE_FILE, options["bridge"], options["project"])
+            for placement in placeable:
+                placement["placed_this_run"] = True
 
         fresh = inspect_sequence(options["bridge"], options["project"])
         warnings.extend(attach_clips(fresh, placements))
         animate_steps = build_animate_steps(spans, placements, options)
-        write_steps(out_dir / ANIMATE_FILE, animate_steps)
+        write_animate_steps(out_dir, animate_steps)
         steps_files.append(ANIMATE_FILE)
         try:
             run_steps(out_dir / ANIMATE_FILE, options["bridge"], options["project"])
+            mark_animate_applied(out_dir)
+            animate_applied = True
         except Exception:
             (out_dir / ANIMATE_FILE).unlink(missing_ok=True)
+            (out_dir / APPLIED_FILE).unlink(missing_ok=True)
             raise
     elif not new_placements:
         warnings.extend(attach_clips(sequence, placements))
         animate_steps = build_animate_steps(spans, placements, options)
-        write_steps(out_dir / ANIMATE_FILE, animate_steps)
+        write_animate_steps(out_dir, animate_steps)
         steps_files.append(ANIMATE_FILE)
     else:
         warnings.append("place steps need --bridge or --project")
         if not options["json"]:
             print_next_steps(out_dir, ranges, options)
 
+    apply_run_state(ranges, placements, animate_applied)
     return build_summary(spans, ranges, new_placements, edge_checks, steps_files, warnings, started, False)
 
 

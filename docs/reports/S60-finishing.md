@@ -1,5 +1,44 @@
 # S60 Mode B finishing
 
+## Lot 1d — Review fixes for lot 1c + additions
+
+**Works**
+- The `docs/ROADMAP.md` picture-in-picture line now names lots 1, 1b and 1c.
+- `finish_pip.py` `--json` `ranges[].placed`/`keyframed` now reflect the state the
+  run leaves behind: a `--bridge`/`--project` run that places and animates reports
+  both true, computed from the run outcome (never a mid-run inspect), so an empty
+  `effects` key on the placed item does not hide a successful animate apply; a dry
+  run and a run without `--bridge`/`--project` keep the input state.
+- The animate steps file counts as keyframe evidence only when applied: a new
+  `finish_pip.animate.applied` marker is written after a successful animate apply,
+  removed on every regeneration and on a failed apply (which also deletes the steps
+  file), so a run that only wrote the file for a manual apply never prints
+  `nothing to do` from it.
+- `serve.py --check` without an inbox warns with the shared three-ways message and
+  still validates the root and the bind (summary `inbox` null, exit 0); serving
+  without `--check` still stops with the usage error.
+- The general no-personal-setup rule is in `docs/RULES.md` (Safety rules) with its
+  DECISIONS entry; the README quickstart, the `yt-recap`/`yt-shorts` skills and the
+  user-guide Shorts tab line are corrected, and the lot 7b/8b report claims fixed.
+- Verified: `.venv/bin/python -m pytest tests/test_finish_pip.py tests/test_serve.py -q`
+  = 157 passed, 1 skipped; full suite
+  `.venv/bin/python -m pytest tests/ -q -m "not needs_melt and not needs_footage"`
+  = 1809 passed, 2 skipped, 1 deselected; `scripts/check_public.py` clean on the 12
+  changed files; `grep -n "~/media" README.md` empty; both `--help` run fine.
+
+**Mocked / not verified**
+- The `--bridge`/`--project` place and animate runs are stubbed in the tests
+  (`FakeRun`, monkeypatched `run_steps`/`inspect_sequence`); no live FilmCraft was
+  used here.
+
+**Doru, check this**
+- `finish_pip.py` now reports `keyframed: true` after a successful `--bridge` run
+  even when the placed item's `effects` key is empty — the state is taken from the
+  run, not a re-inspect (`scripts/finish_pip.py` `apply_run_state`).
+- `serve.py --check` runs on a machine with no inbox configured and only warns
+  (`scripts/serve.py` `main`).
+
+
 ## Lot 7b — Review fixes for lot 7
 
 **Works**
@@ -57,11 +96,11 @@
   naming those three ways (`config.yaml.example` documents `inbox.path`).
   User-guide and skill examples write `<trip-folder>`/`<workspaces>`/`<inbox>`;
   old DECISIONS entries and old reports stay as history.
-- Verified: 14 new tests (`tests/test_config.py` 5, `tests/test_music_pick.py` 2,
+- Verified: 15 new tests (`tests/test_config.py` 5, `tests/test_music_pick.py` 3,
   `tests/test_recap.py` 2, `tests/test_serve.py` 5) and the full suite
   `.venv/bin/python -m pytest tests/ -q -m "not needs_melt and not needs_footage"`
   = 1801 passed, 2 skipped, 1 deselected; `scripts/check_public.py` clean on the
-  13 changed files. Synthetic smoke (`/tmp/opencode/l8b`): `--list --json` reads
+  15 changed files. Synthetic smoke (`/tmp/opencode/l8b`): `--list --json` reads
   the library, `serve.py --check` without an inbox exits with the three-ways
   error, with `--inbox` the summary carries the inbox and the music library.
 
@@ -75,10 +114,12 @@
   (`tests/test_music_pick.py::test_broken_config_is_one_error_line_and_exit_two`).
 - `serve.py` now stops with a usage error when no inbox is configured
   (`--inbox` / `YT_PIPELINE_INBOX` / `inbox.path`), instead of defaulting to
-  `~/media/inbox` (`docs/guides/user-guide.md` quickstart).
+  `~/media/inbox` (`docs/guides/user-guide.md` quickstart); `--check` warns with
+  the same three-ways message and still validates the root and the bind without
+  one.
 - Remaining personal paths (`inbox.py --projects`, `docs/guides/phone-flow.md`,
-  example strings in older scripts) wait for the audit sweep — see the lot 1d
-  addition in `docs/DECISIONS.md`.
+  example strings in older scripts) wait for the audit sweep — see the S60 lot 8b
+  entry in `docs/DECISIONS.md`.
 
 
 ## Lot 8 — Music library

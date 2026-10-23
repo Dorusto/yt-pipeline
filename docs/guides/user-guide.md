@@ -122,7 +122,8 @@ examples below use that layout; the agent-side eval copy of the clip lives at
   what you mark `keep`.
 - The web app's **Shorts** tab (shown when the project has a
   `shorts_candidates.json`) lists every ranked candidate with its rank, span,
-  duration, score, hook/payoff, reason and chapter, and a **layout** select to
+  duration, score, hook/payoff, title, description, reason and chapter, and a
+  **layout** select to
   override `face` / `split` per candidate; the tap posts to
   `POST /<project>/shorts-candidates` and rewrites only that candidate's
   `layout` key. A camera-only session (no screen angle in `edit.json`

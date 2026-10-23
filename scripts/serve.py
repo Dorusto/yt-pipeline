@@ -447,7 +447,10 @@ def build_parser():
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate the root and the bind, print the summary and exit",
+        help=(
+            "validate the root and the bind, print the summary and exit; without a "
+            "configured inbox it warns and still validates the root and the bind"
+        ),
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -2622,8 +2625,12 @@ def main(argv=None):
         bind = resolve_bind(args.bind)
         inbox = inbox_path(args.inbox)
         if inbox is None:
-            raise ServeError(no_inbox_message("--inbox"))
-        inbox = inbox.resolve()
+            if args.check:
+                print(f"[warn] {no_inbox_message('--inbox')}", file=sys.stderr)
+            else:
+                raise ServeError(no_inbox_message("--inbox"))
+        else:
+            inbox = inbox.resolve()
         music_dir = music_library(args.music_dir)
         if music_dir is None:
             print(f"[warn] {no_music_library_message('--music-dir')}", file=sys.stderr)

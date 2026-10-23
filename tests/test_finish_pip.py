@@ -380,7 +380,10 @@ def test_bridge_runs_place_then_animate(tmp_path, capsys, monkeypatch):
     assert rc == 0
     assert runs == [(fp.PLACE_FILE, "127.0.0.1:7714"), (fp.ANIMATE_FILE, "127.0.0.1:7714")]
     assert summary["steps_files"] == [fp.PLACE_FILE, fp.ANIMATE_FILE]
+    assert summary["ranges"][0]["placed"] is True
+    assert summary["ranges"][0]["keyframed"] is True
     assert (tmp_path / fp.ANIMATE_FILE).read_text(encoding="utf-8") != ""
+    assert (tmp_path / fp.APPLIED_FILE).is_file()
 
 
 def test_no_target_no_import_and_no_place_file(tmp_path, capsys, monkeypatch):
@@ -601,7 +604,8 @@ def test_rerun_rewrites_animate_when_keyframes_missing(tmp_path, capsys, monkeyp
     )
     assert rc == 0
     assert summary["nothing_to_do"] is False
-    assert summary["ranges"][0]["keyframed"] is False
+    assert summary["ranges"][0]["placed"] is True
+    assert summary["ranges"][0]["keyframed"] is True
     assert (tmp_path / fp.ANIMATE_FILE).is_file()
     assert (tmp_path / fp.ANIMATE_FILE).read_text(encoding="utf-8") != ""
     assert not (tmp_path / fp.PLACE_FILE).exists()
@@ -640,7 +644,8 @@ def test_rerun_rewrites_animate_when_effects_lack_keyframes(tmp_path, capsys, mo
     )
     assert rc == 0
     assert summary["nothing_to_do"] is False
-    assert summary["ranges"][0]["keyframed"] is False
+    assert summary["ranges"][0]["placed"] is True
+    assert summary["ranges"][0]["keyframed"] is True
     assert (tmp_path / fp.ANIMATE_FILE).read_text(encoding="utf-8") != ""
 
 
@@ -661,6 +666,7 @@ def test_animate_failure_deletes_steps_file(tmp_path, capsys, monkeypatch):
     matte_dir = tmp_path / "matte"
     matte_dir.mkdir()
     (matte_dir / matte_name).write_bytes(b"")
+    (tmp_path / fp.APPLIED_FILE).write_text("", encoding="utf-8")
     fake = FakeRun(import_items=[48], inspect=sequence)
 
     def failing_run_steps(path, bridge, project):
@@ -675,9 +681,107 @@ def test_animate_failure_deletes_steps_file(tmp_path, capsys, monkeypatch):
     )
     assert rc == 1
     assert not (tmp_path / fp.ANIMATE_FILE).exists()
+    assert not (tmp_path / fp.APPLIED_FILE).exists()
 
 
 def test_rerun_nothing_to_do_from_animate_steps_file(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    animate = tmp_path / fp.ANIMATE_FILE
+    sentinel = json.dumps({
+        "id": "effects.setParam",
+        "params": {"clip": 50, "effect": "motion", "param": "scale", "value": 45, "time": 0, "keyframe": True},
+    }) + "\n"
+    animate.write_text(sentinel, encoding="utf-8")
+    (tmp_path / fp.APPLIED_FILE).write_text("", encoding="utf-8")
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--matte-dir", str(matte_dir)], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["nothing_to_do"] is True
+    assert summary["ranges"][0]["keyframed"] is True
+    assert summary["steps_files"] == []
+    assert fake.calls == []
+    assert animate.read_text(encoding="utf-8") == sentinel
+
+
+def test_bridge_run_reports_post_run_state_with_empty_effects(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+    )
+    fresh = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[{
+            "id": 19,
+            "name": "Video 4",
+            "items": [{
+                "clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T,
+                "enabled": True, "effects": [],
+            }],
+        }],
+    )
+    fake = FakeRun(import_items=[48])
+    monkeypatch.setattr(fp.subprocess, "run", fake)
+    monkeypatch.setattr(fp, "run_steps", lambda path, bridge, project: None)
+    monkeypatch.setattr(fp, "inspect_sequence", lambda bridge, project: fresh)
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--bridge", "127.0.0.1:7714"], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["ranges"][0]["placed"] is True
+    assert summary["ranges"][0]["keyframed"] is True
+
+
+def test_no_target_run_keeps_input_state_and_does_not_flip_keyframed(tmp_path, capsys, monkeypatch):
+    matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
+    pip_track = {
+        "id": 19,
+        "name": "Video 4",
+        "items": [
+            {"clip": 50, "item": 48, "name": matte_name, "start": 2 * T, "end": 6 * T, "enabled": True},
+        ],
+    }
+    sequence = make_sequence(
+        [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 2, 5)],
+        [camera_item(9, 1, "camera 2026-09-01 10-00-00.mp4", 0, 10, source_in_s=0)],
+        extra_tracks=[pip_track],
+    )
+    matte_dir = tmp_path / "matte"
+    matte_dir.mkdir()
+    (matte_dir / matte_name).write_bytes(b"")
+    fake = FakeRun(import_items=[48])
+    rc, summary, captured = run_main(
+        tmp_path, capsys, sequence, ["camera 2026-09-01 10-00-00.mp4"],
+        extra=["--json", "--matte-dir", str(matte_dir)], monkeypatch=monkeypatch, fake=fake,
+    )
+    assert rc == 0
+    assert summary["ranges"][0]["placed"] is True
+    assert summary["ranges"][0]["keyframed"] is False
+    assert (tmp_path / fp.ANIMATE_FILE).is_file()
+    assert not (tmp_path / fp.APPLIED_FILE).exists()
+
+
+def test_animate_steps_file_without_applied_marker_is_not_evidence(tmp_path, capsys, monkeypatch):
     matte_name = "camera 2026-09-01 10-00-00_0001.50-0005.50.mov"
     pip_track = {
         "id": 19,
@@ -706,11 +810,10 @@ def test_rerun_nothing_to_do_from_animate_steps_file(tmp_path, capsys, monkeypat
         extra=["--json", "--matte-dir", str(matte_dir)], monkeypatch=monkeypatch, fake=fake,
     )
     assert rc == 0
-    assert summary["nothing_to_do"] is True
-    assert summary["ranges"][0]["keyframed"] is True
-    assert summary["steps_files"] == []
-    assert fake.calls == []
-    assert animate.read_text(encoding="utf-8") == sentinel
+    assert summary["nothing_to_do"] is False
+    assert summary["ranges"][0]["keyframed"] is False
+    assert animate.read_text(encoding="utf-8") != sentinel
+    assert not (tmp_path / fp.APPLIED_FILE).exists()
 
 
 def test_still_on_camera_track_is_not_a_piece(tmp_path, capsys, monkeypatch):

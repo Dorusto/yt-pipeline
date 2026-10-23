@@ -1969,11 +1969,27 @@ def test_missing_inbox_names_the_three_ways(tmp_path, monkeypatch, capsys):
     isolate_music_env(tmp_path, monkeypatch)
     monkeypatch.delenv("YT_PIPELINE_INBOX", raising=False)
     root = make_root(tmp_path)
-    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check"]) == 1
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1"]) == 1
     error = capsys.readouterr().err
     assert "no inbox configured" in error
     for way in ("--inbox", "YT_PIPELINE_INBOX", "inbox.path"):
         assert way in error
+
+
+def test_check_without_inbox_warns_and_validates(tmp_path, monkeypatch, capsys):
+    isolate_music_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("YT_PIPELINE_INBOX", raising=False)
+    root = make_root(tmp_path)
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert summary["status"] == "check"
+    assert summary["bind"] == "127.0.0.1"
+    assert summary["inbox"] is None
+    assert len(summary["projects"]) == 1
+    assert "no inbox configured" in captured.err
+    for way in ("--inbox", "YT_PIPELINE_INBOX", "inbox.path"):
+        assert way in captured.err
 
 
 def test_inbox_from_flag_env_and_config(tmp_path, monkeypatch, capsys):

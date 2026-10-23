@@ -2385,8 +2385,28 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Context:** The lot 7 review (943aff2..76c68c0) found `overlap_fraction` a fourth copy of the "overlap over the shorter" math (already in `index.py`, `graphics_plan.py` and three `overlap_seconds` copies), `title`/`description` written but read by no tool (dead fields on the phone review path), the 2-sentence description rule checked only as prompt text while the code validated the length, and an intro rule whose "different cut" clause appeared only in a report. User decision on the intro rule: a candidate must start at or after 60 s of the edit, no exceptions.
 
-**Options:** (A) keep the per-tool overlap helpers and only fix the intro rule; (B) one shared overlap module plus the review fixes; (C) also move the layout and score helpers into common. **Decision:** B. `scripts/common/overlap.py` holds `overlap_seconds(a_start, a_end, b_start, b_end)` and `overlap_fraction(a_start, a_end, b_start, b_end)` (overlap over the shorter span, 0.0 for a zero-length span); `shorts_rank.py`, `index.py`, `director.py`, `llm_director.py` and `graphics_plan.py` use them and no longer define their own (a zero-length graphics entry is no longer an overlap error, as it cannot exceed "half of the shorter"). The Shorts tab of `serve.py` (the phone review) shows each candidate's `title` and `description`; the `tests/test_serve.py` fixture is the 0.2 schema. A description that is not exactly two sentences is a warning in the `--json` `warnings` and in the printed list, never a rejection — the schema keeps rejecting only what it declares (empty, over 400 characters). `is_standalone(start_s)` is now `start_s >= INTRO_END_S` (60 s): the intro block never becomes a candidate, whatever the span's end, and the "different cut" clause is gone. `test_reference_final_project` requires at most 5 written candidates and no pair over the 20 % overlap cap instead of exactly 5.
+**Options:** (A) keep the per-tool overlap helpers and only fix the intro rule; (B) one shared overlap module plus the review fixes; (C) also move the layout and score helpers into common. **Decision:** B. `scripts/common/overlap.py` holds `overlap_seconds(a_start, a_end, b_start, b_end)` and `overlap_fraction(a_start, a_end, b_start, b_end)` (overlap over the shorter span, 0.0 for a zero-length span); `shorts_rank.py`, `index.py`, `director.py`, `llm_director.py` and `graphics_plan.py` use them and no longer define their own. The Shorts tab of `serve.py` (the phone review) shows each candidate's `title` and `description`; the `tests/test_serve.py` fixture is the 0.2 schema. A description that is not exactly two sentences is a warning in the `--json` `warnings` and in the printed list, never a rejection — the schema keeps rejecting only what it declares (empty, over 400 characters). `is_standalone(start_s)` is now `start_s >= INTRO_END_S` (60 s): the intro block never becomes a candidate, whatever the span's end, and the "different cut" clause is gone. `test_reference_final_project` requires at most 5 written candidates and no pair over the 20 % overlap cap instead of exactly 5.
 
 **Why not A:** the copy was the defect (RULES "shared code only in `scripts/common/`"). **Why not C:** the lot names only the overlap helpers.
 
 **Consequence:** one overlap implementation, the phone review reads the titles and descriptions the schema already required, the 2-sentence rule is a visible warning the model can fail harmlessly, and the intro rule is one line that matches what the user decided. RULES, the `yt-shorts` skill and the S60 report carry the new rule.
+
+---
+
+## [2026-10-23] No tool depends on one person's setup (S60 lot 1d, user decision)
+
+**Context:** Lot 8 did it for the music library and lot 8b for the inbox, each with its own flag/env/config resolution and usage error; the user generalised it.
+
+**Decision:** No tool depends on one person's setup: a setting comes from a flag, else an environment variable, else the config file, else a clear error naming those three ways; docs and examples use placeholders like `<trip-folder>`, `<workspaces>`, `<inbox>`, `<music-library>`, never personal paths. It holds for every tool and every setting.
+
+**Consequence:** The RULES line exists now; the sweep of the tools not yet converted (`inbox.py --projects`, `docs/guides/phone-flow.md`, example strings in older scripts) comes from the audit; old dated DECISIONS entries and old reports stay history.
+
+---
+
+## [2026-10-23] finish_pip post-run state, applied animate evidence, `--check` without an inbox (S60 lot 1d)
+
+**Context:** The lot 1c review found `ranges[].placed`/`keyframed` stale from the input inspect and the un-run `finish_pip.animate.jsonl` counted as keyframe evidence, and the lot 8b review found `--check` unable to validate without an inbox.
+
+**Decision:** `finish_pip.py` `--json` `ranges[].placed`/`keyframed` reflect the state the run leaves behind (a range is placed when every placement was already on the PiP track or this run placed it; keyframed when it is placed and every placement was already keyframed or this run's animate phase applied and the placement carries a clip id), computed from the run outcome and never from a mid-run inspect; the animate steps file counts as keyframe evidence only when a `finish_pip.animate.applied` marker sits next to it (written after a successful apply, removed on every regeneration and on a failed apply, which also deletes the steps file); and `serve.py --check` warns with the shared three-ways message and validates the root and the bind without an inbox (serving still requires one).
+
+**Consequence:** A successful `--bridge`/`--project` run reports the state it leaves behind, `nothing to do` is never claimed from an animate file that was only written, and `--check` runs on machines with no inbox configured.
