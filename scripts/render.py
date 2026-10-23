@@ -776,7 +776,7 @@ def render(
             raise RenderError(f"music file has no audio stream: {music_config['path']}")
         music_duration = probe_duration(music_config["path"])
         if music_duration is None:
-            raise RenderError(f"could not read music duration: {music_config['path']}")
+            raise RenderRuntimeError(f"could not read music duration: {music_config['path']}")
         music_mtime = music_config["path"].stat().st_mtime
     ducking = bool(music_config is not None and ambience_enabled)
     looped = bool(music_config is not None and music_duration < edit_duration)

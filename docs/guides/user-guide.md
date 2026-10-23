@@ -233,7 +233,10 @@ finished recap, the explanation and the contact sheet.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 - **Costs** (top bar) is a read-only page: per project the model cost and the
   number of versions, then the ledger totals (monthly running cost, development
-  total, donations and the balance) and an optional donation link. It reads the
+  total, donations and the balance) and an optional donation link. On a friend
+  instance it leads with the donation buttons, then its own model cost to cover,
+  then the owner instance's costs as voluntary project costs, then the per-clip
+  table and the donation list; the owner's page is unchanged. It reads the
   same totals object as `costs.py totals --json`. The **Feedback and requests**
   form on the same page appends one JSON line (`date`, `type`, `text`,
   `contact`, `backed`) to the requests file; with no requests file configured
@@ -319,8 +322,10 @@ and the app never handles payments.
 
 The owner instance serves `GET /costs.json` (the totals object, no notes and no
 requests). An instance with `costs.project_totals_url` (`--project-totals-url`,
-else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it and shows
-"Project costs (everyone)" next to "This instance"; a failed fetch says the
+else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it: a friend
+instance leads with the donation buttons, then its own model cost to cover, then
+the owner instance's costs as voluntary project costs, then the per-clip table
+and the donation list; the owner's page is unchanged. A failed fetch says the
 project costs are unavailable.
 
 ## How it learns

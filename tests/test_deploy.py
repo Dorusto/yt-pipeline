@@ -56,3 +56,22 @@ def test_deploy_workflow_triggers_and_runner():
     assert any("deploy/update.sh" in run for run in runs)
     assert job["concurrency"]["cancel-in-progress"] is False
     assert "matrix.runner" in job["concurrency"]["group"]
+
+
+def test_service_unit_binds_one_address():
+    text = (ROOT / "deploy" / "yt-pipeline-web.service").read_text(encoding="utf-8")
+    assert "--bind" in text
+
+
+def test_release_workflow_starts_deploy():
+    text = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    assert data["permissions"]["contents"] == "write"
+    assert data["permissions"]["actions"] == "write"
+    runs = [step.get("run", "") for step in data["jobs"]["release"]["steps"]]
+    assert any("gh workflow run deploy.yml" in run and "-f tag=" in run for run in runs)
+
+
+def test_pytest_timeout_and_requirements():
+    assert "timeout = 120" in (ROOT / "pytest.ini").read_text(encoding="utf-8")
+    assert "pytest-timeout" in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")

@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Read the OpenRouter key endpoint: credit and daily usage.
 
-The URL is built from ``common.llm.DEFAULT_BASE_URL`` so the API host lives in
-one place. ``key_info`` returns the endpoint's ``data`` object; the callers pick
-the fields they need (credit limits, daily usage).
+The URL is built from ``common.constants.DEFAULT_BASE_URL`` so the API host
+lives in one place and this module stays light (it must not pull ``openai`` or
+``filelock``). ``key_info`` returns the endpoint's ``data`` object; the callers
+pick the fields they need (credit limits, daily usage).
 """
 
 import json
 import urllib.request
 
-from common.llm import DEFAULT_BASE_URL
+from common.constants import DEFAULT_BASE_URL
 
 KEY_INFO_URL = DEFAULT_BASE_URL + "/key"
 

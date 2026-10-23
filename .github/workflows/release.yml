@@ -5,6 +5,7 @@ on:
       - "v*"
 permissions:
   contents: write
+  actions: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -29,3 +30,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
+      - name: Start the deploy workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh workflow run deploy.yml -f tag=$TAG

@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """JSON helpers shared by the tools: tolerant reads, atomic writes, model answers.
 
-``load_json`` is the tolerant read used by the web app and the metadata tool;
-``write_json`` is the atomic writer that leaves no temporary file behind;
-``now_iso`` is the UTC timestamp every generated document records; and
-``parse_model_json`` unwraps a model answer that may sit inside a ```json fence.
+``load_json`` is the tolerant read used by the web app and the metadata tool: a
+missing or unreadable file is a normal state, so it returns ``None``. The strict
+counterpart is ``common.timeline_words.load_json``, which raises
+``TimelineWordsError`` because a bad words file must stop the run with a message
+naming the file. ``write_json`` is the atomic writer that leaves no temporary
+file behind; ``now_iso`` is the UTC timestamp every generated document records;
+and ``parse_model_json`` unwraps a model answer that may sit inside a ```json
+fence.
 """
 
 import json

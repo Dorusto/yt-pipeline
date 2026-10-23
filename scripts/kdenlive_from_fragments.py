@@ -48,6 +48,10 @@ from common.errors import report_error
 FPS = 25
 
 
+class KdenliveRuntimeError(RuntimeError):
+    """Raised when a called program (ffprobe) fails after the run started."""
+
+
 def load_config(config_path):
     with open(config_path) as f:
         cfg = yaml.safe_load(f) or {}
@@ -94,7 +98,7 @@ def build(config_path, quiet=False):
         if fname not in chain_id_by_file:
             dur = probe_duration(f"{source_dir}/{fname}")
             if dur is None:
-                raise SchemaError("fragments", [f"could not read the duration of {fname}"])
+                raise KdenliveRuntimeError(f"could not read the duration of {fname}")
             chain_id = f"chain{kid}"
             chain_id_by_file[fname] = chain_id
             out_tc = sec_to_tc(dur)
@@ -310,6 +314,8 @@ def main(argv=None):
         out_path = build(args.fragments, quiet=args.json)
     except (SchemaError, FileNotFoundError) as exc:
         return report_error(exc, EXIT_USAGE, args.json, **summary_fields(started))
+    except KdenliveRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json, **summary_fields(started))
 
     if not args.skip_melt:
         result = subprocess.run(

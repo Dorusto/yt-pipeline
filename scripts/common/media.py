@@ -4,6 +4,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from common.jsonio import load_json
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".avi", ".mts", ".insv"}
 MATTE_SUFFIXES = ("-Alpha", "_matte")
 MATTE_RANGE_RE = re.compile(r"_\d+\.\d{2}-\d+\.\d{2}$")
@@ -84,3 +86,23 @@ def stem_timestamp(name):
         return None
     year, month, day, hour, minute, second = match.groups()
     return f"{year}-{month}-{day} {hour}-{minute}-{second}"
+
+
+def earliest_creation_date(workspace_path):
+    """The date part (YYYY-MM-DD) of the earliest clip or photo creation_time in
+    <workspace>/ingest.json, or None when it is missing, unreadable or empty."""
+    data = load_json(Path(workspace_path) / "ingest.json")
+    if not isinstance(data, dict):
+        return None
+    values = []
+    for group in ("clips", "photos"):
+        for item in data.get(group) or []:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("creation_time")
+            if isinstance(value, str) and value.strip():
+                values.append(value.strip())
+    if not values:
+        return None
+    earliest = min(values)
+    return earliest[:10] if len(earliest) >= 10 else None

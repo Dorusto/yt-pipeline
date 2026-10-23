@@ -31,6 +31,7 @@ from common.config import ConfigError, load_config
 from common.brief_facts import FACT_LABELS, load_brief_facts
 from common.jsonio import load_json, now_iso, parse_model_json, write_json
 from common.llm import LLMError, make_client
+from common.media import earliest_creation_date
 from common.schema import SchemaError, validate_or_raise
 from common.summary import summary_fields
 from common.exit_codes import EXIT_OK, EXIT_USAGE, EXIT_RUNTIME
@@ -124,21 +125,7 @@ def shot_descriptions(edit):
 
 def earliest_date(workspace_path):
     """The date part of the earliest clip or photo creation_time in ingest.json, or None."""
-    data = load_json(Path(workspace_path) / "ingest.json")
-    if not isinstance(data, dict):
-        return None
-    values = []
-    for group in ("clips", "photos"):
-        for item in data.get(group) or []:
-            if not isinstance(item, dict):
-                continue
-            value = item.get("creation_time")
-            if isinstance(value, str) and value.strip():
-                values.append(value.strip())
-    if not values:
-        return None
-    earliest = min(values)
-    return earliest[:10] if len(earliest) >= 10 else None
+    return earliest_creation_date(workspace_path)
 
 
 def build_facts(edit, workspace_path):

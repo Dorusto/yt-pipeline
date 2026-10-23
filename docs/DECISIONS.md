@@ -4,6 +4,34 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] The Costs page and costs.json (V020N lot n1)
+
+**Context:** The Costs page on a friend instance showed the owner instance's totals under a "Project costs (everyone)" heading next to a "This instance" heading, which read as two competing ledgers. The page and `costs.py totals` also computed the totals with different calls: the CLI passed only the month, the page passed `upkeep_percent=upkeep_percent()`.
+
+**Options:** (A) keep the two headings and the two calls; (B) one page order for a friend instance — the donation buttons first, then its own model cost to cover, then the owner instance's costs as voluntary project costs, then the per-clip table and the donation list — and one shared `compute_totals(..., upkeep_percent=upkeep_percent())` call for the CLI and the page.
+
+**Decision:** B. The "Project costs (everyone)" / "This instance" headings are gone; the owner's page is unchanged. `costs.py command_totals` now calls `compute_totals(connection, month, upkeep_percent=upkeep_percent())`, the same call `serve.py` makes, so the CLI and the page always agree.
+
+**Why not:** A) two headings for one project's costs confuse a friend about what they are being asked to cover, and two calls can drift.
+
+**Consequence:** `costs.py totals --json` now carries the upkeep fields (`upkeep_percent`, `upkeep_usd`, `total_cost_usd`) and the balance subtracts the upkeep; RULES, the user guide and `config.yaml.example` describe the current page.
+
+---
+
+## [2026-10-23] The two JSON readers (V020N lot n1)
+
+**Context:** Two `load_json` helpers exist: `common.jsonio.load_json` returns `None` on a bad file, `common.timeline_words.load_json` raises `TimelineWordsError`. A reader could not tell whether the duplication was intentional.
+
+**Options:** (A) collapse them into one strict reader; (B) keep both and document why each exists.
+
+**Decision:** B. `jsonio.load_json` is the tolerant read for the web app and metadata (a missing or unreadable file is a normal state); `timeline_words.load_json` is the strict read for word mapping (a bad words file must stop the run with a message naming the file). Both module docstrings say so.
+
+**Why not:** A) a strict reader would make the web app fail on a missing optional file, and a tolerant reader would let a bad words file pass silently.
+
+**Consequence:** the two readers stay; the reason is recorded here and in the two module docstrings.
+
+---
+
 ## [2026-10-23] Shared helpers extracted from serve.py and the tools (V010 lot fix2a)
 
 **Context:** Lot fix2 found the same small helpers copied across `serve.py` and the tools: tolerant JSON reads and atomic writes, a `git` runner, the OpenRouter key endpoint, GB formatting, the run.log tail and the spend-between-times sum, the append-only feedback line, the `sessionStorage` open-state script, the used-shot-keys set, the reason groups, the ffprobe duration and the ffmpeg frame extraction. A helper and its call sites had to change in several places at once.

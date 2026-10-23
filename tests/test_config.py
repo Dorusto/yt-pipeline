@@ -393,3 +393,21 @@ def test_brand_logo_rejects_an_unknown_value(monkeypatch):
 def test_brand_logo_invalid_in_config_is_rejected(tmp_path):
     with pytest.raises(config.ConfigError):
         config.load_config(write_config(tmp_path, with_value("brand", {"logo": "nope"})))
+
+
+def test_upkeep_percent_rejects_non_numeric(monkeypatch):
+    monkeypatch.setenv(config.UPKEEP_PERCENT_ENV, "abc")
+    with pytest.raises(config.ConfigError):
+        config.upkeep_percent()
+    monkeypatch.delenv(config.UPKEEP_PERCENT_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.upkeep_percent(config={"costs": {"upkeep_percent": "abc"}})
+
+
+def test_usd_to_eur_rejects_non_numeric(monkeypatch):
+    monkeypatch.setenv(config.USD_TO_EUR_ENV, "abc")
+    with pytest.raises(config.ConfigError):
+        config.usd_to_eur()
+    monkeypatch.delenv(config.USD_TO_EUR_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.usd_to_eur(config={"costs": {"usd_to_eur": "abc"}})

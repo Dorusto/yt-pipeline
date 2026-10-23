@@ -73,8 +73,9 @@ from common.costs import compute_totals, connect as connect_ledger, list_entries
 from common.brief_facts import FACT_LABELS, load_brief_facts, write_brief_facts
 from common.decisions import used_shot_keys
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
+from common.feedback import append_feedback
 from common.jsonio import load_json, write_json
-from common.media import clip_kind, video_files
+from common.media import clip_kind, earliest_creation_date, video_files
 from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
@@ -431,6 +432,7 @@ def _regenerate_shotlog(directory):
         "--workspace",
         str(directory),
         "--force",
+        "--json",
     ]
     try:
         subprocess.run(command, capture_output=True, timeout=120)
@@ -648,25 +650,7 @@ def content_type_for(path):
 
 def project_date(directory):
     """The filming date of a project as ``YYYY-MM-DD``: the earliest creation_time in ingest.json."""
-    directory = Path(directory)
-    try:
-        data = json.loads((directory / "ingest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    if not isinstance(data, dict):
-        return ""
-    values = []
-    for group in ("clips", "photos"):
-        for item in data.get(group) or []:
-            if not isinstance(item, dict):
-                continue
-            value = item.get("creation_time")
-            if isinstance(value, str) and value.strip():
-                values.append(value.strip())
-    if not values:
-        return ""
-    earliest = min(values)
-    return earliest[:10] if len(earliest) >= 10 else ""
+    return earliest_creation_date(directory) or ""
 
 
 def read_run_pid(directory):
@@ -1508,13 +1492,7 @@ def append_request(path, line):
 
 def append_feedback_action(workspace, action, **fields):
     """Append one feedback action line to the workspace's feedback.jsonl."""
-    line = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "action": action,
-        "text": fields.get("feedback") or "",
-        "tool": TOOL,
-    }
-    append_request(Path(workspace) / "feedback.jsonl", line)
+    append_feedback(workspace, action, text=fields.get("feedback") or "", tool=TOOL)
 
 
 def render_strip(summary, prefix="", thumbs=()):

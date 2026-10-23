@@ -28,7 +28,7 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from common.config import ConfigError, costs_db, load_config, no_costs_message
+from common.config import ConfigError, costs_db, load_config, no_costs_message, upkeep_percent
 from common.costs import KINDS, compute_totals, connect, insert_entry, list_entries, upsert_by_source
 from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
@@ -250,7 +250,7 @@ def command_totals(connection, args, started):
     month = args.month
     if month is not None and not MONTH_RE.match(month):
         raise CostsUsageError(f"--month must match YYYY-MM, got '{month}'")
-    totals = compute_totals(connection, month)
+    totals = compute_totals(connection, month, upkeep_percent=upkeep_percent())
     return {"ok": True, **totals, **summary_fields(started)}
 
 

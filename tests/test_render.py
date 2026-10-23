@@ -924,7 +924,14 @@ def test_help_lists_music_flags(capsys):
     assert "--music-gain-db" in out
 
 
-
+def test_music_probe_failure_exits_3(tmp_path, capsys, monkeypatch):
+    music = make_music(tmp_path / "music.wav", duration=2.0)
+    edit = make_music_edit(tmp_path, music)
+    out = tmp_path / "out.mp4"
+    monkeypatch.setattr(render, "probe_duration", lambda path: None)
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_RUNTIME
+    assert not out.exists()
+    assert "[error]" in capsys.readouterr().err
 
 
 def band_rms(path, start, duration, freq, width=60.0):

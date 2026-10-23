@@ -241,3 +241,17 @@ def test_shared_compute_totals_matches_the_cli(tmp_path, capsys):
     assert totals["balance_usd"] == 100.0 - (10.0 + 9.0)
     assert "ok" not in totals
     assert "wall_time_s" not in totals
+
+
+def test_totals_includes_upkeep_and_balance_subtracts_it(tmp_path, capsys, monkeypatch):
+    ledger = tmp_path / "costs.db"
+    add(capsys, ledger, "model_job", 10.0, day="2026-12-01")
+    add(capsys, ledger, "donation", 100.0, day="2026-12-01")
+    monkeypatch.setenv(config.UPKEEP_PERCENT_ENV, "10")
+    totals = run_json(
+        capsys, "--ledger", str(ledger), "totals", "--month", "2026-12", "--json"
+    )
+    assert totals["upkeep_percent"] == 10.0
+    assert totals["upkeep_usd"] == 1.0
+    assert totals["total_cost_usd"] == 11.0
+    assert totals["balance_usd"] == 100.0 - 11.0

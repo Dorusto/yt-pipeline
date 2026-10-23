@@ -1,12 +1,12 @@
 ---
 name: yt-recap-meta
-description: Write the YouTube title, a 2-3 sentence description and 5-10 hashtags for a recap — reads a workspace edit.json, builds the deterministic facts (the brief text, the four facts place/when/who/occasion from brief_facts.json winning over the brief syntax and the ingest date, and the deduplicated shot descriptions), asks the metadata text model role, retries once on an invalid answer and writes recap_meta.json validated against schemas/recap_meta.schema.json. The fact fields the brief and brief_facts.json did not carry are listed by field name in missing so the web app can mark them. Use when the user asks for the title, description or hashtags of a recap, wants the upload text for a finished edit, or wants recap_meta.json. Trigger phrases - "fă titlul și descrierea recapului", "scrie descrierea pentru YouTube", "ce hashtag-uri pun", "titlu pentru montaj", "write the recap title", "description and hashtags for the recap", "recap_meta.json", "upload text for the edit". Not for building the edit (that is `director`/`llm_director`), rendering the MP4 (that is `render`), the publish kit (`publish`) or the web app (that is `serve.py`).
+description: Write the YouTube title, a 2-3 sentence description and 5-10 hashtags for a recap — reads a workspace edit.json, builds the deterministic facts (the brief text, the four facts place/when/who/occasion from brief_facts.json, with the ingest date for when, and the deduplicated shot descriptions), asks the metadata text model role, retries once on an invalid answer and writes recap_meta.json validated against schemas/recap_meta.schema.json. The fact fields the brief and brief_facts.json did not carry are listed by field name in missing so the web app can mark them. Use when the user asks for the title, description or hashtags of a recap, wants the upload text for a finished edit, or wants recap_meta.json. Trigger phrases - "fă titlul și descrierea recapului", "scrie descrierea pentru YouTube", "ce hashtag-uri pun", "titlu pentru montaj", "write the recap title", "description and hashtags for the recap", "recap_meta.json", "upload text for the edit". Not for building the edit (that is `director`/`llm_director`), rendering the MP4 (that is `render`), the publish kit (`publish`) or the web app (that is `serve.py`).
 compatibility: Run from the repository root. Needs the repo .venv and the model config (config.yaml, llm_backend mock for offline runs). Reads edit.json (required) and ingest.json (optional) read-only, writes recap_meta.json (or --out) atomically. Safe to re-run; an up-to-date output is skipped unless --force.
 ---
 
 # yt-recap-meta
 
-Write the upload text for a recap: turn `WORKSPACE/edit.json` into one **`WORKSPACE/recap_meta.json`** holding the YouTube **title**, a 2-3 sentence **description** and 5-10 **hashtags**. The tool builds the deterministic facts itself (the brief text, the four facts place/when/who/occasion from `brief_facts.json` winning over the brief syntax and the ingest date, the deduplicated shot descriptions), asks the `metadata` text model role and lists the fact fields the brief and `brief_facts.json` did not carry by field name in `missing`. All commands run from the repository root.
+Write the upload text for a recap: turn `WORKSPACE/edit.json` into one **`WORKSPACE/recap_meta.json`** holding the YouTube **title**, a 2-3 sentence **description** and 5-10 **hashtags**. The tool builds the deterministic facts itself (the brief text, the four facts place/when/who/occasion from `brief_facts.json`, with the ingest date for `when`, the deduplicated shot descriptions), asks the `metadata` text model role and lists the fact fields the brief and `brief_facts.json` did not carry by field name in `missing`. All commands run from the repository root.
 
 ## Step 1: write the metadata
 
@@ -34,7 +34,7 @@ The `--json` output is a single object, e.g. `{"ok": true, "status": "written", 
 ## What the tool builds
 
 - `brief_text` — `edit.json` `brief.text`.
-- `place` — `brief_facts.json` `place`, else the value after the first brief line matching `where and when:`, `where:`, `place:` or `location:` (case-insensitive).
+- `place` — `brief_facts.json` `place` only (the brief syntax no longer sets it).
 - `when` — `brief_facts.json` `when`, else the date part (`YYYY-MM-DD`) of the earliest clip `creation_time` in `ingest.json`.
 - `who` — `brief_facts.json` `who`.
 - `occasion` — `brief_facts.json` `occasion`.

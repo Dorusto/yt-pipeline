@@ -35,5 +35,6 @@ Remove shots from a finished edit and render it again as a new version. It takes
 ## Notes
 
 - The render runs from a temporary edit file; `workspace/edit.json` is replaced only after the render succeeded, so a failed render leaves the workspace unchanged.
+- After the render the tool regenerates the thumbnails (`thumbs.py`); a thumbnail failure is a warning, not a failure of the run.
 - The new version is written by `common.versions.snapshot`; the base version is never modified.
 - The web app's Shots-tab bin icon calls this tool through `POST /<project>/drop-shot`.

@@ -412,11 +412,19 @@ def upkeep_percent(config=None):
     """
     from_env = os.environ.get(UPKEEP_PERCENT_ENV)
     if from_env:
-        return max(0.0, float(from_env))
+        try:
+            value = float(from_env)
+        except ValueError as exc:
+            raise ConfigError(f"{UPKEEP_PERCENT_ENV} must be a number") from exc
+        return max(0.0, value)
     data = config if config is not None else load_config()
     section = data.get("costs")
     if isinstance(section, dict) and section.get("upkeep_percent") is not None:
-        return max(0.0, float(section["upkeep_percent"]))
+        try:
+            value = float(section["upkeep_percent"])
+        except ValueError as exc:
+            raise ConfigError("costs.upkeep_percent must be a number") from exc
+        return max(0.0, value)
     return 0.0
 
 
@@ -428,11 +436,17 @@ def usd_to_eur(config=None):
     """
     from_env = os.environ.get(USD_TO_EUR_ENV)
     if from_env:
-        return float(from_env)
+        try:
+            return float(from_env)
+        except ValueError as exc:
+            raise ConfigError(f"{USD_TO_EUR_ENV} must be a number") from exc
     data = config if config is not None else load_config()
     section = data.get("costs")
     if isinstance(section, dict) and section.get("usd_to_eur"):
-        return float(section["usd_to_eur"])
+        try:
+            return float(section["usd_to_eur"])
+        except ValueError as exc:
+            raise ConfigError("costs.usd_to_eur must be a number") from exc
     return None
 
 

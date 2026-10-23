@@ -24,13 +24,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from common.config import ConfigError
+from common.constants import DEFAULT_BASE_URL
 
 import openai
 from filelock import FileLock
 
 from common.config import load_config, model_for
 
-DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 LEDGER_NAME = "llm_spend.json"
 
 

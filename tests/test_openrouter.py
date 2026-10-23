@@ -1,9 +1,15 @@
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from common.llm import DEFAULT_BASE_URL
 from common.openrouter import KEY_INFO_URL, key_info
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeResponse:
@@ -39,3 +45,22 @@ def test_key_info_raises_without_data():
 
     with pytest.raises(ValueError):
         key_info("k", opener=opener)
+
+
+def test_import_openrouter_does_not_pull_openai_or_filelock():
+    env = dict(os.environ)
+    scripts = str(REPO_ROOT / "scripts")
+    env["PYTHONPATH"] = scripts + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, common.openrouter; "
+            "assert 'openai' not in sys.modules and 'filelock' not in sys.modules",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Costs: `costs.py import-opencode` imports build-agent spend per day from opencode's session database, only for this project's folders (`--db`, repeatable `--match`), idempotent by date.
+
+### Changed
+
+- Cleanup lot (V020N lot n1): a failed ffprobe is `EXIT_RUNTIME` in `kdenlive_from_fragments.py` and `render.py`; `serve.py` and `recap_meta.py` share `earliest_creation_date`, `serve.py` writes feedback through `common.feedback`, `costs.py totals` and the Costs page share one `compute_totals` call, `upkeep_percent()`/`usd_to_eur()` raise a clear `ConfigError`, `common.openrouter` no longer pulls `openai`/`filelock`, `pytest-timeout` (120 s per test) is in the test requirements and CI, and `release.yml` starts `deploy.yml` after it creates the release.
+
 ## [0.1.1] - 2026-10-23
 
 The Costs page on a friend's instance now starts with how to help cover the costs, then shows what your own edits have cost in AI models and what is still open, in red until it is paid back. The project's own costs follow, smaller and voluntary, and the donations come last.

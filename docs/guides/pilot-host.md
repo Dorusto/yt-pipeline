@@ -54,6 +54,7 @@ when more people are involved.
    YT_PIPELINE_INBOX=/srv/yt-pipeline/inbox
    YT_PIPELINE_COSTS_DB=/srv/yt-pipeline/costs.db
    YT_PIPELINE_REQUESTS=/srv/yt-pipeline/requests.jsonl
+   YT_PIPELINE_BIND=<tailscale-ip>
    OPENROUTER_API_KEY=<key>
    ```
 

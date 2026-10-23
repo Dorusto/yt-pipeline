@@ -17,7 +17,7 @@ Rules for the owner and for every agent. A version is a tag on `master` plus a G
 8. The stable list lives in [`RELEASES.md`](RELEASES.md). An agent changes a stable tool only in a lot that names it, with the owner's approval; the reviewer flags any unannounced change to a stable file.
 9. A fix to a released version is a new patch version (`vX.Y.Z+1`), never a change to the old one.
 10. The pilot host runs tags only; it is updated with the update script, which rolls back to the previous tag when the smoke test after the update fails.
-11. Publishing the release triggers `.github/workflows/deploy.yml`: one job per pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner. Watch the run in the Actions tab; `update.sh` rolls back to the previous tag when the smoke test fails.
+11. Publishing the release triggers `.github/workflows/deploy.yml`: one job per pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner. Watch the run in the Actions tab; `update.sh` rolls back to the previous tag when the smoke test fails. A release created with the workflow token does not start `deploy.yml` by itself, so `release.yml` starts it explicitly with `gh workflow run deploy.yml -f tag=$TAG` (permissions `actions: write`).
 
 ## Versioning
 
