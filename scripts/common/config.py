@@ -134,6 +134,17 @@ def _validate(data):
         ledger = costs.get("path")
         if ledger is not None and (not isinstance(ledger, str) or not ledger):
             raise ConfigError("costs.path must be a non-empty string")
+        donation = costs.get("donation_url")
+        if donation is not None and (not isinstance(donation, str) or not donation):
+            raise ConfigError("costs.donation_url must be a non-empty string")
+
+    requests = data.get("requests")
+    if requests is not None:
+        if not isinstance(requests, dict):
+            raise ConfigError("requests must be a mapping")
+        path = requests.get("path")
+        if path is not None and (not isinstance(path, str) or not path):
+            raise ConfigError("requests.path must be a non-empty string")
 
     return data
 
@@ -142,6 +153,8 @@ MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
 INBOX_ENV = "YT_PIPELINE_INBOX"
 PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
+DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
+REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
 
 
 def no_music_library_message(flag_name):
@@ -249,6 +262,46 @@ def costs_db(cli_value=None, config=None):
         return Path(from_env).expanduser()
     data = config if config is not None else load_config()
     section = data.get("costs")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def donation_url(cli_value=None, config=None):
+    """The donation link: CLI flag, else DONATION_URL_ENV, else costs.donation_url.
+
+    Returns None when none of the three is set — it is optional, so the caller
+    shows no link rather than failing. There is no personal default.
+    """
+    if cli_value:
+        return cli_value
+    from_env = os.environ.get(DONATION_URL_ENV)
+    if from_env:
+        return from_env
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict):
+        value = section.get("donation_url")
+        if value:
+            return value
+    return None
+
+
+def requests_path(cli_value=None, config=None):
+    """The feedback/requests file: CLI flag, else REQUESTS_ENV, else requests.path.
+
+    Returns None when none of the three is set — it is optional, so the caller
+    hides the form rather than failing. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(REQUESTS_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("requests")
     if isinstance(section, dict):
         value = section.get("path")
         if value:

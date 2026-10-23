@@ -5,6 +5,7 @@ import yaml
 
 import common.config as config
 import costs
+from common.costs import compute_totals, connect, insert_entry
 from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 
@@ -208,3 +209,20 @@ def test_help_lists_subcommands_and_examples(capsys):
     for command in ("add", "import-jobs", "import-dev", "totals", "list"):
         assert command in out
     assert "examples:" in out
+
+
+def test_shared_compute_totals_matches_the_cli(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    add(capsys, ledger, "fixed_monthly", 3.0, day="2026-10-01")
+    add(capsys, ledger, "donation", 100.0, day="2026-12-01")
+    add(capsys, ledger, "model_job", 10.0, day="2026-12-01")
+    connection = connect(ledger)
+    try:
+        totals = compute_totals(connection, "2026-12")
+    finally:
+        connection.close()
+    assert totals["fixed_months"] == 3
+    assert totals["fixed_total_usd"] == 9.0
+    assert totals["balance_usd"] == 100.0 - (10.0 + 9.0)
+    assert "ok" not in totals
+    assert "wall_time_s" not in totals

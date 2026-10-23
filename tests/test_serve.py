@@ -12,6 +12,8 @@ import pytest
 import yaml
 
 import serve
+import common.config as config
+from common.costs import connect, insert_entry
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
@@ -40,7 +42,8 @@ def make_music_dir(tmp_path, names):
     return music
 
 
-def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480):
+def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480,
+                 ledger=None, requests=None, donation_url=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -54,6 +57,9 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         inbox,
         max_upload_mb * 1024 * 1024,
         max_total_mb * 1024 * 1024,
+        ledger,
+        requests,
+        donation_url,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -2096,3 +2102,190 @@ def test_drop_form_names_the_shown_version():
     assert 'value="v002"' in form
     assert 'name="shots" value=""' in form
     assert "Tap shots" not in form and "<button" not in form
+
+
+def make_ledger(path):
+    connection = connect(path)
+    insert_entry(connection, "2026-10-01", "fixed_monthly", 3.0, "", None)
+    insert_entry(connection, "2026-10-01", "model_job", 1.5, "", "proj")
+    insert_entry(connection, "2026-10-01", "dev_spend", 2.0, "", "2026-10-01")
+    insert_entry(connection, "2026-10-01", "donation", 10.0, "", None)
+    connection.close()
+
+
+def test_costs_page_with_a_ledger(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "llm_spend.json").write_text(
+        json.dumps({"entries": [{"cost_usd": 0.05}]}), encoding="utf-8"
+    )
+    (project / "versions" / "v001").mkdir(parents=True)
+    (project / "versions" / "v002").mkdir(parents=True)
+    ledger = tmp_path / "costs.db"
+    make_ledger(ledger)
+    server = start_server(root, ledger=ledger)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "2026-10-14" in page
+        assert "$0.050" in page
+        assert "2 versions" in page
+        assert "Monthly running" in page and "$3.000" in page
+        assert "Development total" in page and "$2.000" in page
+        assert "Donations" in page and "$10.000" in page
+        assert "Balance" in page
+        assert "Feedback and requests" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_page_without_a_ledger(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "2026-10-14" in page
+        assert "The ledger is not set up." in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_request_form_writes_one_line(tmp_path):
+    root = make_root(tmp_path)
+    requests = tmp_path / "requests.jsonl"
+    server = start_server(root, requests=requests)
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/costs/request",
+            headers=form_headers(),
+            body=urllib.parse.urlencode(
+                {"type": "Feedback", "text": "please add chapters", "contact": "me@example.com", "backed": "on"}
+            ),
+        )
+        assert status == 303
+        assert headers["Location"] == "/costs?thanks=1"
+        lines = requests.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["type"] == "Feedback"
+        assert row["text"] == "please add chapters"
+        assert row["contact"] == "me@example.com"
+        assert row["backed"] is True
+        assert len(row["date"]) == 10
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_request_stores_the_type(tmp_path):
+    root = make_root(tmp_path)
+    requests = tmp_path / "requests.jsonl"
+    server = start_server(root, requests=requests)
+    try:
+        status, _, _ = request(
+            server,
+            "POST",
+            "/costs/request",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"type": "Feature request", "text": "a new thing"}),
+        )
+        assert status == 303
+        row = json.loads(requests.read_text(encoding="utf-8").splitlines()[0])
+        assert row["type"] == "Feature request"
+        assert row["backed"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_page_hides_the_form_without_requests(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert 'action="/costs/request"' not in page
+        assert "Requests are not set up." in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_top_bar_has_the_costs_link(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        assert status == 200
+        assert b'href="/costs"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_check_reports_the_ledger_and_requests(tmp_path, capsys):
+    root = make_root(tmp_path)
+    ledger = tmp_path / "costs.db"
+    requests = tmp_path / "requests.jsonl"
+    assert (
+        serve.main(
+            [
+                "--workspaces",
+                str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--ledger",
+                str(ledger),
+                "--requests",
+                str(requests),
+                "--check",
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["ledger"] == str(ledger)
+    assert summary["requests"] == str(requests)
+
+
+def test_check_warns_without_ledger_and_requests(tmp_path, capsys, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.delenv("YT_PIPELINE_COSTS_DB", raising=False)
+    monkeypatch.delenv("YT_PIPELINE_REQUESTS", raising=False)
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {})
+    assert (
+        serve.main(
+            [
+                "--workspaces",
+                str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--check",
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
+    captured = capsys.readouterr()
+    assert "no costs ledger configured" in captured.err
+    assert "no requests file configured" in captured.err
+    summary = json.loads(captured.out)
+    assert summary["ledger"] is None
+    assert summary["requests"] is None

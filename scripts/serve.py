@@ -28,6 +28,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -40,12 +41,17 @@ import yaml
 
 from common.config import (
     ConfigError,
+    costs_db,
+    donation_url,
     inbox_path,
     load_config,
     music_library,
+    no_costs_message,
     no_inbox_message,
     no_music_library_message,
+    requests_path,
 )
+from common.costs import compute_totals, connect as connect_ledger
 from common.media import clip_kind
 from common.moves import slot_screen_length
 from common.timeline_words import fade_for_join
@@ -53,6 +59,7 @@ from common.pacing import estimate_all_good
 from common.versions import list_versions
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
+from common.llm import LLMError, read_ledger
 
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -146,6 +153,9 @@ CUT_PREVIEW_DIR = "cut_previews"
 CUT_ACTIONS = ("keep", "cut")
 CUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
 MODE_B_TOOL = "scripts/rough_cut.py"
+REQUESTS_MAX_CHARS = 2000
+CONTACT_MAX_CHARS = 200
+REQUEST_TYPES = ("Feedback", "Feature request")
 
 
 def brand_progress_color(brand_path):
@@ -404,6 +414,7 @@ def build_parser():
             "  python scripts/serve.py --workspaces <workspaces>\n"
             "  python scripts/serve.py --workspaces <workspaces> --inbox <inbox> --port 8091 --json\n"
             "  python scripts/serve.py --workspaces <workspaces> --inbox <inbox> --check --json\n"
+            "  python scripts/serve.py --workspaces <workspaces> --inbox <inbox> --ledger <costs.db> --requests <requests.jsonl>\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -450,6 +461,30 @@ def build_parser():
         type=int,
         default=DEFAULT_MAX_TOTAL_MB,
         help=f"whole-request upload size cap in MB (default: {DEFAULT_MAX_TOTAL_MB})",
+    )
+    parser.add_argument(
+        "--ledger",
+        default=None,
+        help=(
+            "costs ledger SQLite file (or YT_PIPELINE_COSTS_DB, or costs.path "
+            "in the config; no personal default)"
+        ),
+    )
+    parser.add_argument(
+        "--requests",
+        default=None,
+        help=(
+            "feedback/requests JSON-lines file (or YT_PIPELINE_REQUESTS, or "
+            "requests.path in the config; no personal default)"
+        ),
+    )
+    parser.add_argument(
+        "--donation-url",
+        default=None,
+        help=(
+            "optional donation link shown on the Costs page (or "
+            "YT_PIPELINE_DONATION_URL, or costs.donation_url)"
+        ),
     )
     parser.add_argument(
         "--check",
@@ -928,7 +963,11 @@ v.addEventListener('timeupdate',function(){var t=v.currentTime;b.forEach(functio
 def render_page(title, body, active=None, script="", refresh=None):
     """Return one full HTML page with the top bar and the shared theme."""
     nav = []
-    for key, href, label in (("projects", "/", "Projects"), ("upload", "/upload", "New recap")):
+    for key, href, label in (
+        ("projects", "/", "Projects"),
+        ("upload", "/upload", "New recap"),
+        ("costs", "/costs", "Costs"),
+    ):
         on = " on" if key == active else ""
         nav.append(f'<a class="nav{on}" href="{href}">{label}</a>')
     tail = f"<script>{script}</script>" if script else ""
@@ -1037,6 +1076,108 @@ def render_index(entries):
         f'<h1>Projects</h1><p class="lede">Every folder you sent, newest first.</p>{body}',
         active="projects",
     )
+
+
+def render_costs(server, thanks=False):
+    """The read-only Costs page: per-clip model cost, ledger totals, donation link and the request form."""
+    rows = []
+    for name in discover_projects(server.root):
+        directory = Path(server.root) / name
+        try:
+            cost = read_ledger(directory / "llm_spend.json")["total_usd"]
+        except LLMError:
+            cost = None
+        versions = len(list_versions(directory))
+        rows.append(
+            f'<li><span class="name">{html_escape(name)}</span>'
+            f'<span class="facts num">model cost {format_cost(cost)} \u00b7 '
+            f'{versions} version{"s" if versions != 1 else ""}</span></li>'
+        )
+    if rows:
+        per_clip = f'<ul class="projects">{"".join(rows)}</ul>'
+    else:
+        per_clip = '<p class="empty">No projects yet.</p>'
+
+    ledger_parts = []
+    if server.ledger is not None and Path(server.ledger).is_file():
+        try:
+            connection = connect_ledger(server.ledger)
+            try:
+                totals = compute_totals(connection)
+            finally:
+                connection.close()
+        except (sqlite3.Error, OSError):
+            ledger_parts.append('<p class="empty">The ledger could not be read.</p>')
+        else:
+            balance = totals["balance_usd"]
+            colour = "var(--keep)" if balance >= 0 else "var(--left)"
+            ledger_parts.append(
+                '<ul class="projects">'
+                f'<li><span class="name">Monthly running</span>'
+                f'<span class="facts num">{format_cost(totals["monthly_running_usd"])}</span></li>'
+                f'<li><span class="name">Development total</span>'
+                f'<span class="facts num">{format_cost(totals["development_total_usd"])}</span></li>'
+                f'<li><span class="name">Donations</span>'
+                f'<span class="facts num">{format_cost(totals["donations_usd"])}</span></li>'
+                f'<li><span class="name">Balance</span>'
+                f'<span class="facts num" style="color:{colour}">{format_cost(balance)}</span></li>'
+                '</ul>'
+            )
+    else:
+        ledger_parts.append('<p class="empty">The ledger is not set up.</p>')
+
+    donation = ""
+    if server.donation_url:
+        donation = (
+            f'<p><a href="{html_escape(server.donation_url)}">Support the project</a></p>'
+        )
+
+    thanks_line = (
+        "<p>Thank you, the owner reviews requests and turns them into issues.</p>"
+        if thanks
+        else ""
+    )
+    if server.requests is not None:
+        type_options = "".join(
+            f'<option value="{html_escape(value)}"'
+            f'{" selected" if value == "Feedback" else ""}>{html_escape(value)}</option>'
+            for value in REQUEST_TYPES
+        )
+        request_form = (
+            '<form method="post" action="/costs/request">'
+            f'<label>Type<select name="type">{type_options}</select></label>'
+            f'<label>Your request<textarea name="text" rows="4" required '
+            f'maxlength="{REQUESTS_MAX_CHARS}"></textarea></label>'
+            f'<label>Contact (optional)<input type="text" name="contact" '
+            f'maxlength="{CONTACT_MAX_CHARS}" autocomplete="off"></label>'
+            '<label><span>I would back this with a donation</span>'
+            '<input type="checkbox" name="backed" value="1"></label>'
+            '<button class="go" type="submit">Send</button>'
+            "</form>"
+        )
+    else:
+        request_form = '<p class="empty">Requests are not set up.</p>'
+
+    body = (
+        "<h1>Costs</h1>"
+        "<h2>Per clip</h2>"
+        f"{per_clip}"
+        "<h2>Ledger</h2>"
+        f'{"".join(ledger_parts)}'
+        f"{donation}"
+        "<h2>Feedback and requests</h2>"
+        f"{thanks_line}"
+        f"{request_form}"
+    )
+    return render_page("Costs", body, active="costs")
+
+
+def append_request(path, line):
+    """Append one JSON line to the requests file, creating the parent folder."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line) + "\n")
 
 
 def render_strip(summary):
@@ -1663,6 +1804,12 @@ def parse_number(raw_path, key):
     if values and values[0].isdigit() and len(values[0]) <= 4:
         return int(values[0])
     return None
+
+
+def parse_flag(raw_path, key):
+    """True when the query parameter is present."""
+    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get(key, [])
+    return bool(values)
 
 
 def parse_range(value, size):
@@ -2351,6 +2498,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "shorts-candidates":
             self.handle_shorts_candidates(segments[0])
             return
+        if segments == ["costs", "request"]:
+            self.handle_request_submit()
+            return
         self._method_not_allowed()
 
     def _boundary(self):
@@ -2576,6 +2726,50 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         self.send_json({"ok": True, "rank": rank, "layout": layout})
 
+    def handle_request_submit(self):
+        """Append one feedback/request JSON line to the requests file and redirect back."""
+        if self.server.requests is None:
+            self.send_error_text(404, "requests are not set up")
+            return
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/x-www-form-urlencoded":
+            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.server.max_total_bytes:
+            self.send_error_text(413, "request body too large")
+            return
+        fields = parse_urlencoded(self.rfile.read(length))
+        text = (fields.get("text") or "").strip()
+        if not text:
+            self.send_error_text(400, "text is required")
+            return
+        if len(text) > REQUESTS_MAX_CHARS:
+            self.send_error_text(400, "text too long")
+            return
+        contact = (fields.get("contact") or "").strip()
+        if len(contact) > CONTACT_MAX_CHARS:
+            self.send_error_text(400, "contact too long")
+            return
+        request_type = (fields.get("type") or "Feedback").strip() or "Feedback"
+        if request_type not in REQUEST_TYPES:
+            self.send_error_text(400, "invalid type")
+            return
+        backed = (fields.get("backed") or "").strip().lower() in ("1", "on", "true", "yes")
+        line = {
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "type": request_type,
+            "text": text,
+            "contact": contact,
+            "backed": backed,
+        }
+        try:
+            append_request(self.server.requests, line)
+        except OSError:
+            self.send_error_text(500, "could not save the request")
+            return
+        self.send_redirect("/costs?thanks=1")
+
     def handle_cut_audio(self, project, send_body):
         """Serve a short WAV preview of one cut span, cached under cut_previews/."""
         workspace = self.server.root / project
@@ -2680,6 +2874,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if segments == ["upload"]:
             self.send_html(render_upload(list_music_tracks(self.server.music_dir)), send_body)
+            return
+        if segments == ["costs"]:
+            self.send_html(
+                render_costs(self.server, thanks=parse_flag(self.path, "thanks")), send_body
+            )
             return
         if len(segments) == 1:
             directory = root / segments[0]
@@ -2801,17 +3000,22 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes):
+    def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
+                 ledger=None, requests=None, donation_url=None):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+        self.ledger = Path(ledger) if ledger is not None else None
+        self.requests = Path(requests) if requests is not None else None
+        self.donation_url = donation_url
         super().__init__(address, WorkspaceHandler)
 
 
 def build_server(root, bind, port, music_dir=None, inbox=None,
-                 max_file_bytes=None, max_total_bytes=None):
+                 max_file_bytes=None, max_total_bytes=None,
+                 ledger=None, requests=None, donation_url=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -2820,11 +3024,14 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         Path(inbox).expanduser().resolve() if inbox is not None else None,
         max_file_bytes if max_file_bytes is not None else DEFAULT_MAX_UPLOAD_MB * 1024 * 1024,
         max_total_bytes if max_total_bytes is not None else DEFAULT_MAX_TOTAL_MB * 1024 * 1024,
+        ledger,
+        requests,
+        donation_url,
     )
 
 
 def build_summary(root, bind, port, projects, status, started, music_dir=None,
-                  inbox=None):
+                  inbox=None, ledger=None, requests=None, donation_url=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -2863,6 +3070,9 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "music_tracks": len(list_music_tracks(music_dir)),
         "music_library": str(Path(music_dir).expanduser()) if music_dir else None,
         "inbox": str(Path(inbox).expanduser().resolve()) if inbox else None,
+        "ledger": str(Path(ledger).expanduser()) if ledger else None,
+        "requests": str(Path(requests).expanduser()) if requests else None,
+        "donation_url": donation_url,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -2925,6 +3135,17 @@ def main(argv=None):
         music_dir = music_library(args.music_dir)
         if music_dir is None:
             print(f"[warn] {no_music_library_message('--music-dir')}", file=sys.stderr)
+        ledger = costs_db(args.ledger)
+        if ledger is None:
+            print(f"[warn] {no_costs_message('--ledger')}", file=sys.stderr)
+        requests = requests_path(args.requests)
+        if requests is None:
+            print(
+                "[warn] no requests file configured: pass --requests PATH, set the "
+                "YT_PIPELINE_REQUESTS environment variable, or set requests.path in the config",
+                file=sys.stderr,
+            )
+        donation = donation_url(args.donation_url)
         try:
             server = build_server(
                 root,
@@ -2934,6 +3155,9 @@ def main(argv=None):
                 inbox,
                 args.max_upload_mb * 1024 * 1024,
                 args.max_total_mb * 1024 * 1024,
+                ledger,
+                requests,
+                donation,
             )
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
@@ -2946,7 +3170,7 @@ def main(argv=None):
     projects = discover_projects(root)
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
-        music_dir, inbox,
+        music_dir, inbox, ledger, requests, donation,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

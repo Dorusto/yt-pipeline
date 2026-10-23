@@ -1,6 +1,6 @@
 ---
 name: yt-costs
-description: Keep a small SQLite ledger of what the project costs and earns — model jobs, build-agent spend, fixed monthly costs, one-off investments and donations — with idempotent imports and a totals view. Use when the user asks what the project costs or earns, wants to add a cost or a donation, import the model or build-agent spend, or see the balance. Trigger phrases - "cât costă proiectul", "cât am cheltuit", "adaugă o donație", "importă cheltuielile", "cât e balanța", "costs ledger", "add a cost", "import the spend", "what is the balance", "totals". Not for the per-run LLM budget cap (that is `scripts/common/llm.py` and the watchdog), not for the Costs web page (a later lot) and not for any donation payment handling.
+description: Keep a small SQLite ledger of what the project costs and earns — model jobs, build-agent spend, fixed monthly costs, one-off investments and donations — with idempotent imports and a totals view. Use when the user asks what the project costs or earns, wants to add a cost or a donation, import the model or build-agent spend, or see the balance. Trigger phrases - "cât costă proiectul", "cât am cheltuit", "adaugă o donație", "importă cheltuielile", "cât e balanța", "costs ledger", "add a cost", "import the spend", "what is the balance", "totals". Not for the per-run LLM budget cap (that is `scripts/common/llm.py` and the watchdog), not for the read-only Costs page in the web app (that is `scripts/serve.py`, `GET /costs`) and not for any donation payment handling.
 compatibility: Run from the repository root. Needs the repo .venv (stdlib only — sqlite3, json). The ledger is a SQLite file outside the repository; no model is called, so llm_cost_usd is always 0.0. Reads llm_spend.json files and a run-spend JSON read-only.
 ---
 
@@ -60,3 +60,4 @@ Every subcommand accepts `--json` (before or after the subcommand) and reports `
 
 - The ledger is written outside the repository; never commit it.
 - No model is called and no donation payment is handled.
+- The web app's read-only **Costs** page (`scripts/serve.py`, `GET /costs`) reads the same `totals` object through `scripts/common/costs.py`; the shared module is the one place the totals math lives.

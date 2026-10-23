@@ -72,6 +72,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 ## Costs
 
 - The costs ledger is a SQLite file outside the repository; its path comes from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`, else a three-ways usage error. Five kinds (`model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`); imports are idempotent by `source`; `totals --json` is the source the web page reads. — 2026-10-23
+- The web app's Costs page (`GET /costs`) is read-only and reads the shared totals from `scripts/common/costs.py`; the feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set; the donation link comes from `costs.donation_url` / `YT_PIPELINE_DONATION_URL` and the app never handles payments. — 2026-10-23
 
 ## Safety rules
 

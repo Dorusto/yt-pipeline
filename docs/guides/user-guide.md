@@ -214,6 +214,13 @@ finished recap, the explanation and the contact sheet.
   going the page shows the last finished version, the step it is on, and
   refreshes by itself; a failed run says where it failed and why.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
+- **Costs** (top bar) is a read-only page: per project the model cost and the
+  number of versions, then the ledger totals (monthly running cost, development
+  total, donations and the balance) and an optional donation link. It reads the
+  same totals object as `costs.py totals --json`. The **Feedback and requests**
+  form on the same page appends one JSON line (`date`, `type`, `text`,
+  `contact`, `backed`) to the requests file; with no requests file configured
+  the form is hidden.
 
 `--music auto` picks the track from the music library by the brief's pace and
 the shot tags, using the BPM and energy `beats.py` measures for every track
@@ -251,10 +258,18 @@ stops with a usage error naming those three ways (docs write `<costs.db>`).
 
 `import-jobs` reads each workspace's `llm_spend.json` and `import-dev` the build
 agents' run-spend JSON; both are idempotent by `source`, so re-running never
-duplicates a row. `totals --json` is the object the web page will read: per-kind
-sums, the recurring monthly cost, the fixed total over the months since the
-first fixed entry and the balance (donations minus model + dev + investments +
-fixed monthly × months).
+duplicates a row. `totals --json` is the object the web app's **Costs** page
+reads (through the shared `scripts/common/costs.py`): per-kind sums, the
+recurring monthly cost, the fixed total over the months since the first fixed
+entry and the balance (donations minus model + dev + investments + fixed
+monthly × months).
+
+The Costs page also carries the **Feedback and requests** form. It appends one
+JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file,
+whose path comes from `--requests`, else `YT_PIPELINE_REQUESTS`, else
+`requests.path`; with none set the form is hidden. The donation link comes from
+`--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_url`,
+and the app never handles payments.
 
 ## How it learns
 

@@ -22,3 +22,4 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - The audit changes.
 - The shaky review policy.
 - Costs ledger.
+- The Costs page and the feedback/requests form.

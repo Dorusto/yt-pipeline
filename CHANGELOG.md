@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Music: the library path comes from a flag, an environment variable or the config, and `music_pick.py --list` reports each track's licence status.
 - Shorts: `shorts_rank.py` writes standalone candidates with titles and descriptions.
 - Costs: `costs.py` keeps a SQLite ledger of model jobs, build-agent spend, fixed monthly costs, investments and donations, with idempotent imports and a `totals` view.
+- Web app: a read-only Costs page (per-clip model cost, ledger totals, donation link) and a feedback/requests form that appends one JSON line to the requests file.
 
 ### Changed
 

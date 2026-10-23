@@ -80,7 +80,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons and the Mode B Cuts-tab cut review |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the read-only Costs page and the feedback/requests form |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 
 Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
@@ -406,7 +406,17 @@ The ledger is a SQLite file **outside the repository**. Its path comes from `--l
 
 - Five kinds: `model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`.
 - `import-jobs` reads each workspace's `llm_spend.json`; `import-dev` reads the build agents' run-spend JSON. Both are idempotent by `source` (the project name for jobs, the date for dev spend), so re-running never duplicates a row.
-- `totals` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance (donations minus model + dev + investments + fixed monthly × months). `totals --json` is the object the web page will read.
+- `totals` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance (donations minus model + dev + investments + fixed monthly × months). `totals --json` is the object the web page reads.
+
+---
+
+## Costs page
+
+The web app has a read-only **Costs** page (`GET /costs`, linked in the top bar). It shows, per project, the model cost from the workspace's `llm_spend.json` and the number of versions, then the ledger totals (monthly running cost, development total, donations and the balance, coloured green when positive and red when negative) and an optional donation link. The page reads the same totals object as `costs.py totals --json`, through the shared `scripts/common/costs.py`; it never writes the ledger and never handles payments.
+
+The ledger path comes from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`; the donation link from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_url`. With no ledger configured the page says the ledger is not set up.
+
+The **Feedback and requests** form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file. Its path comes from `--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`; with none set the form is hidden and the page says requests are not set up. `--check` warns about a missing ledger or requests file without failing.
 
 ---
 

@@ -2520,3 +2520,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) leaves the process unverifiable and lets a stable tool change silently.
 
 **Consequence:** a version is a tag on `master` plus a GitHub Release, never a moved or deleted tag; the stable list is the one place that says what may change only in a named lot; the reviewer flags an unannounced change to a stable file. `docs/REVIEW_CHECKLIST.md` is brought onto this branch from the unmerged `reviewer-agent` branch (commit `193d637`) because the protocol references it; the merge of `reviewer-agent` will need to keep the added question.
+
+---
+
+## [2026-10-23] Costs page and feedback/requests in serve.py
+
+**Context:** The costs ledger CLI (`costs.py`) had a `totals` view but no web page, and the app had no way for a visitor to leave feedback or a feature request. The totals computation lived inside `costs.py`, so a page could not read it without importing another tool.
+
+**Decision:** the totals computation moves to `scripts/common/costs.py` so `costs.py` and `serve.py` share it (no tool imports another tool). `GET /costs` is read-only and shows the per-clip model cost and version count plus the ledger totals, and says the ledger is not set up when none is configured. The donation link comes from `costs.donation_url` / `YT_PIPELINE_DONATION_URL` and the app never handles payments. The feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set. `--check` warns about a missing ledger or requests file without failing.
+
+**Consequence:** the page reads the same totals object as `costs.py totals --json`; the ledger schema and the five kinds are unchanged; the `yt-costs` skill points at the page.
