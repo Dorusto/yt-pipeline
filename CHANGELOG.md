@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-23
+
+yt-pipeline turns the clips from a trip into a short video. Upload your clips and photos from your phone or laptop, write a few words about the day, and the AI director makes the edit and explains its choices. You can leave a shot out, ask for another version, or ask the director what it would change before it starts. Every edit comes with a title, a description and hashtags ready to copy. The Costs page shows what the project costs and how to support it.
+
 ### Added
 
 - Web app: one visual direction for every page — a shared token set (colour, type, spacing, radii) with a light and dark theme, a consistent button, field, strip, notice and tab-bar style, and a header slot for the logo.
