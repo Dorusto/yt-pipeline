@@ -28,10 +28,15 @@ import urllib.parse
 from pathlib import Path
 
 from common import notify, versions
+from common.config import ConfigError, music_library
 from common.media import video_files
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/recap.py"
+NO_MUSIC_LIBRARY_MESSAGE = (
+    "no music library configured: pass --music-dir DIR, set the "
+    "YT_PIPELINE_MUSIC_LIBRARY environment variable, or set music.library in the config"
+)
 
 
 class RecapError(RuntimeError):
@@ -136,7 +141,10 @@ def build_parser():
     parser.add_argument(
         "--music-dir",
         default=None,
-        help="folder of tracks for --music auto (default ~/media/music)",
+        help=(
+            "folder of tracks for --music auto (or YT_PIPELINE_MUSIC_LIBRARY, or "
+            "music.library in the config; no personal default)"
+        ),
     )
     parser.add_argument(
         "--target-duration-s",
@@ -368,7 +376,6 @@ INDEPENDENT_RENDERS = ("render", "render_vertical", "render_final", "render_fina
 VERTICAL_PREVIEW_NAME = "recap_720p_9x16.mp4"
 VERTICAL_FINAL_NAME = "recap_final_9x16.mp4"
 MUSIC_TOKEN = "@music@"
-DEFAULT_MUSIC_DIR = "~/media/music"
 MUSIC_CHOICE_NAME = "music_choice.json"
 
 
@@ -560,13 +567,13 @@ def build_stations(ctx):
         )
     if ctx.music == "auto":
         pick_args = [
-            "--library",
-            str(ctx.music_dir or DEFAULT_MUSIC_DIR),
             "--brief-file",
             str(ws / "brief.txt"),
             "--workspace",
             str(ws),
         ]
+        if ctx.music_dir is not None:
+            pick_args = ["--library", str(ctx.music_dir)] + pick_args
         if ctx.target_duration_s:
             pick_args += ["--target-duration-s", str(ctx.target_duration_s)]
         index_at = next(i for i, station in enumerate(stations) if station["name"] == "index")
@@ -1014,7 +1021,10 @@ def main(argv=None):
                 music = Path(args.music).expanduser().resolve()
                 if not music.is_file():
                     raise RecapError(f"music file not found: {music}")
-    except RecapError as exc:
+        music_dir = music_library(args.music_dir) if (args.music or args.music_dir) else None
+        if music == "auto" and music_dir is None:
+            raise RecapError(NO_MUSIC_LIBRARY_MESSAGE)
+    except (RecapError, ConfigError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
     ctx = Context(
@@ -1032,7 +1042,7 @@ def main(argv=None):
         notify=args.notify,
         preview_base=args.preview_base,
         feedback=args.feedback,
-        music_dir=Path(args.music_dir).expanduser().resolve() if args.music_dir else None,
+        music_dir=music_dir,
         target_duration_s=args.target_duration_s,
         order=args.order,
         no_audio_clean=args.no_audio_clean,

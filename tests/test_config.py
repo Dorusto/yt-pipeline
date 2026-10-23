@@ -147,3 +147,34 @@ def test_llm_mock_text_wrong_type_raises():
         config._validate(with_value("llm_mock_text", 5))
     with pytest.raises(config.ConfigError):
         config._validate(with_value("llm_mock_text", {"metadata": 5}))
+
+
+def test_music_library_flag_env_and_config(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.MUSIC_LIBRARY_ENV, raising=False)
+    config_path = write_config(tmp_path, with_value("music", {"library": str(tmp_path / "from-config")}))
+    monkeypatch.setenv("YT_CONFIG", str(config_path))
+    assert config.music_library(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+    assert config.music_library() == (tmp_path / "from-config").expanduser()
+    monkeypatch.setenv(config.MUSIC_LIBRARY_ENV, str(tmp_path / "from-env"))
+    assert config.music_library() == (tmp_path / "from-env").expanduser()
+    assert config.music_library(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+
+
+def test_music_library_config_argument_wins_over_config_file(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.MUSIC_LIBRARY_ENV, raising=False)
+    explicit = {"music": {"library": str(tmp_path / "explicit")}}
+    assert config.music_library(config=explicit) == (tmp_path / "explicit").expanduser()
+
+
+def test_music_library_none_when_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.MUSIC_LIBRARY_ENV, raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, VALID)))
+    assert config.music_library() is None
+
+
+def test_music_section_validated():
+    assert config._validate(with_value("music", {"library": "/tracks"}))["music"]["library"] == "/tracks"
+    assert config._validate(with_value("music", {}))["music"] == {}
+    for bad in ("nope", {"library": ""}, {"library": 5}):
+        with pytest.raises(config.ConfigError):
+            config._validate(with_value("music", bad))

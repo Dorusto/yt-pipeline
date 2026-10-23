@@ -1,5 +1,55 @@
 # S60 Mode B finishing
 
+## Lot 8 — Music library
+
+**Works**
+- The music library folder has no personal default anywhere: it comes from
+  `--library` (`scripts/music_pick.py`) or `--music-dir` (`scripts/recap.py`,
+  `scripts/serve.py`), else `YT_PIPELINE_MUSIC_LIBRARY`, else `music.library` in
+  the config (`common.config.music_library`), and with none set the tools that
+  need it stop with a usage error naming those three ways (`recap.py` fails
+  before the stations run; `serve.py` starts with no tracks and warns with the
+  same message, so the web app still runs without music). `config.yaml.example`
+  documents `music.library`; the user guide, the `yt-music-pick` and `yt-recap`
+  skills and the RULES music line write `<music-library>`.
+- `scripts/music_pick.py --list [--json]` reports every track with `file`,
+  `path`, `duration_s`, `bpm`, `licence_status` (`sidecar` / `library` /
+  `missing`) and `licence_file` (a `<stem>.license`/`.licence` or
+  `<file>.license`/`.licence` sidecar, else the library's
+  `LICENSE`/`LICENCE`/`LICENSE.txt`/`LICENCE.txt`/`COPYING`, else nothing); a
+  track that cannot be measured keeps nulls and the listing still succeeds.
+  Nothing in any tool downloads music.
+- Verified: 16 new tests (`tests/test_config.py` 4, `tests/test_music_pick.py` 6,
+  `tests/test_recap.py` 3, `tests/test_serve.py` 3) and the full suite
+  `.venv/bin/python -m pytest tests/ -q -m "not needs_melt and not needs_footage"`
+  = 1786 passed, 2 skipped, 1 deselected; `scripts/check_public.py` clean on the
+  14 changed files.
+- Synthetic end-to-end (`/tmp/opencode/mlib8`, two generated WAVs, one sidecar
+  licence and one library licence): `--list` prints both rows with `sidecar` and
+  `library`, `--list --json` carries path/duration/BPM/licence per track, pick
+  mode through `YT_PIPELINE_MUSIC_LIBRARY` writes `music_choice.json`, and a run
+  with no library at all exits 1 with the three-ways message.
+
+**Mocked / not verified**
+- No real music library and no model call; the licence check is file-name based
+  only, and the BPM numbers on the synthetic WAVs are meaningless (the
+  measurement path itself is `beats.py`, unchanged).
+
+**Doru, check this**
+- The rule and the tool split are in `docs/DECISIONS.md` (2026-10-22, S60 lot 8)
+  and `docs/RULES.md` (music line) — confirm the `serve.py` choice: warn and
+  serve no tracks instead of exiting when no library is configured.
+- `docs/guides/user-guide.md` "Music library" section and
+  `.claude/skills/yt-music-pick/SKILL.md` (`--list`, the three ways).
+- The build machine keeps its folder in the git-ignored `config.yaml`
+  (`music.library`); the repo never names it.
+- Not touched: `~/media/inbox` (`serve.py --inbox`, phone flow) and the
+  `~/media/trip` style examples in the user guide — the correction named the
+  music paths; say if the no-personal-path rule must extend to them.
+- Dated history entries in `docs/DECISIONS.md` and the old reports still quote
+  the old default as it was then — kept as history; say if they should be
+  scrubbed too.
+
 ## Lot 7 — Shorts quality
 
 **Works**

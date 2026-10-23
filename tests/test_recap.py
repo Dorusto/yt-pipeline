@@ -838,3 +838,58 @@ def test_new_edit_reruns_the_edit_without_feedback(tmp_path, monkeypatch, capsys
     director_argv = dict(recorder.argvs)["llm_director"]
     flat = director_argv[0] if isinstance(director_argv[0], list) else director_argv
     assert "--force" in flat
+
+
+def write_isolated_config(tmp_path, monkeypatch, library=None):
+    text = (
+        "models:\n  director: deepseek/deepseek-v4.1-flash\n"
+        "llm_budget_usd: 5.0\nllm_backend: mock\n"
+    )
+    if library is not None:
+        text += f"music:\n  library: {library}\n"
+    path = tmp_path / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(path))
+    return path
+
+
+def test_music_auto_omits_library_when_unset(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    ctx.music_dir = None
+    stations = recap.build_stations(ctx)
+    pick = next(station for station in stations if station["name"] == "music_pick")
+    argv = pick["argv"][0]
+    assert "--library" not in argv
+    assert "--workspace" in argv
+
+
+def test_music_auto_without_library_is_a_usage_error(tmp_path, monkeypatch, capsys):
+    write_isolated_config(tmp_path, monkeypatch)
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    assert run_recap(source, tmp_path / "ws", extra=["--music", "auto", "--json"]) == 1
+    error = capsys.readouterr().err
+    assert "no music library configured" in error
+    for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
+        assert way in error
+
+
+class MusicRecorder(Recorder):
+    def create_outputs(self, name, ctx):
+        super().create_outputs(name, ctx)
+        if name == "music_pick":
+            self.touch(ctx.workspace / "music_choice.json", json.dumps({"path": "track.mp3"}))
+
+
+def test_music_auto_reads_the_library_from_the_config(tmp_path, monkeypatch, capsys):
+    library = tmp_path / "music"
+    library.mkdir()
+    write_isolated_config(tmp_path, monkeypatch, library=str(library))
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    recorder = MusicRecorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, tmp_path / "ws", extra=["--music", "auto", "--json"]) == 0
+    commands = dict(recorder.argvs)
+    argv = commands["music_pick"][0]
+    assert argv[argv.index("--library") + 1] == str(library)
+    capsys.readouterr()

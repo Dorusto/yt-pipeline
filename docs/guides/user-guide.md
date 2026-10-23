@@ -19,7 +19,7 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 # -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json, shotlog.html and explain.html)
 # full quality from the originals + a Kdenlive project:
 .venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
-# with music (auto picks a track from ~/media/music by the brief and the shot tags):
+# with music (auto picks a track from the music library by the brief and the shot tags; see below):
 .venv/bin/python scripts/recap.py --source ~/media/trip/raw --brief "90 s, chronological" --music auto
 # re-running skips finished stations; a new brief only redoes the edit
 # the web app for the phone:
@@ -192,7 +192,7 @@ finished recap, the explanation and the contact sheet.
   a project folder name, the brief and an options form where **every field
   defaults to Auto** (length 30 s / 60 s / 90 s / 3 min, order chronological /
   best first, audio clean-up, format Auto (16:9) / 16:9 / 9:16 / both, music none / a track / auto from
-  `~/media/music`, ambient level under the music, speed ramp Auto (off) / off / on, Shorts layout Auto / on / off). Clips play at normal speed unless **Speed ramp: on**, which lets the middle of long camera moves play up to 1.2x. When a long move has to be shortened, the cut is centred on its best moment (the model's pick, else the busiest second, else the middle). For a vertical version pick
+  the music library, ambient level under the music, speed ramp Auto (off) / off / on, Shorts layout Auto / on / off). Clips play at normal speed unless **Speed ramp: on**, which lets the middle of long camera moves play up to 1.2x. When a long move has to be shortened, the cut is centred on its best moment (the model's pick, else the busiest second, else the middle). For a vertical version pick
   **Format: 9:16** (or **both**): the recap is cut to 720x1280 with a window
   that follows the subject (`recap_720p_9x16.mp4`). **Start** streams the files
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
@@ -214,9 +214,23 @@ finished recap, the explanation and the contact sheet.
   refreshes by itself; a failed run says where it failed and why.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 
-`--music auto` picks the track from `~/media/music` by the brief's pace and
+`--music auto` picks the track from the music library by the brief's pace and
 the shot tags, using the BPM and energy `beats.py` measures for every track
 (`scripts/music_pick.py`, skill `yt-music-pick`).
+
+## Music library
+
+No tool ships with a personal music path: the library folder comes from
+`--library` (`music_pick.py`) or `--music-dir` (`recap.py`, `serve.py`), else
+the `YT_PIPELINE_MUSIC_LIBRARY` environment variable, else `music.library` in
+the config. With none set, the tools that need the library stop with a usage
+error naming those three ways. In docs and examples the folder is written
+`<music-library>`. Tools only read the library — nothing is ever downloaded.
+
+`music_pick.py --list` (with `--json` for agents) reports every track with its
+path, duration, BPM and licence file status (a `<stem>.license`/`.licence`
+sidecar, else the library's own `LICENSE`/`LICENCE`/`COPYING` file, else
+`missing`).
 
 ## How it learns
 

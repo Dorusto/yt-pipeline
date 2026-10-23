@@ -44,3 +44,11 @@ llm_backend: openrouter
 # Overridden by the YT_SPEND_LEDGER environment variable; when neither is set,
 # YT_WORKSPACE/llm_spend.json is used if YT_WORKSPACE is set.
 # spend_ledger: /path/to/workspace/llm_spend.json
+
+# Music library folder for music_pick.py, recap.py --music auto and the web
+# Upload page. There is no personal default in code: set the folder here, in the
+# YT_PIPELINE_MUSIC_LIBRARY environment variable, or pass --library /
+# --music-dir. Docs and examples write <music-library>. Tools only read the
+# folder; they never download music.
+# music:
+#   library: <music-library>

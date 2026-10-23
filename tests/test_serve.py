@@ -1868,3 +1868,55 @@ def test_shorts_tab_offers_both_layouts_for_two_angles(tmp_path):
 
 
 
+
+
+def isolate_music_env(tmp_path, monkeypatch, library=None):
+    text = (
+        "models:\n  director: deepseek/deepseek-v4.1-flash\n"
+        "llm_budget_usd: 5.0\nllm_backend: mock\n"
+    )
+    if library is not None:
+        text += f"music:\n  library: {library}\n"
+    path = tmp_path / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(path))
+
+
+def test_check_without_music_library_reports_no_tracks(tmp_path, monkeypatch, capsys):
+    isolate_music_env(tmp_path, monkeypatch)
+    root = make_root(tmp_path)
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert summary["music_tracks"] == 0
+    assert summary["music_library"] is None
+    assert "no music library configured" in captured.err
+    for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
+        assert way in captured.err
+
+
+def test_check_reads_the_music_library_from_env_and_config(tmp_path, monkeypatch, capsys):
+    music = make_music_dir(tmp_path, ["a.mp3", "b.wav"])
+    isolate_music_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("YT_PIPELINE_MUSIC_LIBRARY", str(music))
+    root = make_root(tmp_path)
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music_tracks"] == 2
+    assert summary["music_library"] == str(music)
+    isolate_music_env(tmp_path, monkeypatch, library=str(music))
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["music_library"] == str(music)
+
+
+def test_build_server_defaults_to_no_music_library(tmp_path):
+    root = make_root(tmp_path)
+    server = serve.build_server(root, "127.0.0.1", 0, None, str(tmp_path / "inbox"), 1024, 1024)
+    try:
+        assert server.music_dir is None
+        assert serve.list_music_tracks(None) == []
+    finally:
+        server.server_close()

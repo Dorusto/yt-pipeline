@@ -38,7 +38,7 @@ from pathlib import Path
 
 import yaml
 
-from common.config import ConfigError, load_config
+from common.config import ConfigError, load_config, music_library
 from common.media import clip_kind
 from common.moves import slot_screen_length
 from common.timeline_words import fade_for_join
@@ -48,7 +48,10 @@ from common.versions import list_versions
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORT = 8091
-DEFAULT_MUSIC_DIR = "~/media/music"
+NO_MUSIC_LIBRARY_MESSAGE = (
+    "no music library configured: pass --music-dir DIR, set the "
+    "YT_PIPELINE_MUSIC_LIBRARY environment variable, or set music.library in the config"
+)
 DEFAULT_INBOX = "~/media/inbox"
 DEFAULT_MAX_UPLOAD_MB = 4096
 DEFAULT_MAX_TOTAL_MB = 20480
@@ -411,8 +414,11 @@ def build_parser():
     )
     parser.add_argument(
         "--music-dir",
-        default=DEFAULT_MUSIC_DIR,
-        help=f"folder of music tracks offered on the Upload page (default: {DEFAULT_MUSIC_DIR})",
+        default=None,
+        help=(
+            "folder of music tracks offered on the Upload page (or YT_PIPELINE_MUSIC_LIBRARY, "
+            "or music.library in the config; no personal default)"
+        ),
     )
     parser.add_argument(
         "--inbox",
@@ -610,6 +616,8 @@ def project_status(directory):
 
 def list_music_tracks(music_dir):
     """Return the audio file names offered on the Upload page, sorted by name."""
+    if music_dir is None:
+        return []
     directory = Path(music_dir).expanduser()
     try:
         names = [
@@ -1999,7 +2007,7 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
     music = fields.get("music") or "auto"
     if music == "auto":
         command += ["--music", "auto"]
-    elif music and music != "none":
+    elif music and music != "none" and music_dir is not None:
         command += ["--music", str(Path(music_dir).expanduser().resolve() / Path(music).name)]
     ambient = fields.get("ambient_under_music_db") or "auto"
     if ambient in AMBIENT_CHOICES and ambient != "auto":
@@ -2108,7 +2116,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 raise UploadError(400, "brief too long")
             music = fields.get("music") or "auto"
             if music not in ("auto", "none") and not (
-                (Path(self.server.music_dir).expanduser() / Path(music).name).is_file()
+                self.server.music_dir is not None
+                and (Path(self.server.music_dir).expanduser() / Path(music).name).is_file()
                 and Path(music).suffix.lower() in MUSIC_EXTENSIONS
             ):
                 raise UploadError(400, "unknown music track")
@@ -2492,7 +2501,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         super().__init__(address, WorkspaceHandler)
 
 
-def build_server(root, bind, port, music_dir=DEFAULT_MUSIC_DIR, inbox=DEFAULT_INBOX,
+def build_server(root, bind, port, music_dir=None, inbox=DEFAULT_INBOX,
                  max_file_bytes=None, max_total_bytes=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
@@ -2505,7 +2514,7 @@ def build_server(root, bind, port, music_dir=DEFAULT_MUSIC_DIR, inbox=DEFAULT_IN
     )
 
 
-def build_summary(root, bind, port, projects, status, started, music_dir=DEFAULT_MUSIC_DIR,
+def build_summary(root, bind, port, projects, status, started, music_dir=None,
                   inbox=DEFAULT_INBOX):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
@@ -2543,6 +2552,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=DEFAULT
         "url": f"{base}/",
         "projects": entries,
         "music_tracks": len(list_music_tracks(music_dir)),
+        "music_library": str(Path(music_dir).expanduser()) if music_dir else None,
         "inbox": str(Path(inbox).expanduser().resolve()),
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
@@ -2596,19 +2606,22 @@ def main(argv=None):
         root = resolve_root(args.workspaces)
         bind = resolve_bind(args.bind)
         inbox = Path(args.inbox).expanduser().resolve()
+        music_dir = music_library(args.music_dir)
+        if music_dir is None:
+            print(f"[warn] {NO_MUSIC_LIBRARY_MESSAGE}", file=sys.stderr)
         try:
             server = build_server(
                 root,
                 bind,
                 args.port,
-                args.music_dir,
+                music_dir,
                 inbox,
                 args.max_upload_mb * 1024 * 1024,
                 args.max_total_mb * 1024 * 1024,
             )
         except OSError as exc:
             raise ServeError(f"could not bind {bind}:{args.port}: {exc}") from exc
-    except ServeError as exc:
+    except (ServeError, ConfigError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
 
@@ -2616,7 +2629,7 @@ def main(argv=None):
     projects = discover_projects(root)
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
-        args.music_dir, inbox,
+        music_dir, inbox,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

@@ -103,4 +103,35 @@ def _validate(data):
         else:
             raise ConfigError("llm_mock_text must be a string or a mapping of role to string")
 
+    music = data.get("music")
+    if music is not None:
+        if not isinstance(music, dict):
+            raise ConfigError("music must be a mapping")
+        library = music.get("library")
+        if library is not None and (not isinstance(library, str) or not library):
+            raise ConfigError("music.library must be a non-empty string")
+
     return data
+
+
+MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
+
+
+def music_library(cli_value=None, config=None):
+    """The music library folder: CLI flag, else MUSIC_LIBRARY_ENV, else music.library.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(MUSIC_LIBRARY_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("music")
+    if isinstance(section, dict):
+        value = section.get("library")
+        if value:
+            return Path(value).expanduser()
+    return None
