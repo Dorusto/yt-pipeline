@@ -29,8 +29,13 @@ from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 BATCH_CHARS = 80000
+
+
+class AnalysisError(RuntimeError):
+    """A usage or input problem in analyze_srt (exit 2)."""
 
 _client = None
 
@@ -422,13 +427,9 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
         print(f"\nCandidați salvați → {candidates_file.name}")
 
         if select is None and not sys.stdin.isatty():
-            error = "--select is required when stdin is not a terminal (1,3,5 | all | none)"
-            print(f"[error] {error}", file=sys.stderr)
-            return {
-                "ok": False,
-                "error": error,
-                **summary_fields(started, spent_usd()),
-            }, EXIT_USAGE
+            raise AnalysisError(
+                "--select is required when stdin is not a terminal (1,3,5 | all | none)"
+            )
 
         # --- Confirmare tăiere ---
         try:
@@ -475,11 +476,9 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
             **summary_fields(started, spent_usd()),
         }, EXIT_OK
     except ConfigError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return {"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}, EXIT_USAGE
-    except LLMError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return {"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}, EXIT_RUNTIME
+        raise AnalysisError(str(exc)) from exc
+    except LLMError:
+        raise
 
 
 def main():
@@ -502,15 +501,20 @@ def main():
             print("Folosește căi absolute (ex: <clip-folder>/Export/subtitles/<clip>_RO.srt)")
             sys.exit(EXIT_USAGE)
 
-    if json_out:
-        with contextlib.redirect_stdout(sys.stderr):
+    try:
+        if json_out:
+            with contextlib.redirect_stdout(sys.stderr):
+                summary, code = run_analysis(
+                    srt_file, video_file, youtube_url, shorts_config_path, select, started
+                )
+        else:
             summary, code = run_analysis(
                 srt_file, video_file, youtube_url, shorts_config_path, select, started
             )
-    else:
-        summary, code = run_analysis(
-            srt_file, video_file, youtube_url, shorts_config_path, select, started
-        )
+    except (AnalysisError, ConfigError) as exc:
+        sys.exit(report_error(exc, EXIT_USAGE, json_out, **summary_fields(started, spent_usd())))
+    except LLMError as exc:
+        sys.exit(report_error(exc, EXIT_RUNTIME, json_out, **summary_fields(started, spent_usd())))
 
     if json_out:
         print(json.dumps(summary))

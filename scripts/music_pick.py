@@ -30,6 +30,7 @@ from pathlib import Path
 
 from common.config import ConfigError, music_library, no_music_library_message
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 
 TOOL = "scripts/music_pick.py"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
@@ -67,7 +68,7 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/music_pick.py --library <music-library> --brief \"about 60 seconds\" --workspace ~/ws\n"
+            "  python scripts/music_pick.py --library <music-library> --brief \"about 60 seconds\" --workspace <workspace>\n"
             "  python scripts/music_pick.py --library <music-library> --brief-file brief.txt --json\n"
             "  python scripts/music_pick.py --list --json\n"
         ),
@@ -434,14 +435,11 @@ def main(argv=None):
                 force=args.force,
             )
     except (MusicPickRuntimeError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except MusicPickError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except ConfigError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     elif args.list:

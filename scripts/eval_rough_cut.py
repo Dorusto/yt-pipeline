@@ -38,6 +38,7 @@ import yaml
 
 from common.constants import TICKS_PER_SECOND
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import media_item_path, word_in_window
 
@@ -605,24 +606,15 @@ def main(argv=None):
                           args.section_min_s, args.until_s, review_rows)
         report["wall_time_s"] = round(time.monotonic() - started, 3)
     except EvalRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (EvalError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.out:
         try:
             atomic_write_json(args.out, report)
         except OSError as exc:
-            print(f"[error] cannot write {args.out}: {exc}", file=sys.stderr)
-            if args.json:
-                print(json.dumps({"ok": False, "error": str(exc)}))
-            return EXIT_RUNTIME
+            return report_error(f"cannot write {args.out}: {exc}", EXIT_RUNTIME, args.json)
 
     if args.json:
         print(json.dumps(report))

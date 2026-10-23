@@ -28,6 +28,7 @@ from pathlib import Path
 
 from common.config import ConfigError, no_projects_message, projects_path
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 DEFAULT_BRIEF = (
@@ -679,8 +680,7 @@ def main(argv=None):
     try:
         inbox, projects, state_path = resolve_paths(args)
     except (InboxError, ConfigError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     default_brief = args.default_brief if args.default_brief is not None else DEFAULT_BRIEF
     settings = Settings(
         quiet_minutes=args.quiet_minutes,

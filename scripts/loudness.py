@@ -32,6 +32,7 @@ from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path
 from common.filmcraft import cli_path
 
@@ -451,8 +452,7 @@ def main(argv=None):
                 args.dry_run,
             )
     except LoudnessError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return exc.code
+        return report_error(exc, exc.code, args.json)
 
     if args.json:
         print(json.dumps(summary))

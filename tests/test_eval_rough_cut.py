@@ -240,7 +240,7 @@ def test_missing_edit_is_exit_2(tmp_path, capsys):
     )
     assert code == EXIT_USAGE
     assert "nope.json" in err
-    assert report == {"ok": False, "error": report["error"]}
+    assert report == {"ok": False, "error": report["error"], "exit_code": EXIT_USAGE}
 
 
 def test_missing_sessions_is_exit_2(tmp_path, capsys):
@@ -431,7 +431,7 @@ def test_until_s_nonpositive_is_exit_2(tmp_path, capsys):
         )
         assert code == EXIT_USAGE
         assert "--until-s" in err
-        assert report == {"ok": False, "error": report["error"]}
+        assert report == {"ok": False, "error": report["error"], "exit_code": EXIT_USAGE}
 
 
 def write_review(tmp_path, rows):

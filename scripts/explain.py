@@ -26,6 +26,7 @@ from html import escape
 from pathlib import Path
 
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.frames import thumbnail_data_uri
 from common.moves import middle_speed_of
 from common.schema import SchemaError, validate
@@ -94,11 +95,9 @@ def main(argv=None):
     try:
         summary, exit_code = run(args.workspace, out=args.out, force=args.force)
     except (ExplainError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except OSError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     line = (
         f"{summary['status']}: {summary['out']} "
         f"({summary['slots']} slots, {summary['candidates']} candidates)"

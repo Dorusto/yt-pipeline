@@ -22,6 +22,7 @@ from pathlib import Path
 from common.constants import TICKS_PER_SECOND
 from common.filmcraft import parse_frame_rate
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 ROSE = "rose"
 SCHEMA_VERSION = "1"
 
@@ -213,8 +214,7 @@ def main(argv=None):
     try:
         summary = run(args.project, args.sequence, args.out, args.todo)
     except MarkersError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps(summary))

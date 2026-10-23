@@ -35,6 +35,7 @@ from common.timeline_words import (
     word_in_window,
 )
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 
 class ShortsRuntimeError(RuntimeError):
@@ -792,23 +793,11 @@ def main(argv=None) -> int:
             )
             corrections = load_corrections(corrections_path) if corrections_path else []
     except UsageError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json, **summary_fields(started))
     except ShortsRuntimeError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json, **summary_fields(started))
     except (RuntimeError, TimelineWordsError, CorrectionsError) as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json, **summary_fields(started))
 
     out_dir = video_path.parent
     shorts_dir = out_dir / "shorts"

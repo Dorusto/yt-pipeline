@@ -42,6 +42,7 @@ from PIL import Image
 
 from common.config import ConfigError, load_config
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.frames import read_frame_pairs
 from common.llm import BudgetExceeded, LLMError
 from common.peak import valid_vision_peak
@@ -879,17 +880,13 @@ def main(argv=None):
             frame_mode=args.frame_mode,
         )
     except DescribeRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (DescribeError, ConfigError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except LLMError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except OSError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

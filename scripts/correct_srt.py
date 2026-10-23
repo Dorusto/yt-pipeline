@@ -30,6 +30,7 @@ from common.corrections import (
 )
 from common.summary import summary_fields
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 
 def main():
@@ -38,11 +39,7 @@ def main():
     try:
         run(json_out, started)
     except CorrectionsError as exc:
-        if json_out:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(EXIT_USAGE)
+        sys.exit(report_error(exc, EXIT_USAGE, json_out, **summary_fields(started)))
 
 
 def run(json_out=False, started=None):

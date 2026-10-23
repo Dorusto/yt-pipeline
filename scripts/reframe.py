@@ -37,6 +37,7 @@ from common.faces import (
     make_detector,
 )
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.schema import SchemaError, validate_or_raise
 from common.summary import summary_fields
 
@@ -523,14 +524,11 @@ def main(argv=None):
     try:
         summary, exit_code = run(args)
     except ReframeRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (FacesError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ReframeError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

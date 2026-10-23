@@ -30,6 +30,7 @@ from pathlib import Path
 import yaml
 
 from common.exit_codes import EXIT_ATTENTION, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 
 
 class EvalError(RuntimeError):
@@ -248,14 +249,12 @@ def main(argv=None):
         report = evaluate(edit, expectations, workspace, expect_path, edit_path)
         report["wall_time_s"] = round(time.monotonic() - started, 2)
     except EvalError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.out:
         try:
             atomic_write_json(Path(args.out).expanduser(), report)
         except OSError as exc:
-            print(f"[error] cannot write {args.out}: {exc}", file=sys.stderr)
-            return EXIT_RUNTIME
+            return report_error(f"cannot write {args.out}: {exc}", EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(report, indent=2))
     else:

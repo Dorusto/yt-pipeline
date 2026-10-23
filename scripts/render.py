@@ -45,6 +45,7 @@ from common.photos import ensure_jpeg, open_photo
 from common import vertical
 from common.schema import SchemaError, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 FPS = 25
 SAMPLE_RATE = 48000
@@ -1028,11 +1029,9 @@ def main(argv=None):
         if len(summaries) > 1:
             summary["vertical"] = summaries[1]
     except (RenderRuntimeError, AmbienceError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (RenderError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

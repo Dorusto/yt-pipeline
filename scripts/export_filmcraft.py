@@ -34,6 +34,7 @@ from common.filmcraft import DEFAULT_FRAME_RATE, frame_rate_fraction
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import slot_length
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 SCHEMA_VERSION = 15
 GENERATOR = "yt-pipeline export_filmcraft.py"
 DEFAULT_SEQUENCE = "Main"
@@ -642,10 +643,7 @@ def main(argv=None):
     try:
         summary = run(args.edit, args.out, options)
     except ExportError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))

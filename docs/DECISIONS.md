@@ -2482,3 +2482,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not one code for all errors:** the whole point of F08 is that an agent can tell "fix your input" from "the run broke" without reading the tool.
 
 **Consequence:** every tool returns the constants, the tests assert the constants (and the test names name the code they assert), the table is in `docs/RULES.md` and in the README's Exit codes section, and the skills name the new codes. `mode_b.py` and its skill keep their own table. No schema change.
+
+---
+
+## [2026-10-23] One structured error helper for every `--json` tool (AUDIT 2026-10 lot 3b2, F24)
+
+**Context:** F24: only 12 of 50 scripts printed a structured `{"ok": false, "error": ...}` on their error paths and none carried the exit code; the rest printed a bare `[error]` line to stderr, so an agent could not read a failure as data. The lot 3b1 exit-code table gave the codes a meaning; this lot gives the error object one shape.
+
+**Decision:** `scripts/common/errors.py` gains `report_error(error, exit_code, json_out, **extra)`: it prints the human `[error] {error}` line to stderr and, when `json_out`, one `{"ok": false, "error": str(error), "exit_code": exit_code, **extra}` object on stdout, and returns `exit_code` so a caller writes `return report_error(exc, EXIT_USAGE, args.json)`. Every tool with `--json` uses it on its tool-level error paths (the `main()` handlers and the legacy `sys.exit` paths); `extra` carries the `summary_fields(...)` keys where the tool already reported them. `mode_b.py` drops its private `report_error` for the shared one (its own 0/1/2/3 codes are passed through). Per-item errors that let the tool continue (proxy's per-file failures, the chain tools' child-step lines) and `llm_director`'s post-run detail line stay as they are: they are not the tool's error path.
+
+**Consequence:** an agent reads the same error object from every `--json` tool, with the exit code inside it; `tests/test_explain.py` and `tests/test_eval_rough_cut.py` assert the new shape. The no-personal-setup guard gains `~/ws` and scans `config.yaml.example` and `docs/VISION.md`; `tests/test_inbox.py` imports the one banned list. No schema change.

@@ -27,6 +27,7 @@ import cv2
 
 from common.ffmpeg_tools import ffmpeg_path
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 RATIO_4K = 0.125
 RATIO_1080P = 0.25
@@ -355,11 +356,9 @@ def main(argv=None):
             out=args.out,
         )
     except MatteError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
 
     if args.json:
         print(json.dumps(summary))

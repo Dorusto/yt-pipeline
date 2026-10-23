@@ -31,6 +31,7 @@ from common import notify, versions
 from common.config import ConfigError, music_library, no_music_library_message
 from common.media import video_files
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/recap.py"
@@ -1027,8 +1028,7 @@ def main(argv=None):
         if music == "auto" and music_dir is None:
             raise RecapError(no_music_library_message("--music-dir"))
     except (RecapError, ConfigError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     ctx = Context(
         source=source,
         workspace=workspace,

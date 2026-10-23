@@ -26,6 +26,7 @@ from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 BATCH_SIZE = 20
 WORKERS = 4
@@ -140,17 +141,9 @@ def main():
 
         print(f"Salvat: {output_file}", file=stream)
     except ConfigError as exc:
-        if json_out:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(EXIT_USAGE)
+        sys.exit(report_error(exc, EXIT_USAGE, json_out, **summary_fields(started, spent_usd())))
     except LLMError as exc:
-        if json_out:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(EXIT_RUNTIME)
+        sys.exit(report_error(exc, EXIT_RUNTIME, json_out, **summary_fields(started, spent_usd())))
 
     if json_out:
         print(json.dumps({

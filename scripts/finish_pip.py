@@ -35,6 +35,7 @@ from common.filmcraft import cli_path, parse_frame_rate
 from common.media import clip_kind, is_matte_export, is_video_name
 from common.overlap import overlap_bounds
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
@@ -1008,15 +1009,9 @@ def main(argv=None):
     try:
         summary = run(args.sequence, args.camera_dir, options)
     except FinishPipError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
 
     if args.json:
         print(json.dumps(summary))

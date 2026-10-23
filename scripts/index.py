@@ -36,6 +36,7 @@ from html import escape
 from pathlib import Path
 
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.frames import thumbnail_data_uri
 from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
@@ -252,14 +253,11 @@ def main(argv=None):
             no_html=args.no_html,
         )
     except ShotlogRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ShotlogError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except OSError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

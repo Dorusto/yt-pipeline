@@ -33,6 +33,7 @@ from pathlib import Path
 import yaml
 
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.overlap import overlap_seconds
 from common.schema import SchemaError, validate_or_raise
 
@@ -650,14 +651,12 @@ def main(argv=None):
         }
         validate_or_raise(report, "eval")
     except (EvalError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.out:
         try:
             _atomic_write_json(Path(args.out).expanduser(), report)
         except OSError as exc:
-            print(f"[error] cannot write {args.out}: {exc}", file=sys.stderr)
-            return EXIT_RUNTIME
+            return report_error(f"cannot write {args.out}: {exc}", EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(report, indent=2))
     else:

@@ -31,6 +31,7 @@ import cv2
 import numpy as np
 
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.schema import SchemaError, validate, validate_or_raise
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
@@ -1459,11 +1460,9 @@ def main(argv=None):
             width=args.width,
         )
     except (MotionError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except OSError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

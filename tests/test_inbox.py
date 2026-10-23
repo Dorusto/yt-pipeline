@@ -9,6 +9,7 @@ import yaml
 
 import inbox
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from test_no_personal_setup import BANNED as BANNED_STRINGS
 
 
 def make_clip(path, content=b"clip"):
@@ -654,17 +655,6 @@ VALID_CONFIG = {
     "llm_budget_usd": None,
     "llm_backend": "mock",
 }
-
-BANNED_STRINGS = (
-    "~/Videos",
-    "~/media",
-    "/root/media",
-    "~/projects",
-    "~/Proiecte",
-    "%h/media",
-    "~/yt-watchdog",
-    "Dorusto/resurse",
-)
 
 
 def write_config(tmp_path, data):

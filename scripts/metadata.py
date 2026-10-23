@@ -28,6 +28,7 @@ from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "metadata.md"
 MEMBERS_SENTENCE = (
@@ -550,11 +551,9 @@ def main(argv=None):
             chapters_path=args.chapters,
         )
     except (MetadataRuntimeError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (MetadataError, ConfigError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps(summary))

@@ -32,6 +32,7 @@ from common.brand import BrandError, parse_hex_color
 from common.brand import load_brand as load_brand_kit
 from common.brand import resolve_font as resolve_font_kit
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/thumbnail.py"
 FONT_KEYS = ("title", "kicker", "tag")
@@ -666,11 +667,9 @@ def main(argv=None):
     try:
         summary = render(args, started)
     except ThumbnailRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ThumbnailError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary, indent=2))
     else:

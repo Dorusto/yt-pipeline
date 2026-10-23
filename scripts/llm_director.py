@@ -52,6 +52,7 @@ from common.overlap import overlap_seconds
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/llm_director.py"
 SCHEMA_VERSION = "0.1"
@@ -2833,11 +2834,9 @@ def main(argv=None):
             speed_ramp=args.speed_ramp,
         )
     except (LLMDirectorRuntimeError, LLMError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (LLMDirectorError, ConfigError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

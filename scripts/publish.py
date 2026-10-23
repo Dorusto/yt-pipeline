@@ -29,6 +29,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/publish.py"
@@ -1077,8 +1078,7 @@ def main(argv=None):
     try:
         ctx = build_context(args)
     except PublishError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     summary = run(ctx)
     if args.json:
         print(json.dumps(summary))

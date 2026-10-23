@@ -52,6 +52,7 @@ from common.timeline_words import fade_for_join
 from common.pacing import estimate_all_good
 from common.versions import list_versions
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -2652,11 +2653,9 @@ def main(argv=None):
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
     except ServeRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ServeError, ConfigError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     port = server.server_address[1]
     projects = discover_projects(root)

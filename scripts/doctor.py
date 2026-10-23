@@ -30,6 +30,7 @@ from pathlib import Path
 
 from common.config import ConfigError
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/doctor.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -354,8 +355,7 @@ def main(argv=None):
     try:
         checks = run_checks(source, workspace)
     except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     summary = build_summary(checks, source, workspace, started)
     if args.json:
         print(json.dumps(summary))

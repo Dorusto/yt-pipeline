@@ -322,7 +322,9 @@ def test_missing_edit_json_exits_2(tmp_path):
     result = run_tool(workspace, "--json")
     assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
-    assert result.stdout.strip() == ""
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == EXIT_USAGE
 
 
 def test_missing_workspace_exits_2(tmp_path):

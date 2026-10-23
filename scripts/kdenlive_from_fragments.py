@@ -42,6 +42,7 @@ import yaml
 from common.schema import SchemaError, validate
 from common.summary import summary_fields
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 FPS = 25
 
@@ -314,11 +315,7 @@ def main(argv=None):
     try:
         out_path = build(args.fragments, quiet=args.json)
     except (SchemaError, FileNotFoundError) as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json, **summary_fields(started))
 
     if not args.skip_melt:
         result = subprocess.run(

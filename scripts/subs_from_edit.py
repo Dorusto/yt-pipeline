@@ -29,6 +29,7 @@ from common.timeline_words import (
     plan_from_fcproj,
 )
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 SENTENCE_END = (".", "!", "?", "\u2026")
 MAX_LINES = 2
@@ -239,10 +240,7 @@ def main(argv=None):
             args.name,
         )
     except (SubsError, TimelineWordsError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))

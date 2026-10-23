@@ -86,6 +86,8 @@ Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_
 
 **Exit codes** (every tool, constants in `scripts/common/exit_codes.py`): `0` success, `1` finished but something needs a human look (check-type tools, suspect results), `2` usage/input/config error and nothing ran, `3` runtime failure after work started (external program, model call, disk). `scripts/mode_b.py` is the one exception and keeps its own documented `0`/`1`/`2`/`3` meanings (all clear / suspect / incomplete / error).
 
+**Structured errors** (`--json`): when a `--json` run fails, every tool prints one `{"ok": false, "error": "...", "exit_code": N}` object on stdout (the human `[error]` line stays on stderr), through `scripts/common/errors.py` `report_error`, so an agent reads the same shape everywhere.
+
 ---
 
 ## Foundation (AI Director, phase D0)

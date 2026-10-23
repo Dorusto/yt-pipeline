@@ -42,6 +42,7 @@ from common.peak import centre_window, choose_peak, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/director.py"
 SCHEMA_VERSION = "0.1"
@@ -1793,11 +1794,9 @@ def main(argv=None):
     try:
         summary, record = run(args, started)
     except OSError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (DirectorError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

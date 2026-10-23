@@ -148,4 +148,4 @@ Do not switch coder models mid-task. Vision backend is a config value.
 - `.gitignore` ignores `*.json`; `opencode.json`, `schemas/*.json` and `tests/fixtures/**/*.json` are re-included.
 - The build LXC has no GPU and no nvenc. Anything GPU-bound needs a CPU fallback or a mock for tests.
 - Test media: Doru's own short clips, transcoded to 720p H.264, fetched by a script, never committed (the repo is public).
-- `edit_workflow.py` lives outside this repo; its behavior is documented in the vault (`DOCUMENTATIE_editare_claude.md`). Older standalone copies of some scripts exist under `~/Proiecte-AI/YouTube/` and have drifted (see DECISIONS 2026-09-06). This repo is the one to build on.
+- `edit_workflow.py` lives outside this repo; its behavior is documented in the vault (`DOCUMENTATIE_editare_claude.md`). Older standalone copies of some scripts exist under `<old-checkout>` and have drifted (see DECISIONS 2026-09-06). This repo is the one to build on.

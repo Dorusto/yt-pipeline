@@ -66,6 +66,7 @@ from common.faces import (
 from common.frames import read_frame_pairs
 from common.media import parse_stamp, stem_timestamp, video_files
 from common.timeline_words import words_file_for
+from common.errors import report_error
 
 TOOL = "scripts/mode_b.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -813,14 +814,6 @@ def build_parser():
     return parser
 
 
-def report_error(exc, json_mode, code):
-    """Print a user-facing error and return its exit code."""
-    print(f"[error] {exc}", file=sys.stderr)
-    if json_mode:
-        print(json.dumps({"ok": False, "error": str(exc)}))
-    return code
-
-
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
@@ -838,7 +831,7 @@ def main(argv=None):
             Path(args.out_dir).expanduser().resolve() if args.out_dir else folder / "mode_b"
         )
     except ModeBError as exc:
-        return report_error(exc, args.json, 3)
+        return report_error(exc, 3, args.json)
 
     try:
         if args.check:
@@ -846,7 +839,7 @@ def main(argv=None):
         else:
             summary = run(folder, out_dir, args.backend, config, args.llm, args.force, mode_b_config)
     except ModeBError as exc:
-        return report_error(exc, args.json, 2)
+        return report_error(exc, 2, args.json)
 
     stream = sys.stderr if args.json else sys.stdout
     if args.json:

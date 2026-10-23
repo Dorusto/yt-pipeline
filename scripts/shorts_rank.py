@@ -60,6 +60,7 @@ from common.timeline_words import (
     video_spans_from_fcproj,
 )
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/shorts_rank.py"
 SCHEMA_VERSION = "0.2"
@@ -697,15 +698,9 @@ def main(argv=None):
             publish_dir, args.layout, spans=spans, layout_policy=layout_policy,
         )
     except (ShortsRankRuntimeError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ShortsRankError, ConfigError, TimelineWordsError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))

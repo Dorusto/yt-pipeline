@@ -18,6 +18,7 @@ import time
 
 from common.notify import NotifyError, resolve_url, send
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.summary import summary_fields
 
 
@@ -46,11 +47,7 @@ def main(argv=None):
     try:
         target = resolve_url(args.url)
     except NotifyError as exc:
-        if args.json:
-            print(json.dumps({"sent": False, "url": None, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json, sent=False, url=None, **summary_fields(started))
 
     if args.dry_run:
         summary = {"sent": False, "url": target, "message": message, **summary_fields(started)}
@@ -71,11 +68,7 @@ def main(argv=None):
             timeout=args.timeout,
         )
     except NotifyError as exc:
-        if args.json:
-            print(json.dumps({"sent": False, "url": target, "error": str(exc), **summary_fields(started)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json, sent=False, url=target, **summary_fields(started))
 
     summary = {"sent": True, "url": target, "status": status, **summary_fields(started)}
     if args.json:

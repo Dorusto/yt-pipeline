@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path
 
 ANALYSIS_RATE = 22050
@@ -535,11 +536,9 @@ def main(argv=None):
             force=args.force,
         )
     except BeatsRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except BeatsError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

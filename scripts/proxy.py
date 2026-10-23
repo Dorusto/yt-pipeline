@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder, video_encode_args
 from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo
 
@@ -345,11 +346,9 @@ def main(argv=None):
     try:
         summary = build_proxies(args.source, args.out, args.height, args.crf, args.force)
     except ProxyRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except ProxyError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:

@@ -26,6 +26,7 @@ from pathlib import Path
 
 from common.config import ConfigError, load_config, model_for
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.llm import LLMError, make_client
 from common.overlap import overlap_fraction, overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
@@ -457,11 +458,9 @@ def main(argv=None):
             max_entries=args.max_entries,
         )
     except (GraphicsPlanError, ConfigError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_USAGE
+        return report_error(exc, EXIT_USAGE, args.json)
     except LLMError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return report_error(exc, EXIT_RUNTIME, args.json)
 
     if args.json:
         print(json.dumps(summary))
