@@ -56,7 +56,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Architect: MiMo V2.6 Pro via OpenRouter; coder: DeepSeek V4.1 Flash (fallback GLM 5.3 Flash). Do not switch coder models mid-task. — 2026-10-12
 - Vision default: GLM 5.3 Flash (fallback DeepSeek V4.1 Flash); the backend is a config value, never code. — 2026-10-13
 - Local Qwen3.8 27B (4-bit, RTX 3090, vLLM) takes over for private footage. — 2026-10-12
-- Every LLM call goes through `scripts/common/llm.py`: `usage.cost` charged per call (missing cost raises), a per-project spend ledger caps the whole job; stop and report at the budget cap. — 2026-10-12
+- Every LLM call goes through `scripts/common/llm.py`: `usage.cost` charged per call (missing cost raises), a per-project spend ledger caps the whole job; stop and report at the budget cap; a model answer that is empty or not valid JSON is retried once, both attempts charged to the budget. — 2026-10-12 / 2026-10-23
 - Transcriber (`scripts/transcribe.py`): openai-whisper (turbo on GPU, tiny on CPU) behind a `Transcriber` interface, `--backend mock` for tests and offline runs, lazy torch/whisper imports; its `_words.json` is the Whisper shape that `subs_from_edit.py --words-dir` reads. — 2026-10-20
 - `config.yaml` holds model ids per role and the per-run budget; `llm_backend: mock` for offline runs; no secrets in the file. — 2026-10-12
 - Music: YuE2 first (editable ABC score → cuts land on beats by construction), ACE-Step 1.5 fallback; excluded for licence: MusicGen, AudioGen, MMAudio, HunyuanVideo-Foley. — 2026-10-13

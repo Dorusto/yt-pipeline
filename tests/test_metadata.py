@@ -210,6 +210,30 @@ def test_missing_json_key_exits_3(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in err
 
 
+class RetryClient(MockClient):
+    def __init__(self, answers, **kwargs):
+        super().__init__(**kwargs)
+        self.answers = list(answers)
+        self.calls = 0
+
+    def complete(self, role, messages, model=None, **kwargs):
+        self._default_text = self.answers[self.calls]
+        self.calls += 1
+        return super().complete(role, messages, model=model, **kwargs)
+
+
+def test_empty_first_answer_is_retried(tmp_path, monkeypatch):
+    srt, context = write_inputs(tmp_path)
+    client = RetryClient(["", json.dumps(FULL)], config=CONFIG)
+    patch(monkeypatch, client)
+    code = metadata.main(
+        [str(srt), "--context", str(context), "--out-dir", str(tmp_path / "out")]
+    )
+    assert code == EXIT_OK
+    assert (tmp_path / "out" / "metadata.md").is_file()
+    assert client.calls == 2
+
+
 BAD_CHAPTERS = [
     ("beyond", [{"timestamp": "99:99:99", "title": "Bad"}]),
     ("decreasing", [

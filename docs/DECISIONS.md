@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] scripts/common/llm.py: one retry on an empty or non-JSON model answer
+
+**Context:** Issue #77: `metadata.py` with xiaomi/mimo-v2.6-pro failed once in three runs with `model response is not valid JSON: Expecting value: line 1 column 1 (char 0)` (an empty response); a second identical run worked. `metadata.py` was the only tool that parsed a model answer with no retry — `chapters.py`, `shorts_rank.py` and `recap_meta.py` already retry once, and `graphics_plan.py` retries on validation errors.
+
+**Options:** (A) add the retry in each tool that parses JSON; (B) one shared `complete_json` on the LLM client.
+
+**Decision:** B. `LLMClient.complete_json(role, messages, model=None, **kwargs)` runs a completion, parses the answer with `common.jsonio.parse_model_json` and retries once when the answer is empty or not valid JSON; both attempts are charged to the budget and the returned `JSONResponse.cost_usd` is their sum. It raises `InvalidModelJSON` (an `LLMError`) when the second answer is still empty or not valid JSON. `metadata.py` calls it instead of `complete` plus a local parse.
+
+**Why not:** A) the retry would be copied into every tool and drift; the client owns the call, so it is the one place that can retry and charge both attempts. The tools that already retry keep their own validation retry.
+
+**Consequence:** `metadata.py`'s local `parse_model_json` is gone; `InvalidModelJSON` exits `EXIT_RUNTIME` through the existing `LLMError` handler. RULES line 59 records the retry.
+
+---
+
 ## [2026-10-23] The Costs page and costs.json (V020N lot n1)
 
 **Context:** The Costs page on a friend instance showed the owner instance's totals under a "Project costs (everyone)" heading next to a "This instance" heading, which read as two competing ledgers. The page and `costs.py totals` also computed the totals with different calls: the CLI passed only the month, the page passed `upkeep_percent=upkeep_percent()`.

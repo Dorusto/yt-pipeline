@@ -115,16 +115,6 @@ def build_message(prompt_text, context_text, transcript_text, channel_url, previ
     return "\n\n".join(parts)
 
 
-def parse_model_json(text):
-    raw = text.strip()
-    raw = re.sub(r"^```(?:json)?\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise MetadataRuntimeError(f"model response is not valid JSON: {exc}")
-
-
 def require_key(data, key):
     if key not in data:
         raise MetadataRuntimeError(f"model JSON is missing key '{key}'")
@@ -450,15 +440,13 @@ def run(
     message = build_message(
         prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url
     )
-    response = get_client().complete(
+    answer = get_client().complete_json(
         "metadata",
         [{"role": "user", "content": message}],
         temperature=0.3,
     )
 
-    fields = validate_model_json(
-        parse_model_json(response.text), require_chapters=chapters_path is None
-    )
+    fields = validate_model_json(answer.data, require_chapters=chapters_path is None)
     chapters = validate_chapters(
         file_chapters if file_chapters is not None else fields["chapters"], srt_end
     )
