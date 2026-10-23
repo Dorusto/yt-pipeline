@@ -1,3 +1,4 @@
+import re
 import json
 from pathlib import Path
 
@@ -76,7 +77,7 @@ def test_parse_real_releases_file():
     version, enforced, stable_files = check_stable.parse_stable_files(
         releases.read_text(encoding="utf-8")
     )
-    assert version == "v0.1.0"
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", version)
     assert enforced is True
     assert "scripts/serve.py" in stable_files
 

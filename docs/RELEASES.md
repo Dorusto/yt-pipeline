@@ -6,6 +6,13 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 
 A patch for friends' instances: the Costs page shows their own model cost first and the project's costs as voluntary. Stable and experimental lists as in v0.1.0.
 
+```stable-files
+scripts/serve.py
+scripts/recap.py
+scripts/common/versions.py
+scripts/quality.py
+```
+
 ## v0.1.0 (2026-10-23)
 
 Released on 2026-10-23 after the owner's real test on phone and laptop.
