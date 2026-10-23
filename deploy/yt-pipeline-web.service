@@ -1,0 +1,16 @@
+[Unit]
+Description=yt-pipeline web app (tailnet preview)
+Documentation=https://github.com/Dorusto/yt-pipeline/blob/master/docs/guides/pilot-host.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/yt-pipeline/env
+WorkingDirectory=<repo>
+ExecStart=<repo>/.venv/bin/python <repo>/scripts/serve.py --workspaces ${YT_PIPELINE_WORKSPACES}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -27,6 +27,25 @@ For the details see [docs/guides/user-guide.md](docs/guides/user-guide.md); agen
 
 Phone-only flow (Syncthing → inbox.py → serve.py → ntfy): [docs/guides/phone-flow.md](docs/guides/phone-flow.md).
 
+## Pilot host
+
+One small container per person, all on the same released tag; each person
+reaches only their own container through a Tailscale node share, and the inbox
+and the workspaces live on a NAS share mounted into the container. The owner
+sets up the Tailscale share, the NAS share, the mount and the env file; the
+update script does the rest.
+
+```bash
+cd <repo>
+sudo deploy/update.sh <tag>          # fetch the tag, install, restart, smoke test, roll back on failure
+deploy/update.sh <tag> --dry-run     # print the steps, change nothing
+```
+
+The systemd unit template is `deploy/yt-pipeline-web.service` (an
+`EnvironmentFile` at `/etc/yt-pipeline/env`, not in the repo). The full guide,
+including the storage quota, the per-instance OpenRouter key and the project
+costs URL, is [docs/guides/pilot-host.md](docs/guides/pilot-host.md).
+
 ---
 
 ## Workflow

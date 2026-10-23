@@ -24,3 +24,4 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - Costs ledger.
 - The Costs page and the feedback/requests form.
 - Title, description and hashtags for a recap.
+- Pilot host install, update and rollback (`deploy/update.sh`, `deploy/yt-pipeline-web.service`, `docs/guides/pilot-host.md`).
