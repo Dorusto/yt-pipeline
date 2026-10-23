@@ -41,6 +41,7 @@ import numpy as np
 from PIL import Image
 
 from common.config import ConfigError, load_config
+from common.excluded import is_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import read_frame_pairs
@@ -777,10 +778,11 @@ def run(
     if model is None:
         model = make_vision_model(effective, ledger_path=spend_ledger)
     photos = _load_photos(workspace_path)
+    excluded = load_excluded(workspace_path)
     if photos_only:
         selected = []
     elif quality_dir.is_dir():
-        selected = _select_quality_files(quality_dir, clips)
+        selected = _select_quality_files(quality_dir, clips, excluded)
     elif photos:
         selected = []
     else:
@@ -1156,10 +1158,12 @@ def _normalize_tags(value):
     return tags
 
 
-def _select_quality_files(quality_dir, clips):
+def _select_quality_files(quality_dir, clips, excluded=None):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
-    selected = [path for path in files if _matches(path.stem, tokens)]
+    selected = [
+        path for path in files if _matches(path.stem, tokens) and not is_excluded(path.stem, excluded)
+    ]
     if not selected:
         raise DescribeError(f"no quality files matched in {quality_dir}")
     return selected

@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Files tab: see, add and leave out the files of a project (V010 lot files)
+
+**Context:** A project page shows the edit and the analyses but never the files themselves, so the user cannot see which clips and photos the project holds, add more into the same inbox source, or drop one from the edit without deleting it from disk. Every station lists clips by scanning the source or the proxy folder, so a file the user wants out would otherwise keep coming back.
+
+**Options:** (A) delete the unwanted file from disk; (B) a machine-owned `<workspace>/excluded.json` that every station reads and skips, plus a Files tab that lists the files, adds more into the recorded inbox source and toggles a name in and out; (C) a per-project ignore list only the director reads.
+
+**Decision:** B. `scripts/common/excluded.py` owns the interface: `load_excluded(workspace)` / `load_excluded_path(path)` return the set of names, `write_excluded` writes `{"excluded": [...]}` atomically and sorted, `exclude_name` / `include_name` add and remove one name, `is_excluded` matches a file name or its stem in both directions and `filter_excluded` drops the matching paths. `ingest.py`, `proxy.py` (`--exclude-file`), `motion.py`, `quality.py`, `describe.py`, `similarity.py` and `index.py` skip the excluded names; `recap.py` passes `<workspace>/excluded.json` to the proxy station and treats a source with no clips or photos as up to date when the proxy folder still holds files, so only the new files are proxied and analysed and the cached proxies are reused when the originals are gone. `serve.py` gains a Files tab (`?tab=files`, part of the `recap` feature) that lists every clip and photo from the proxies and the recorded inbox source with its state (`in the edit`, `new`, `left out`), an Add files form and a bin icon / Bring back button, and the write routes `POST /<project>/add-files` (streams into the recorded inbox source) and `POST /<project>/exclude-file` (writes `excluded.json`). No file is ever deleted from disk.
+
+**Why not:** A) destroys footage the user may want back; C) the stations would still list the file and the director would keep seeing it.
+
+**Consequence:** `<workspace>/excluded.json` is machine-owned and reversible; every station that lists clips or photos skips the names; the Files tab and the two routes are experimental in the v0.1.0 candidate.
+
+---
+
 ## [2026-10-23] The director's reviewer visible, and a reply before a new version (V010 lot dialog)
 
 **Context:** The LLM director's reviewer approves the edit or sends fixes back, but the user never sees the verdict, so a weak edit has no explanation on the project page. And a re-edit starts straight from the feedback box, so a request the director reads differently than the user meant costs a full director run and a new version.

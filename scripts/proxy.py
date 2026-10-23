@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 
+from common.excluded import filter_excluded, load_excluded_path
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder, video_encode_args
@@ -79,6 +80,10 @@ def build_parser():
         "--force",
         action="store_true",
         help="rebuild even when the proxy exists",
+    )
+    parser.add_argument(
+        "--exclude-file",
+        help="excluded.json whose names are skipped (or none)",
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -230,7 +235,7 @@ def encode_clip(source, out_path, height, crf, encoder):
     return active
 
 
-def build_proxies(source, out, height, crf, force):
+def build_proxies(source, out, height, crf, force, exclude_file=None):
     """Build proxies for ``source`` into ``out`` and return the run summary."""
     started = time.monotonic()
     source = Path(source).expanduser().resolve()
@@ -245,6 +250,10 @@ def build_proxies(source, out, height, crf, force):
                 f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) or photos "
                 f"({', '.join(sorted(PHOTO_EXTENSIONS))}) in {source}"
             )
+        if exclude_file is not None:
+            excluded = load_excluded_path(exclude_file)
+            clips = filter_excluded(clips, excluded)
+            photos = filter_excluded(photos, excluded)
     elif source.is_file():
         clips = [source]
     else:
@@ -344,7 +353,9 @@ def build_proxies(source, out, height, crf, force):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary = build_proxies(args.source, args.out, args.height, args.crf, args.force)
+        summary = build_proxies(
+            args.source, args.out, args.height, args.crf, args.force, args.exclude_file
+        )
     except ProxyRuntimeError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except ProxyError as exc:

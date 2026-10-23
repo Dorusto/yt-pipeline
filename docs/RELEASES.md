@@ -32,6 +32,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - Instance limits (storage cap, model-credit read) and the shared project-costs view (`GET /costs.json`).
 - The director's reviewer verdict on the project page and the "Ask the director" reply before a new version (llm_director.py --interpret-feedback, POST /<project>/feedback-reply).
 - The Why? and Shots pages open with a summary and collapsed sections, and the two tabs sit under a Details group.
+- The Files tab (see, add and leave out the files of a project, `excluded.json`).
 
 **Stable files** — the files behind the stable candidate above. A change to one
 needs the `Stable-change: approved` trailer on a commit in the range (see

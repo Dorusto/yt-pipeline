@@ -30,6 +30,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.excluded import filter_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.overlap import overlap_seconds
@@ -1073,6 +1074,7 @@ def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, wid
     """Analyse every clip of ``input_path`` into ``workspace/quality``; return a summary."""
     started = time.monotonic()
     clips = resolve_inputs(input_path)
+    clips = filter_excluded(clips, load_excluded(workspace))
     workspace_path = Path(workspace).expanduser().resolve()
     output_dir = workspace_path / "quality"
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -948,3 +948,19 @@ def test_music_help_names_the_three_ways():
     help_text = actions["music"].help
     for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
         assert way in help_text
+
+
+def test_proxy_up_to_date_when_source_gone_and_proxies_remain(tmp_path):
+    ctx = make_context(tmp_path)
+    (ctx.workspace / "proxy").mkdir(parents=True, exist_ok=True)
+    (ctx.workspace / "proxy" / "clip.mp4").write_bytes(b"proxy")
+    assert recap.is_up_to_date("proxy", ctx) is True
+
+
+def test_proxy_station_carries_the_exclude_file(tmp_path):
+    ctx = make_context(tmp_path)
+    stations = recap.build_stations(ctx)
+    proxy = next(station for station in stations if station["name"] == "proxy")
+    argv = proxy["argv"][0]
+    assert "--exclude-file" in argv
+    assert argv[argv.index("--exclude-file") + 1] == str(ctx.workspace / "excluded.json")

@@ -317,3 +317,42 @@ def test_rerun_rewrites_identical_clips(tmp_path):
     assert validate(second, "ingest") == []
     assert second["clips"] == first["clips"]
     assert second["clip_count"] == first["clip_count"]
+
+
+def test_excluded_clip_is_skipped(tmp_path):
+    source = tmp_path / "clips"
+    source.mkdir()
+    make_clip(source / "a_clip.mp4")
+    make_clip(source / "b_clip.mp4")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "excluded.json").write_text(
+        json.dumps({"excluded": ["b_clip.mp4"]}), encoding="utf-8"
+    )
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == EXIT_OK, result.stderr
+    data = read_ingest(workspace)
+    assert validate(data, "ingest") == []
+    assert [clip["file"] for clip in data["clips"]] == ["a_clip.mp4"]
+    assert data["clip_count"] == 1
+
+
+def test_all_clips_excluded_writes_zero(tmp_path):
+    source = tmp_path / "clips"
+    source.mkdir()
+    make_clip(source / "only.mp4")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "excluded.json").write_text(
+        json.dumps({"excluded": ["only"]}), encoding="utf-8"
+    )
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == EXIT_OK, result.stderr
+    data = read_ingest(workspace)
+    assert validate(data, "ingest") == []
+    assert data["clip_count"] == 0
+    assert data["clips"] == []

@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
+from common.excluded import is_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
@@ -140,10 +141,11 @@ def run(
         raise ShotlogError("weight vision + weight labels must be positive")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
+    excluded = load_excluded(workspace_path)
     ingest_photos = _load_ingest_photos(workspace_path)
-    photo_describes = _load_photo_describes(workspace_path)
+    photo_describes = _load_photo_describes(workspace_path, excluded)
     if quality_dir.is_dir():
-        selected = _select_quality_files(quality_dir, clips, required=not photo_describes)
+        selected = _select_quality_files(quality_dir, clips, excluded, required=not photo_describes)
     else:
         selected = []
     if not selected and not photo_describes:
@@ -756,12 +758,14 @@ def _photo_shot_key(describe_record, describe_path, lookup):
     return segment_key(clip_counter(name), PHOTO_SEGMENT_ID)
 
 
-def _load_photo_describes(workspace_path):
+def _load_photo_describes(workspace_path, excluded=None):
     describe_dir = workspace_path / "describe"
     if not describe_dir.is_dir():
         return []
     records = []
     for path in sorted(describe_dir.glob("*.json")):
+        if is_excluded(path.stem, excluded):
+            continue
         data = _load_json(path)
         if isinstance(data, dict) and data.get("media_type") == "photo":
             records.append((path, data))
@@ -783,10 +787,12 @@ def _input_files(workspace_path, quality_files, photo_describes=None):
     return files
 
 
-def _select_quality_files(quality_dir, clips, required=True):
+def _select_quality_files(quality_dir, clips, excluded=None, required=True):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
-    selected = [path for path in files if _matches(path.stem, tokens)]
+    selected = [
+        path for path in files if _matches(path.stem, tokens) and not is_excluded(path.stem, excluded)
+    ]
     if not selected and required:
         raise ShotlogError(f"no quality files matched in {quality_dir}")
     return selected

@@ -17,6 +17,7 @@ Build a machine-readable inventory of a folder of raw clips and still photos bef
 - `SOURCE_DIR` is scanned non-recursively: clips with an `.mp4`, `.mov` or `.m4v` extension and still photos with an `.jpg`, `.jpeg` or `.heic` extension (any letter case) count, each group sorted by file name. Subfolders are ignored.
 - `--workspace` is required. It is created if missing and `DIR/ingest.json` is written there. The source folder is never written to.
 - Re-running is safe: it rescans and rewrites `ingest.json` from scratch. Nothing else is touched.
+- Names listed in `<workspace>/excluded.json` (`{"excluded": ["C1634.MP4", ...]}`, written by the web app's Files tab) are skipped: they never reach `ingest.json`. The files stay on disk.
 - On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing folder, not a directory, neither a clip nor a photo found, unreadable input) or `3` (runtime failure after work started: ffprobe or photo decode failed, disk write failed). It never asks questions.
 - A folder with only photos (no clips) scans fine: `clip_count` is 0 and `photos` holds the stills.
 - A successful run prints a short summary: clip count, photo count, total duration and how many clips have gyro.

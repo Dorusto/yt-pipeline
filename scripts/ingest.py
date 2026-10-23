@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.excluded import filter_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.photos import PHOTO_EXTENSIONS, PhotoError, is_photo, photo_metadata
@@ -324,6 +325,9 @@ def scan(source_dir, workspace):
             f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) or photos "
             f"({', '.join(sorted(PHOTO_EXTENSIONS))}) in {source}"
         )
+    excluded = load_excluded(workspace)
+    clips = filter_excluded(clips, excluded)
+    photos = filter_excluded(photos, excluded)
     data = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_dir": str(source),

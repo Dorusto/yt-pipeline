@@ -64,7 +64,9 @@ from common.config import (
     web_features,
 )
 from common.costs import compute_totals, connect as connect_ledger
-from common.media import clip_kind
+from common.excluded import exclude_name, include_name, is_excluded, load_excluded
+from common.media import clip_kind, video_files
+from common.photos import is_photo
 from common.moves import slot_screen_length
 from common.timeline_words import fade_for_join
 from common.pacing import estimate_all_good
@@ -136,7 +138,7 @@ ARTIFACT_LABELS = (
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
-TABS = (("recap", "Recap"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
+TABS = (("recap", "Recap"), ("files", "Files"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 SHORTS_LAYOUT_POLICIES = ("auto", "on", "off")
 SHORTS_LAYOUTS = ("face", "split")
@@ -1937,6 +1939,193 @@ def render_shorts_panel(directory, name):
     return f'<style>{SHORTS_STYLE}</style><div class="shorts">{"".join(rows)}</div>'
 
 
+def recorded_source(directory):
+    """The inbox source folder recorded in .run.json, or None."""
+    data = _load_json(Path(directory) / ".run.json")
+    if not isinstance(data, dict):
+        return None
+    source = data.get("source")
+    return Path(source) if source else None
+
+
+def edit_file_names(path):
+    """The set of clip and photo file names used by an edit.json, or an empty set."""
+    data = _load_json(path)
+    if not isinstance(data, dict):
+        return set()
+    names = set()
+    for slot in data.get("video") or []:
+        if not isinstance(slot, dict):
+            continue
+        for key in ("clip", "photo"):
+            value = slot.get(key)
+            if isinstance(value, str) and value:
+                names.add(value)
+    for source in data.get("sources") or []:
+        if isinstance(source, dict):
+            value = source.get("file")
+            if isinstance(value, str) and value:
+                names.add(value)
+    return names
+
+
+def ingest_lengths(path):
+    """Map each clip file name in ingest.json to its duration_s."""
+    data = _load_json(path)
+    if not isinstance(data, dict):
+        return {}
+    lengths = {}
+    for clip in data.get("clips") or []:
+        if isinstance(clip, dict) and clip.get("file"):
+            lengths[clip["file"]] = clip.get("duration_s")
+    return lengths
+
+
+def format_size(size_bytes):
+    """Bytes as '45 MB' or '1.2 GB'."""
+    if not isinstance(size_bytes, (int, float)) or isinstance(size_bytes, bool):
+        return "0 MB"
+    if size_bytes >= BYTES_PER_GB:
+        return f"{size_bytes / BYTES_PER_GB:.1f} GB"
+    return f"{size_bytes / (1024 * 1024):.0f} MB"
+
+
+def _file_row(path, kind, edit_names, excluded, lengths, new=False):
+    name = path.name
+    return {
+        "name": name,
+        "kind": kind,
+        "size_bytes": path.stat().st_size if path.exists() else 0,
+        "length_s": lengths.get(name) if kind == "clip" else None,
+        "in_edit": name in edit_names,
+        "new": new,
+        "excluded": is_excluded(name, excluded),
+    }
+
+
+def _has_proxy(proxy_dir, path):
+    if (proxy_dir / path.name).is_file():
+        return True
+    if path.suffix.lower() == ".heic" and (proxy_dir / f"{path.stem}.jpg").is_file():
+        return True
+    return False
+
+
+def project_files(directory):
+    """Every clip and photo of a project with its edit state, from proxies and the inbox source."""
+    directory = Path(directory)
+    proxy_dir = directory / "proxy"
+    edit_names = edit_file_names(directory / "edit.json")
+    excluded = load_excluded(directory)
+    lengths = ingest_lengths(directory / "ingest.json")
+    files = []
+    seen = set()
+    for path in video_files(proxy_dir):
+        files.append(_file_row(path, "clip", edit_names, excluded, lengths))
+        seen.add(path.name)
+    if proxy_dir.is_dir():
+        for path in sorted(proxy_dir.iterdir(), key=lambda item: item.name):
+            if path.is_file() and is_photo(path):
+                files.append(_file_row(path, "photo", edit_names, excluded, lengths))
+                seen.add(path.name)
+    source = recorded_source(directory)
+    if source is not None and source.is_dir():
+        for path in video_files(source):
+            if path.name in seen or _has_proxy(proxy_dir, path):
+                continue
+            files.append(_file_row(path, "clip", edit_names, excluded, lengths, new=True))
+            seen.add(path.name)
+        for path in sorted(source.iterdir(), key=lambda item: item.name):
+            if not path.is_file() or not is_photo(path):
+                continue
+            if path.name in seen or _has_proxy(proxy_dir, path):
+                continue
+            files.append(_file_row(path, "photo", edit_names, excluded, lengths, new=True))
+            seen.add(path.name)
+    return files
+
+
+def _render_file_row(name, row):
+    if row["kind"] == "photo":
+        meta = f"photo · {format_size(row['size_bytes'])}"
+    else:
+        length = row["length_s"]
+        length_text = (
+            f"{length:.1f} s"
+            if isinstance(length, (int, float)) and not isinstance(length, bool)
+            else "clip"
+        )
+        meta = f"{length_text} · {format_size(row['size_bytes'])}"
+    if row["excluded"]:
+        state = "left out"
+    elif row["new"]:
+        state = "new"
+    elif row["in_edit"]:
+        state = "in the edit"
+    else:
+        state = "not in the edit"
+    if row["excluded"]:
+        form = (
+            f'<form class="file-row" method="post" action="/{html_escape(name)}/exclude-file">'
+            f'<input type="hidden" name="name" value="{html_escape(row["name"])}">'
+            '<input type="hidden" name="action" value="include">'
+            '<button type="submit" class="bring-back">Bring back</button>'
+            "</form>"
+        )
+    else:
+        form = (
+            f'<form class="file-row" method="post" action="/{html_escape(name)}/exclude-file">'
+            f'<input type="hidden" name="name" value="{html_escape(row["name"])}">'
+            '<input type="hidden" name="action" value="exclude">'
+            '<button type="submit" class="file-del" aria-label="Leave out">'
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>'
+            "</button></form>"
+        )
+    return (
+        f'<div class="file-row"><span class="file-name">{html_escape(row["name"])}</span>'
+        f'<span class="file-meta">{html_escape(meta)}</span>'
+        f'<span class="file-state">{html_escape(state)}</span>{form}</div>'
+    )
+
+
+def render_files_panel(directory, name, features=None, consent_text=None):
+    """The Files tab: every clip and photo with its state, add files and leave a file out."""
+    files = project_files(directory)
+    total = len(files)
+    new = sum(1 for row in files if row["new"])
+    excluded = sum(1 for row in files if row["excluded"])
+    rows = "".join(_render_file_row(name, row) for row in files)
+    consent = ""
+    if consent_text:
+        consent = (
+            f'<p class="consent-text">{html_escape(consent_text)}</p>'
+            '<label class="consent"><input type="checkbox" name="consent" value="1" required>'
+            " I agree</label>"
+        )
+    add = (
+        '<details class="add-files"><summary>Add files</summary>'
+        f'<form method="post" action="/{html_escape(name)}/add-files" enctype="multipart/form-data">'
+        '<div class="drop" data-drop>'
+        '<input type="file" name="files" multiple accept="video/*,image/*">'
+        '<p class="drop-hint">Drag clips and photos here, or tap to choose. '
+        '<span class="drop-count"></span></p></div>'
+        f"{consent}"
+        '<button class="go" type="submit">Add files</button>'
+        "</form></details>"
+    )
+    new_line = ""
+    if new:
+        new_line = (
+            f'<p class="files-new">{new} new files. They join the next edit. '
+            f'<a href="/{html_escape(name)}/?tab=files&reedit=1">Make a new edit</a></p>'
+        )
+    summary = (
+        f'<p class="files-summary">{total} files, {new} new since the last edit, '
+        f"{excluded} left out</p>"
+    )
+    return f"<style>{DROP_STYLE}</style>{summary}{new_line}{rows}{add}"
+
+
 def _render_tabs(name, enabled, tab):
     """The project tab bar: Recap, the Details group (Why? and Shots), then Cuts and Shorts."""
     labels = dict(TABS)
@@ -1948,6 +2137,8 @@ def _render_tabs(name, enabled, tab):
     parts = []
     if "recap" in enabled:
         parts.append(link("recap"))
+    if "files" in enabled:
+        parts.append(link("files"))
     details = [key for key in ("why", "shots") if key in enabled]
     if details:
         parts.append(
@@ -1961,7 +2152,7 @@ def _render_tabs(name, enabled, tab):
 
 
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
-                   feedback_prefill=""):
+                   feedback_prefill="", reedit_open=False, consent_text=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
@@ -1975,6 +2166,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         if key == "shorts" and (not has_shorts or not feature_on(features, "shorts")):
             continue
         if key in ("recap", "why", "shots") and not feature_on(features, key):
+            continue
+        if key == "files" and not feature_on(features, "recap"):
             continue
         enabled.append(key)
     if tab not in enabled:
@@ -1999,6 +2192,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         panels["cuts"] = render_cuts_panel(directory, name)
     if "shorts" in enabled:
         panels["shorts"] = render_shorts_panel(directory, name)
+    if "files" in enabled:
+        panels["files"] = render_files_panel(directory, name, features, consent_text=consent_text)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
     if estimate and estimate["shots"]:
@@ -2006,8 +2201,23 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             f' <span class="facts num">All good shots would make about '
             f'{format_length(estimate["seconds"])} ({estimate["shots"]} shots)</span>'
         )
+    files = project_files(directory)
+    total = len(files)
+    new = sum(1 for row in files if row["new"])
+    excluded = sum(1 for row in files if row["excluded"])
+    files_line = (
+        f'{total} files, {new} new since the last edit, {excluded} left out · '
+        f'<a href="/{html_escape(name)}/?tab=files">Manage files</a>'
+    )
     reedit = (
-        render_reedit(name, music_tracks, features=features, feedback_prefill=feedback_prefill)
+        render_reedit(
+            name,
+            music_tracks,
+            features=features,
+            feedback_prefill=feedback_prefill,
+            files_line=files_line,
+            open_=reedit_open,
+        )
         if feature_on(features, "recap")
         else ""
     )
@@ -2029,6 +2239,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         script += CUTS_SCRIPT
     if tab == "shorts":
         script += SHORTS_SCRIPT
+    if tab == "files":
+        script += DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT + FILES_SCRIPT
     refresh = 20 if status == "running" else None
     return render_page(name, body, active="projects", script=script, refresh=refresh, features=features)
 
@@ -2170,6 +2382,22 @@ var value=box.value;if(value&&value.slice(-1)!=='\\n')value+='\\n';
 box.value=value+line;box.focus();box.setSelectionRange(box.value.length,box.value.length);});});});})();
 """
 
+# Files tab: each kept file row's exclude form becomes a bin icon that asks
+# "Leave out <name>?" with Yes and No; Yes submits the form.
+FILES_SCRIPT = """
+(function(){var bin='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>';
+[].forEach.call(document.querySelectorAll('form.file-row'),function(f){
+var a=f.querySelector('input[name=action]');if(!a||a.value!=='exclude')return;
+var n=f.querySelector('input[name=name]');var label=n?n.value:'this file';
+var b=f.querySelector('button');if(!b)return;b.innerHTML=bin;b.setAttribute('aria-label','Leave out '+label);
+b.addEventListener('click',function(e){e.preventDefault();
+var ask=document.createElement('div');ask.className='shot-ask';
+ask.innerHTML='<span>Leave out '+label+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
+f.appendChild(ask);
+ask.querySelector('.no').onclick=function(){ask.remove();};
+ask.querySelector('.yes').onclick=function(){f.submit();};});});})();
+"""
+
 
 def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html=""):
     """Return the Upload page with the form wired to POST /upload."""
@@ -2211,7 +2439,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
                        features=features)
 
 
-def render_reedit(name, music_tracks, features=None, feedback_prefill=""):
+def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_line="", open_=False):
     """Return the Re-edit form with the same options plus a feedback box."""
     fields = [
         ("Brief", f'<textarea class="brief-input" name="brief" rows="4" '
@@ -2221,8 +2449,10 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill=""):
     fields.extend(option_fields(music_tracks))
     fields.append(("What should change?", '<textarea name="feedback" rows="3" '
                    f'placeholder="drop 0071/s2, tunnel longer">{html_escape(feedback_prefill)}</textarea>'))
+    open_attr = " open" if open_ else ""
     return (
-        "<details class=\"reedit\"><summary>Re-edit</summary>"
+        f'<details class="reedit"{open_attr}><summary>Re-edit</summary>'
+        f"{files_line}"
         f'<form method="post" action="/{html_escape(name)}/re-edit" '
         'enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
@@ -2543,13 +2773,10 @@ def parse_urlencoded(body):
     return fields
 
 
-def move_into_inbox(staged, inbox, folder):
-    """Move the staged files to ``inbox/folder``; refuse to overwrite anything."""
-    destination_dir = inbox / folder
+def move_staged(staged, destination_dir):
+    """Move the staged files into ``destination_dir``; refuse to overwrite anything."""
+    destination_dir = Path(destination_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
-    resolved_dir = destination_dir.resolve()
-    if inbox.resolve() not in resolved_dir.parents:
-        raise UploadError(400, "refused: destination outside the inbox")
     moved = []
     for base in sorted(staged):
         target = destination_dir / base
@@ -2558,6 +2785,16 @@ def move_into_inbox(staged, inbox, folder):
         os.replace(staged[base], target)
         moved.append(base)
     return moved
+
+
+def move_into_inbox(staged, inbox, folder):
+    """Move the staged files to ``inbox/folder``; refuse to overwrite anything."""
+    destination_dir = inbox / folder
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    resolved_dir = destination_dir.resolve()
+    if inbox.resolve() not in resolved_dir.parents:
+        raise UploadError(400, "refused: destination outside the inbox")
+    return move_staged(staged, destination_dir)
 
 
 def write_text_atomic(path, text):
@@ -3010,6 +3247,18 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_drop_shot(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "add-files":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_add_files(segments[0])
+            return
+        if len(segments) == 2 and segments[1] == "exclude-file":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_exclude_file(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "cut-review":
             self.handle_cut_review(segments[0])
             return
@@ -3216,6 +3465,68 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
             return
         self.send_redirect(f"/{project}/?tab=recap")
+
+    def handle_add_files(self, project):
+        """Store more files in the project's recorded inbox source folder."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        source = recorded_source(workspace)
+        if source is None or not source.is_dir():
+            self.send_error_text(409, "no recorded source for this project")
+            return
+        staging = None
+        try:
+            reader = self._reader()
+            self._check_storage_capacity()
+            fields, staged, staging = parse_upload(reader, self.server.inbox)
+            if not staged:
+                raise UploadError(400, "no files uploaded")
+            if self.server.consent_text and not fields.get("consent"):
+                raise UploadError(400, "consent is required")
+            move_staged(staged, source)
+        except UploadError as exc:
+            if staging is not None:
+                discard_staging(staging)
+            self.send_error_text(exc.status, exc.message)
+            return
+        finally:
+            if staging is not None and staging.exists():
+                discard_staging(staging)
+        self.send_redirect(f"/{project}/?tab=files")
+
+    def handle_exclude_file(self, project):
+        """Leave a file out of the edit, or bring it back, in the workspace's excluded.json."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        name = (fields.get("name") or "").strip()
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            self.send_error_text(400, "invalid file name")
+            return
+        action = (fields.get("action") or "exclude").strip() or "exclude"
+        if action not in ("exclude", "include"):
+            self.send_error_text(400, "invalid action")
+            return
+        try:
+            if action == "include":
+                include_name(workspace, name)
+            else:
+                exclude_name(workspace, name)
+        except OSError as exc:
+            self.send_error_text(500, f"could not save the file list: {exc}")
+            return
+        self.send_redirect(f"/{project}/?tab=files")
 
     def handle_delete_project(self, project):
         """Delete the workspace and its inbox source; refuse while a run is going."""
@@ -3544,6 +3855,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     compare_with=parse_number(self.path, "with"),
                     features=features,
                     feedback_prefill=query_param(self.path, "feedback") or "",
+                    reedit_open=parse_flag(self.path, "reedit"),
+                    consent_text=self.server.consent_text,
                 ),
                 send_body,
             )

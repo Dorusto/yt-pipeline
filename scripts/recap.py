@@ -30,6 +30,7 @@ from pathlib import Path
 from common import notify, versions
 from common.config import ConfigError, music_library, no_music_library_message
 from common.media import video_files
+from common.photos import is_photo
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -290,7 +291,14 @@ def is_up_to_date(name, ctx):
     proxies = video_files(proxy_dir)
     if name == "proxy":
         clips = video_files(src)
-        return bool(clips) and all((proxy_dir / clip.name).is_file() for clip in clips)
+        photos = (
+            [path for path in Path(src).iterdir() if path.is_file() and is_photo(path)]
+            if Path(src).is_dir()
+            else []
+        )
+        if not clips and not photos:
+            return bool(directory_files(proxy_dir))
+        return all((proxy_dir / clip.name).is_file() for clip in clips)
     if name == "ingest":
         return all_newer(ws / "ingest.json", proxies)
     if name == "beats":
@@ -466,7 +474,16 @@ def build_stations(ctx):
             "name": "proxy",
             "argv": [
                 station_command(
-                    ctx, "proxy.py", [str(src), "--out", str(proxy_dir)], force=force
+                    ctx,
+                    "proxy.py",
+                    [
+                        str(src),
+                        "--out",
+                        str(proxy_dir),
+                        "--exclude-file",
+                        str(ws / "excluded.json"),
+                    ],
+                    force=force,
                 )
             ],
         },

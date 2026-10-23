@@ -33,6 +33,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.excluded import is_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.photos import PhotoError, read_bgr
@@ -196,8 +197,9 @@ def run(
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
     photos = _load_photos(workspace_path)
+    excluded = load_excluded(workspace_path)
     if quality_dir.is_dir():
-        selected = _select_quality_files(quality_dir, clips)
+        selected = _select_quality_files(quality_dir, clips, excluded)
     elif photos:
         selected = []
     else:
@@ -413,10 +415,12 @@ def _download_model(path, url):
     print(f"[info] fetched {url} -> {path} ({path.stat().st_size} bytes)", file=sys.stderr)
 
 
-def _select_quality_files(quality_dir, clips):
+def _select_quality_files(quality_dir, clips, excluded=None):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
-    selected = [path for path in files if _matches(path.stem, tokens)]
+    selected = [
+        path for path in files if _matches(path.stem, tokens) and not is_excluded(path.stem, excluded)
+    ]
     if not selected:
         raise SimilarityError(f"no quality files matched in {quality_dir}")
     return selected

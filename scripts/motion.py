@@ -30,6 +30,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.excluded import filter_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.schema import SchemaError, validate, validate_or_raise
@@ -1426,6 +1427,7 @@ def run(input_path, workspace, force=False, sample_fps=10.0, width=320):
     """Analyse every clip of ``input_path`` into ``workspace/motion``; return a summary."""
     started = time.monotonic()
     clips = resolve_inputs(input_path)
+    clips = filter_excluded(clips, load_excluded(workspace))
     output_dir = Path(workspace).expanduser().resolve() / "motion"
     output_dir.mkdir(parents=True, exist_ok=True)
     analyzed = 0

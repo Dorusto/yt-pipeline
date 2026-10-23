@@ -3061,3 +3061,162 @@ def test_reedit_form_has_the_ask_button():
 def test_reedit_form_prefills_the_feedback():
     page = serve.render_reedit("2026-10-14", [], feedback_prefill="drop 0071/s2")
     assert "drop 0071/s2" in page
+
+
+def make_files_project(tmp_path):
+    root = tmp_path / "projects"
+    project = root / "trip"
+    project.mkdir(parents=True)
+    (project / "recap_720p.mp4").write_bytes(b"x")
+    proxy = project / "proxy"
+    proxy.mkdir()
+    (proxy / "clip_a.mp4").write_bytes(b"a" * 100)
+    (proxy / "photo.jpg").write_bytes(b"p" * 50)
+    inbox = tmp_path / "inbox"
+    source = inbox / "trip"
+    source.mkdir(parents=True)
+    (source / "clip_b.mp4").write_bytes(b"b" * 200)
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 2**31 - 1, "source": str(source)}), encoding="utf-8"
+    )
+    (project / "edit.json").write_text(
+        json.dumps({"video": [{"clip": "clip_a.mp4", "in_s": 0.0, "out_s": 5.0}]}),
+        encoding="utf-8",
+    )
+    return root, project, source
+
+
+def test_files_tab_lists_proxy_files_with_state(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    server = start_server(root, inbox=tmp_path / "inbox")
+    try:
+        status, _, body = request(server, "GET", "/trip/?tab=files")
+        page = body.decode()
+        assert status == 200
+        assert "clip_a.mp4" in page
+        assert "photo.jpg" in page
+        assert "in the edit" in page
+        assert "clip_b.mp4" in page
+        assert "new" in page
+        assert "3 files, 1 new since the last edit, 0 left out" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_exclude_file_writes_and_shows_left_out(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    server = start_server(root, inbox=tmp_path / "inbox")
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/trip/exclude-file",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"name": "clip_a.mp4", "action": "exclude"}),
+        )
+        assert status == 303
+        assert headers["Location"] == "/trip/?tab=files"
+        assert json.loads((project / "excluded.json").read_text(encoding="utf-8")) == {
+            "excluded": ["clip_a.mp4"]
+        }
+        status, _, body = request(server, "GET", "/trip/?tab=files")
+        page = body.decode()
+        assert "left out" in page
+        assert "Bring back" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_include_file_brings_it_back(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    (project / "excluded.json").write_text(
+        json.dumps({"excluded": ["clip_a.mp4"]}), encoding="utf-8"
+    )
+    server = start_server(root, inbox=tmp_path / "inbox")
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/trip/exclude-file",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"name": "clip_a.mp4", "action": "include"}),
+        )
+        assert status == 303
+        assert json.loads((project / "excluded.json").read_text(encoding="utf-8")) == {
+            "excluded": []
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_add_files_stores_in_the_recorded_source(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    server = start_server(root, inbox=tmp_path / "inbox")
+    try:
+        status, headers, body = request(
+            server,
+            "POST",
+            "/trip/add-files",
+            headers=multipart_headers(),
+            body=multipart_body([("files", "clip_c.mp4", b"new-bytes")]),
+        )
+        assert status == 303, body
+        assert headers["Location"] == "/trip/?tab=files"
+        assert (source / "clip_c.mp4").read_bytes() == b"new-bytes"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_form_shows_the_counts_line(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    server = start_server(root, inbox=tmp_path / "inbox")
+    try:
+        status, _, body = request(server, "GET", "/trip/")
+        page = body.decode()
+        assert status == 200
+        assert "3 files, 1 new since the last edit, 0 left out" in page
+        assert "Manage files" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_open_flag_opens_the_form(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    server = start_server(root, inbox=tmp_path / "inbox")
+    try:
+        _, _, body = request(server, "GET", "/trip/?tab=files&reedit=1")
+        page = body.decode()
+        assert '<details class="reedit" open>' in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_files_routes_refused_when_recap_off(tmp_path):
+    root, project, source = make_files_project(tmp_path)
+    server = start_server(root, inbox=tmp_path / "inbox", features=("upload",))
+    try:
+        status, _, _ = request(
+            server,
+            "POST",
+            "/trip/exclude-file",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"name": "clip_a.mp4", "action": "exclude"}),
+        )
+        assert status == 404
+        status, _, _ = request(
+            server,
+            "POST",
+            "/trip/add-files",
+            headers=multipart_headers(),
+            body=multipart_body([("files", "clip_c.mp4", b"x")]),
+        )
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
