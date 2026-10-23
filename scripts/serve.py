@@ -853,7 +853,7 @@ def credit_line(server):
     if remaining is None:
         remaining = limit - credit["usage"]
     warn = " warn" if remaining < server.credit_warn_usd else ""
-    return f'<p class="credit{warn}">Model credit: ${remaining:.2f} left of ${limit:.2f}</p>'
+    return f'<p class="credit{warn}">Model credit: {format_cost(remaining)} left of {format_cost(limit)}</p>'
 
 
 def fetch_project_totals(url, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
@@ -982,15 +982,20 @@ def instance_paid(ledger):
 def instance_due_block(spent_usd, paid_usd, limit_usd=None):
     """A friend's headline: their own model cost minus what they paid back, red while some is still open."""
     due = max(0.0, spent_usd - paid_usd)
-    state = "minus" if due >= 0.005 else "plus"
-    value = format_cost(due) if due >= 0.005 else "Paid"
     limit = f" Credit limit: {format_cost(limit_usd)}." if limit_usd else ""
+    if spent_usd < 0.005:
+        state, value = "zero", format_cost(0.0)
+        note = "Your edits have not used any AI models yet."
+    else:
+        state = "minus" if due >= 0.005 else "plus"
+        value = format_cost(due) if due >= 0.005 else "Paid"
+        note = (f"The AI models behind your edits cost {format_cost(spent_usd)}; "
+                f"you have paid {format_cost(paid_usd)}.")
     return (
         f'<div class="balance {state}">'
         '<span class="balance-label">Your model cost to cover</span>'
         f'<span class="balance-value num">{value}</span>'
-        f'<span class="balance-note">The AI models behind your edits cost {format_cost(spent_usd)}; '
-        f'you have paid {format_cost(paid_usd)}.{limit}</span>'
+        f'<span class="balance-note">{note}{limit}</span>'
         "</div>"
     )
 

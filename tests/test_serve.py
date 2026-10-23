@@ -2597,7 +2597,7 @@ def test_costs_page_shows_storage_and_credit(tmp_path, monkeypatch):
         page = body.decode()
         assert status == 200
         assert "GB of 100 GB used" in page
-        assert "Model credit: $3.20 left of $5.00" in page
+        assert "Model credit: $3,20 left of $5,00" in page
     finally:
         server.shutdown()
         server.server_close()
@@ -2631,7 +2631,7 @@ def test_upload_page_shows_storage_and_credit(tmp_path, monkeypatch):
         page = body.decode()
         assert status == 200
         assert "GB of 100 GB used" in page
-        assert "Model credit: $3.20 left of $5.00" in page
+        assert "Model credit: $3,20 left of $5,00" in page
     finally:
         server.shutdown()
         server.server_close()
@@ -3764,6 +3764,9 @@ def test_instance_due_block_is_red_until_paid(monkeypatch):
     assert "$2,00" in open_block and "Credit limit: $5,00" in open_block
     paid_block = serve.instance_due_block(3.0, 3.0)
     assert 'class="balance plus"' in paid_block and "Paid" in paid_block
+    unused_block = serve.instance_due_block(0.0, 0.0, 5.0)
+    assert 'class="balance zero"' in unused_block and "Paid" not in unused_block
+    assert "$0,00" in unused_block and "not used any AI models yet" in unused_block
 
 
 def test_instance_paid_sums_the_local_donations(tmp_path):
