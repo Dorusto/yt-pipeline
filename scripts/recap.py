@@ -28,15 +28,11 @@ import urllib.parse
 from pathlib import Path
 
 from common import notify, versions
-from common.config import ConfigError, music_library
+from common.config import ConfigError, music_library, no_music_library_message
 from common.media import video_files
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/recap.py"
-NO_MUSIC_LIBRARY_MESSAGE = (
-    "no music library configured: pass --music-dir DIR, set the "
-    "YT_PIPELINE_MUSIC_LIBRARY environment variable, or set music.library in the config"
-)
 
 
 class RecapError(RuntimeError):
@@ -136,7 +132,11 @@ def build_parser():
     parser.add_argument(
         "--music",
         default=None,
-        help="music track: a file to detect beats and mix under the recap, or 'auto' to pick one from --music-dir",
+        help=(
+            "music track: a file to detect beats and mix under the recap, or 'auto' to pick "
+            "one from the music library (found via --music-dir, else YT_PIPELINE_MUSIC_LIBRARY, "
+            "else music.library in the config)"
+        ),
     )
     parser.add_argument(
         "--music-dir",
@@ -1021,9 +1021,10 @@ def main(argv=None):
                 music = Path(args.music).expanduser().resolve()
                 if not music.is_file():
                     raise RecapError(f"music file not found: {music}")
-        music_dir = music_library(args.music_dir) if (args.music or args.music_dir) else None
+        library = music_library(args.music_dir) if (args.music or args.music_dir) else None
+        music_dir = library.resolve() if library is not None else None
         if music == "auto" and music_dir is None:
-            raise RecapError(NO_MUSIC_LIBRARY_MESSAGE)
+            raise RecapError(no_music_library_message("--music-dir"))
     except (RecapError, ConfigError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1

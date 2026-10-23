@@ -1,5 +1,49 @@
 # S60 Mode B finishing
 
+## Lot 8b — Review fixes for lot 8
+
+**Works**
+- `serve.py build_recap_command` passes `--music-dir` (the resolved library) with
+  `--music auto`, so the Upload page and the recap use the same library;
+  `recap.py` resolves the library path again (`music_library(...).resolve()`).
+- One "no music library configured" message in
+  `common.config.no_music_library_message(flag_name)`, used by `music_pick.py`
+  (`--library`) and by `recap.py`/`serve.py` (`--music-dir`);
+  `common.config.no_inbox_message(flag_name)` is its inbox twin.
+- `music_pick.py` catches `ConfigError` like the other tools: one `[error]`
+  line, exit 2 (the tool's own errors stay exit 1); a broken config is never a
+  traceback.
+- `recap.py --music` help and the `yt-recap` skill name the three ways (skill
+  `--json` summary lists `music_library`).
+- `serve.py --inbox` has no personal default: `--inbox`, else
+  `YT_PIPELINE_INBOX`, else `inbox.path` in the config, else a usage error
+  naming those three ways (`config.yaml.example` documents `inbox.path`).
+  User-guide and skill examples write `<trip-folder>`/`<workspaces>`/`<inbox>`;
+  old DECISIONS entries and old reports stay as history.
+- Verified: 14 new tests (`tests/test_config.py` 5, `tests/test_music_pick.py` 2,
+  `tests/test_recap.py` 2, `tests/test_serve.py` 5) and the full suite
+  `.venv/bin/python -m pytest tests/ -q -m "not needs_melt and not needs_footage"`
+  = 1801 passed, 2 skipped, 1 deselected; `scripts/check_public.py` clean on the
+  13 changed files. Synthetic smoke (`/tmp/opencode/l8b`): `--list --json` reads
+  the library, `serve.py --check` without an inbox exits with the three-ways
+  error, with `--inbox` the summary carries the inbox and the music library.
+
+**Mocked / not verified**
+- The web Upload → `recap.py` hand-off is covered by `build_recap_command` unit
+  tests only; no full browser upload was run here.
+
+**Doru, check this**
+- `music_pick.py` exits 2 on a broken/missing config and 1 on its own errors
+  (empty library, no track) — say if you want one code for both
+  (`tests/test_music_pick.py::test_broken_config_is_one_error_line_and_exit_two`).
+- `serve.py` now stops with a usage error when no inbox is configured
+  (`--inbox` / `YT_PIPELINE_INBOX` / `inbox.path`), instead of defaulting to
+  `~/media/inbox` (`docs/guides/user-guide.md` quickstart).
+- Remaining personal paths (`inbox.py --projects`, `docs/guides/phone-flow.md`,
+  example strings in older scripts) wait for the audit sweep — see the lot 1d
+  addition in `docs/DECISIONS.md`.
+
+
 ## Lot 8 — Music library
 
 **Works**

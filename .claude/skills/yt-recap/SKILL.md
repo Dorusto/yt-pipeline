@@ -11,7 +11,7 @@ The front door of the AI Director pipeline: one command turns a folder of raw cl
 ## Step 1: check the machine
 
 ```bash
-.venv/bin/python scripts/doctor.py --source ~/media/trip/raw
+.venv/bin/python scripts/doctor.py --source <trip-folder>/raw
 ```
 
 Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API key, disk space, workspace writable, workspace outside the originals, originals read-only. Exit 0 means nothing failed (warnings are allowed); exit 1 means at least one check failed. Fix what it lists, then continue. Add `--workspace DIR` to check a specific workspace and `--json` for a machine-readable summary.
@@ -19,8 +19,8 @@ Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API k
 ## Step 2: run the recap
 
 ```bash
-.venv/bin/python scripts/recap.py --source ~/media/trip/raw \
-    --workspace ~/media/trip/workspace \
+.venv/bin/python scripts/recap.py --source <trip-folder>/raw \
+    --workspace <trip-folder>/workspace \
     --brief "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only"
 ```
 
@@ -28,7 +28,7 @@ Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API k
 - Give exactly one of `--brief` (inline text) or `--brief-file` (path).
 - Stations run as subprocesses in order: proxy, ingest, motion, quality, describe, similarity, index, router, llm_director, render; with `--final` also render_final (from the originals) and export_kdenlive. With `--music FILE` a `beats` station runs right after ingest; with `--music auto` a `music_pick` station runs right after index (the shotlog tags exist by then) and writes `beats.json` itself.
 - One progress line per station, e.g. `[ 3/10] quality        skip      0.0s  up to date`. A station whose outputs are up to date is skipped. A station that is about to run prints a start line first, e.g. `[ 3/10] quality         start`, then its result line; a skipped station prints only its `skip` line.
-- The recap lands at `~/media/trip/workspace/recap_720p.mp4`.
+- The recap lands at `<trip-folder>/workspace/recap_720p.mp4`.
 
 ## Step 3: review
 
@@ -39,7 +39,7 @@ After a run the workspace holds `recap_720p.mp4` (the recap to watch), `edit.jso
 Serve the finished workspaces over the tailnet as a small web app (the Shots-tab review taps and the Mode B Cuts-tab review taps):
 
 ```bash
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
 - `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `.run.json`, `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `explain.html`, `edit.json`; the list is newest folder name first).
@@ -49,7 +49,7 @@ Serve the finished workspaces over the tailnet as a small web app (the Shots-tab
 - A project with a `shorts_candidates.json` also gets a **Shorts** tab (`?tab=shorts`): one row per ranked candidate with its rank, span, duration, score, hook/payoff, reason and chapter, and a **layout** select (`face`/`split`, the candidate's current value selected, `face` when it has none). A change posts `POST /<project>/shorts-candidates` (urlencoded `rank`, `layout`; 200 JSON `{ok, rank, layout}`, 400 one-line text for a missing/unknown rank, a bad layout, a missing file or `split` on a camera-only project, 404 unknown project, 405 otherwise) and rewrites only that candidate's `layout` key in `<workspace>/shorts_candidates.json` (atomic, `indent=2`, trailing newline, every other key untouched; re-posting is safe). A camera-only session (video `sources[]` with no `screen` angle by `common.media.clip_kind`) offers `face` only. Projects without the file have no Shorts tab and `?tab=shorts` falls back to Recap.
 - The Upload page (`<base>/upload`) takes clips and photos from the phone browser: files, folder, brief, length, order, audio clean, music, ambient-under-music dB, shorts layout. `POST /upload` streams the files into `--inbox/<folder>/` (allowlisted extensions, `--max-upload-mb`/`--max-total-mb` caps, never overwrites, never outside the inbox), writes `brief.txt` there and starts `recap.py` in the background; the Projects page shows the run status (`running`/`failed`/`done` from `<workspace>/.run.json`). The project page has a **Re-edit** form (the same options plus a `feedback` box; Length has an "Exact seconds…" option that reveals a seconds box `length_s` under it) that re-runs only `llm_director` → `render` with `--feedback`. The Recap tab shows version chips (`?v=N`) and a second player with `&with=M`; while running it shows the last finished version plus `Now: <plain name> (step i of N, <seconds>s)` and a progress bar of the stations (from `run.log`, after the `=== recap run started` marker serve writes) and refreshes every 20 s; a failed run shows the station and the error line. The run-progress `<progress>` bar is themed from `brand.json` `colors.cool` (`::-webkit-progress-value` / `::-moz-progress-bar`, fallback `#57b8c4`). A finished child is reaped, so a dead pid never stays `running`.
 - Binds the machine's tailnet IPv4 address by default. `--bind` refuses the wildcard (`0.0.0.0`, `::`, empty) so the server never leaves the tailnet; `127.0.0.1` is local only.
-- `--port N` (default `8091`; `0` picks an ephemeral port). `--music-dir DIR` is the music library folder whose audio files (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`) are offered on the Upload page — from `--music-dir`, else `YT_PIPELINE_MUSIC_LIBRARY`, else `music.library` in the config (no personal default; with none set the page offers no tracks and `--music auto` stops with a usage error naming the three ways). `--inbox DIR` (default `~/media/inbox`) is where uploads land; `--max-upload-mb` (4096) and `--max-total-mb` (20480) cap the upload size. `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup (including `music_tracks` and `inbox`).
+- `--port N` (default `8091`; `0` picks an ephemeral port). `--music-dir DIR` is the music library folder whose audio files (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`) are offered on the Upload page — from `--music-dir`, else `YT_PIPELINE_MUSIC_LIBRARY`, else `music.library` in the config (no personal default; with none set the page offers no tracks and `--music auto` stops with a usage error naming the three ways). `--inbox DIR` is where uploads land — from `--inbox`, else `YT_PIPELINE_INBOX`, else `inbox.path` in the config (no personal default; with none set the server stops with a usage error naming the three ways); `--max-upload-mb` (4096) and `--max-total-mb` (20480) cap the upload size. `--check` validates the root and the bind, prints the summary and exits without serving. `--json` prints one summary object at startup (including `music_tracks`, `music_library` and `inbox`).
 - URL layout: `<base>/` is the Projects page, `<base>/upload` the upload form, `<base>/<project>/` the project page, and the four artifacts are `<base>/<project>/recap_720p.mp4`, `<base>/<project>/recap_final.mp4`, `<base>/<project>/shotlog.html` and `<base>/<project>/explain.html` (videos support HTTP Range). Nothing else in a project is served — proxies, `edit.json`, `.run.json` and every analysis folder stay private.
 
 ## Phone flow: inbox.py
@@ -58,7 +58,7 @@ Turn an inbox folder filled by a phone sync tool into one recap per day with no
 command per clip:
 
 ```bash
-.venv/bin/python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects \
+.venv/bin/python scripts/inbox.py --inbox <inbox> --projects <workspaces> \
     --preview-base http://<agent-host>:8091 --notify
 ```
 
@@ -129,5 +129,5 @@ Setup is Doru's step; see [docs/guides/phone-flow.md](../../../docs/guides/phone
 
 - The originals folder must not be the workspace; `recap.py` refuses a workspace inside the source.
 - The budget stops the chain when it is reached. Raise `--budget-usd` or edit `config.yaml: llm_budget_usd`.
-- `doctor.py` warns when the originals folder is writable; make it read-only with `chmod -R a-w ~/media/trip/raw`.
+- `doctor.py` warns when the originals folder is writable; make it read-only with `chmod -R a-w <trip-folder>/raw`.
 - Proxies are 720p copies under `workspace/proxy/`; still photos (JPEG/HEIC) are copied through next to them so ingest sees the whole day. Proxies can be deleted and rebuilt at any time.

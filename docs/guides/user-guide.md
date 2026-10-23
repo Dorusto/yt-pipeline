@@ -13,17 +13,17 @@ You give it a folder of raw clips and a brief in plain words. It analyses the fo
 git clone https://github.com/Dorusto/yt-pipeline && cd yt-pipeline
 uv venv && uv pip install -r requirements.txt
 export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.ai/keys
-.venv/bin/python scripts/doctor.py --source ~/media/trip/raw
-.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace \
+.venv/bin/python scripts/doctor.py --source <trip-folder>/raw
+.venv/bin/python scripts/recap.py --source <trip-folder>/raw --workspace <trip-folder>/workspace \
     --brief "90 s, chronological, calm start, ambient sound only"
-# -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json, shotlog.html and explain.html)
+# -> <trip-folder>/workspace/recap_720p.mp4 (plus edit.json, shotlog.html and explain.html)
 # full quality from the originals + a Kdenlive project:
-.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
+.venv/bin/python scripts/recap.py --source <trip-folder>/raw --workspace <trip-folder>/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
 # with music (auto picks a track from the music library by the brief and the shot tags; see below):
-.venv/bin/python scripts/recap.py --source ~/media/trip/raw --brief "90 s, chronological" --music auto
+.venv/bin/python scripts/recap.py --source <trip-folder>/raw --brief "90 s, chronological" --music auto
 # re-running skips finished stations; a new brief only redoes the edit
 # the web app for the phone:
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
 The long station-by-station section below is what `recap.py` chains for you.
@@ -63,18 +63,18 @@ Analysis runs once per folder and is cached; a new brief only re-runs the right-
 Run everything from the repository root, `~/projects/yt-pipeline`. `WS` is the workspace folder next to the footage; the originals are never modified.
 
 ```bash
-WS=~/media/trip/workspace
-.venv/bin/python scripts/ingest.py ~/media/trip/proxy --workspace $WS
-.venv/bin/python scripts/motion.py ~/media/trip/proxy --workspace $WS
-.venv/bin/python scripts/quality.py ~/media/trip/proxy --workspace $WS
+WS=<trip-folder>/workspace
+.venv/bin/python scripts/ingest.py <trip-folder>/proxy --workspace $WS
+.venv/bin/python scripts/motion.py <trip-folder>/proxy --workspace $WS
+.venv/bin/python scripts/quality.py <trip-folder>/proxy --workspace $WS
 .venv/bin/python scripts/describe.py --workspace $WS          # vision model, ~2 cents per minute of footage
 .venv/bin/python scripts/similarity.py --workspace $WS
 .venv/bin/python scripts/index.py --workspace $WS             # shotlog.json + shotlog.html
 .venv/bin/python scripts/llm_director.py --workspace $WS --brief "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only"
 .venv/bin/python scripts/explain.py --workspace $WS                    # explain.html: why the edit looks the way it does
 .venv/bin/python scripts/render.py --edit $WS/edit.json --out $WS/recap_720p.mp4
-.venv/bin/python scripts/render.py --edit $WS/edit.json --out $WS/recap_final.mp4 --originals-dir ~/media/trip/raw
-.venv/bin/python scripts/edit_to_fragments.py --edit $WS/edit.json --out $WS/fragments.yaml --source-dir ~/media/trip/raw --kdenlive-out $WS/recap.kdenlive
+.venv/bin/python scripts/render.py --edit $WS/edit.json --out $WS/recap_final.mp4 --originals-dir <trip-folder>/raw
+.venv/bin/python scripts/edit_to_fragments.py --edit $WS/edit.json --out $WS/fragments.yaml --source-dir <trip-folder>/raw --kdenlive-out $WS/recap.kdenlive
 ```
 
 Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `cd $WS && python3 -m http.server 8091 --bind <agent-host>`, then open `http://<agent-host>:8091/shotlog.html` and the MP4.
@@ -172,7 +172,7 @@ Say what you want, not how to cut it. The router reads length, order, pacing, mu
 | You write | It does |
 |---|---|
 | "about 90 seconds, chronological, calm start, energy at the end" | target 90 s, shots in filming order, long holds first, shorter shots later |
-| "3 minute recap, best moments first, music: ~/music/track.mp3" | ranks by score, cuts on the beats of the track |
+| "3 minute recap, best moments first, music: <track.mp3>" | ranks by score, cuts on the beats of the track |
 | "tutorial, keep everything I say, chapters" | content type tutorial: silence and filler cut, chapters, graphics (D4) |
 
 ## The web app (phone + desktop)
@@ -182,7 +182,7 @@ bind address, never the wildcard) and it never exposes the footage beyond the
 finished recap, the explanation and the contact sheet.
 
 ```bash
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 # open http://<tailnet-ip>:8091/
 ```
 

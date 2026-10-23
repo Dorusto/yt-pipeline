@@ -111,10 +111,35 @@ def _validate(data):
         if library is not None and (not isinstance(library, str) or not library):
             raise ConfigError("music.library must be a non-empty string")
 
+    inbox = data.get("inbox")
+    if inbox is not None:
+        if not isinstance(inbox, dict):
+            raise ConfigError("inbox must be a mapping")
+        folder = inbox.get("path")
+        if folder is not None and (not isinstance(folder, str) or not folder):
+            raise ConfigError("inbox.path must be a non-empty string")
+
     return data
 
 
 MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
+INBOX_ENV = "YT_PIPELINE_INBOX"
+
+
+def no_music_library_message(flag_name):
+    """The one usage error for an unconfigured music library, naming the flag."""
+    return (
+        f"no music library configured: pass {flag_name} DIR, set the "
+        f"{MUSIC_LIBRARY_ENV} environment variable, or set music.library in the config"
+    )
+
+
+def no_inbox_message(flag_name):
+    """The one usage error for an unconfigured inbox, naming the flag."""
+    return (
+        f"no inbox configured: pass {flag_name} DIR, set the "
+        f"{INBOX_ENV} environment variable, or set inbox.path in the config"
+    )
 
 
 def music_library(cli_value=None, config=None):
@@ -132,6 +157,26 @@ def music_library(cli_value=None, config=None):
     section = data.get("music")
     if isinstance(section, dict):
         value = section.get("library")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def inbox_path(cli_value=None, config=None):
+    """The inbox folder: CLI flag, else INBOX_ENV, else inbox.path.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(INBOX_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("inbox")
+    if isinstance(section, dict):
+        value = section.get("path")
         if value:
             return Path(value).expanduser()
     return None

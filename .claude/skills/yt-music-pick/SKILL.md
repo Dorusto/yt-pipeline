@@ -43,7 +43,8 @@ from the repository root.
   or `--json` for an agent. A track that cannot be measured keeps nulls and the
   list still succeeds.
 - Exit 1 with one `[error]` line when no library is configured, the library is
-  empty or nothing could be analysed.
+  empty or nothing could be analysed; a missing or invalid config exits 2 with
+  one `[error]` line.
 
 ## How it scores
 

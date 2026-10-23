@@ -28,13 +28,9 @@ import sys
 import time
 from pathlib import Path
 
-from common.config import music_library
+from common.config import ConfigError, music_library, no_music_library_message
 
 TOOL = "scripts/music_pick.py"
-NO_LIBRARY_MESSAGE = (
-    "no music library configured: pass --library DIR, set the "
-    "YT_PIPELINE_MUSIC_LIBRARY environment variable, or set music.library in the config"
-)
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 LICENCE_SIDECAR_SUFFIXES = (".license", ".licence")
 LICENCE_LIBRARY_NAMES = ("license", "licence", "license.txt", "licence.txt", "copying")
@@ -116,7 +112,7 @@ def resolve_library(cli_value):
     """The library folder from the flag, the environment or the config."""
     resolved = music_library(cli_value)
     if resolved is None:
-        raise MusicPickError(NO_LIBRARY_MESSAGE)
+        raise MusicPickError(no_music_library_message("--library"))
     return resolved
 
 
@@ -435,6 +431,9 @@ def main(argv=None):
     except (MusicPickError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
+    except ConfigError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(summary))
     elif args.list:

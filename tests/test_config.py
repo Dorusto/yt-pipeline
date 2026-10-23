@@ -178,3 +178,45 @@ def test_music_section_validated():
     for bad in ("nope", {"library": ""}, {"library": 5}):
         with pytest.raises(config.ConfigError):
             config._validate(with_value("music", bad))
+
+
+def test_no_music_library_message_names_the_flag():
+    for flag in ("--library", "--music-dir"):
+        message = config.no_music_library_message(flag)
+        assert "no music library configured" in message
+        assert flag in message
+        assert config.MUSIC_LIBRARY_ENV in message
+        assert "music.library" in message
+
+
+def test_no_inbox_message_names_the_flag():
+    message = config.no_inbox_message("--inbox")
+    assert "no inbox configured" in message
+    assert "--inbox" in message
+    assert config.INBOX_ENV in message
+    assert "inbox.path" in message
+
+
+def test_inbox_path_flag_env_and_config(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.INBOX_ENV, raising=False)
+    config_path = write_config(tmp_path, with_value("inbox", {"path": str(tmp_path / "from-config")}))
+    monkeypatch.setenv("YT_CONFIG", str(config_path))
+    assert config.inbox_path(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+    assert config.inbox_path() == (tmp_path / "from-config").expanduser()
+    monkeypatch.setenv(config.INBOX_ENV, str(tmp_path / "from-env"))
+    assert config.inbox_path() == (tmp_path / "from-env").expanduser()
+    assert config.inbox_path(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+
+
+def test_inbox_path_none_when_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.INBOX_ENV, raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, VALID)))
+    assert config.inbox_path() is None
+
+
+def test_inbox_section_validated():
+    assert config._validate(with_value("inbox", {"path": "/drop"}))["inbox"]["path"] == "/drop"
+    assert config._validate(with_value("inbox", {}))["inbox"] == {}
+    for bad in ("nope", {"path": ""}, {"path": 5}):
+        with pytest.raises(config.ConfigError):
+            config._validate(with_value("inbox", bad))

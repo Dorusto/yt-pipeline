@@ -52,3 +52,9 @@ llm_backend: openrouter
 # folder; they never download music.
 # music:
 #   library: <music-library>
+
+# Inbox folder for serve.py uploads and the phone flow. There is no personal
+# default in code: set the folder here, in the YT_PIPELINE_INBOX environment
+# variable, or pass --inbox. Docs and examples write <inbox>.
+# inbox:
+#   path: <inbox>

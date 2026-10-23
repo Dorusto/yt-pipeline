@@ -3,8 +3,8 @@
 """Web app for recap workspaces, bound to the tailnet address only.
 
 Usage:
-    python scripts/serve.py --workspaces ~/media/projects
-    python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox --check --json
+    python scripts/serve.py --workspaces <workspaces>
+    python scripts/serve.py --workspaces <workspaces> --inbox <inbox> --check --json
 
 ``--workspaces`` is a folder whose direct subfolders are project workspaces. The
 Projects page lists, in descending folder-name order, every direct child
@@ -38,7 +38,14 @@ from pathlib import Path
 
 import yaml
 
-from common.config import ConfigError, load_config, music_library
+from common.config import (
+    ConfigError,
+    inbox_path,
+    load_config,
+    music_library,
+    no_inbox_message,
+    no_music_library_message,
+)
 from common.media import clip_kind
 from common.moves import slot_screen_length
 from common.timeline_words import fade_for_join
@@ -48,11 +55,6 @@ from common.versions import list_versions
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORT = 8091
-NO_MUSIC_LIBRARY_MESSAGE = (
-    "no music library configured: pass --music-dir DIR, set the "
-    "YT_PIPELINE_MUSIC_LIBRARY environment variable, or set music.library in the config"
-)
-DEFAULT_INBOX = "~/media/inbox"
 DEFAULT_MAX_UPLOAD_MB = 4096
 DEFAULT_MAX_TOTAL_MB = 20480
 UPLOAD_CHUNK = 65536
@@ -390,9 +392,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/serve.py --workspaces ~/media/projects\n"
-            "  python scripts/serve.py --workspaces ~/media/projects --port 8091 --json\n"
-            "  python scripts/serve.py --workspaces ~/media/projects --check --json\n"
+            "  python scripts/serve.py --workspaces <workspaces>\n"
+            "  python scripts/serve.py --workspaces <workspaces> --inbox <inbox> --port 8091 --json\n"
+            "  python scripts/serve.py --workspaces <workspaces> --inbox <inbox> --check --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -422,8 +424,11 @@ def build_parser():
     )
     parser.add_argument(
         "--inbox",
-        default=DEFAULT_INBOX,
-        help=f"inbox the uploads land in (default: {DEFAULT_INBOX})",
+        default=None,
+        help=(
+            "inbox the uploads land in (or YT_PIPELINE_INBOX, or inbox.path "
+            "in the config; no personal default)"
+        ),
     )
     parser.add_argument(
         "--max-upload-mb",
@@ -2007,6 +2012,8 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
     music = fields.get("music") or "auto"
     if music == "auto":
         command += ["--music", "auto"]
+        if music_dir is not None:
+            command += ["--music-dir", str(Path(music_dir).expanduser().resolve())]
     elif music and music != "none" and music_dir is not None:
         command += ["--music", str(Path(music_dir).expanduser().resolve() / Path(music).name)]
     ambient = fields.get("ambient_under_music_db") or "auto"
@@ -2501,21 +2508,21 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         super().__init__(address, WorkspaceHandler)
 
 
-def build_server(root, bind, port, music_dir=None, inbox=DEFAULT_INBOX,
+def build_server(root, bind, port, music_dir=None, inbox=None,
                  max_file_bytes=None, max_total_bytes=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
         root,
         music_dir,
-        Path(inbox).expanduser().resolve(),
+        Path(inbox).expanduser().resolve() if inbox is not None else None,
         max_file_bytes if max_file_bytes is not None else DEFAULT_MAX_UPLOAD_MB * 1024 * 1024,
         max_total_bytes if max_total_bytes is not None else DEFAULT_MAX_TOTAL_MB * 1024 * 1024,
     )
 
 
 def build_summary(root, bind, port, projects, status, started, music_dir=None,
-                  inbox=DEFAULT_INBOX):
+                  inbox=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -2553,7 +2560,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "projects": entries,
         "music_tracks": len(list_music_tracks(music_dir)),
         "music_library": str(Path(music_dir).expanduser()) if music_dir else None,
-        "inbox": str(Path(inbox).expanduser().resolve()),
+        "inbox": str(Path(inbox).expanduser().resolve()) if inbox else None,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -2605,10 +2612,13 @@ def main(argv=None):
     try:
         root = resolve_root(args.workspaces)
         bind = resolve_bind(args.bind)
-        inbox = Path(args.inbox).expanduser().resolve()
+        inbox = inbox_path(args.inbox)
+        if inbox is None:
+            raise ServeError(no_inbox_message("--inbox"))
+        inbox = inbox.resolve()
         music_dir = music_library(args.music_dir)
         if music_dir is None:
-            print(f"[warn] {NO_MUSIC_LIBRARY_MESSAGE}", file=sys.stderr)
+            print(f"[warn] {no_music_library_message('--music-dir')}", file=sys.stderr)
         try:
             server = build_server(
                 root,

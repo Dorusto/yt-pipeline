@@ -255,3 +255,36 @@ def test_cli_list_json_shape(tmp_path):
     assert plain.returncode == 0
     assert "licence: sidecar (fast party.licence)" in plain.stdout
     assert "2 tracks" in plain.stdout
+
+
+def test_broken_config_is_one_error_line_and_exit_two(tmp_path, monkeypatch):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("models: []\n", encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(bad))
+    result = run_pick("--brief", "calm", "--list")
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.count("\n") == 1
+    assert result.stderr.startswith("[error]")
+    assert "Traceback" not in result.stderr
+
+
+def test_invalid_yaml_config_is_not_a_traceback(tmp_path, monkeypatch):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("models: [\ninvalid: yaml\n", encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(bad))
+    result = run_pick("--brief", "calm", "--list")
+    assert result.returncode == 2
+    assert result.stderr.startswith("[error]")
+    assert "Traceback" not in result.stderr
+
+
+def test_no_library_message_is_the_shared_one(tmp_path, monkeypatch):
+    import common.config as config_module
+
+    isolate_library_config(tmp_path, monkeypatch)
+    with pytest.raises(music_pick.MusicPickError) as exc:
+        music_pick.resolve_library(None)
+    assert str(exc.value) == config_module.no_music_library_message("--library")

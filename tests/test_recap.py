@@ -893,3 +893,42 @@ def test_music_auto_reads_the_library_from_the_config(tmp_path, monkeypatch, cap
     argv = commands["music_pick"][0]
     assert argv[argv.index("--library") + 1] == str(library)
     capsys.readouterr()
+
+
+def test_main_resolves_the_music_library_path(tmp_path, monkeypatch):
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    real = tmp_path / "real-lib"
+    real.mkdir()
+    link = tmp_path / "link-lib"
+    link.symlink_to(real)
+    captured = {}
+
+    def fake_run(ctx):
+        captured["music_dir"] = ctx.music_dir
+        return {"status": "done"}
+
+    monkeypatch.setattr(recap, "run", fake_run)
+    code = recap.main(
+        [
+            "--source",
+            str(source),
+            "--brief",
+            "a calm recap",
+            "--workspace",
+            str(tmp_path / "ws"),
+            "--music",
+            "auto",
+            "--music-dir",
+            str(link),
+            "--json",
+        ]
+    )
+    assert code == 0
+    assert captured["music_dir"] == real.resolve()
+
+
+def test_music_help_names_the_three_ways():
+    actions = {action.dest: action for action in recap.build_parser()._actions}
+    help_text = actions["music"].help
+    for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
+        assert way in help_text

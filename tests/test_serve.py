@@ -724,6 +724,8 @@ def test_check_json_summary(tmp_path, capsys):
             [
                 "--workspaces",
                 str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
                 "--bind",
                 "127.0.0.1",
                 "--port",
@@ -759,7 +761,18 @@ def test_check_reports_requested_port(tmp_path, capsys):
     root = make_root(tmp_path)
     assert (
         serve.main(
-            ["--workspaces", str(root), "--bind", "127.0.0.1", "--port", "8099", "--check", "--json"]
+            [
+                "--workspaces",
+                str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                "8099",
+                "--check",
+                "--json",
+            ]
         )
         == 0
     )
@@ -782,7 +795,10 @@ def test_help_mentions_music_dir(capsys):
 def test_check_human_output(tmp_path, capsys):
     root = make_root(tmp_path)
     assert (
-        serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check"]) == 0
+        serve.main(
+            ["--workspaces", str(root), "--inbox", str(tmp_path / "inbox"), "--bind", "127.0.0.1", "--check"]
+        )
+        == 0
     )
     out = capsys.readouterr().out
     assert out.startswith("check: http://127.0.0.1:")
@@ -1886,7 +1902,7 @@ def isolate_music_env(tmp_path, monkeypatch, library=None):
 def test_check_without_music_library_reports_no_tracks(tmp_path, monkeypatch, capsys):
     isolate_music_env(tmp_path, monkeypatch)
     root = make_root(tmp_path)
-    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    assert serve.main(["--workspaces", str(root), "--inbox", str(tmp_path / "inbox"), "--bind", "127.0.0.1", "--check", "--json"]) == 0
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
     assert summary["music_tracks"] == 0
@@ -1901,13 +1917,13 @@ def test_check_reads_the_music_library_from_env_and_config(tmp_path, monkeypatch
     isolate_music_env(tmp_path, monkeypatch)
     monkeypatch.setenv("YT_PIPELINE_MUSIC_LIBRARY", str(music))
     root = make_root(tmp_path)
-    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    assert serve.main(["--workspaces", str(root), "--inbox", str(tmp_path / "inbox"), "--bind", "127.0.0.1", "--check", "--json"]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["music_tracks"] == 2
     assert summary["music_library"] == str(music)
     isolate_music_env(tmp_path, monkeypatch, library=str(music))
     monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
-    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    assert serve.main(["--workspaces", str(root), "--inbox", str(tmp_path / "inbox"), "--bind", "127.0.0.1", "--check", "--json"]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["music_library"] == str(music)
 
@@ -1920,3 +1936,73 @@ def test_build_server_defaults_to_no_music_library(tmp_path):
         assert serve.list_music_tracks(None) == []
     finally:
         server.server_close()
+
+
+def test_build_recap_command_passes_the_library_to_auto_music(tmp_path):
+    music_dir = tmp_path / "music"
+    command = serve.build_recap_command(
+        "py", tmp_path / "in", tmp_path / "ws", "brief", {"music": "auto"}, music_dir
+    )
+    assert "--music" in command and command[command.index("--music") + 1] == "auto"
+    assert "--music-dir" in command
+    assert command[command.index("--music-dir") + 1] == str(music_dir.resolve())
+
+
+def test_build_recap_command_without_library_omits_music_dir(tmp_path):
+    command = serve.build_recap_command(
+        "py", tmp_path / "in", tmp_path / "ws", "brief", {"music": "auto"}, None
+    )
+    assert "--music" in command
+    assert "--music-dir" not in command
+
+
+def test_missing_inbox_names_the_three_ways(tmp_path, monkeypatch, capsys):
+    isolate_music_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("YT_PIPELINE_INBOX", raising=False)
+    root = make_root(tmp_path)
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check"]) == 1
+    error = capsys.readouterr().err
+    assert "no inbox configured" in error
+    for way in ("--inbox", "YT_PIPELINE_INBOX", "inbox.path"):
+        assert way in error
+
+
+def test_inbox_from_flag_env_and_config(tmp_path, monkeypatch, capsys):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "drop"
+    isolate_music_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("YT_PIPELINE_INBOX", str(inbox))
+    assert (
+        serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["inbox"] == str(inbox.resolve())
+    monkeypatch.delenv("YT_PIPELINE_INBOX", raising=False)
+    assert (
+        serve.main(
+            ["--workspaces", str(root), "--inbox", str(inbox), "--bind", "127.0.0.1", "--check", "--json"]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["inbox"] == str(inbox.resolve())
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "models:\n  director: deepseek/deepseek-v4.1-flash\n"
+        "llm_budget_usd: 5.0\nllm_backend: mock\n"
+        f"inbox:\n  path: {inbox}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YT_CONFIG", str(config))
+    assert (
+        serve.main(["--workspaces", str(root), "--bind", "127.0.0.1", "--check", "--json"]) == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["inbox"] == str(inbox.resolve())
+
+
+def test_no_personal_default_inbox_path():
+    assert not hasattr(serve, "DEFAULT_INBOX")
+    help_text = serve.build_parser().format_help()
+    assert "~/media/inbox" not in help_text
+    assert "YT_PIPELINE_INBOX" in help_text
