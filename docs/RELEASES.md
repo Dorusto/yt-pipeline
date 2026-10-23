@@ -12,6 +12,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - The recap run from the web app.
 - The run notice with step times and model cost.
 - Versions (each run keeps its edit and renders under `versions/vNNN/`).
+- The shaky review policy.
 
 **Experimental** — everything else:
 
@@ -20,6 +21,5 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - Thumbnail.
 - Shorts.
 - The audit changes.
-- The shaky review policy.
 - Costs ledger.
 - The Costs page and the feedback/requests form.

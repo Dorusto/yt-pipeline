@@ -77,6 +77,8 @@ WS=<trip-folder>/workspace
 .venv/bin/python scripts/edit_to_fragments.py --edit $WS/edit.json --out $WS/fragments.yaml --source-dir <trip-folder>/raw --kdenlive-out $WS/recap.kdenlive
 ```
 
+Long shaky runs keep their move or hold role by default (the review policy): the vision model and the director see the shake defect and decide. `YT_PIPELINE_SHAKY=drop` restores the old behaviour that turns them into `accidental`; junk frames (obstruction, near-uniform, static low-detail) are `accidental` either way.
+
 Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `cd $WS && python3 -m http.server 8091 --bind <agent-host>`, then open `http://<agent-host>:8091/shotlog.html` and the MP4.
 
 ## Mode B on a finished clip

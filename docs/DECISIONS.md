@@ -2477,6 +2477,16 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ---
 
+## [2026-10-23] edit_drop.py is an orchestrator step (V010 lot fix1)
+
+**Context:** `serve.py` shells out to `edit_drop.py` (the Shots-tab bin icon) and `edit_drop.py` shells out to `render.py`; neither pair was in the F35 allowed list, so the calls sat outside the rule.
+
+**Decision:** the F35 list gains `serve.py` → `edit_drop.py` and `edit_drop.py` → `render.py` as flow-orchestrator steps. Both resolve the sibling script next to the caller and run it with the same interpreter and `--json`, as the rest of the list.
+
+**Consequence:** RULES carries the two pairs; no code change.
+
+---
+
 ## [2026-10-23] Correction: a zero-length graphics entry does reach the overlap check (AUDIT lot 3a review)
 
 **Context:** The 2026-10-23 F27 correction entry says a zero-length graphics entry "is rejected by the schema validation and never reaches `graphics_plan.overlap_errors` at all". The review of lot 1 (33d18f6) found that wrong: `graphics_plan.validate_plan` calls `validate(plan, "graphics_plan")` and then `overlap_errors(plan["entries"])` unconditionally on the same list, so a zero-length entry is checked by both.
@@ -2527,6 +2537,16 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Context:** The costs ledger CLI (`costs.py`) had a `totals` view but no web page, and the app had no way for a visitor to leave feedback or a feature request. The totals computation lived inside `costs.py`, so a page could not read it without importing another tool.
 
-**Decision:** the totals computation moves to `scripts/common/costs.py` so `costs.py` and `serve.py` share it (no tool imports another tool). `GET /costs` is read-only and shows the per-clip model cost and version count plus the ledger totals, and says the ledger is not set up when none is configured. The donation link comes from `costs.donation_url` / `YT_PIPELINE_DONATION_URL` and the app never handles payments. The feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set. `--check` warns about a missing ledger or requests file without failing.
+**Decision:** the totals computation moves to `scripts/common/costs.py` so `costs.py` and `serve.py` share it (no tool imports another tool). `GET /costs` is read-only and shows the per-clip model cost and version count plus the ledger totals, and says the ledger is not set up when none is configured. The donation links come from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_links` (a list of `{label, url}`; `costs.donation_url` with one link stays accepted) in the config, and the app never handles payments. The feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set. `--check` warns about a missing ledger or requests file without failing.
 
-**Consequence:** the page reads the same totals object as `costs.py totals --json`; the ledger schema and the five kinds are unchanged; the `yt-costs` skill points at the page.
+**Consequence:** the page reads the same totals object as `costs.py totals --json` through `compute_totals` in `scripts/common/costs.py`; the ledger schema and the five kinds are unchanged; the `yt-costs` skill points at the page. The per-workspace `feedback.jsonl` (about an edit) and the per-instance requests file (feature requests to the owner) are two separate stores.
+
+---
+
+## [2026-10-23] Shaky review is the default (V010 lot fix1)
+
+**Context:** commit 8fae888 made the review policy the default after the first real holiday test: long shaky runs keep their move or hold role and reach the vision model and the director with their shake defect, instead of being upgraded to `accidental`. The code changed but the docs did not.
+
+**Decision:** the 2026-10-13 accidental run rule now covers junk frames only by default (obstruction, near-uniform frame, static low-detail frame). A long shaky run keeps its role and its shake defect; `YT_PIPELINE_SHAKY=drop` restores the old upgrade to `accidental`. The policy passed the real test, so it is listed as stable in the v0.1.0 candidate.
+
+**Consequence:** RULES, the user guide and the `yt-quality` skill state the default and the switch; `docs/RELEASES.md` moves the shaky review policy to the stable candidate.
