@@ -43,7 +43,7 @@ def make_music_dir(tmp_path, names):
 
 
 def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480,
-                 ledger=None, requests=None, donation_url=None):
+                 ledger=None, requests=None, donation_links=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -59,7 +59,7 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         max_total_mb * 1024 * 1024,
         ledger,
         requests,
-        donation_url,
+        donation_links,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -2150,6 +2150,24 @@ def test_costs_page_without_a_ledger(tmp_path):
         assert status == 200
         assert "2026-10-14" in page
         assert "The ledger is not set up." in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_page_shows_every_donation_link(tmp_path):
+    root = make_root(tmp_path)
+    links = [
+        {"label": "Ko-fi", "url": "https://example.org/k"},
+        {"label": "GitHub", "url": "https://example.org/g"},
+    ]
+    server = start_server(root, donation_links=links)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert 'href="https://example.org/k"' in page and "Ko-fi" in page
+        assert 'href="https://example.org/g"' in page and "GitHub" in page
     finally:
         server.shutdown()
         server.server_close()

@@ -259,3 +259,31 @@ def test_projects_section_validated():
     for bad in ("nope", {"path": ""}, {"path": 5}):
         with pytest.raises(config.ConfigError):
             config._validate(with_value("projects", bad))
+
+
+def test_donation_links_flag_env_and_config(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.DONATION_URL_ENV, raising=False)
+    assert config.donation_links("https://example.org/a") == [
+        {"label": config.DEFAULT_DONATION_LABEL, "url": "https://example.org/a"}
+    ]
+    monkeypatch.setenv(config.DONATION_URL_ENV, "https://example.org/b")
+    assert config.donation_links() == [
+        {"label": config.DEFAULT_DONATION_LABEL, "url": "https://example.org/b"}
+    ]
+    monkeypatch.delenv(config.DONATION_URL_ENV, raising=False)
+    data = {"costs": {"donation_links": [{"label": "Ko-fi", "url": "https://example.org/k"}]}}
+    assert config.donation_links(None, data) == [
+        {"label": "Ko-fi", "url": "https://example.org/k"}
+    ]
+    assert config.donation_links(None, {"costs": {"donation_url": "https://example.org/one"}}) == [
+        {"label": config.DEFAULT_DONATION_LABEL, "url": "https://example.org/one"}
+    ]
+    assert config.donation_links(None, {}) is None
+
+
+def test_donation_links_section_validated():
+    with pytest.raises(config.ConfigError):
+        config._validate(
+            {"models": {"coder": "x"}, "llm_budget_usd": 1.0, "llm_backend": "mock",
+             "costs": {"donation_links": [{"label": "", "url": "https://example.org"}]}}
+        )

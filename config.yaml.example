@@ -71,12 +71,15 @@ llm_backend: openrouter
 # Costs ledger for costs.py: a SQLite file outside the repository. There is no
 # personal default in code: set the file here, in the YT_PIPELINE_COSTS_DB
 # environment variable, or pass --ledger. Docs and examples write <costs.db>.
-# donation_url is optional and shown on the web app's Costs page; set it here,
-# in the YT_PIPELINE_DONATION_URL environment variable, or pass --donation-url.
-# The app never handles payments.
+# donation_links is optional and shown on the web app's Costs page as plain
+# links; set it here, in the YT_PIPELINE_DONATION_URL environment variable, or
+# pass --donation-url. A single costs.donation_url is still accepted. Never
+# commit the real links; the example uses placeholders.
 # costs:
 #   path: <costs.db>
-#   donation_url: <donation-url>
+#   donation_links:
+#     - label: Support the project
+#       url: https://example.org/donate
 
 # Feedback/requests file for the web app's Costs page: one JSON line per
 # request. There is no personal default in code: set the file here, in the

@@ -42,13 +42,14 @@ import yaml
 from common.config import (
     ConfigError,
     costs_db,
-    donation_url,
+    donation_links,
     inbox_path,
     load_config,
     music_library,
     no_costs_message,
     no_inbox_message,
     no_music_library_message,
+    no_requests_message,
     requests_path,
 )
 from common.costs import compute_totals, connect as connect_ledger
@@ -483,7 +484,7 @@ def build_parser():
         default=None,
         help=(
             "optional donation link shown on the Costs page (or "
-            "YT_PIPELINE_DONATION_URL, or costs.donation_url)"
+            "YT_PIPELINE_DONATION_URL, or costs.donation_links / costs.donation_url)"
         ),
     )
     parser.add_argument(
@@ -1127,9 +1128,10 @@ def render_costs(server, thanks=False):
         ledger_parts.append('<p class="empty">The ledger is not set up.</p>')
 
     donation = ""
-    if server.donation_url:
-        donation = (
-            f'<p><a href="{html_escape(server.donation_url)}">Support the project</a></p>'
+    if server.donation_links:
+        donation = "".join(
+            f'<p><a href="{html_escape(link["url"])}">{html_escape(link["label"])}</a></p>'
+            for link in server.donation_links
         )
 
     thanks_line = (
@@ -1791,25 +1793,29 @@ def parse_path(raw_path):
     return segments
 
 
+def query_param(raw_path, key):
+    """The first value of a query parameter, or None."""
+    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get(key, [])
+    return values[0] if values else None
+
+
 def parse_tab(raw_path):
     """Return the requested tab key from the query string, falling back to recap."""
-    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get("tab", [])
-    tab = values[0] if values else "recap"
+    tab = query_param(raw_path, "tab") or "recap"
     return tab if tab in TAB_KEYS else "recap"
 
 
 def parse_number(raw_path, key):
     """An integer query parameter, or None."""
-    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get(key, [])
-    if values and values[0].isdigit() and len(values[0]) <= 4:
-        return int(values[0])
+    value = query_param(raw_path, key)
+    if value is not None and value.isdigit() and len(value) <= 4:
+        return int(value)
     return None
 
 
 def parse_flag(raw_path, key):
     """True when the query parameter is present."""
-    values = urllib.parse.parse_qs(urllib.parse.urlsplit(raw_path).query).get(key, [])
-    return bool(values)
+    return query_param(raw_path, key) is not None
 
 
 def parse_range(value, size):
@@ -2525,6 +2531,16 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             content_length=length,
         )
 
+    def _form_fields(self):
+        """Read and parse an application/x-www-form-urlencoded body, or raise UploadError."""
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/x-www-form-urlencoded":
+            raise UploadError(400, "expected application/x-www-form-urlencoded")
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > self.server.max_total_bytes:
+            raise UploadError(413, "request body too large")
+        return parse_urlencoded(self.rfile.read(length))
+
     def handle_upload(self):
         """Store the uploaded files in the inbox and start the recap."""
         staging = None
@@ -2624,15 +2640,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
             return
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type != "application/x-www-form-urlencoded":
-            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > self.server.max_total_bytes:
-            self.send_error_text(413, "request body too large")
-            return
-        fields = parse_urlencoded(self.rfile.read(length))
         try:
             shot = validate_shot(fields.get("shot"))
             kind = validate_kind(fields.get("kind"))
@@ -2653,15 +2665,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
             return
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type != "application/x-www-form-urlencoded":
-            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > self.server.max_total_bytes:
-            self.send_error_text(413, "request body too large")
-            return
-        fields = parse_urlencoded(self.rfile.read(length))
         try:
             cut_id = validate_cut_id(fields.get("id"))
             action = validate_cut_action(fields.get("action"))
@@ -2694,15 +2702,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
             return
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type != "application/x-www-form-urlencoded":
-            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > self.server.max_total_bytes:
-            self.send_error_text(413, "request body too large")
-            return
-        fields = parse_urlencoded(self.rfile.read(length))
         try:
             rank = validate_rank(fields.get("rank"))
             layout = validate_layout(fields.get("layout"))
@@ -2731,15 +2735,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if self.server.requests is None:
             self.send_error_text(404, "requests are not set up")
             return
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type != "application/x-www-form-urlencoded":
-            self.send_error_text(400, "expected application/x-www-form-urlencoded")
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > self.server.max_total_bytes:
-            self.send_error_text(413, "request body too large")
-            return
-        fields = parse_urlencoded(self.rfile.read(length))
         text = (fields.get("text") or "").strip()
         if not text:
             self.send_error_text(400, "text is required")
@@ -3001,7 +3001,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
-                 ledger=None, requests=None, donation_url=None):
+                 ledger=None, requests=None, donation_links=None):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
@@ -3009,13 +3009,13 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         self.max_total_bytes = max_total_bytes
         self.ledger = Path(ledger) if ledger is not None else None
         self.requests = Path(requests) if requests is not None else None
-        self.donation_url = donation_url
+        self.donation_links = donation_links
         super().__init__(address, WorkspaceHandler)
 
 
 def build_server(root, bind, port, music_dir=None, inbox=None,
                  max_file_bytes=None, max_total_bytes=None,
-                 ledger=None, requests=None, donation_url=None):
+                 ledger=None, requests=None, donation_links=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -3026,12 +3026,12 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         max_total_bytes if max_total_bytes is not None else DEFAULT_MAX_TOTAL_MB * 1024 * 1024,
         ledger,
         requests,
-        donation_url,
+        donation_links,
     )
 
 
 def build_summary(root, bind, port, projects, status, started, music_dir=None,
-                  inbox=None, ledger=None, requests=None, donation_url=None):
+                  inbox=None, ledger=None, requests=None, donation_links=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -3072,7 +3072,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "inbox": str(Path(inbox).expanduser().resolve()) if inbox else None,
         "ledger": str(Path(ledger).expanduser()) if ledger else None,
         "requests": str(Path(requests).expanduser()) if requests else None,
-        "donation_url": donation_url,
+        "donation_links": donation_links,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -3140,12 +3140,8 @@ def main(argv=None):
             print(f"[warn] {no_costs_message('--ledger')}", file=sys.stderr)
         requests = requests_path(args.requests)
         if requests is None:
-            print(
-                "[warn] no requests file configured: pass --requests PATH, set the "
-                "YT_PIPELINE_REQUESTS environment variable, or set requests.path in the config",
-                file=sys.stderr,
-            )
-        donation = donation_url(args.donation_url)
+            print(f"[warn] {no_requests_message('--requests')}", file=sys.stderr)
+        donation = donation_links(args.donation_url)
         try:
             server = build_server(
                 root,

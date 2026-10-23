@@ -137,6 +137,21 @@ def _validate(data):
         donation = costs.get("donation_url")
         if donation is not None and (not isinstance(donation, str) or not donation):
             raise ConfigError("costs.donation_url must be a non-empty string")
+        links = costs.get("donation_links")
+        if links is not None:
+            if not isinstance(links, list):
+                raise ConfigError("costs.donation_links must be a list")
+            for item in links:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("label"), str)
+                    or not item["label"]
+                    or not isinstance(item.get("url"), str)
+                    or not item["url"]
+                ):
+                    raise ConfigError(
+                        "costs.donation_links entries must map a non-empty label and url"
+                    )
 
     requests = data.get("requests")
     if requests is not None:
@@ -155,6 +170,7 @@ PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
 DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
 REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
+DEFAULT_DONATION_LABEL = "Support the project"
 
 
 def no_music_library_message(flag_name):
@@ -186,6 +202,14 @@ def no_costs_message(flag_name):
     return (
         f"no costs ledger configured: pass {flag_name} PATH, set the "
         f"{COSTS_DB_ENV} environment variable, or set costs.path in the config"
+    )
+
+
+def no_requests_message(flag_name):
+    """The one usage error for an unconfigured requests file, naming the flag."""
+    return (
+        f"no requests file configured: pass {flag_name} PATH, set the "
+        f"{REQUESTS_ENV} environment variable, or set requests.path in the config"
     )
 
 
@@ -269,23 +293,27 @@ def costs_db(cli_value=None, config=None):
     return None
 
 
-def donation_url(cli_value=None, config=None):
-    """The donation link: CLI flag, else DONATION_URL_ENV, else costs.donation_url.
+def donation_links(cli_value=None, config=None):
+    """The donation links: CLI flag, else DONATION_URL_ENV, else costs.donation_links / costs.donation_url.
 
-    Returns None when none of the three is set — it is optional, so the caller
-    shows no link rather than failing. There is no personal default.
+    Returns a list of ``{"label", "url"}`` dicts, or None when none is set — it is
+    optional, so the caller shows no link rather than failing. There is no
+    personal default.
     """
     if cli_value:
-        return cli_value
+        return [{"label": DEFAULT_DONATION_LABEL, "url": cli_value}]
     from_env = os.environ.get(DONATION_URL_ENV)
     if from_env:
-        return from_env
+        return [{"label": DEFAULT_DONATION_LABEL, "url": from_env}]
     data = config if config is not None else load_config()
     section = data.get("costs")
     if isinstance(section, dict):
+        links = section.get("donation_links")
+        if links:
+            return [{"label": item["label"], "url": item["url"]} for item in links]
         value = section.get("donation_url")
         if value:
-            return value
+            return [{"label": DEFAULT_DONATION_LABEL, "url": value}]
     return None
 
 
