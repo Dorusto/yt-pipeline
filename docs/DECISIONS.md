@@ -2632,3 +2632,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) a framework or a CDN font adds a dependency and a network call the tailnet app must not need; the app already has a coherent palette to refine.
 
 **Consequence:** the look is one token set; a future page uses the same tokens; RULES gains one line; the new look is experimental in the v0.1.0 candidate; no route, form field or behaviour changes.
+
+---
+
+## [2026-10-23] Continuous deployment to the pilot containers (V010 lot deploy)
+
+**Context:** The pilot host is updated by hand with `deploy/update.sh <tag>`; every container must reach the same released tag without a person logging in to each one.
+
+**Decision:** `.github/workflows/deploy.yml` runs on `release: published` and on `workflow_dispatch` with a `tag` input. One job per pilot container comes from a matrix over the repository variable `PILOT_RUNNERS` (a JSON list of runner labels); each job runs on `[self-hosted, <label>]`, has `concurrency` per label with `cancel-in-progress: false`, and runs `cd "$YT_PIPELINE_PATH" && deploy/update.sh "<tag>"`. There is no `pull_request` trigger, so a self-hosted runner never runs code from a fork. `docs/guides/pilot-host.md` documents the runner install, `YT_PIPELINE_PATH`, the `PILOT_RUNNERS` variable and the outside-collaborator approval setting; `docs/RELEASING.md` names the deploy step.
+
+**Consequence:** publishing a release deploys it to every container in `PILOT_RUNNERS`; `update.sh` still rolls back to the previous tag when the smoke test fails; the new part is experimental in the v0.1.0 candidate; no tool, schema or route changes.

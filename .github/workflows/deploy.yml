@@ -1,0 +1,25 @@
+name: deploy
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Released tag to deploy (for example v0.1.0)"
+        required: true
+        type: string
+jobs:
+  deploy:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(vars.PILOT_RUNNERS) }}
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
+    concurrency:
+      group: deploy-${{ matrix.runner }}
+      cancel-in-progress: false
+    steps:
+      - name: Update to the released tag
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: cd "$YT_PIPELINE_PATH" && deploy/update.sh "$TAG"

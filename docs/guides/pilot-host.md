@@ -61,6 +61,25 @@ SMOKE_URL=http://<container>:8091/upload sudo deploy/update.sh <tag>
 deploy/update.sh <tag> --dry-run
 ```
 
+## Continuous deployment
+
+Publishing a GitHub Release (or a manual dispatch with a tag) deploys that tag
+to every pilot container, one job per container on its own self-hosted runner.
+
+1. **Runner.** Install a GitHub Actions runner on each container with its own
+   label (for example `<label>` = `yt-owner`, `yt-friend-1`).
+2. **Clone path.** Set `YT_PIPELINE_PATH` in the runner's environment to the
+   clone path (`<repo>`).
+3. **Repository variable.** Add the label to the repository variable
+   `PILOT_RUNNERS` (a JSON list, for example
+   `["yt-owner","yt-friend-1"]`).
+4. **Approval.** In the repository settings, require approval for workflows
+   from outside collaborators.
+
+Publishing a release (or a manual dispatch with a tag) then runs
+`deploy/update.sh <tag>` on each container; the run is visible in the Actions
+tab.
+
 ## Storage limit per person
 
 Give each person a quota on their NAS share (for example 100 GB) and a

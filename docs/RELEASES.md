@@ -34,6 +34,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - The Why? and Shots pages open with a summary and collapsed sections, and the two tabs sit under a Details group.
 - The Files tab (see, add and leave out the files of a project, `excluded.json`).
 - The web app's visual design (one token set with a light and dark theme, the header logo slot).
+- Continuous deployment to the pilot containers (`.github/workflows/deploy.yml`, the `PILOT_RUNNERS` repository variable).
 
 **Stable files** — the files behind the stable candidate above. A change to one
 needs the `Stable-change: approved` trailer on a commit in the range (see

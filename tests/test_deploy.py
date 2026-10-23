@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,3 +38,21 @@ def test_pilot_host_guide_has_placeholders_and_limits():
         assert token in text
     for topic in ("quota", "credit", "project_totals_url"):
         assert topic in text
+
+
+def test_deploy_workflow_triggers_and_runner():
+    text = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    triggers = data.get("on", data.get(True))
+    assert set(triggers) == {"release", "workflow_dispatch"}
+    assert "pull_request" not in triggers
+    assert triggers["release"]["types"] == ["published"]
+    job = data["jobs"]["deploy"]
+    assert "PILOT_RUNNERS" in str(job["strategy"]["matrix"]["runner"])
+    runs_on = job["runs-on"]
+    assert "self-hosted" in runs_on
+    assert any("matrix.runner" in str(item) for item in runs_on)
+    runs = [step.get("run", "") for step in job["steps"]]
+    assert any("deploy/update.sh" in run for run in runs)
+    assert job["concurrency"]["cancel-in-progress"] is False
+    assert "matrix.runner" in job["concurrency"]["group"]
