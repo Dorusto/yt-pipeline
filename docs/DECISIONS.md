@@ -2620,3 +2620,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** `scripts/common/config.py` gains `limits.storage_gb` (`--storage-gb`, else `YT_PIPELINE_STORAGE_GB`, else the config; unset = no limit shown), `limits.credit_warn_usd` (default 1.0) and `costs.project_totals_url` (`--project-totals-url`, else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config). `serve.py` shows "X GB of Y GB used" (the workspaces + inbox size) on the Upload and Costs pages, warns over 80 % and refuses an upload that would pass the limit with a 413 before any byte is written. The model credit is read from `GET https://openrouter.ai/api/v1/key` (cached 10 minutes) and shown as "Model credit: $3.20 left of $5.00", with a warning under `limits.credit_warn_usd`, "no credit limit set" when the key has no limit and "credit unknown" on a failed call (never blocking the app). The owner instance serves `GET /costs.json` (the `compute_totals` object, no notes and no requests); an instance with `costs.project_totals_url` fetches it (cached 10 minutes) and shows "Project costs (everyone)" next to "This instance". `--check` reports the three settings and warns when the storage limit or the project totals URL is unset.
 
 **Consequence:** RULES names the new settings and the `GET /costs.json` route; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.
+
+---
+
+## [2026-10-23] Continuous deployment to the pilot containers (V010 lot deploy)
+
+**Context:** The pilot host is updated by hand with `deploy/update.sh <tag>`; every container must reach the same released tag without a person logging in to each one.
+
+**Decision:** `.github/workflows/deploy.yml` runs on `release: published` and on `workflow_dispatch` with a `tag` input. One job per pilot container comes from a matrix over the repository variable `PILOT_RUNNERS` (a JSON list of runner labels); each job runs on `[self-hosted, <label>]`, has `concurrency` per label with `cancel-in-progress: false`, and runs `cd "$YT_PIPELINE_PATH" && deploy/update.sh "<tag>"`. There is no `pull_request` trigger, so a self-hosted runner never runs code from a fork. `docs/guides/pilot-host.md` documents the runner install, `YT_PIPELINE_PATH`, the `PILOT_RUNNERS` variable and the outside-collaborator approval setting; `docs/RELEASING.md` names the deploy step.
+
+**Consequence:** publishing a release deploys it to every container in `PILOT_RUNNERS`; `update.sh` still rolls back to the previous tag when the smoke test fails; the new part is experimental in the v0.1.0 candidate; no tool, schema or route changes.
