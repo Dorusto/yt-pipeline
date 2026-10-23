@@ -30,6 +30,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.overlap import overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
@@ -550,7 +551,7 @@ def _longest_source(sources, start_s, end_s):
     """Return the source span overlapping a merged interval the most."""
 
     def overlap(source):
-        return min(end_s, source["end_s"]) - max(start_s, source["start_s"])
+        return overlap_seconds(start_s, end_s, source["start_s"], source["end_s"])
 
     return max(sources, key=overlap)
 
@@ -572,7 +573,7 @@ def _overlapping_move(moves, start_s, end_s):
     best = None
     best_overlap = 0.0
     for move in moves:
-        overlap = min(end_s, move["end_s"]) - max(start_s, move["start_s"])
+        overlap = overlap_seconds(start_s, end_s, move["start_s"], move["end_s"])
         if overlap > best_overlap:
             best_overlap = overlap
             best = move

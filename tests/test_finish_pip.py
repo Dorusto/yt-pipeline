@@ -816,6 +816,20 @@ def test_animate_steps_file_without_applied_marker_is_not_evidence(tmp_path, cap
     assert not (tmp_path / fp.APPLIED_FILE).exists()
 
 
+def test_write_animate_steps_clears_marker_before_the_write(tmp_path, monkeypatch):
+    (tmp_path / fp.ANIMATE_FILE).write_text("old\n", encoding="utf-8")
+    (tmp_path / fp.APPLIED_FILE).write_text("", encoding="utf-8")
+
+    def failing_write(path, steps):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(fp, "write_steps", failing_write)
+    with pytest.raises(RuntimeError):
+        fp.write_animate_steps(tmp_path, [{"id": "effects.setParam"}])
+    assert not (tmp_path / fp.APPLIED_FILE).exists()
+    assert (tmp_path / fp.ANIMATE_FILE).read_text(encoding="utf-8") == "old\n"
+
+
 def test_still_on_camera_track_is_not_a_piece(tmp_path, capsys, monkeypatch):
     sequence = make_sequence(
         [screen_item(11, 3, "2026-09-01 10-00-00.mp4", 0, 10)],

@@ -33,6 +33,7 @@ from pathlib import Path
 from common.constants import TICKS_PER_SECOND
 from common.filmcraft import cli_path, parse_frame_rate
 from common.media import clip_kind, is_matte_export, is_video_name
+from common.overlap import overlap_bounds
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
@@ -216,8 +217,7 @@ def camera_pieces(sequence, spans, pad_s):
         for item in items:
             item_start = int(item.get("start", 0))
             item_end = int(item.get("end", 0))
-            overlap_start = max(item_start, span["start"])
-            overlap_end = min(item_end, span["end"])
+            overlap_start, overlap_end = overlap_bounds(item_start, item_end, span["start"], span["end"])
             if overlap_end <= overlap_start:
                 continue
             source_in = int(item.get("sourceIn", 0))
@@ -638,10 +638,10 @@ def write_steps(path, steps):
 
 
 def write_animate_steps(out_dir, steps):
-    """Write the animate steps and clear the applied marker: the file is not applied yet."""
+    """Clear the applied marker first, then write the animate steps: the file is not applied yet."""
     out_dir = Path(out_dir)
-    write_steps(out_dir / ANIMATE_FILE, steps)
     (out_dir / APPLIED_FILE).unlink(missing_ok=True)
+    write_steps(out_dir / ANIMATE_FILE, steps)
 
 
 def mark_animate_applied(out_dir):

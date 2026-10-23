@@ -66,7 +66,7 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 The first full talking-head clip was finished by hand (an assistant driving FilmCraft through `filmcraft-cli --bridge ... run steps.jsonl`); each manual step below becomes a tool:
 
-- ✅ Move the camera picture-in-picture over screen spans into a `scripts/` tool (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes) — `scripts/finish_pip.py` (S60 lot 1, 1b and 1c).
+- ✅ Move the camera picture-in-picture over screen spans into a `scripts/` tool (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes) — `scripts/finish_pip.py` (S60 lot 1, 1b, 1c and 1d).
 - Build the intro layout into the render (camera shifted right, brand background, fade, slide back).
 - Sync the intro overlays to the speech (HyperFrames, left third).
 - Open cold on the hook, cut from the strongest sentence.

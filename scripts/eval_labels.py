@@ -32,6 +32,7 @@ from pathlib import Path
 
 import yaml
 
+from common.overlap import overlap_seconds
 from common.schema import SchemaError, validate_or_raise
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
@@ -124,11 +125,6 @@ def label_credit(expected, predicted):
     if (expected, predicted) in FAMILY_LABELS:
         return 0.5
     return 0.0
-
-
-def overlap(start_a, end_a, start_b, end_b):
-    """Overlap in seconds of two intervals; zero when they do not touch."""
-    return max(0.0, min(end_a, end_b) - max(start_a, start_b))
 
 
 def predicted_label_intervals(motion_doc):
@@ -244,7 +240,7 @@ def role_component(gt_segments, quality_doc, predicted=None):
         seconds_exact = 0.0
         seconds_wrong = 0.0
         for quality_segment in predicted:
-            covered = overlap(
+            covered = overlap_seconds(
                 start,
                 end,
                 float(quality_segment.get("start_s", 0.0)),
@@ -302,7 +298,7 @@ def horizon_component(gt_segments, quality_doc, tolerance):
         level_seconds = 0.0
         abstain_seconds = 0.0
         for quality_segment in predicted:
-            covered = overlap(
+            covered = overlap_seconds(
                 start,
                 end,
                 float(quality_segment.get("start_s", 0.0)),

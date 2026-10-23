@@ -110,16 +110,19 @@ overwritten atomically. A range is `keyframed` when it is placed and every
 placement shows the animate keyframes (a `motion` effect with non-empty `scale`
 and `position` keyframes, or — when the inspect shape exposes no `effects` — a
 `finish_pip.animate.jsonl` holding an `effects.setParam` step for the placed clip
-id). When there is no new placement and every range is already matted **and**
+id **with the `finish_pip.animate.applied` marker next to it**; the steps file
+alone is written evidence, not applied evidence). When there is no new placement
+and every range is already matted **and**
 keyframed (vacuously true when there are no ranges at all), the plan prints
 `nothing to do` instead of the placements and keyframes, and a non-dry-run writes
 no steps files and prints `nothing to do`; `--force` never overrides
 `nothing to do`. When the placements exist but the animate phase is missing or
 failed, a re-run rewrites `finish_pip.animate.jsonl` (and runs it with
 `--bridge`/`--project`, skipping the import and the place phase) instead of
-returning `nothing to do`; if the animate apply fails, the file is deleted so the
-next run rewrites it. A second full run imports nothing and reports
-`placements: 0`.
+returning `nothing to do`; regenerating the animate file clears the
+`finish_pip.animate.applied` marker first, and a failed animate apply deletes the
+steps file and the marker so the next run rewrites it. A second full run imports
+nothing and reports `placements: 0`.
 
 ## `--json`
 

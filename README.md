@@ -32,31 +32,33 @@ Phone-only flow (Syncthing → inbox.py → serve.py → ntfy): [docs/guides/pho
 ## Workflow
 
 ```
-1. Export final video from editor (.mp4)
-2. whisper Clip.mp4 --language Romanian --model turbo --output_format srt \
-       --word_timestamps True --max_line_width 42 --max_line_count 2 \
-       --output_dir /path/to/export/
-3. python scripts/correct_srt.py raw.srt Clip_RO.srt
-4. [Manual SRT review — fix remaining errors directly in the file]
-5. python scripts/translate_srt.py Clip_RO.srt Clip_EN.srt
-6. [DEPRECATED 2026-09-06, see docs/DECISIONS.md] python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
-   → no longer used for the main video's metadata — a generic transcript-only model can't
-     see narrative decisions already made (angle, what got cut, pre-selected Shorts moments).
-     Main video metadata is now written directly by Claude from the project's own structure doc.
-7. Edit scripts/shorts_config.yaml with segments already decided in the project's own planning
-   doc (not from a generated candidates file)
-8. .venv/bin/python scripts/shorts_generator.py --video Clip.mp4
-9. [Upload main video → add youtube_url to scripts/shorts_config.yaml]
-10. [Also deprecated for the same reason as step 6] python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
-    --shorts-config scripts/shorts_config.yaml — per-short title/description are now written
-    manually (by Claude, from the pre-decided segment), not generated here
+1. Export the final video from the editor (.mp4) — the edit is the source of truth
+   (a FilmCraft project, an edit.json, or just the media file)
+2. Transcribe once when no word JSON exists yet — one Whisper pass per source:
+   .venv/bin/python scripts/transcribe.py Clip.mp4 --out-dir words/
+   (raw .srt + _words.json; --backend mock for an offline run)
+3. Run the publish chain (skill: yt-publish):
+   .venv/bin/python scripts/publish.py --project out/ --context context.md \
+       --fcproj project.fcproj --sequence Main --words-dir words/ --json
+   (also --from-edit edit.json or --media Clip.mp4; steps: subtitles -> corrections
+    -> human-review stop -> EN translation -> thumbnail -> metadata draft,
+    publish_state.json tracks them and re-runs skip finished steps)
+4. [Manual SRT review at the stop — fix remaining errors in the file]
+5. Continue past the review stop: repeat step 3 with --resume
+6. Build the manual-upload kit for YouTube Studio:
+   .venv/bin/python scripts/publish.py ... --resume --kit --final-video final.mp4 --kit-loudness
+   (publish-kit/: video, RO/EN SRTs, thumbnail, studio.md copy-ready blocks + checklist)
+7. For Shorts from the finished video: edit scripts/shorts_config.yaml with the
+   segments decided in the project's own planning doc, then
+   .venv/bin/python scripts/shorts_generator.py --video Clip.mp4 (skill: yt-shorts)
+8. [Upload main video → add youtube_url to scripts/shorts_config.yaml]
 ```
 
 Note: Whisper accepts `.mp4` directly — no separate audio export needed.
 
-`analyze_srt.py` itself is not removed (client now points at OpenRouter, see below) — only its use for metadata/Shorts-description generation is deprecated. `shorts_generator.py` (video cropping + karaoke burn-in) is unaffected — it does no text generation.
+Each chain step is also a standalone script (`transcribe.py`, `correct_srt.py`, `translate_srt.py`, `thumbnail.py`, `metadata.py`) when only one of them is needed. `analyze_srt.py` metadata generation is deprecated since 2026-09-06 (a generic transcript-only model can't see the narrative decisions already made — angle, what got cut, pre-selected Shorts moments) and is not part of the chain; the script itself stays (client now points at OpenRouter, see below). `shorts_generator.py` (video cropping + karaoke burn-in) is unaffected — it does no text generation.
 
-All outputs (translated SRT, cropped shorts) are saved next to the video file.
+Outputs: the publish chain writes under `--project`; `translate_srt.py` and `shorts_generator.py` save next to the video file.
 
 ---
 
