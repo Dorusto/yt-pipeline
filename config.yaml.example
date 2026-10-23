@@ -80,6 +80,11 @@ llm_backend: openrouter
 #   donation_links:
 #     - label: Support the project
 #       url: https://example.org/donate
+#   project_totals_url is the owner instance's GET /costs.json; when set, the
+#   Costs page shows "Project costs (everyone)" next to "This instance". Set it
+#   here, in the YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or pass
+#   --project-totals-url.
+#   project_totals_url: https://example.org/costs.json
 
 # Feedback/requests file for the web app's Costs page: one JSON line per
 # request. There is no personal default in code: set the file here, in the
@@ -87,6 +92,16 @@ llm_backend: openrouter
 # examples write <requests.jsonl>.
 # requests:
 #   path: <requests.jsonl>
+
+# Instance limits for the web app. limits.storage_gb caps the workspaces and the
+# inbox size: the Upload and Costs pages show "X GB of Y GB used", warn over 80 %
+# and refuse an upload that would pass the limit before any byte is written.
+# limits.credit_warn_usd (default 1.0) warns when the OpenRouter key's remaining
+# credit falls below it. There is no personal default: set storage_gb here, in the
+# YT_PIPELINE_STORAGE_GB environment variable, or pass --storage-gb.
+# limits:
+#   storage_gb: 100
+#   credit_warn_usd: 1.0
 
 # Web app parts and consent. web.features lists the parts shown on this
 # instance (upload, recap, why, shots, shorts, costs, requests); the server

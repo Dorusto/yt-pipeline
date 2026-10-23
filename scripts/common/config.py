@@ -152,6 +152,32 @@ def _validate(data):
                     raise ConfigError(
                         "costs.donation_links entries must map a non-empty label and url"
                     )
+        totals_url = costs.get("project_totals_url")
+        if totals_url is not None and (not isinstance(totals_url, str) or not totals_url):
+            raise ConfigError("costs.project_totals_url must be a non-empty string")
+
+    limits = data.get("limits")
+    if limits is not None:
+        if not isinstance(limits, dict):
+            raise ConfigError("limits must be a mapping")
+        storage = limits.get("storage_gb")
+        if storage is not None:
+            if (
+                isinstance(storage, bool)
+                or not isinstance(storage, (int, float))
+                or not math.isfinite(storage)
+                or storage <= 0
+            ):
+                raise ConfigError("limits.storage_gb must be a positive number")
+        warn = limits.get("credit_warn_usd")
+        if warn is not None:
+            if (
+                isinstance(warn, bool)
+                or not isinstance(warn, (int, float))
+                or not math.isfinite(warn)
+                or warn < 0
+            ):
+                raise ConfigError("limits.credit_warn_usd must be a non-negative number")
 
     requests = data.get("requests")
     if requests is not None:
@@ -187,7 +213,10 @@ PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
 DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
 REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
+STORAGE_GB_ENV = "YT_PIPELINE_STORAGE_GB"
+PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
 DEFAULT_DONATION_LABEL = "Support the project"
+DEFAULT_CREDIT_WARN_USD = 1.0
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
@@ -230,6 +259,23 @@ def no_requests_message(flag_name):
     return (
         f"no requests file configured: pass {flag_name} PATH, set the "
         f"{REQUESTS_ENV} environment variable, or set requests.path in the config"
+    )
+
+
+def no_storage_message(flag_name):
+    """The one usage error for an unconfigured storage limit, naming the flag."""
+    return (
+        f"no storage limit configured: pass {flag_name} GB, set the "
+        f"{STORAGE_GB_ENV} environment variable, or set limits.storage_gb in the config"
+    )
+
+
+def no_project_totals_message(flag_name):
+    """The one usage error for an unconfigured project totals URL, naming the flag."""
+    return (
+        f"no project totals URL configured: pass {flag_name} URL, set the "
+        f"{PROJECT_TOTALS_URL_ENV} environment variable, or set "
+        f"costs.project_totals_url in the config"
     )
 
 
@@ -354,6 +400,60 @@ def requests_path(cli_value=None, config=None):
         value = section.get("path")
         if value:
             return Path(value).expanduser()
+    return None
+
+
+def storage_gb(cli_value=None, config=None):
+    """The storage limit in GB: CLI flag, else STORAGE_GB_ENV, else limits.storage_gb.
+
+    Returns None when none of the three is set — the caller shows no limit. A
+    non-numeric environment value is a ConfigError. There is no personal default.
+    """
+    if cli_value is not None:
+        return float(cli_value)
+    from_env = os.environ.get(STORAGE_GB_ENV)
+    if from_env:
+        try:
+            return float(from_env)
+        except ValueError as exc:
+            raise ConfigError(f"{STORAGE_GB_ENV} must be a number") from exc
+    data = config if config is not None else load_config()
+    section = data.get("limits")
+    if isinstance(section, dict):
+        value = section.get("storage_gb")
+        if value is not None:
+            return float(value)
+    return None
+
+
+def credit_warn_usd(config=None):
+    """The credit warning threshold in USD: limits.credit_warn_usd, default 1.0."""
+    data = config if config is not None else load_config()
+    section = data.get("limits")
+    if isinstance(section, dict):
+        value = section.get("credit_warn_usd")
+        if value is not None:
+            return float(value)
+    return DEFAULT_CREDIT_WARN_USD
+
+
+def project_totals_url(cli_value=None, config=None):
+    """The project totals URL: CLI flag, else PROJECT_TOTALS_URL_ENV, else costs.project_totals_url.
+
+    Returns None when none of the three is set — the page then shows only this
+    instance. There is no personal default.
+    """
+    if cli_value:
+        return cli_value
+    from_env = os.environ.get(PROJECT_TOTALS_URL_ENV)
+    if from_env:
+        return from_env
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict):
+        value = section.get("project_totals_url")
+        if value:
+            return value
     return None
 
 

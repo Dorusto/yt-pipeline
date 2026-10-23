@@ -230,6 +230,14 @@ finished recap, the explanation and the contact sheet.
   form on the same page appends one JSON line (`date`, `type`, `text`,
   `contact`, `backed`) to the requests file; with no requests file configured
   the form is hidden.
+- **Instance limits.** The Upload and Costs pages show "X GB of Y GB used" (the
+  workspaces + inbox size) and warn over 80 % ("almost full"); an upload that
+  would pass the limit is refused before any byte is written. The storage cap
+  comes from `--storage-gb`, else `YT_PIPELINE_STORAGE_GB`, else
+  `limits.storage_gb` in the config; with none set no limit is shown. The same
+  pages show the model credit ("Model credit: $3.20 left of $5.00") read from
+  the OpenRouter key endpoint, and warn under `limits.credit_warn_usd` (default
+  1.0).
 - **Brief help.** The Brief field on the Upload and Re-edit forms has hint
   chips (Where and when, Who is in it, The story or the best moment, Mood,
   Length, What to leave out); tapping one appends its line. The grey example
@@ -294,6 +302,12 @@ whose path comes from `--requests`, else `YT_PIPELINE_REQUESTS`, else
 `requests.path`; with none set the form is hidden. The donation link comes from
 `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_url`,
 and the app never handles payments.
+
+The owner instance serves `GET /costs.json` (the totals object, no notes and no
+requests). An instance with `costs.project_totals_url` (`--project-totals-url`,
+else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it and shows
+"Project costs (everyone)" next to "This instance"; a failed fetch says the
+project costs are unavailable.
 
 ## How it learns
 

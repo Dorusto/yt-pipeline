@@ -29,6 +29,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - Per-instance feature switches (`--features` / `YT_PIPELINE_FEATURES` / `web.features`).
 - The brief hint chips and the multi-line example placeholder.
 - Pilot host install, update and rollback (`deploy/update.sh`, `deploy/yt-pipeline-web.service`, `docs/guides/pilot-host.md`).
+- Instance limits (storage cap, model-credit read) and the shared project-costs view (`GET /costs.json`).
 
 **Stable files** — the files behind the stable candidate above. A change to one
 needs the `Stable-change: approved` trailer on a commit in the range (see

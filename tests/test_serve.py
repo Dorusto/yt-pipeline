@@ -17,6 +17,13 @@ from common.costs import connect, insert_entry
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    serve._credit_cache.update({"at": 0.0, "value": None})
+    serve._totals_cache.update({"at": 0.0, "url": None, "value": None})
+
+
 def make_root(tmp_path):
     root = tmp_path / "projects"
     root.mkdir()
@@ -44,7 +51,8 @@ def make_music_dir(tmp_path, names):
 
 def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480,
                  ledger=None, requests=None, donation_links=None,
-                 features=None, consent_text=None):
+                 features=None, consent_text=None,
+                 storage_gb=None, credit_warn_usd=None, project_totals_url=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -63,6 +71,9 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         donation_links,
         features,
         consent_text,
+        storage_gb,
+        credit_warn_usd,
+        project_totals_url,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -2361,6 +2372,281 @@ def test_check_warns_without_ledger_and_requests(tmp_path, capsys, monkeypatch):
     summary = json.loads(captured.out)
     assert summary["ledger"] is None
     assert summary["requests"] is None
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def read(self):
+        return json.dumps(self._payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def fake_opener(payload):
+    def opener(request, timeout=None):
+        return FakeResponse(payload)
+    return opener
+
+
+def test_fetch_model_credit_parses_the_key_endpoint():
+    credit = serve.fetch_model_credit(
+        "k", opener=fake_opener({"data": {"usage": 1.8, "limit": 5.0}})
+    )
+    assert credit == {"usage": 1.8, "limit": 5.0, "remaining": 3.2}
+    no_limit = serve.fetch_model_credit(
+        "k", opener=fake_opener({"data": {"usage": 1.8, "limit": None}})
+    )
+    assert no_limit["limit"] is None
+    assert no_limit["remaining"] is None
+
+
+def test_fetch_project_totals_parses_the_json():
+    payload = {"balance_usd": 12.5, "monthly_running_usd": 3.0}
+    assert serve.fetch_project_totals(
+        "https://example.org/costs.json", opener=fake_opener(payload)
+    ) == payload
+    with pytest.raises(ValueError):
+        serve.fetch_project_totals(
+            "https://example.org/costs.json", opener=fake_opener({"nope": 1})
+        )
+
+
+def test_costs_page_shows_storage_and_credit(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 1.8, "limit": 5.0, "remaining": 3.2},
+    )
+    server = start_server(root, storage_gb=100)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "GB of 100 GB used" in page
+        assert "Model credit: $3.20 left of $5.00" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_storage_line_warns_over_80_percent(tmp_path):
+    root = make_root(tmp_path)
+    (root / "2026-10-14" / "big.bin").write_bytes(b"x" * 1_000_000)
+    server = start_server(root, storage_gb=0.0001)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "almost full" in page
+        assert 'class="storage warn"' in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_shows_storage_and_credit(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 1.8, "limit": 5.0, "remaining": 3.2},
+    )
+    server = start_server(root, storage_gb=100)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "GB of 100 GB used" in page
+        assert "Model credit: $3.20 left of $5.00" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_refused_over_the_storage_limit(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    server = start_server(root, inbox=inbox, storage_gb=0.0000001)
+    try:
+        status, _, body = upload(
+            server,
+            [("folder", None, "kotor-day"), ("brief", None, "hello"), ("files", "a.mp4", b"x")],
+        )
+        assert status == 413
+        assert b"storage limit reached" in body
+        assert b"GB used" in body
+        assert not (inbox / "kotor-day").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_credit_unknown_on_a_failed_call(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+
+    def boom(*a, **k):
+        raise OSError("no network")
+
+    monkeypatch.setattr(serve, "fetch_model_credit", boom)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "Model credit: unknown" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_credit_no_limit_set(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 0.5, "limit": None, "remaining": None},
+    )
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "no credit limit set" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_json_serves_the_totals(tmp_path):
+    root = make_root(tmp_path)
+    ledger = tmp_path / "costs.db"
+    make_ledger(ledger)
+    server = start_server(root, ledger=ledger)
+    try:
+        status, _, body = request(server, "GET", "/costs.json")
+        assert status == 200
+        payload = json.loads(body)
+        assert isinstance(payload["balance_usd"], (int, float))
+        assert "notes" not in payload
+        assert "requests" not in payload
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_json_without_a_ledger_is_404(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, _ = request(server, "GET", "/costs.json")
+        assert status == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    totals = {
+        "balance_usd": 7.5,
+        "monthly_running_usd": 3.0,
+        "development_total_usd": 2.0,
+        "donations_usd": 10.0,
+    }
+    monkeypatch.setattr(serve, "fetch_project_totals", lambda *a, **k: totals)
+    server = start_server(root, project_totals_url="https://example.org/costs.json")
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "Project costs (everyone)" in page
+        assert "$7.500" in page
+        assert "$10.000" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_costs_page_project_totals_unavailable(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+
+    def boom(*a, **k):
+        raise OSError("no network")
+
+    monkeypatch.setattr(serve, "fetch_project_totals", boom)
+    server = start_server(root, project_totals_url="https://example.org/costs.json")
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        page = body.decode()
+        assert status == 200
+        assert "Project costs are unavailable." in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_check_reports_the_limits_settings(tmp_path, capsys, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.delenv(config.STORAGE_GB_ENV, raising=False)
+    monkeypatch.delenv(config.PROJECT_TOTALS_URL_ENV, raising=False)
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {})
+    assert (
+        serve.main(
+            [
+                "--workspaces",
+                str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--storage-gb",
+                "100",
+                "--project-totals-url",
+                "https://example.org/costs.json",
+                "--check",
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["storage_gb"] == 100.0
+    assert summary["credit_warn_usd"] == 1.0
+    assert summary["project_totals_url"] == "https://example.org/costs.json"
+
+    assert (
+        serve.main(
+            [
+                "--workspaces",
+                str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--check",
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
+    captured = capsys.readouterr()
+    assert "no storage limit configured" in captured.err
+    assert "no project totals URL configured" in captured.err
+    summary = json.loads(captured.out)
+    assert summary["storage_gb"] is None
+    assert summary["project_totals_url"] is None
 
 
 def test_upload_page_shows_the_consent_checkbox(tmp_path):

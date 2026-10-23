@@ -287,3 +287,68 @@ def test_donation_links_section_validated():
             {"models": {"coder": "x"}, "llm_budget_usd": 1.0, "llm_backend": "mock",
              "costs": {"donation_links": [{"label": "", "url": "https://example.org"}]}}
         )
+
+
+def test_storage_gb_flag_env_and_config(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.STORAGE_GB_ENV, raising=False)
+    assert config.storage_gb(25, {}) == 25.0
+    monkeypatch.setenv(config.STORAGE_GB_ENV, "40")
+    assert config.storage_gb() == 40.0
+    assert config.storage_gb(25, {}) == 25.0
+    monkeypatch.delenv(config.STORAGE_GB_ENV, raising=False)
+    assert config.storage_gb(None, {"limits": {"storage_gb": 100}}) == 100.0
+    assert config.storage_gb(None, {}) is None
+
+
+def test_storage_gb_section_validated(tmp_path):
+    for bad in (0, -1, "x", True):
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, with_value("limits", {"storage_gb": bad})))
+
+
+def test_credit_warn_usd_default_and_config():
+    assert config.credit_warn_usd(config={}) == 1.0
+    assert config.credit_warn_usd(config={"limits": {"credit_warn_usd": 2.5}}) == 2.5
+
+
+def test_credit_warn_usd_section_validated():
+    with pytest.raises(config.ConfigError):
+        config._validate(with_value("limits", {"credit_warn_usd": -1}))
+
+
+def test_project_totals_url_flag_env_and_config(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.PROJECT_TOTALS_URL_ENV, raising=False)
+    assert config.project_totals_url("https://flag.example/costs.json", {}) == (
+        "https://flag.example/costs.json"
+    )
+    monkeypatch.setenv(config.PROJECT_TOTALS_URL_ENV, "https://env.example/costs.json")
+    assert config.project_totals_url() == "https://env.example/costs.json"
+    assert config.project_totals_url("https://flag.example/costs.json", {}) == (
+        "https://flag.example/costs.json"
+    )
+    monkeypatch.delenv(config.PROJECT_TOTALS_URL_ENV, raising=False)
+    assert config.project_totals_url(None, {"costs": {"project_totals_url": "https://cfg.example/costs.json"}}) == (
+        "https://cfg.example/costs.json"
+    )
+    assert config.project_totals_url(None, {}) is None
+
+
+def test_project_totals_url_section_validated():
+    with pytest.raises(config.ConfigError):
+        config._validate(with_value("costs", {"project_totals_url": ""}))
+
+
+def test_no_storage_message_names_the_flag():
+    message = config.no_storage_message("--storage-gb")
+    assert "no storage limit configured" in message
+    assert "--storage-gb" in message
+    assert config.STORAGE_GB_ENV in message
+    assert "limits.storage_gb" in message
+
+
+def test_no_project_totals_message_names_the_flag():
+    message = config.no_project_totals_message("--project-totals-url")
+    assert "no project totals URL configured" in message
+    assert "--project-totals-url" in message
+    assert config.PROJECT_TOTALS_URL_ENV in message
+    assert "costs.project_totals_url" in message

@@ -35,6 +35,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,9 +43,11 @@ import yaml
 
 from common.config import (
     ConfigError,
+    DEFAULT_CREDIT_WARN_USD,
     WEB_FEATURES,
     consent_text,
     costs_db,
+    credit_warn_usd,
     donation_links,
     inbox_path,
     load_config,
@@ -52,8 +55,12 @@ from common.config import (
     no_costs_message,
     no_inbox_message,
     no_music_library_message,
+    no_project_totals_message,
     no_requests_message,
+    no_storage_message,
+    project_totals_url,
     requests_path,
+    storage_gb,
     web_features,
 )
 from common.costs import compute_totals, connect as connect_ledger
@@ -72,6 +79,11 @@ DEFAULT_PORT = 8091
 DEFAULT_MAX_UPLOAD_MB = 4096
 DEFAULT_MAX_TOTAL_MB = 20480
 UPLOAD_CHUNK = 65536
+BYTES_PER_GB = 1024 ** 3
+STORAGE_WARN_RATIO = 0.8
+CREDIT_CACHE_SECONDS = 600
+TOTALS_CACHE_SECONDS = 600
+KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BRIEF_MAX_CHARS = 4000
@@ -546,6 +558,19 @@ def build_parser():
              "no personal default)",
     )
     parser.add_argument(
+        "--storage-gb",
+        type=float,
+        default=None,
+        help="storage limit in GB shown on the Upload and Costs pages (or "
+             "YT_PIPELINE_STORAGE_GB, or limits.storage_gb in the config; unset = no limit shown)",
+    )
+    parser.add_argument(
+        "--project-totals-url",
+        default=None,
+        help="URL of the owner instance's /costs.json, shown as 'Project costs (everyone)' "
+             "(or YT_PIPELINE_PROJECT_TOTALS_URL, or costs.project_totals_url in the config)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help=(
@@ -735,6 +760,154 @@ def format_cost(usd):
     if 0 < usd < 0.001:
         return "< $0.001"
     return f"${usd:.3f}"
+
+
+def tree_size_bytes(path):
+    """Total size in bytes of every file under ``path``; 0 when it does not exist."""
+    base = Path(path)
+    if not base.exists():
+        return 0
+    total = 0
+    for child in base.rglob("*"):
+        try:
+            if child.is_file():
+                total += child.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def storage_usage_bytes(root, inbox):
+    """Bytes used by the workspaces and the inbox folders."""
+    return tree_size_bytes(root) + (tree_size_bytes(inbox) if inbox else 0)
+
+
+def format_gb(value):
+    """A byte count as a short GB string, e.g. '34 GB' or '0.3 GB'."""
+    return f"{round(value / BYTES_PER_GB, 1):g} GB"
+
+
+def storage_line(server):
+    """The '34 GB of 100 GB used' line, or '' when no limit is set."""
+    if server.storage_gb is None:
+        return ""
+    used = storage_usage_bytes(server.root, server.inbox)
+    limit = server.storage_gb * BYTES_PER_GB
+    ratio = used / limit if limit else 0.0
+    if ratio >= STORAGE_WARN_RATIO:
+        return (
+            f'<p class="storage warn">{format_gb(used)} of '
+            f"{server.storage_gb:g} GB used (almost full)</p>"
+        )
+    return f'<p class="storage">{format_gb(used)} of {server.storage_gb:g} GB used</p>'
+
+
+def fetch_model_credit(api_key, timeout=10, opener=None):
+    """GET the OpenRouter key endpoint; return {"usage", "limit", "remaining"} or raise."""
+    opener = opener or urllib.request.urlopen
+    request = urllib.request.Request(
+        KEY_INFO_URL, headers={"Authorization": f"Bearer {api_key}"}
+    )
+    with opener(request, timeout=timeout) as response:
+        data = json.loads(response.read().decode("utf-8")).get("data", {})
+    if not isinstance(data, dict):
+        raise ValueError("key endpoint returned no data object")
+    usage = float(data.get("usage") or 0.0)
+    limit = data.get("limit")
+    limit = float(limit) if limit is not None else None
+    remaining = data.get("limit_remaining")
+    if remaining is not None:
+        remaining = float(remaining)
+    elif limit is not None:
+        remaining = limit - usage
+    return {"usage": usage, "limit": limit, "remaining": remaining}
+
+
+_credit_cache = {"at": 0.0, "value": None}
+
+
+def model_credit(api_key, now=None, timeout=10, opener=None):
+    """Cached OpenRouter credit info, or None when unknown (cached 10 minutes)."""
+    now = time.monotonic() if now is None else now
+    if _credit_cache["value"] is not None and now - _credit_cache["at"] < CREDIT_CACHE_SECONDS:
+        return _credit_cache["value"]
+    if not api_key:
+        return None
+    try:
+        value = fetch_model_credit(api_key, timeout=timeout, opener=opener)
+    except (OSError, ValueError, KeyError):
+        value = None
+    _credit_cache["at"] = now
+    _credit_cache["value"] = value
+    return value
+
+
+def credit_line(server):
+    """The 'Model credit: ...' line, or '' when no OpenRouter key is set."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return ""
+    credit = model_credit(api_key)
+    if credit is None:
+        return '<p class="credit">Model credit: unknown</p>'
+    limit = credit["limit"]
+    if limit is None:
+        return '<p class="credit">Model credit: no credit limit set</p>'
+    remaining = credit["remaining"]
+    if remaining is None:
+        remaining = limit - credit["usage"]
+    warn = " warn" if remaining < server.credit_warn_usd else ""
+    return f'<p class="credit{warn}">Model credit: ${remaining:.2f} left of ${limit:.2f}</p>'
+
+
+def fetch_project_totals(url, timeout=10, opener=None):
+    """GET the owner instance's /costs.json; return the totals dict or raise."""
+    opener = opener or urllib.request.urlopen
+    with opener(url, timeout=timeout) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("balance_usd"), (int, float)):
+        raise ValueError("project totals must be a JSON object with a numeric balance_usd")
+    return data
+
+
+_totals_cache = {"at": 0.0, "url": None, "value": None}
+
+
+def project_totals(url, now=None, timeout=10, opener=None):
+    """Cached project totals from the owner instance, or None when unavailable."""
+    now = time.monotonic() if now is None else now
+    if (
+        _totals_cache["url"] == url
+        and _totals_cache["value"] is not None
+        and now - _totals_cache["at"] < TOTALS_CACHE_SECONDS
+    ):
+        return _totals_cache["value"]
+    try:
+        value = fetch_project_totals(url, timeout=timeout, opener=opener)
+    except (OSError, ValueError, KeyError):
+        value = None
+    _totals_cache["at"] = now
+    _totals_cache["url"] = url
+    _totals_cache["value"] = value
+    return value
+
+
+def totals_rows(totals):
+    """The ledger totals as a list: monthly running, development, donations and the balance."""
+    balance = totals["balance_usd"]
+    colour = "var(--keep)" if balance >= 0 else "var(--left)"
+    return (
+        '<ul class="projects">'
+        f'<li><span class="name">Monthly running</span>'
+        f'<span class="facts num">{format_cost(totals["monthly_running_usd"])}</span></li>'
+        f'<li><span class="name">Development total</span>'
+        f'<span class="facts num">{format_cost(totals["development_total_usd"])}</span></li>'
+        f'<li><span class="name">Donations</span>'
+        f'<span class="facts num">{format_cost(totals["donations_usd"])}</span></li>'
+        f'<li><span class="name">Balance</span>'
+        f'<span class="facts num" style="color:{colour}">{format_cost(balance)}</span></li>'
+        '</ul>'
+    )
 
 
 def last_run_start(directory):
@@ -1193,20 +1366,7 @@ def render_costs(server, thanks=False):
         except (sqlite3.Error, OSError):
             ledger_parts.append('<p class="empty">The ledger could not be read.</p>')
         else:
-            balance = totals["balance_usd"]
-            colour = "var(--keep)" if balance >= 0 else "var(--left)"
-            ledger_parts.append(
-                '<ul class="projects">'
-                f'<li><span class="name">Monthly running</span>'
-                f'<span class="facts num">{format_cost(totals["monthly_running_usd"])}</span></li>'
-                f'<li><span class="name">Development total</span>'
-                f'<span class="facts num">{format_cost(totals["development_total_usd"])}</span></li>'
-                f'<li><span class="name">Donations</span>'
-                f'<span class="facts num">{format_cost(totals["donations_usd"])}</span></li>'
-                f'<li><span class="name">Balance</span>'
-                f'<span class="facts num" style="color:{colour}">{format_cost(balance)}</span></li>'
-                '</ul>'
-            )
+            ledger_parts.append(totals_rows(totals))
     else:
         ledger_parts.append('<p class="empty">The ledger is not set up.</p>')
 
@@ -1243,12 +1403,23 @@ def render_costs(server, thanks=False):
     else:
         request_form = '<p class="empty">Requests are not set up.</p>'
 
+    parts = []
+    if server.project_totals_url:
+        fetched = project_totals(server.project_totals_url)
+        if fetched is None:
+            parts.append(
+                "<h2>Project costs (everyone)</h2>"
+                '<p class="empty">Project costs are unavailable.</p>'
+            )
+        else:
+            parts.append("<h2>Project costs (everyone)</h2>" + totals_rows(fetched))
+    parts.append("<h2>This instance</h2>" + per_clip + "".join(ledger_parts))
+
     body = (
         "<h1>Costs</h1>"
-        "<h2>Per clip</h2>"
-        f"{per_clip}"
-        "<h2>Ledger</h2>"
-        f'{"".join(ledger_parts)}'
+        f"{storage_line(server)}"
+        f"{credit_line(server)}"
+        f'{"".join(parts)}'
         f"{donation}"
         "<h2>Feedback and requests</h2>"
         f"{thanks_line}"
@@ -1929,7 +2100,7 @@ box.value=value+line;box.focus();box.setSelectionRange(box.value.length,box.valu
 """
 
 
-def render_upload(music_tracks, features=None, consent_text=None):
+def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html=""):
     """Return the Upload page with the form wired to POST /upload."""
     fields = [
         ("Clips and photos", '<div class="drop" data-drop>'
@@ -1953,6 +2124,8 @@ def render_upload(music_tracks, features=None, consent_text=None):
         "<h1>New recap</h1>"
         '<p class="lede">Pick the clips and photos of one day, say what you want, and start. '
         "The files go to the inbox and the edit runs on the server; the project shows up under Projects.</p>"
+        f"{storage_html}"
+        f"{credit_html}"
         '<form method="post" action="/upload" enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
@@ -2760,6 +2933,19 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             content_length=length,
         )
 
+    def _check_storage_capacity(self):
+        """Refuse an upload that would pass the storage limit, before any byte is written."""
+        if self.server.storage_gb is None:
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        used = storage_usage_bytes(self.server.root, self.server.inbox)
+        if used + length > self.server.storage_gb * BYTES_PER_GB:
+            raise UploadError(
+                413,
+                f"storage limit reached: {format_gb(used)} of "
+                f"{self.server.storage_gb:g} GB used",
+            )
+
     def _form_fields(self):
         """Read and parse an application/x-www-form-urlencoded body, or raise UploadError."""
         content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -2775,6 +2961,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         staging = None
         try:
             reader = self._reader()
+            self._check_storage_capacity()
             fields, staged, staging = parse_upload(reader, self.server.inbox)
             if not staged:
                 raise UploadError(400, "no files uploaded")
@@ -3121,6 +3308,22 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             )
         return entries
 
+    def handle_costs_json(self):
+        """Serve the ledger totals as JSON for another instance's Costs page."""
+        if self.server.ledger is None or not Path(self.server.ledger).is_file():
+            self.send_not_found()
+            return
+        try:
+            connection = connect_ledger(self.server.ledger)
+            try:
+                totals = compute_totals(connection)
+            finally:
+                connection.close()
+        except (sqlite3.Error, OSError):
+            self.send_error_text(500, "the ledger could not be read")
+            return
+        self.send_json({"ok": True, **totals})
+
     def handle_request(self, send_body):
         """Route one request against the allowlist and write the response."""
         root = self.server.root
@@ -3141,6 +3344,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     list_music_tracks(self.server.music_dir),
                     features=features,
                     consent_text=self.server.consent_text,
+                    storage_html=storage_line(self.server),
+                    credit_html=credit_line(self.server),
                 ),
                 send_body,
             )
@@ -3152,6 +3357,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_html(
                 render_costs(self.server, thanks=parse_flag(self.path, "thanks")), send_body
             )
+            return
+        if segments == ["costs.json"]:
+            if not feature_on(features, "costs"):
+                self.send_not_found()
+                return
+            self.handle_costs_json()
             return
         if len(segments) == 1:
             directory = root / segments[0]
@@ -3286,7 +3497,8 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
-                 ledger=None, requests=None, donation_links=None, features=None, consent_text=None):
+                 ledger=None, requests=None, donation_links=None, features=None, consent_text=None,
+                 storage_gb=None, credit_warn_usd=None, project_totals_url=None):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
@@ -3297,13 +3509,17 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         self.donation_links = donation_links
         self.features = set(features) if features is not None else set(WEB_FEATURES)
         self.consent_text = consent_text
+        self.storage_gb = storage_gb
+        self.credit_warn_usd = credit_warn_usd if credit_warn_usd is not None else DEFAULT_CREDIT_WARN_USD
+        self.project_totals_url = project_totals_url
         super().__init__(address, WorkspaceHandler)
 
 
 def build_server(root, bind, port, music_dir=None, inbox=None,
                  max_file_bytes=None, max_total_bytes=None,
                  ledger=None, requests=None, donation_links=None,
-                 features=None, consent_text=None):
+                 features=None, consent_text=None,
+                 storage_gb=None, credit_warn_usd=None, project_totals_url=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -3317,12 +3533,16 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         donation_links,
         features,
         consent_text,
+        storage_gb,
+        credit_warn_usd,
+        project_totals_url,
     )
 
 
 def build_summary(root, bind, port, projects, status, started, music_dir=None,
                   inbox=None, ledger=None, requests=None, donation_links=None,
-                  features=None, consent_text=None):
+                  features=None, consent_text=None,
+                  storage_gb=None, credit_warn_usd=None, project_totals_url=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -3366,6 +3586,9 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "donation_links": donation_links,
         "features": list(features) if features is not None else list(WEB_FEATURES),
         "consent": bool(consent_text),
+        "storage_gb": storage_gb,
+        "credit_warn_usd": credit_warn_usd,
+        "project_totals_url": project_totals_url,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -3437,6 +3660,13 @@ def main(argv=None):
         donation = donation_links(args.donation_url)
         features = web_features(args.features)
         consent = consent_text(args.consent_text)
+        storage = storage_gb(args.storage_gb)
+        if storage is None:
+            print(f"[warn] {no_storage_message('--storage-gb')}", file=sys.stderr)
+        warn_usd = credit_warn_usd()
+        totals_url = project_totals_url(args.project_totals_url)
+        if totals_url is None:
+            print(f"[warn] {no_project_totals_message('--project-totals-url')}", file=sys.stderr)
         try:
             server = build_server(
                 root,
@@ -3451,6 +3681,9 @@ def main(argv=None):
                 donation,
                 features,
                 consent,
+                storage,
+                warn_usd,
+                totals_url,
             )
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
@@ -3464,6 +3697,7 @@ def main(argv=None):
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
         music_dir, inbox, ledger, requests, donation, features, consent,
+        storage, warn_usd, totals_url,
     )
     if args.json:
         print(json.dumps(summary), flush=True)
