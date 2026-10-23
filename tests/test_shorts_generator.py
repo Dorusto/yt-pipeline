@@ -1,7 +1,9 @@
+import io
 import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pysubs2
@@ -664,3 +666,43 @@ def test_main_face_layout_is_unchanged(monkeypatch, tmp_path, capsys):
         capture_output=True, text=True, check=True,
     )
     assert probe.stdout.strip() == "608,1080"
+
+
+def test_ask_video_path_without_a_tty_is_a_usage_error(monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    with pytest.raises(sg.UsageError) as excinfo:
+        sg.ask_video_path()
+    assert "--video" in str(excinfo.value)
+
+
+def test_find_file_without_a_tty_names_the_flag(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    base = tmp_path / "video" / "clip.mp4"
+    base.parent.mkdir()
+    base.write_bytes(b"x")
+    with pytest.raises(sg.UsageError) as excinfo:
+        sg.find_file(base, "missing.wav", "audio", "--audio")
+    assert "--audio" in str(excinfo.value)
+
+
+def test_main_without_video_and_no_tty_exits_2(monkeypatch, tmp_path, capsys):
+    cfg = write_config(
+        tmp_path,
+        "video: Real.mp4\n"
+        "srt: Real.srt\n"
+        "segments:\n"
+        "  - name: Hook\n"
+        "    start: '00:00:00'\n"
+        "    end: '00:00:10'\n",
+    )
+    monkeypatch.setattr(sg, "CONFIG_PATH", cfg)
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+
+    code = sg.main(["--json"])
+
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "--video" in payload["error"]
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.0

@@ -21,11 +21,13 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from common.photos import PHOTO_EXTENSIONS, PhotoError, is_photo, photo_metadata
 from common.schema import SchemaError, validate_or_raise
+from common.summary import summary_fields
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 GYRO_HANDLER_MARKERS = ("dji meta", "gyro", "gyroscope", "motion")
@@ -334,6 +336,7 @@ def scan(source_dir, workspace):
 
 
 def main(argv=None):
+    started = time.monotonic()
     args = build_parser().parse_args(argv)
     try:
         data, output_path = scan(args.source_dir, args.workspace)
@@ -347,6 +350,7 @@ def main(argv=None):
         "output": str(output_path),
         "gyro_clips": sum(1 for clip in clips if clip["gyro"]["present"]),
         "total_duration_s": round(sum(clip["duration_s"] for clip in clips), 3),
+        **summary_fields(started),
     }
     if args.json:
         print(json.dumps(summary))

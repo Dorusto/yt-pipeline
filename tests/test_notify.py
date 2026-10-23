@@ -99,6 +99,8 @@ def test_cli_dry_run_json(monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["sent"] is False
     assert payload["url"] == "http://example.test/topic"
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.0
 
 
 def test_cli_without_a_configured_url_returns_1(monkeypatch, capsys, tmp_path):
@@ -113,7 +115,10 @@ def test_cli_success_json(monkeypatch, capsys):
     monkeypatch.setenv("NTFY_URL", "http://example.test/topic")
     monkeypatch.setattr(notify_cli, "send", lambda *a, **k: 200)
     assert notify_cli.main(["hi", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["sent"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sent"] is True
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.0
 
 
 def test_cli_failure_returns_1(monkeypatch, capsys):
@@ -124,7 +129,10 @@ def test_cli_failure_returns_1(monkeypatch, capsys):
 
     monkeypatch.setattr(notify_cli, "send", boom)
     assert notify_cli.main(["hi", "--json"]) == 1
-    assert json.loads(capsys.readouterr().out)["sent"] is False
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sent"] is False
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.0
 
 
 def test_cli_reads_message_from_stdin(monkeypatch, capsys):

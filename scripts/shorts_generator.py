@@ -28,11 +28,17 @@ from common.corrections import (
 )
 from common.ffmpeg_tools import available_video_encoders, pick_video_encoder, video_encode_args
 from common.schema import SchemaError, validate_or_raise
+from common.summary import summary_fields
 from common.timeline_words import (
     TimelineWordsError,
     timeline_words_from_file,
     word_in_window,
 )
+
+
+class UsageError(RuntimeError):
+    """A required flag is missing and the prompt that would ask for it has no TTY."""
+
 
 CROP_W = 608
 CROP_H = 1080
@@ -106,6 +112,8 @@ def load_and_validate_config(interactive: bool = True, require_segments: bool = 
 
 
 def ask_video_path() -> Path:
+    if not sys.stdin.isatty():
+        raise UsageError("--video is required when stdin is not a terminal")
     print("\nPath to the video file:")
     print("  (e.g. <clip-folder>/Export/video/<clip>.mp4)")
     raw = input("> ").strip()
@@ -116,7 +124,7 @@ def ask_video_path() -> Path:
     return path
 
 
-def find_file(base_path: Path, filename: str, subfolder: str, interactive: bool = True) -> Path:
+def find_file(base_path: Path, filename: str, subfolder: str, flag: str, interactive: bool = True) -> Path:
     """Look for filename in: same dir, parent/subfolder/, parent/."""
     candidates = [
         base_path.parent / filename,
@@ -129,6 +137,8 @@ def find_file(base_path: Path, filename: str, subfolder: str, interactive: bool 
 
     if not interactive:
         raise RuntimeError(f"could not find {filename} next to {base_path}")
+    if not sys.stdin.isatty():
+        raise UsageError(f"could not find {filename} next to {base_path}; pass {flag}")
 
     print(f"\nCould not find {filename} automatically.")
     print(f"Path to {filename}:")
@@ -749,14 +759,14 @@ def main(argv=None) -> int:
         if args.audio:
             audio_path = Path(args.audio).expanduser().resolve()
         elif config.get("audio") and config["audio"] not in ("MyVideo.mp3",):
-            audio_path = find_file(video_path, config["audio"], "audio", interactive=interactive)
+            audio_path = find_file(video_path, config["audio"], "audio", "--audio", interactive=interactive)
         else:
             audio_path = video_path
 
         srt_path = (
             Path(args.srt).expanduser().resolve()
             if args.srt
-            else find_file(video_path, config["srt"], "subtitles", interactive=interactive)
+            else find_file(video_path, config["srt"], "subtitles", "--srt", interactive=interactive)
         )
 
         encoder = args.encoder or os.environ.get("YT_VIDEO_ENCODER") or pick_video_encoder()
@@ -776,9 +786,15 @@ def main(argv=None) -> int:
                 args.corrections or CORRECTIONS_FILE, CORRECTIONS_EXAMPLE_FILE
             )
             corrections = load_corrections(corrections_path) if corrections_path else []
+    except UsageError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        return 2
     except (RuntimeError, TimelineWordsError, CorrectionsError) as exc:
         if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
         return 1
@@ -890,8 +906,7 @@ def main(argv=None) -> int:
             "ok": True,
             "shorts": results,
             "output_dir": str(shorts_dir),
-            "wall_time_s": round(time.monotonic() - started, 3),
-            "llm_cost_usd": 0.0,
+            **summary_fields(started),
         }))
     return 0
 

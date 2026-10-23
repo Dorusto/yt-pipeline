@@ -194,13 +194,18 @@ def test_json_success_is_parseable(tmp_path):
     make_clip(source / "one.mp4")
     result = run_cli(source, "--workspace", tmp_path / "ws", "--json")
     assert result.returncode == 0
-    assert set(json.loads(result.stdout)) == {
+    summary = json.loads(result.stdout)
+    assert set(summary) == {
         "clips",
         "photos",
         "output",
         "gyro_clips",
         "total_duration_s",
+        "wall_time_s",
+        "llm_cost_usd",
     }
+    assert summary["wall_time_s"] >= 0.0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_help_mentions_photo_extensions():

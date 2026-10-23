@@ -32,6 +32,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ from pathlib import Path
 import yaml
 
 from common.schema import SchemaError, validate
+from common.summary import summary_fields
 
 FPS = 25
 
@@ -299,6 +301,7 @@ def build(config_path, quiet=False):
 
 
 def main(argv=None):
+    started = time.monotonic()
     parser = argparse.ArgumentParser(
         description="Generate a .kdenlive project timeline from a fragments YAML."
     )
@@ -311,7 +314,7 @@ def main(argv=None):
         out_path = build(args.fragments, quiet=args.json)
     except (SchemaError, FileNotFoundError) as exc:
         if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
         return 1
@@ -327,6 +330,7 @@ def main(argv=None):
                     "output": out_path,
                     "error": "melt validation failed",
                     "stderr": result.stderr[-2000:],
+                    **summary_fields(started),
                 }))
             else:
                 print("melt validation FAILED:")
@@ -336,7 +340,7 @@ def main(argv=None):
             print("melt validation OK")
 
     if args.json:
-        print(json.dumps({"ok": True, "output": out_path}))
+        print(json.dumps({"ok": True, "output": out_path, **summary_fields(started)}))
     return 0
 
 

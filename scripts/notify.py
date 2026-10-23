@@ -14,8 +14,10 @@ built-in default (never a private address in this public repository).
 import argparse
 import json
 import sys
+import time
 
 from common.notify import NotifyError, resolve_url, send
+from common.summary import summary_fields
 
 
 def build_parser():
@@ -32,6 +34,7 @@ def build_parser():
 
 
 def main(argv=None):
+    started = time.monotonic()
     args = build_parser().parse_args(argv)
 
     if args.message == "-":
@@ -43,13 +46,13 @@ def main(argv=None):
         target = resolve_url(args.url)
     except NotifyError as exc:
         if args.json:
-            print(json.dumps({"sent": False, "url": None, "error": str(exc)}))
+            print(json.dumps({"sent": False, "url": None, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
         return 1
 
     if args.dry_run:
-        summary = {"sent": False, "url": target, "message": message}
+        summary = {"sent": False, "url": target, "message": message, **summary_fields(started)}
         if args.json:
             print(json.dumps(summary))
         else:
@@ -68,12 +71,12 @@ def main(argv=None):
         )
     except NotifyError as exc:
         if args.json:
-            print(json.dumps({"sent": False, "url": target, "error": str(exc)}))
+            print(json.dumps({"sent": False, "url": target, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
         return 1
 
-    summary = {"sent": True, "url": target, "status": status}
+    summary = {"sent": True, "url": target, "status": status, **summary_fields(started)}
     if args.json:
         print(json.dumps(summary))
     else:

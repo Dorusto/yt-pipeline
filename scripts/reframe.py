@@ -37,6 +37,7 @@ from common.faces import (
     make_detector,
 )
 from common.schema import SchemaError, validate_or_raise
+from common.summary import summary_fields
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SUBJECT_GATE = 0.5
@@ -480,8 +481,7 @@ def run(args):
                 "out": str(out_path),
                 "points": len(data.get("points") or []),
                 "warnings": list(data.get("warnings") or []),
-                "wall_time_s": round(time.monotonic() - started, 2),
-                "cost_usd": 0.0,
+                **summary_fields(started),
             },
             0,
         )
@@ -507,8 +507,7 @@ def run(args):
             "out": str(out_path),
             "points": len(record["points"]),
             "warnings": record["warnings"],
-            "wall_time_s": record["wall_time_s"],
-            "cost_usd": 0.0,
+            **summary_fields(started),
         },
         0,
     )
@@ -528,7 +527,7 @@ def main(argv=None):
         print(f"crop path {state}: {summary['out']} ({summary['points']} points)")
         for warning in summary["warnings"]:
             print(f"[warn] {warning}")
-        print(f"{summary['wall_time_s']}s, cost ${summary['cost_usd']:.4f}")
+        print(f"{summary['wall_time_s']}s, cost ${summary['llm_cost_usd']:.4f}")
     return exit_code
 
 

@@ -1,4 +1,6 @@
 import importlib
+import io
+import json
 import sys
 
 import pytest
@@ -94,3 +96,90 @@ def test_import_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     for name in ("translate_srt", "analyze_srt", "daily_summary_srt"):
         importlib.reload(importlib.import_module(name))
+
+
+def test_parse_selection_reads_flag_values():
+    shorts = [{"i": 1}, {"i": 2}, {"i": 3}]
+    assert analyze_srt.parse_selection("all", shorts) == shorts
+    assert analyze_srt.parse_selection("none", shorts) == []
+    assert analyze_srt.parse_selection("2", shorts) == [shorts[1]]
+    assert analyze_srt.parse_selection("1,3", shorts) == [shorts[0], shorts[2]]
+
+
+def test_translate_main_json_summary_reports_cost(tmp_path, monkeypatch, capsys):
+    srt = tmp_path / "clip.srt"
+    srt.write_text(SAMPLE_SRT, encoding="utf-8")
+    client = MockClient(text="[1] Hello\n[2] World", cost_per_call=0.25)
+    patch_client(monkeypatch, translate_srt, client)
+    monkeypatch.setattr(translate_srt, "_client", client)
+    monkeypatch.setattr(sys, "argv", ["translate_srt.py", str(srt), "--json"])
+
+    translate_srt.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["segments"] == 2
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.25
+
+
+def test_daily_summary_main_json_summary_reports_cost(tmp_path, monkeypatch, capsys):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "DJI_20260101120000_0001_D.srt").write_text(SAMPLE_SRT, encoding="utf-8")
+    client = MockClient(text="rezumat", cost_per_call=0.5)
+    patch_client(monkeypatch, daily_summary_srt, client)
+    monkeypatch.setattr(daily_summary_srt, "_client", client)
+    monkeypatch.setattr(
+        sys, "argv", ["daily_summary_srt.py", str(raw), str(tmp_path / "out.md"), "--json"]
+    )
+
+    daily_summary_srt.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["days"] == ["2026-01-01"]
+    assert payload["skipped"] == []
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.5
+
+
+def test_analyze_main_json_summary_with_select_none(tmp_path, monkeypatch, capsys):
+    srt = tmp_path / "clip.srt"
+    video = tmp_path / "clip.mp4"
+    srt.write_text(SAMPLE_SRT, encoding="utf-8")
+    video.write_bytes(b"x")
+    client = MockClient(text=ANALYZE_JSON)
+    patch_client(monkeypatch, analyze_srt, client)
+    monkeypatch.setattr(analyze_srt, "_client", client)
+    monkeypatch.setattr(
+        sys, "argv", ["analyze_srt.py", str(srt), str(video), "--select", "none", "--json"]
+    )
+
+    analyze_srt.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["mode"] == "metadata"
+    assert payload["candidates"] == 0
+    assert payload["selected"] == 0
+    assert payload["wall_time_s"] >= 0.0
+    assert payload["llm_cost_usd"] == 0.0
+
+
+def test_analyze_without_select_and_no_tty_is_a_usage_error(tmp_path, monkeypatch, capsys):
+    srt = tmp_path / "clip.srt"
+    video = tmp_path / "clip.mp4"
+    srt.write_text(SAMPLE_SRT, encoding="utf-8")
+    video.write_bytes(b"x")
+    client = MockClient(text=ANALYZE_JSON)
+    patch_client(monkeypatch, analyze_srt, client)
+    monkeypatch.setattr(analyze_srt, "_client", client)
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    monkeypatch.setattr(sys, "argv", ["analyze_srt.py", str(srt), str(video)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        analyze_srt.main()
+
+    assert excinfo.value.code == 2
+    assert "--select" in capsys.readouterr().err

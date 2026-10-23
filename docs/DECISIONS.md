@@ -2440,3 +2440,33 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** (F01) `--projects` is resolved flag → `YT_PIPELINE_PROJECTS` → `projects.path` in the config → a usage error naming those three ways (`common.config.projects_path` / `no_projects_message`, mirroring the inbox and music resolvers); `DEFAULT_PROJECTS` is gone. (F09/F33) one placeholder sweep across `scripts/`, `prompts/`, `.claude/skills/`, `README.md`, `CLAUDE.md`, `docs/guides/` and `docs/AGENT_SETUP.md` using `<repo>`, `<trip-folder>`, `<clip-folder>`, `<source-folder>`, `<workspace>`, `<workspaces>`, `<projects>`, `<inbox>`, `<music-library>`, `<eval-folder>`, `<watchdog-checkout>`; the documented overridable defaults (`~/.cache/yt-pipeline/...`, `~/.config/opencode/...`, `~/.local/share/opencode/...`) and the repo's own clone URL stay. (F10) `channel.github_url` is required config next to `channel.members` (same error style, exit 2) and is handed to the model as `channel_url` in the `## Links` section; the prompt names no URL of ours. A new `tests/test_no_personal_setup.py` scans the swept paths for the banned strings and is the regression guard.
 
 **Consequence:** `inbox.py --projects` is optional and a missing folder is a clear `[error]` with exit 1; `metadata.py` exits 2 when `channel.github_url` is missing or empty; `config.yaml.example` documents `projects.path` and `channel.github_url` (placeholder only — the real URL stays in the git-ignored `config.yaml`); docs and skills carry no personal path. No schema change.
+
+---
+
+## [2026-10-23] Blocking prompts behind flags, one `--json` summary helper for wall time and cost (AUDIT 2026-10 lot 3a)
+
+**Context:** AUDIT findings F06, F07 and F31: `analyze_srt.py` and `shorts_generator.py` blocked on `input()` with no TTY and no flag alternative (an agent hung); `ingest.py`, `notify.py`, `kdenlive_from_fragments.py`, `srt_from_fragments.py` and `reframe.py` printed `--json` summaries without `wall_time_s`/`llm_cost_usd`; `analyze_srt.py`, `correct_srt.py`, `daily_summary_srt.py` and `translate_srt.py` had no `--json` at all, so an agent could not read an LLM run's cost.
+
+**Decision:** `scripts/common/summary.py` gains `summary_fields(started, llm_cost_usd=0.0)` — the one helper for the two keys every `--json` summary reports (RULES 2026-10-13) — and the five F07 tools use it on every `--json` object they print (success and error). `reframe.py`'s summary key `cost_usd` becomes `llm_cost_usd` (the crop-path record keeps `cost_usd`, `schemas/reframe.schema.json` declares it). The four legacy tools gain `--json` with the sibling shape `{"ok": true|false, ..., **summary_fields(...)}`; with `--json` their human chatter goes to stderr (the `mode_b.py` pattern) so stdout is one JSON object. Every prompt is behind a flag — `analyze_srt.py --select 1,3,5|all|none` (parsed by the same grammar the prompt accepted), `shorts_generator.py --video`/`--audio`/`--srt` — and without the flag and without a TTY the tool fails with a usage error naming the flag (exit 2, the argparse convention) instead of blocking. The lot 3a review also moved `srt_from_fragments.py`'s fragment clipping onto `common.overlap.overlap_bounds` (a cue exactly on a fragment edge is dropped, as before; a degenerate zero-length cue inside a fragment is now dropped too).
+
+**Consequence:** an agent can run every one of these tools non-interactively and read cost and wall time from `--json`; `tests/test_summary.py` and the tool tests hold the keys; the `yt-ingest`, `yt-reframe`, `yt-shorts`, `yt-transcript` and `yt-rough-cut` skills document the flags. Exit codes for usage errors are the argparse convention for now; AUDIT F08 (lot 3b) writes the exit-code table.
+
+---
+
+## [2026-10-23] Allowed tool-to-tool subprocess calls (AUDIT F35)
+
+**Context:** F35: `music_pick.py` (`beats.py`), `shorts_generator.py` (`reframe.py`), `finish_pip.py` (`matte.py`), `eval_rough_cut.py` (`subs_from_edit.py`) and `render.py` (`reframe.py`) shell out to another tool's script instead of only `scripts/common/`. It matters when one tool is moved, renamed or run from another checkout. The alternative — moving each shared step behind a `common/` helper — would drag model runners and station CLIs into the shared library.
+
+**Decision:** orchestrator-style subprocess calls are accepted, limited to this set: flow orchestrators chain station CLIs (`recap.py` → the stations; `inbox.py` and `serve.py` → `recap.py`; `publish.py` → `transcribe.py`, `subs_from_edit.py`, `correct_srt.py`, `translate_srt.py`, `thumbnail.py`, `metadata.py`, `loudness.py`; `mode_b.py` → `transcribe.py`, `rough_cut.py`, `export_filmcraft.py`, `chapters.py`); fallbacks and evals (`llm_director.py` → `director.py`, `eval_rough_cut.py` → `subs_from_edit.py`); data steps (`music_pick.py` → `beats.py`; `shorts_generator.py` and `render.py` → `reframe.py`; `finish_pip.py` → `matte.py`); probes (`doctor.py` → each tool's `--help`). Every call resolves the sibling script next to the caller's own file (or the repo `scripts/` root) and runs it with the same interpreter, `--json` where the callee has it. Nothing outside this list shells out to another tool; a step needed by more than one tool goes behind `scripts/common/`. RULES carries the list.
+
+**Consequence:** moving or renaming a script means updating its named pairs; a new tool-to-tool call is a new DECISIONS entry first. No code change in this lot.
+
+---
+
+## [2026-10-23] Correction: a zero-length graphics entry does reach the overlap check (AUDIT lot 3a review)
+
+**Context:** The 2026-10-23 F27 correction entry says a zero-length graphics entry "is rejected by the schema validation and never reaches `graphics_plan.overlap_errors` at all". The review of lot 1 (33d18f6) found that wrong: `graphics_plan.validate_plan` calls `validate(plan, "graphics_plan")` and then `overlap_errors(plan["entries"])` unconditionally on the same list, so a zero-length entry is checked by both.
+
+**Decision:** what rejects a zero-length entry is the schema (`schemas/graphics_plan.schema.json`, `duration_s` `exclusiveMinimum: 0`); it still reaches `overlap_errors`, where the shared `overlap_fraction` returns 0.0 for a zero-length span and raises no overlap error. The same review notes that `quality.py`'s `_longest_source` is now clamped at 0: since lot 1 it ranks sources with `common.overlap.overlap_seconds` (`max(0.0, ...)`), where the hand-rolled `min(end_s, ...) - max(start_s, ...)` could come back negative.
+
+**Consequence:** the 2026-10-22 entry and the F27 correction stay as written (old entries are history); the accurate behaviour is stated here. No code change.

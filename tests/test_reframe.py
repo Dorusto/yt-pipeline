@@ -84,7 +84,7 @@ def test_path_follows_a_moving_subject(tmp_path, monkeypatch, capsys):
     assert abs((xs[-1] + data["crop_w"] / 2) - (100.0 + 12.0 * (len(data["points"]) - 1) + 40.0)) < 120.0
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary["ok"] is True
-    assert summary["cost_usd"] == 0.0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_smoothing_limits_speed_and_never_jumps(tmp_path, monkeypatch):
@@ -166,7 +166,7 @@ def test_json_summary_has_wall_time_and_zero_cost(tmp_path, monkeypatch, capsys)
     assert summary["out"] == str(out)
     assert summary["points"] >= 2
     assert summary["wall_time_s"] >= 0.0
-    assert summary["cost_usd"] == 0.0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_range_without_any_face_keeps_a_still_crop(tmp_path, monkeypatch):

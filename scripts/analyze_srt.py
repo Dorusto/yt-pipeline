@@ -8,15 +8,18 @@ Analizează un fișier .srt și generează:
 
 Utilizare:
     python3 analyze_srt.py subtitles.srt video.mp4
+    python3 analyze_srt.py subtitles.srt video.mp4 --select 1,3,5 --json
 
 Necesită: OPENROUTER_API_KEY în environment
 Necesită: pip install openai
 """
 
+import contextlib
 import json
 import os
 import re
 import sys
+import time
 import unicodedata
 from pathlib import Path
 
@@ -24,6 +27,7 @@ import yaml
 
 from common.config import ConfigError
 from common.llm import LLMError, make_client
+from common.summary import summary_fields
 
 BATCH_CHARS = 80000
 
@@ -295,9 +299,8 @@ def cut_shorts(selected, video_file, youtube_url, out_dir):
     return shorts_dir
 
 
-def ask_selection(shorts):
-    print("\nCare vrei să tai? (ex: 1,3,5 | all | none): ", end="")
-    raw = input().strip().lower()
+def parse_selection(raw, shorts):
+    raw = raw.strip().lower()
     if raw == "none" or raw == "":
         return []
     if raw == "all":
@@ -312,34 +315,43 @@ def ask_selection(shorts):
     return [shorts[i] for i in indices]
 
 
-def main():
-    if len(sys.argv) < 3:
-        print("Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] [--shorts-config config.yaml]")
-        sys.exit(1)
+def ask_selection(shorts, choice=None):
+    if choice is None:
+        print("\nCare vrei să tai? (ex: 1,3,5 | all | none): ", end="")
+        choice = input()
+    return parse_selection(choice, shorts)
 
-    srt_file = Path(sys.argv[1]).expanduser().resolve()
-    video_file = Path(sys.argv[2]).expanduser().resolve()
 
-    for label, path in [("SRT", srt_file), ("Video", video_file)]:
-        if not path.exists():
-            print(f"[eroare] {label} negăsit: {path}")
-            print("Folosește căi absolute (ex: <clip-folder>/Export/subtitles/<clip>_RO.srt)")
-            sys.exit(1)
+def spent_usd():
+    return _client.spent_usd if _client is not None else 0.0
 
-    args = sys.argv[3:]
-    youtube_url = "[LINK VIDEO PRINCIPAL]"
+
+def parse_args(argv):
+    positionals = []
     shorts_config_path = None
+    select = None
+    json_out = False
     i = 0
-    while i < len(args):
-        if args[i] == "--shorts-config" and i + 1 < len(args):
-            shorts_config_path = Path(args[i + 1]).expanduser().resolve()
+    while i < len(argv):
+        token = argv[i]
+        if token == "--json":
+            json_out = True
+            i += 1
+        elif token == "--select" and i + 1 < len(argv):
+            select = argv[i + 1]
             i += 2
-        elif not args[i].startswith("--"):
-            youtube_url = args[i]
+        elif token == "--shorts-config" and i + 1 < len(argv):
+            shorts_config_path = Path(argv[i + 1]).expanduser().resolve()
+            i += 2
+        elif not token.startswith("--"):
+            positionals.append(token)
             i += 1
         else:
             i += 1
+    return positionals, shorts_config_path, select, json_out
 
+
+def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, started):
     out_dir = make_output_dir(video_file)
     shorts_dir = out_dir / "shorts"
 
@@ -350,7 +362,12 @@ def main():
             generate_shorts_metadata(srt_file, shorts_config_path, shorts_dir, youtube_url)
             print(f"\nMetadata shorturi salvate în: {shorts_dir}/")
             print(f"LLM cost: ${get_client().spent_usd:.4f}")
-            return
+            return {
+                "ok": True,
+                "mode": "shorts-config",
+                "output_dir": str(shorts_dir),
+                **summary_fields(started, spent_usd()),
+            }, 0
 
         basename = srt_file.stem
 
@@ -403,17 +420,42 @@ def main():
             f.write("\n".join(lines))
         print(f"\nCandidați salvați → {candidates_file.name}")
 
+        if select is None and not sys.stdin.isatty():
+            error = "--select is required when stdin is not a terminal (1,3,5 | all | none)"
+            print(f"[error] {error}", file=sys.stderr)
+            return {
+                "ok": False,
+                "error": error,
+                **summary_fields(started, spent_usd()),
+            }, 2
+
         # --- Confirmare tăiere ---
         try:
-            selected = ask_selection(shorts_sorted)
+            selected = ask_selection(shorts_sorted, select)
         except EOFError:
             print("Mod non-interactiv — nicio tăiere. Gata.")
             print(f"LLM cost: ${get_client().spent_usd:.4f}")
-            return
+            return {
+                "ok": True,
+                "mode": "metadata",
+                "video_metadata": str(meta_file),
+                "shorts_candidates": str(candidates_file),
+                "candidates": len(shorts_sorted),
+                "selected": 0,
+                **summary_fields(started, spent_usd()),
+            }, 0
         if not selected:
             print("Nicio tăiere. Gata.")
             print(f"LLM cost: ${get_client().spent_usd:.4f}")
-            return
+            return {
+                "ok": True,
+                "mode": "metadata",
+                "video_metadata": str(meta_file),
+                "shorts_candidates": str(candidates_file),
+                "candidates": len(shorts_sorted),
+                "selected": 0,
+                **summary_fields(started, spent_usd()),
+            }, 0
 
         print(f"\n{'=' * 50}")
         print(f"TĂIERE {len(selected)} SHORTS")
@@ -421,9 +463,55 @@ def main():
         cut_shorts(selected, video_file, youtube_url, out_dir)
         print(f"\nShorts salvate în: {out_dir}/shorts/")
         print(f"LLM cost: ${get_client().spent_usd:.4f}")
+        return {
+            "ok": True,
+            "mode": "metadata",
+            "video_metadata": str(meta_file),
+            "shorts_candidates": str(candidates_file),
+            "candidates": len(shorts_sorted),
+            "selected": len(selected),
+            "output_dir": str(shorts_dir),
+            **summary_fields(started, spent_usd()),
+        }, 0
     except (ConfigError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(2)
+        return {"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}, 2
+
+
+def main():
+    started = time.monotonic()
+    positionals, shorts_config_path, select, json_out = parse_args(sys.argv[1:])
+    if len(positionals) < 2:
+        print(
+            "Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] "
+            "[--shorts-config config.yaml] [--select 1,3,5|all|none] [--json]"
+        )
+        sys.exit(1)
+
+    srt_file = Path(positionals[0]).expanduser().resolve()
+    video_file = Path(positionals[1]).expanduser().resolve()
+    youtube_url = positionals[2] if len(positionals) > 2 else "[LINK VIDEO PRINCIPAL]"
+
+    for label, path in [("SRT", srt_file), ("Video", video_file)]:
+        if not path.exists():
+            print(f"[eroare] {label} negăsit: {path}")
+            print("Folosește căi absolute (ex: <clip-folder>/Export/subtitles/<clip>_RO.srt)")
+            sys.exit(1)
+
+    if json_out:
+        with contextlib.redirect_stdout(sys.stderr):
+            summary, code = run_analysis(
+                srt_file, video_file, youtube_url, shorts_config_path, select, started
+            )
+    else:
+        summary, code = run_analysis(
+            srt_file, video_file, youtube_url, shorts_config_path, select, started
+        )
+
+    if json_out:
+        print(json.dumps(summary))
+    if code:
+        sys.exit(code)
 
 
 if __name__ == "__main__":

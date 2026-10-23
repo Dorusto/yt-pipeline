@@ -14,10 +14,13 @@ import argparse
 import json
 import re
 import sys
+import time
 
 import yaml
 
+from common.overlap import overlap_bounds
 from common.schema import SchemaError, validate
+from common.summary import summary_fields
 
 SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
 TC = re.compile(r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})")
@@ -95,10 +98,9 @@ def build(fragments_path, transcripts_dir, output_path, quiet=False):
         frag_dur = frag_out - frag_in
 
         for start, end, text in entries:
-            if end <= frag_in or start >= frag_out:
+            clipped_start, clipped_end = overlap_bounds(start, end, frag_in, frag_out)
+            if clipped_end <= clipped_start:
                 continue
-            clipped_start = max(start, frag_in)
-            clipped_end = min(end, frag_out)
             new_start = timeline_pos + (clipped_start - frag_in)
             new_end = timeline_pos + (clipped_end - frag_in)
             out_entries.append((new_start, new_end, text, frag.get("label", "")))
@@ -115,6 +117,7 @@ def build(fragments_path, transcripts_dir, output_path, quiet=False):
 
 
 def main(argv=None):
+    started = time.monotonic()
     parser = argparse.ArgumentParser(
         description="Retime raw per-clip subtitles onto a rough-cut timeline."
     )
@@ -128,13 +131,13 @@ def main(argv=None):
         summary = build(args.fragments, args.transcripts_dir, args.output, quiet=args.json)
     except (SchemaError, FileNotFoundError) as exc:
         if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
         return 1
 
     if args.json:
-        print(json.dumps({"ok": True, **summary}))
+        print(json.dumps({"ok": True, **summary, **summary_fields(started)}))
     return 0
 
 

@@ -82,13 +82,15 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
 | `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons and the Mode B Cuts-tab cut review |
 
+Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
+
 ---
 
 ## Foundation (AI Director, phase D0)
 
 Shared building blocks for the AI Director track (see `docs/VISION.md`). Independent of the finished-clip pipeline above.
 
-- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `__init__.py`.
+- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `summary.py` (`--json` wall time and LLM cost fields), `__init__.py`.
 - `config.yaml` — project-wide AI Director config: OpenRouter model id per role, per-job `llm_budget_usd`, `llm_backend`, optional `spend_ledger`. Copy from the committed `config.yaml.example`; `config.yaml` is git-ignored and holds no secrets (API keys stay in `OPENROUTER_API_KEY`).
 - `scripts/common/llm.py` — OpenRouter client with `llm_budget_usd` spend tracking against a per-project ledger file (`<workspace>/llm_spend.json`), role-to-model resolution and a mock backend for offline tests and dry runs. An OpenRouter response without `usage.cost` raises `MissingUsageCost` instead of counting as free.
 - `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`; `ingest.schema.json`, `motion.schema.json` and `quality.schema.json` describe the D1a analysis outputs; `reframe.schema.json` describes the crop path written by `reframe.py`.

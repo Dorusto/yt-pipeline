@@ -27,7 +27,7 @@ Build a machine-readable inventory of a folder of raw clips and still photos bef
 .venv/bin/python scripts/ingest.py /path/to/footage --workspace /path/to/workspace --json
 ```
 
-The `--json` output is a single object, e.g. `{"clips": 21, "photos": 3, "output": "/abs/workspace/ingest.json", "gyro_clips": 0, "total_duration_s": 749.5}`. Read `ingest.json` when the per-clip or per-photo detail is needed.
+The `--json` output is a single object, e.g. `{"clips": 21, "photos": 3, "output": "/abs/workspace/ingest.json", "gyro_clips": 0, "total_duration_s": 749.5, "wall_time_s": 3.2, "llm_cost_usd": 0.0}`. Read `ingest.json` when the per-clip or per-photo detail is needed.
 
 `ingest.json` is validated against `schemas/ingest.schema.json` before it is written, so a run either leaves a complete, valid file or none at all.
 
