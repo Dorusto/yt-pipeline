@@ -785,6 +785,7 @@ background:var(--sea);overflow:hidden;white-space:nowrap;text-overflow:clip;
 text-align:center;opacity:.72;transition:opacity .15s}
 .strip-track button.photo{background:repeating-linear-gradient(135deg,var(--stone) 0 6px,#d9d0bd 6px 12px)}
 .strip-track button.now{opacity:1;box-shadow:inset 0 -4px 0 var(--water)}
+.strip-track button.picked{opacity:1;outline:3px solid #e5484d;outline-offset:-3px;text-decoration:line-through}
 .strip-legend{display:flex;gap:16px;margin-top:8px;color:var(--haze);font-size:.85rem}
 .strip-legend span::before{content:"";display:inline-block;width:10px;height:10px;
 border-radius:3px;margin-right:6px;vertical-align:-1px}
@@ -891,6 +892,18 @@ if(m<60)return m+' min '+(r<10?'0':'')+r+' s';var h=Math.floor(m/60);m=m%60;retu
 var d=document.querySelector('details.run-steps');if(d){try{if(sessionStorage.getItem('runSteps')==='open')d.open=true;}catch(e){}d.addEventListener('toggle',function(){try{sessionStorage.setItem('runSteps',d.open?'open':'closed');}catch(e){}});}
 var t=[].slice.call(document.querySelectorAll('.tick[data-since]'));if(!t.length)return;
 function go(){var n=Date.now()/1000;t.forEach(function(e){e.textContent=f(n-parseFloat(e.dataset.since));});}go();setInterval(go,1000);})();
+"""
+
+# Shot removal: tapping a block on the first strip selects it; the Remove button
+# appears with the selected numbers and posts them to /<project>/drop-shot.
+PICK_SCRIPT = """
+(function(){var f=document.querySelector('form.drop-shot');var p=document.querySelector('.player');if(!f||!p)return;
+var hid=f.querySelector('input[name=shots]'),btn=f.querySelector('button[type=submit]');
+var b=[].slice.call(p.querySelectorAll('.strip-track button'));
+function sync(){var n=[];b.forEach(function(x,i){if(x.classList.contains('picked'))n.push(i+1);});hid.value=n.join(',');
+btn.hidden=!n.length;btn.textContent=n.length===1?'Remove shot '+n[0]:'Remove shots '+n.join(', ');}
+b.forEach(function(x){x.addEventListener('click',function(){x.classList.toggle('picked');sync();});});
+f.addEventListener('submit',function(){btn.disabled=true;btn.textContent='Removing, about 15 s...';});sync();})();
 """
 
 STRIP_SCRIPT = """
@@ -1226,11 +1239,9 @@ def render_drop_form(name, version):
         f'<form class="drop-shot" method="post" action="/{html_escape(name)}/drop-shot" '
         'enctype="multipart/form-data">'
         f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
-        '<label>Remove shot <input type="text" name="shots" inputmode="numeric" '
-        'placeholder="7 or 2, 7" size="8" autocomplete="off"></label> '
-        '<button type="submit" name="submit" value="drop">Remove and make a new version</button>'
-        '<p class="hint">Numbers as on the strip under the video. Nothing else changes; '
-        'it takes about a minute.</p></form>'
+        '<input type="hidden" name="shots" value="">'
+        '<p class="hint">Tap shots on the strip under the video to select them for removal.</p>'
+        '<button type="submit" name="submit" value="drop" hidden>Remove</button></form>'
     )
 
 
@@ -1464,7 +1475,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f'<section class="panel">{panels[tab]}</section>'
         f"{render_reedit(name, music_tracks)}"
     )
-    script = (STRIP_SCRIPT + TICK_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
+    script = (STRIP_SCRIPT + TICK_SCRIPT + PICK_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
     if tab == "cuts":
         script += CUTS_SCRIPT
     if tab == "shorts":

@@ -2094,3 +2094,5 @@ def test_drop_form_names_the_shown_version():
     form = serve.render_drop_form("trip", {"name": "v002"})
     assert 'action="/trip/drop-shot"' in form
     assert 'value="v002"' in form
+    assert 'name="shots" value=""' in form
+    assert "PICK" not in form and "Tap shots on the strip" in form
