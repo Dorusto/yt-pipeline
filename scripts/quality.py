@@ -792,15 +792,16 @@ def _is_stable_content(segment, steadiness, move):
 
 
 def shaky_policy():
-    """``drop`` (default) turns long shaky runs into ``accidental``; ``review`` keeps them.
+    """``review`` (default) keeps long shaky runs; ``drop`` turns them into ``accidental``.
 
     With ``review`` the segment keeps its move or hold role, so the vision model and
     the director see it with its shake defect and decide. Junk frames (obstruction,
     near-uniform, static low-detail) stay ``accidental`` either way. Test switch for
-    the holiday pilot: ``YT_PIPELINE_SHAKY=review``.
+    the holiday pilot; review is the default since the first real test, and
+    ``YT_PIPELINE_SHAKY=drop`` brings back the old behaviour.
     """
-    value = os.environ.get("YT_PIPELINE_SHAKY", "drop").strip().lower()
-    return value if value in ("drop", "review") else "drop"
+    value = os.environ.get("YT_PIPELINE_SHAKY", "review").strip().lower()
+    return value if value in ("drop", "review") else "review"
 
 
 def _keep_for_review(segment, evidence):

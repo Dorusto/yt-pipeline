@@ -12,6 +12,13 @@ import quality
 from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate
 
+
+@pytest.fixture(autouse=True)
+def _drop_policy_for_the_old_tests(monkeypatch, request):
+    """These tests describe the drop policy; the review default has its own test."""
+    if "shaky_review" not in request.node.name:
+        monkeypatch.setenv("YT_PIPELINE_SHAKY", "drop")
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "quality.py"
 FOURCC = cv2.VideoWriter_fourcc(*"mp4v")
@@ -999,9 +1006,9 @@ def test_shaky_review_policy_keeps_long_shaky_runs(monkeypatch):
         quality.apply_accidental_runs(segments, facts, 10.0)
         return segments[0]
 
-    monkeypatch.delenv("YT_PIPELINE_SHAKY", raising=False)
+    monkeypatch.setenv("YT_PIPELINE_SHAKY", "drop")
     assert run_once()["role"] == "accidental"
-    monkeypatch.setenv("YT_PIPELINE_SHAKY", "review")
+    monkeypatch.delenv("YT_PIPELINE_SHAKY", raising=False)
     kept = run_once()
     assert kept["role"] == "move"
     assert "kept for review" in kept["role_evidence"][-1]
