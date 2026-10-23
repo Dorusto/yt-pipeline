@@ -2088,3 +2088,9 @@ def test_run_cost_and_version_cost(tmp_path):
     assert round(serve.version_cost(first), 3) == 0.04
     assert round(serve.version_cost(second), 3) == 0.02
     assert serve.format_cost(0.0473) == "$0.047"
+
+
+def test_drop_form_names_the_shown_version():
+    form = serve.render_drop_form("trip", {"name": "v002"})
+    assert 'action="/trip/drop-shot"' in form
+    assert 'value="v002"' in form

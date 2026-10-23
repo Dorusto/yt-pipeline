@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Remove shots from a finished edit and render it again as a new version.
+
+Takes the edit of one version (the latest with a video by default), removes the
+shots named by their number on the edit timeline (1 is the first shot), renders
+the preview again from the proxies and keeps the result as the next version.
+Nothing else changes: no model call, the order and cuts of the other shots stay.
+
+Examples:
+  python scripts/edit_drop.py --workspace <workspaces>/<project> --drop 7
+  python scripts/edit_drop.py --workspace <workspaces>/<project> --drop 2 --drop 7 --version v002 --json
+  python scripts/edit_drop.py --workspace <workspaces>/<project> --drop 7 --dry-run
+
+Exit codes: 0 done, 2 usage or input error (nothing written), 3 the render failed.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import versions  # noqa: E402
+from common.errors import report_error  # noqa: E402
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE  # noqa: E402
+
+SCRIPTS = Path(__file__).resolve().parent
+PREVIEW_NAME = "recap_720p.mp4"
+
+
+class DropError(Exception):
+    """An input problem: nothing was written."""
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description="Remove shots from a finished edit and render it again as a new version.",
+        epilog=__doc__.split("Examples:", 1)[1],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--workspace", required=True, help="project workspace with versions/")
+    parser.add_argument("--drop", type=int, action="append", required=True,
+                        help="shot number on the edit timeline to remove (1 = first); repeat for more")
+    parser.add_argument("--version", help="version to start from, e.g. v002 (default: the latest with a video)")
+    parser.add_argument("--dry-run", action="store_true", help="say what would be removed, write nothing")
+    parser.add_argument("--json", action="store_true", help="print one JSON summary on stdout")
+    return parser.parse_args(argv)
+
+
+def pick_base(workspace, wanted):
+    found = versions.list_versions(workspace)
+    if not found:
+        raise DropError("this project has no versions yet")
+    if wanted:
+        for item in found:
+            if item["name"] == wanted:
+                return item
+        raise DropError(f"version {wanted} not found")
+    with_video = [item for item in found if any(name.endswith(".mp4") for name in item["files"])]
+    if not with_video:
+        raise DropError("no version with a video to start from")
+    return with_video[-1]
+
+
+def drop_shots(edit, numbers):
+    shots = edit.get("video") or []
+    bad = [n for n in numbers if n < 1 or n > len(shots)]
+    if bad:
+        raise DropError(f"shot {bad[0]} does not exist: the edit has {len(shots)} shots")
+    if len(set(numbers)) >= len(shots):
+        raise DropError("cannot remove every shot")
+    removed = [shots[n - 1] for n in sorted(set(numbers))]
+    keep = [shot for i, shot in enumerate(shots, 1) if i not in set(numbers)]
+    new_edit = dict(edit)
+    new_edit["video"] = keep
+    return new_edit, removed
+
+
+def describe(numbers, removed):
+    bits = []
+    for number, shot in zip(sorted(set(numbers)), removed):
+        bits.append(f"{number} ({shot.get('clip')} {float(shot.get('in_s', 0)):.1f}-{float(shot.get('out_s', 0)):.1f} s)")
+    return "removed shot " + ", ".join(bits)
+
+
+def atomic_write(path, text):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    started = time.time()
+    workspace = Path(args.workspace).expanduser()
+    try:
+        if not workspace.is_dir():
+            raise DropError(f"workspace not found: {workspace}")
+        base = pick_base(workspace, args.version)
+        edit = json.loads((base["path"] / versions.EDIT_NAME).read_text(encoding="utf-8"))
+        new_edit, removed = drop_shots(edit, args.drop)
+    except DropError as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except (OSError, ValueError) as exc:
+        return report_error(f"cannot read the edit of the base version: {exc}", EXIT_USAGE, args.json)
+    note = f"{describe(args.drop, removed)} of {base['name']}"
+    summary = {
+        "tool": "scripts/edit_drop.py",
+        "ok": True,
+        "base": base["name"],
+        "removed": [shot.get("id") for shot in removed],
+        "note": note,
+        "shots_left": len(new_edit["video"]),
+        "version": None,
+        "dry_run": args.dry_run,
+        "llm_cost_usd": 0.0,
+    }
+    if args.dry_run:
+        summary["wall_time_s"] = round(time.time() - started, 3)
+        print(json.dumps(summary) if args.json else f"would make a new version: {note}")
+        return EXIT_OK
+    atomic_write(workspace / versions.EDIT_NAME, json.dumps(new_edit, indent=2) + "\n")
+    render = subprocess.run(
+        [sys.executable, str(SCRIPTS / "render.py"), "--edit", str(workspace / versions.EDIT_NAME),
+         "--out", str(workspace / PREVIEW_NAME), "--force", "--json"],
+        capture_output=True, text=True,
+    )
+    if render.returncode != 0:
+        tail = (render.stderr or render.stdout or "").strip().splitlines()[-1:] or ["no output"]
+        return report_error(f"render failed: {tail[0]}", EXIT_RUNTIME, args.json, base=base["name"])
+    meta = dict(base["meta"])
+    for key in ("created_at", "files"):
+        meta.pop(key, None)
+    meta.update({"feedback": [], "note": note, "status": "done", "failed_at": None})
+    directory = versions.snapshot(workspace, meta)
+    summary["version"] = directory.name if directory else None
+    summary["wall_time_s"] = round(time.time() - started, 3)
+    print(json.dumps(summary) if args.json else f"new version {summary['version']}: {note}")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

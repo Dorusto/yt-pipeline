@@ -1220,6 +1220,20 @@ def render_run_notice(status, report, has_previous=False):
     return ""
 
 
+def render_drop_form(name, version):
+    """A small form that removes shots of the shown version and renders a new one."""
+    return (
+        f'<form class="drop-shot" method="post" action="/{html_escape(name)}/drop-shot" '
+        'enctype="multipart/form-data">'
+        f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
+        '<label>Remove shot <input type="text" name="shots" inputmode="numeric" '
+        'placeholder="7 or 2, 7" size="8" autocomplete="off"></label> '
+        '<button type="submit" name="submit" value="drop">Remove and make a new version</button>'
+        '<p class="hint">Numbers as on the strip under the video. Nothing else changes; '
+        'it takes about a minute.</p></form>'
+    )
+
+
 def render_version_links(name, versions, shown, compare=None):
     """The row of version chips, plus compare links for the other versions."""
     if len(versions) < 2:
@@ -1277,6 +1291,8 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     if compare is not None and compare["number"] == shown["number"]:
         compare = None
     parts.append(render_version_links(name or directory.name, versions, shown, compare))
+    if status != "running" and has_video(shown):
+        parts.append(render_drop_form(name or directory.name, shown))
     heading = shown["name"].lstrip("v").lstrip("0") or "0"
     parts.append(
         render_player(
@@ -2304,6 +2320,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "expectations":
             self.handle_expectations(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "drop-shot":
+            self.handle_drop_shot(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "cut-review":
             self.handle_cut_review(segments[0])
             return
@@ -2394,6 +2413,38 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(409, "unreadable .run.json")
             return
         self._start_for(fields, source, project, reedit=True)
+
+    def handle_drop_shot(self, project):
+        """Remove shots from a version with edit_drop.py and show the new version."""
+        workspace = self.server.root / project
+        if not (workspace / "versions").is_dir():
+            self.send_error_text(404, "no such project")
+            return
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        try:
+            fields = parse_fields_only(self._reader())
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        numbers = re.findall(r"\d+", fields.get("shots") or "")
+        if not numbers:
+            self.send_error_text(400, "give the number of the shot to remove")
+            return
+        command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
+                   "--workspace", str(workspace), "--json"]
+        version = fields.get("version") or ""
+        if re.fullmatch(r"v\d+", version):
+            command += ["--version", version]
+        for number in numbers:
+            command += ["--drop", number]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        if result.returncode != 0:
+            message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
+            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            return
+        self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_expectations(self, project):
         """Append one phone-review expectation to the workspace's expectations.yaml."""
