@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Costs: `costs.py import-opencode` imports build-agent spend per day from opencode's session database, only for this project's folders (`--db`, repeatable `--match`), idempotent by date.
+- Costs: `costs.py import-donations --from <donations.csv>` imports donations from a CSV export (required `date`, `amount`; optional `note`, `id`), idempotent by `source`, skipping bad rows with a warning.
+- Web app: the Upload page shows a low-credit warning banner when the OpenRouter key's remaining credit is under `limits.credit_warn_usd`, before a run that would pass the key limit.
 - Repo automations: Dependabot opens one grouped weekly pull request per ecosystem (Python requirements and GitHub Actions) inside the owner's working hours, checked by CI like any pull request; `AGENTS.md` is the shared instruction file for every coding agent, pointing to `docs/RULES.md`, the skills and the topic files in `docs/agents/` (code style, testing, conventions), with `CLAUDE.md` pointing to it.
 - Web app: a shot on the strip can be made 1 s longer or shorter (a "− 1 s" / "+ 1 s" control next to the bin icon), rendered as a new version with `edit_drop.py --trim` and no model call.
 

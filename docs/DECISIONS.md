@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Donations import and the low-credit warning (V020N lot n7)
+
+**Context:** Issue #97 asks for two things: importing donations into the costs ledger from a provider's CSV export instead of typing each one with `add --kind donation`, and warning the person on the Upload page when the OpenRouter key's remaining credit is low, before a run that would pass the key limit.
+
+**Options:** (A) a Ko-fi webhook or a network listener that receives donations; (B) a CSV file import, idempotent like the other imports. For the warning: (A) an ntfy alert; (B) a banner on the Upload page.
+
+**Decision:** B for both. `costs.py import-donations --from <donations.csv>` reads a header row (required `date`, `amount`; optional `note`, `id`), strips a leading `$`/`€` and thousands separators from the amount, and upserts by `source` (`donation:<id>` when the provider gives an id, else `donation:<date>:<amount>:<note>`), so re-running updates instead of duplicating. A bad date or amount is skipped with a `[warn]` line and counted in `skipped`; a missing file or a missing `date`/`amount` header is a usage error. `serve.py` gains `credit_warning(server)`, which returns a `.notice` banner when the cached credit is known, the key has a limit and `remaining < limits.credit_warn_usd`; the `/upload` route renders it above the start button.
+
+**Why not:** A) a webhook needs a public listener and payment handling, which the project explicitly avoids; the file import is the deliverable and the CLI `add --kind donation` stays. An ntfy alert is out of band — the person is already on the Upload page when they start a run, so the warning belongs there.
+
+**Consequence:** No new config key or flag beyond `import-donations --from`; no payment handling and no network listener. `credit_line` and the Costs page are unchanged. RULES records both lines.
+
+---
+
 ## [2026-10-23] scripts/common/llm.py: one retry on an empty or non-JSON model answer
 
 **Context:** Issue #77: `metadata.py` with xiaomi/mimo-v2.6-pro failed once in three runs with `model response is not valid JSON: Expecting value: line 1 column 1 (char 0)` (an empty response); a second identical run worked. `metadata.py` was the only tool that parsed a model answer with no retry — `chapters.py`, `shorts_rank.py` and `recap_meta.py` already retry once, and `graphics_plan.py` retries on validation errors.

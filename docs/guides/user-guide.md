@@ -248,7 +248,9 @@ finished recap, the explanation and the contact sheet.
   `limits.storage_gb` in the config; with none set no limit is shown. The same
   pages show the model credit ("Model credit: $3.20 left of $5.00") read from
   the OpenRouter key endpoint, and warn under `limits.credit_warn_usd` (default
-  1.0).
+  1.0). When the remaining credit is under that value the Upload page also shows
+  a low-credit banner above the start button, so you see it before starting a
+  run that would pass the key limit.
 - **Brief help.** The four fact fields (Place, When, Who is in it, Occasion)
   sit above the Brief field on the Upload and Re-edit forms. The Brief field
   has hint chips (The story or the best moment, Mood, What to leave out);
@@ -302,16 +304,19 @@ stops with a usage error naming those three ways (docs write `<costs.db>`).
 .venv/bin/python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>
 .venv/bin/python scripts/costs.py --ledger <costs.db> totals --json
 ```
 
 `import-jobs` reads each workspace's `llm_spend.json` and `import-dev` the build
 agents' run-spend JSON; both are idempotent by `source`, so re-running never
-duplicates a row. `totals --json` is the object the web app's **Costs** page
-reads (through the shared `scripts/common/costs.py`): per-kind sums, the
-recurring monthly cost, the fixed total over the months since the first fixed
-entry and the balance (donations minus model + dev + investments + fixed
-monthly × months).
+duplicates a row. `import-donations --from <donations.csv>` imports donations
+from a CSV export (required `date`, `amount`; optional `note`, `id`), idempotent
+by `source` too, and skips a bad row with a warning. `totals --json` is the
+object the web app's **Costs** page reads (through the shared
+`scripts/common/costs.py`): per-kind sums, the recurring monthly cost, the fixed
+total over the months since the first fixed entry and the balance (donations
+minus model + dev + investments + fixed monthly × months).
 
 The Costs page also carries the **Feedback and requests** form. It appends one
 JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file,

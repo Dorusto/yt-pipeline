@@ -1,6 +1,6 @@
 ---
 name: yt-costs
-description: Keep a small SQLite ledger of what the project costs and earns — model jobs, build-agent spend, fixed monthly costs, one-off investments and donations — with idempotent imports and a totals view. Use when the user asks what the project costs or earns, wants to add a cost or a donation, import the model or build-agent spend, or see the balance. Trigger phrases - "cât costă proiectul", "cât am cheltuit", "adaugă o donație", "importă cheltuielile", "cât e balanța", "costs ledger", "add a cost", "import the spend", "what is the balance", "totals". Not for the per-run LLM budget cap (that is `scripts/common/llm.py` and the watchdog), not for the read-only Costs page in the web app (that is `scripts/serve.py`, `GET /costs`) and not for any donation payment handling.
+description: Keep a small SQLite ledger of what the project costs and earns — model jobs, build-agent spend, fixed monthly costs, one-off investments and donations — with idempotent imports and a totals view. Use when the user asks what the project costs or earns, wants to add a cost or a donation, import the model or build-agent spend, import donations from a CSV export, or see the balance. Trigger phrases - "cât costă proiectul", "cât am cheltuit", "adaugă o donație", "importă cheltuielile", "importă donațiile", "cât e balanța", "costs ledger", "add a cost", "import the spend", "import donations", "what is the balance", "totals". Not for the per-run LLM budget cap (that is `scripts/common/llm.py` and the watchdog), not for the read-only Costs page in the web app (that is `scripts/serve.py`, `GET /costs`) and not for any donation payment handling.
 compatibility: Run from the repository root. Needs the repo .venv (stdlib only — sqlite3, json). The ledger is a SQLite file outside the repository; no model is called, so llm_cost_usd is always 0.0. Reads llm_spend.json files and a run-spend JSON read-only through `scripts/common/spend.py`.
 ---
 
@@ -25,6 +25,7 @@ With none set the tool stops with a usage error naming those three ways. Docs an
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-opencode --db <opencode.db> --match <folder-part>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>
 .venv/bin/python scripts/costs.py --ledger <costs.db> totals --month 2026-10 --json
 .venv/bin/python scripts/costs.py --ledger <costs.db> list --kind model_job
 ```
@@ -33,6 +34,7 @@ With none set the tool stops with a usage error naming those three ways. Docs an
 - `import-jobs --workspaces DIR` reads every immediate subdirectory's `llm_spend.json` (through `common.llm.read_ledger`) and writes one `model_job` entry per project; `source` is the project directory name, `date` the file's modification date. An unreadable ledger is skipped with a warning on stderr and does not fail the run.
 - `import-dev --from FILE` reads the build agents' run-spend JSON through the shared `scripts/common/spend.py` `read_spend_ledger` (a list, or an object with an `entries` list) and sums `cost_usd` per calendar day; one `dev_spend` entry per day, `source` the date.
 - `import-opencode --db <opencode.db> --match <folder-part>` reads opencode's session database read-only and imports build-agent spend per day, only for this project's folders: `--match` is a folder-name part that marks the project's sessions and is repeatable (a session is kept when any part appears in its directory). `source` is the date, so re-running is idempotent.
+- `import-donations --from <donations.csv>` imports donations from a CSV export with a header row. Required columns `date` (`YYYY-MM-DD`) and `amount` (a number `> 0`; a leading `$`/`€` and thousands separators are stripped); optional `note` and `id`. `source` is `donation:<id>` when the provider gives an id, else `donation:<date>:<amount>:<note>`, so re-running updates instead of duplicating. A bad date or amount is skipped with a `[warn]` line on stderr and counted in `skipped`; the run still succeeds. A missing file or a missing `date`/`amount` header is a usage error.
 - `totals [--month YYYY-MM]` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance.
 - `list [--kind K]` lists entries, optionally filtered by kind.
 
@@ -42,7 +44,7 @@ With none set the tool stops with a usage error naming those three ways. Docs an
 
 ## Idempotent imports
 
-Both imports are idempotent by `source`: the project name for model jobs, the date for dev spend. Re-running updates the existing row instead of inserting a duplicate, so `count` stays stable.
+The imports are idempotent by `source`: the project name for model jobs, the date for dev spend, `donation:<id>` or `donation:<date>:<amount>:<note>` for donations. Re-running updates the existing row instead of inserting a duplicate, so `count` stays stable.
 
 ## JSON shapes
 
@@ -52,6 +54,7 @@ Every subcommand accepts `--json` (before or after the subcommand) and reports `
 - `import-jobs`: `{"ok": true, "imported": [{"project", "total_usd", "action"}], "count", ...}`
 - `import-dev`: `{"ok": true, "imported": [{"date", "cost_usd", "action"}], "count", ...}`
 - `import-opencode`: `{"ok": true, "imported": [{"date", "cost_usd", "action"}], "count", ...}`
+- `import-donations`: `{"ok": true, "imported": [{"date", "amount_usd", "action"}], "count", "skipped", ...}`
 - `totals`: `{"ok": true, "month", "by_kind": {...}, "monthly_running_usd", "development_total_usd", "model_total_usd", "donations_usd", "investments_usd", "fixed_months", "fixed_total_usd", "balance_usd", ...}` — the object the web page will read.
 - `list`: `{"ok": true, "entries": [...], "count", ...}`
 

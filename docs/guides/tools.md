@@ -385,12 +385,14 @@ The ledger is a SQLite file **outside the repository**. Its path comes from `--l
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-opencode --db <opencode.db> --match <folder-part>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>
 .venv/bin/python scripts/costs.py --ledger <costs.db> totals --month 2026-10 --json
 .venv/bin/python scripts/costs.py --ledger <costs.db> list --kind model_job
 ```
 
 - Five kinds: `model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`.
 - `import-jobs` reads each workspace's `llm_spend.json`; `import-dev` reads the build agents' run-spend JSON; `import-opencode` reads opencode's session database (`--db`, repeatable `--match` for this project's folders). All are idempotent by `source` (the project name for jobs, the date for dev spend), so re-running never duplicates a row.
+- `import-donations --from <donations.csv>` imports donations from a CSV export with a header row (required `date`, `amount`; optional `note`, `id`), idempotent by `source` (`donation:<id>` or `donation:<date>:<amount>:<note>`); a bad date or amount is skipped with a warning and the run still succeeds.
 - `totals` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance (donations minus model + dev + investments + fixed monthly × months). `costs.py totals --json` and the web page share `compute_totals` from `scripts/common/costs.py`.
 
 ### Costs page

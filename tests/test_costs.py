@@ -114,6 +114,51 @@ def test_import_dev_idempotent(tmp_path, capsys):
     assert {entry["source"] for entry in listing["entries"]} == {"2026-10-01", "2026-10-02"}
 
 
+def test_import_donations_idempotent(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    donations = tmp_path / "donations.csv"
+    donations.write_text(
+        "date,amount,note,id\n"
+        "2026-10-01,10.00,thanks,abc123\n"
+        "2026-10-02,$5.50,coffee,\n"
+        "2026/10/03,3.00,bad date,\n"
+        "2026-10-03,0,zero,\n",
+        encoding="utf-8",
+    )
+    first = run_json(
+        capsys, "--ledger", str(ledger), "import-donations", "--from", str(donations), "--json"
+    )
+    assert first["count"] == 2
+    assert first["skipped"] == 2
+    assert all(row["action"] == "created" for row in first["imported"])
+    totals_first = run_json(capsys, "--ledger", str(ledger), "totals", "--json")
+    second = run_json(
+        capsys, "--ledger", str(ledger), "import-donations", "--from", str(donations), "--json"
+    )
+    assert second["count"] == 2
+    assert all(row["action"] == "updated" for row in second["imported"])
+    totals_second = run_json(capsys, "--ledger", str(ledger), "totals", "--json")
+    assert totals_first["donations_usd"] == totals_second["donations_usd"] == 15.5
+    listing = run_json(capsys, "--ledger", str(ledger), "list", "--kind", "donation", "--json")
+    assert listing["count"] == 2
+    assert {entry["source"] for entry in listing["entries"]} == {
+        "donation:abc123",
+        "donation:2026-10-02:5.50:coffee",
+    }
+
+
+def test_import_donations_missing_columns_usage_error(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    donations = tmp_path / "donations.csv"
+    donations.write_text("date,note\n2026-10-01,thanks\n", encoding="utf-8")
+    code = costs.main(
+        ["--ledger", str(ledger), "import-donations", "--from", str(donations), "--json"]
+    )
+    assert code == EXIT_USAGE
+    captured = capsys.readouterr()
+    assert "amount" in captured.err
+
+
 def test_totals_balance_math(tmp_path, capsys):
     ledger = tmp_path / "costs.db"
     add(capsys, ledger, "fixed_monthly", 3.0, day="2026-10-01")
@@ -189,10 +234,13 @@ def test_json_summary_fields_on_every_subcommand(tmp_path, capsys):
     spend.write_text(
         json.dumps([{"ts": "2026-10-01T00:00:00Z", "cost_usd": 0.1}]), encoding="utf-8"
     )
+    donations = tmp_path / "donations.csv"
+    donations.write_text("date,amount\n2026-10-01,1.0\n", encoding="utf-8")
     commands = [
         ["add", "--kind", "donation", "--amount", "1", "--date", "2026-10-01"],
         ["import-jobs", "--workspaces", str(workspaces)],
         ["import-dev", "--from", str(spend)],
+        ["import-donations", "--from", str(donations)],
         ["totals"],
         ["list"],
     ]
@@ -221,7 +269,7 @@ def test_help_lists_subcommands_and_examples(capsys):
         costs.main(["--help"])
     assert excinfo.value.code == EXIT_OK
     out = capsys.readouterr().out
-    for command in ("add", "import-jobs", "import-dev", "totals", "list"):
+    for command in ("add", "import-jobs", "import-dev", "import-donations", "totals", "list"):
         assert command in out
     assert "examples:" in out
 

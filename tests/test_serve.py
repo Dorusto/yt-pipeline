@@ -2651,6 +2651,43 @@ def test_upload_page_shows_storage_and_credit(tmp_path, monkeypatch):
         server.server_close()
 
 
+def test_upload_page_warns_on_low_credit(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 4.5, "limit": 5.0, "remaining": 0.5},
+    )
+    server = start_server(root, credit_warn_usd=1.0)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "Low model credit" in page
+        assert "a run may pass the key limit" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_no_warning_when_credit_is_enough(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 1.8, "limit": 5.0, "remaining": 3.2},
+    )
+    server = start_server(root, credit_warn_usd=1.0)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "Low model credit" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_upload_refused_over_the_storage_limit(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     inbox = tmp_path / "inbox"

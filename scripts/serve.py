@@ -840,6 +840,28 @@ def credit_line(server):
     return f'<p class="credit{warn}">Model credit: ${remaining:.2f} left of ${limit:.2f}</p>'
 
 
+def credit_warning(server):
+    """The low-credit banner, or '' when the key has enough credit or is unknown."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return ""
+    credit = model_credit(api_key)
+    if credit is None:
+        return ""
+    limit = credit["limit"]
+    if limit is None:
+        return ""
+    remaining = credit["remaining"]
+    if remaining is None:
+        remaining = limit - credit["usage"]
+    if remaining >= server.credit_warn_usd:
+        return ""
+    return (
+        f'<p class="notice credit-warning">Low model credit: {format_cost(remaining)} left of '
+        f"{format_cost(limit)} \u2014 a run may pass the key limit. Add credit before starting.</p>"
+    )
+
+
 def fetch_project_totals(url, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     """GET the owner instance's /costs.json; return the totals dict or raise."""
     opener = opener or urllib.request.urlopen
@@ -2518,7 +2540,7 @@ askYesNo(f,'Leave out '+label+'?',function(){f.submit();});});});})();
 
 
 def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html="",
-                  brand_logo=DEFAULT_BRAND_LOGO):
+                  credit_warning_html="", brand_logo=DEFAULT_BRAND_LOGO):
     """Return the Upload page with the form wired to POST /upload."""
     limits = f"{storage_html}{credit_html}"
     drop = (
@@ -2564,6 +2586,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         '<span class="options-state">All on Auto</span></summary>'
         f"{render_form_rows(option_fields(music_tracks))}"
         f"{AUTO_HINT}</details>"
+        f"{credit_warning_html}"
         f"{consent}"
         f'<button class="go start" type="submit" name="submit" value="start"{start_disabled}>Upload and start</button>'
         '<div class="upload-progress" hidden><progress max="100" value="0"></progress>'
@@ -4091,6 +4114,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     consent_text=self.server.consent_text,
                     storage_html=storage_line(self.server),
                     credit_html=credit_line(self.server),
+                    credit_warning_html=credit_warning(self.server),
                     brand_logo=self.server.brand_logo,
                 ),
                 send_body,

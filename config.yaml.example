@@ -99,7 +99,8 @@ llm_backend: openrouter
 # inbox size: the Upload and Costs pages show "X GB of Y GB used", warn over 80 %
 # and refuse an upload that would pass the limit before any byte is written.
 # limits.credit_warn_usd (default 1.0) warns when the OpenRouter key's remaining
-# credit falls below it. There is no personal default: set storage_gb here, in the
+# credit falls below it; the Upload page shows a low-credit banner under it.
+# There is no personal default: set storage_gb here, in the
 # YT_PIPELINE_STORAGE_GB environment variable, or pass --storage-gb.
 # limits:
 #   storage_gb: 100
