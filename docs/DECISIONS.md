@@ -2742,3 +2742,20 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) the hint gives no way to act on it, and the brief is written before the edit exists.
 
 **Consequence:** `brief_facts.json` is a new machine-owned file (no schema, four optional string keys); `recap_meta.py` `missing` now uses the field names (`place`, `when`, `who`, `occasion`); the new route is in RULES; the new parts are experimental in the v0.1.0 candidate.
+
+---
+
+## [2026-10-23] README is the front door, the tool reference moves to docs/guides/tools.md (V020N lot n2)
+
+The README had grown to about 500 lines and 30 sections, one per tool, so a
+first-time visitor could not see what the project is, who it is for or how to
+start. The README is now about one screen: what yt-pipeline is, who it is for, a
+short quickstart and where to go next. The tool-by-tool reference moved, grouped
+and unchanged, to `docs/guides/tools.md`, and the pilot host and costs sections
+link to their guides instead of repeating them.
+
+The README illustration is a vector SVG (`docs/images/web-app.svg`), not a PNG:
+`scripts/check_public.py` blocks `.png` outside `tests/fixtures/` and `examples/`,
+and a real capture would carry the instance's own music library names. The SVG is
+own work drawn in the app's theme colours. `tests/test_readme_layout.py` keeps the
+README short and its links resolving.

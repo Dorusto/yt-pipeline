@@ -356,3 +356,4 @@ project costs URL are in [pilot-host.md](pilot-host.md).
 - Why it works this way: `docs/VISION.md`, `docs/DECISIONS.md`
 - Filming tips that make the edit better: `docs/guides/shot-grammar.md`, section 4
 - Known risks and how they are handled: `docs/RISKS.md`
+- Every tool, grouped, with flags and examples: `docs/guides/tools.md`
