@@ -113,3 +113,10 @@ llm_backend: openrouter
 # web:
 #   features: [upload, recap, why, shots, shorts, costs, requests]
 #   consent_text: <consent text>
+
+# App logo: one of the three flat SVG marks in assets/brand/ (option-1
+# clapperboard, option-2 viewfinder, option-3 reticle). There is a default:
+# set it here, in the YT_PIPELINE_BRAND_LOGO environment variable, or pass
+# --brand-logo. GET /brand shows all three side by side.
+# brand:
+#   logo: option-1

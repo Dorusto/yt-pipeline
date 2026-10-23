@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Web app: one visual direction for every page — a shared token set (colour, type, spacing, radii) with a light and dark theme, a consistent button, field, strip, notice and tab-bar style, and a header slot for the logo.
+- Web app: three flat SVG logo marks (assets/brand/), a GET /brand chooser, the brand.logo setting and the chosen mark as the SVG favicon and in the top bar.
 - Web app: upload with progress and drag and drop, a run notice with live total time and the time of each step, and the model cost of the running edit and of each version.
 - Mode B finishing: `finish_pip.py` places the camera picture-in-picture over the screen spans with an eased entry and exit.
 - Music: the library path comes from a flag, an environment variable or the config, and `music_pick.py --list` reports each track's licence status.

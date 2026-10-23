@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Viewfinder">
+  <g style="fill:none;stroke:var(--sea,#57b8c4)" stroke-width="4" stroke-linecap="square">
+    <path d="M8 18 V8 H18"/>
+    <path d="M30 8 H40 V18"/>
+    <path d="M40 30 V40 H30"/>
+    <path d="M18 40 H8 V30"/>
+  </g>
+  <circle cx="24" cy="24" r="4" style="fill:var(--stone,#ece5d5)"/>
+</svg>

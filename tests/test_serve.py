@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import xml.etree.ElementTree as ET
 
 import pytest
 import yaml
@@ -52,7 +53,8 @@ def make_music_dir(tmp_path, names):
 def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480,
                  ledger=None, requests=None, donation_links=None,
                  features=None, consent_text=None,
-                 storage_gb=None, credit_warn_usd=None, project_totals_url=None):
+                 storage_gb=None, credit_warn_usd=None, project_totals_url=None,
+                 brand_logo=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -74,6 +76,7 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         storage_gb,
         credit_warn_usd,
         project_totals_url,
+        brand_logo if brand_logo is not None else serve.DEFAULT_BRAND_LOGO,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -3234,10 +3237,124 @@ def test_pages_share_the_theme_tokens(tmp_path):
                           "--font-display:", "--sp-4:", "--bg:var(--water)"):
                 assert token in text, (path, token)
             assert "prefers-color-scheme:light" in text, path
-            assert 'class="brand-slot"' in text, path
+            assert 'class="brand-mark"' in text, path
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_brand_page_lists_the_three_options(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/brand")
+        assert status == 200
+        text = body.decode("utf-8")
+        for name in ("option-1", "option-2", "option-3"):
+            assert name in text, name
+        assert "in use" in text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_brand_svg_files_are_served(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/brand/option-1.svg")
+        assert status == 200
+        assert headers["Content-Type"] == "image/svg+xml"
+        assert body.startswith(b"<svg")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_favicon_serves_the_chosen_mark(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/favicon.svg")
+        assert status == 200
+        assert headers["Content-Type"] == "image/svg+xml"
+        assert body == (serve.BRAND_DIR / "option-1.svg").read_bytes()
+    finally:
+        server.shutdown()
+        server.server_close()
+    server = start_server(root, brand_logo="option-2")
+    try:
+        status, _, body = request(server, "GET", "/favicon.svg")
+        assert status == 200
+        assert body == (serve.BRAND_DIR / "option-2.svg").read_bytes()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_every_page_links_the_favicon(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        for path in ("/", "/upload", "/costs", "/2026-10-14/"):
+            status, _, body = request(server, "GET", path)
+            assert status == 200, path
+            assert '<link rel="icon" type="image/svg+xml" href="/favicon.svg">' in body.decode("utf-8"), path
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_header_shows_the_chosen_mark(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/")
+        text = body.decode("utf-8")
+        assert 'class="brand-mark"' in text
+        assert "Clapperboard" in text
+    finally:
+        server.shutdown()
+        server.server_close()
+    server = start_server(root, brand_logo="option-3")
+    try:
+        _, _, body = request(server, "GET", "/")
+        assert "Focus reticle" in body.decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_brand_svg_files_are_valid_and_use_two_theme_colours():
+    for name in serve.BRAND_OPTIONS:
+        path = serve.BRAND_DIR / f"{name}.svg"
+        text = path.read_text(encoding="utf-8")
+        ET.fromstring(text)
+        assert "var(--sea,#57b8c4)" in text, name
+        assert "var(--stone,#ece5d5)" in text, name
+
+
+def test_check_json_reports_brand_logo(tmp_path, capsys):
+    root = make_root(tmp_path)
+    assert (
+        serve.main(
+            [
+                "--workspaces",
+                str(root),
+                "--inbox",
+                str(tmp_path / "inbox"),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--check",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["brand_logo"] == "option-1"
 
 
 def test_theme_has_a_light_palette():

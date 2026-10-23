@@ -2642,3 +2642,15 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** `.github/workflows/deploy.yml` runs on `release: published` and on `workflow_dispatch` with a `tag` input. One job per pilot container comes from a matrix over the repository variable `PILOT_RUNNERS` (a JSON list of runner labels); each job runs on `[self-hosted, <label>]`, has `concurrency` per label with `cancel-in-progress: false`, and runs `cd "$YT_PIPELINE_PATH" && deploy/update.sh "<tag>"`. There is no `pull_request` trigger, so a self-hosted runner never runs code from a fork. `docs/guides/pilot-host.md` documents the runner install, `YT_PIPELINE_PATH`, the `PILOT_RUNNERS` variable and the outside-collaborator approval setting; `docs/RELEASING.md` names the deploy step.
 
 **Consequence:** publishing a release deploys it to every container in `PILOT_RUNNERS`; `update.sh` still rolls back to the previous tag when the smoke test fails; the new part is experimental in the v0.1.0 candidate; no tool, schema or route changes.
+
+## [2026-10-23] App logo and favicon (V010 lot logo)
+
+**Context:** The web app's header carried a `.brand-slot` placeholder left by the design lot, and the app had no favicon. The owner wants a simple, flat mark that fits the token set.
+
+**Options:** (A) a raster logo or an icon font; (B) three hand-drawn flat SVG marks in `assets/brand/`, drawn in two theme colours, chosen per instance by `brand.logo`.
+
+**Decision:** B. `assets/brand/option-1.svg` (clapperboard), `option-2.svg` (viewfinder brackets) and `option-3.svg` (focus reticle) are 48x48 square marks, own work under the repository licence (AGPL-3.0-or-later), drawn in `--sea` (accent) and `--stone` (text) written as CSS variables with hex fallbacks so a mark adapts to the light and dark theme when inlined and still renders standalone as the favicon. `scripts/common/config.py` gains `BRAND_OPTIONS`, `brand_logo()` (`--brand-logo`, else `YT_PIPELINE_BRAND_LOGO`, else `brand.logo`, else `option-1`) and a `brand` validation block. `serve.py` inlines the chosen mark left of the app name in the top bar, links it as the SVG favicon (`GET /favicon.svg`) and serves the three files (`GET /brand/<name>.svg`); `GET /brand` shows the three options side by side for the owner to choose. No new dependency.
+
+**Why not:** A) a raster logo or an icon font adds a dependency and does not adapt to the light and dark theme; the app already ships no external assets.
+
+**Consequence:** the header placeholder becomes the chosen mark; the favicon is the chosen SVG; `brand.logo` is documented in `config.yaml.example`; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.

@@ -260,6 +260,10 @@ finished recap, the explanation and the contact sheet.
   shows (`upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`);
   with none set every part is on. A part that is off is refused with a 404,
   not just hidden.
+- **Logo.** The top bar shows the instance's mark left of the app name and uses
+  it as the favicon. `GET /brand` shows the three options side by side; pick one
+  with `brand.logo` (default `option-1`), or `--brand-logo` /
+  `YT_PIPELINE_BRAND_LOGO`.
 
 `--music auto` picks the track from the music library by the brief's pace and
 the shot tags, using the BPM and energy `beats.py` measures for every track

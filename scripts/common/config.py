@@ -204,6 +204,16 @@ def _validate(data):
                         f"web.features entries must be one of: {', '.join(WEB_FEATURES)}"
                     )
 
+    brand = data.get("brand")
+    if brand is not None:
+        if not isinstance(brand, dict):
+            raise ConfigError("brand must be a mapping")
+        logo = brand.get("logo")
+        if logo is not None and logo not in BRAND_OPTIONS:
+            raise ConfigError(
+                f"brand.logo must be one of: {', '.join(BRAND_OPTIONS)}"
+            )
+
     return data
 
 
@@ -220,6 +230,9 @@ DEFAULT_CREDIT_WARN_USD = 1.0
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
+BRAND_OPTIONS = ("option-1", "option-2", "option-3")
+BRAND_LOGO_ENV = "YT_PIPELINE_BRAND_LOGO"
+DEFAULT_BRAND_LOGO = "option-1"
 
 
 def no_music_library_message(flag_name):
@@ -503,3 +516,24 @@ def web_features(cli_value=None, config=None):
                 f"web.features entries must be one of: {', '.join(WEB_FEATURES)}"
             )
     return tuple(name for name in WEB_FEATURES if name in names)
+
+
+def brand_logo(cli_value=None, config=None):
+    """The app logo mark: CLI flag, else BRAND_LOGO_ENV, else brand.logo, else option-1.
+
+    An unknown value is a ConfigError naming the three options. There is a
+    default, so this is not a three-ways error.
+    """
+    value = cli_value
+    if not value:
+        value = os.environ.get(BRAND_LOGO_ENV)
+    if not value:
+        data = config if config is not None else load_config()
+        section = data.get("brand")
+        if isinstance(section, dict):
+            value = section.get("logo")
+    if not value:
+        return DEFAULT_BRAND_LOGO
+    if value not in BRAND_OPTIONS:
+        raise ConfigError(f"brand.logo must be one of: {', '.join(BRAND_OPTIONS)}")
+    return value

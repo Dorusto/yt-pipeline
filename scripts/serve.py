@@ -42,9 +42,12 @@ from pathlib import Path
 import yaml
 
 from common.config import (
+    BRAND_OPTIONS,
     ConfigError,
+    DEFAULT_BRAND_LOGO,
     DEFAULT_CREDIT_WARN_USD,
     WEB_FEATURES,
+    brand_logo,
     consent_text,
     costs_db,
     credit_warn_usd,
@@ -168,6 +171,7 @@ STATION_PLAIN_NAMES = {
 }
 
 BRAND_PATH = REPO_ROOT / "brand.json"
+BRAND_DIR = REPO_ROOT / "assets" / "brand"
 PROGRESS_FALLBACK_COLOR = "#57b8c4"
 SHOT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,63}$")
 EXPECTATION_KINDS = ("must_include", "wrong_label")
@@ -575,6 +579,12 @@ def build_parser():
         default=None,
         help="URL of the owner instance's /costs.json, shown as 'Project costs (everyone)' "
              "(or YT_PIPELINE_PROJECT_TOTALS_URL, or costs.project_totals_url in the config)",
+    )
+    parser.add_argument(
+        "--brand-logo",
+        default=None,
+        help="logo mark shown in the top bar and used as the favicon "
+             "(or YT_PIPELINE_BRAND_LOGO, or brand.logo in the config; default: option-1)",
     )
     parser.add_argument(
         "--check",
@@ -1030,9 +1040,11 @@ textarea:focus-visible,summary:focus-visible{outline:2px solid var(--accent);out
 .wrap{max-width:760px;margin:0 auto;padding:0 var(--sp-4) var(--sp-6)}
 .bar{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) 0;margin-bottom:var(--sp-2);
 border-bottom:1px solid var(--line)}
-.brand-slot{width:26px;height:26px;border-radius:8px;background:var(--line);flex:0 0 auto}
+.brand-mark{display:inline-flex;align-items:center;flex:0 0 auto}
+.brand-mark svg{width:26px;height:26px;display:block}
 .mark{font-family:var(--font-display);font-size:var(--fs-l);
-color:var(--text);text-decoration:none;margin-right:auto;letter-spacing:.01em}
+color:var(--text);text-decoration:none;margin-right:auto;letter-spacing:.01em;
+display:inline-flex;align-items:center;gap:var(--sp-2)}
 .bar a.nav{color:var(--muted);text-decoration:none;min-height:var(--tap);
 display:inline-flex;align-items:center}
 .bar a.nav.on{color:var(--text)}
@@ -1157,6 +1169,12 @@ font-family:var(--font-display);font-size:var(--fs-l)}
 .reply{font-size:var(--fs-l);line-height:var(--lh-body);margin:0 0 var(--sp-2)}
 .estimate{color:var(--muted);margin:0 0 var(--sp-4)}
 .tick{font-variant-numeric:tabular-nums}
+.brand-options{display:flex;flex-wrap:wrap;gap:var(--sp-4);margin:var(--sp-4) 0 0}
+.brand-option{background:var(--surface);border-radius:var(--radius-l);padding:var(--sp-4);
+display:flex;flex-direction:column;align-items:center;gap:var(--sp-2);min-width:120px}
+.brand-option svg{width:48px;height:48px;display:block}
+.brand-option .name{font-family:var(--font-mono);font-size:var(--fs-s);color:var(--muted)}
+.brand-option .badge{color:var(--ok);font-size:var(--fs-s)}
 """
 
 PROGRESS_CSS = (
@@ -1263,7 +1281,16 @@ setTimeout(function(){b.textContent=was;},1200);});});});})();
 """
 
 
-def render_page(title, body, active=None, script="", refresh=None, features=None):
+def brand_svg(name):
+    """Return the text of the brand mark ``name``, or an empty string when it is missing."""
+    try:
+        return (BRAND_DIR / f"{name}.svg").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def render_page(title, body, active=None, script="", refresh=None, features=None,
+                brand_logo=DEFAULT_BRAND_LOGO):
     """Return one full HTML page with the top bar and the shared theme."""
     nav = []
     for key, href, label in (
@@ -1282,10 +1309,12 @@ def render_page(title, body, active=None, script="", refresh=None, features=None
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"{reload_tag}"
+        '<link rel="icon" type="image/svg+xml" href="/favicon.svg">'
         f"<title>{html_escape(title)}</title>"
         f'<style>{THEME_CSS}{PROGRESS_CSS}</style></head><body><div class="wrap">'
-        f'<header class="bar"><span class="brand-slot" aria-hidden="true"></span>'
-        f'<a class="mark" href="/">AI Director</a>{"".join(nav)}</header>'
+        f'<header class="bar"><a class="mark" href="/">'
+        f'<span class="brand-mark" aria-hidden="true">{brand_svg(brand_logo)}</span>'
+        f'AI Director</a>{"".join(nav)}</header>'
         f"{body}</div>{tail}"
         "</body></html>\n"
     )
@@ -1359,7 +1388,7 @@ def describe_summary(summary):
     return ", ".join(parts)
 
 
-def render_index(entries, features=None):
+def render_index(entries, features=None, brand_logo=DEFAULT_BRAND_LOGO):
     """Return the Projects page: one row per project with its state and edit facts."""
     rows = []
     for entry in entries:
@@ -1382,6 +1411,7 @@ def render_index(entries, features=None):
         f'<h1>Projects</h1><p class="lede">Every folder you sent, newest first.</p>{body}',
         active="projects",
         features=features,
+        brand_logo=brand_logo,
     )
 
 
@@ -1475,7 +1505,26 @@ def render_costs(server, thanks=False):
         f"{thanks_line}"
         f"{request_form}"
     )
-    return render_page("Costs", body, active="costs", features=server.features)
+    return render_page("Costs", body, active="costs", features=server.features,
+                       brand_logo=server.brand_logo)
+
+
+def render_brand_page(server):
+    """The Brand page: the three logo options side by side, the chosen one badged."""
+    cards = []
+    for name in BRAND_OPTIONS:
+        badge = '<span class="badge">in use</span>' if name == server.brand_logo else ""
+        cards.append(
+            f'<div class="brand-option">{brand_svg(name)}'
+            f'<span class="name">{html_escape(name)}</span>{badge}</div>'
+        )
+    body = (
+        "<h1>Brand</h1>"
+        "<p>Set <code>brand.logo</code> in the config (or <code>--brand-logo</code> / "
+        "<code>YT_PIPELINE_BRAND_LOGO</code>) to one of the names below.</p>"
+        f'<div class="brand-options">{"".join(cards)}</div>'
+    )
+    return render_page("Brand", body, features=server.features, brand_logo=server.brand_logo)
 
 
 def append_request(path, line):
@@ -2194,7 +2243,8 @@ def _render_tabs(name, enabled, tab):
 
 
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
-                   feedback_prefill="", reedit_open=False, consent_text=None):
+                   feedback_prefill="", reedit_open=False, consent_text=None,
+                   brand_logo=DEFAULT_BRAND_LOGO):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
@@ -2284,7 +2334,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     if tab == "files":
         script += DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT + FILES_SCRIPT
     refresh = 20 if status == "running" else None
-    return render_page(name, body, active="projects", script=script, refresh=refresh, features=features)
+    return render_page(name, body, active="projects", script=script, refresh=refresh, features=features,
+                       brand_logo=brand_logo)
 
 
 def render_select(name, options, default=None):
@@ -2441,7 +2492,8 @@ ask.querySelector('.yes').onclick=function(){f.submit();};});});})();
 """
 
 
-def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html=""):
+def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html="",
+                  brand_logo=DEFAULT_BRAND_LOGO):
     """Return the Upload page with the form wired to POST /upload."""
     fields = [
         ("Clips and photos", '<div class="drop" data-drop>'
@@ -2478,7 +2530,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
     )
     return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
                        script=LENGTH_SCRIPT + DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT + BRIEF_HINTS_SCRIPT,
-                       features=features)
+                       features=features, brand_logo=brand_logo)
 
 
 def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_line="", open_=False):
@@ -3472,7 +3524,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         body = render_feedback_reply(project, fields, feedback, summary)
         self.send_html(
-            render_page("Ask the director", body, active="projects", features=self.server.features),
+            render_page("Ask the director", body, active="projects", features=self.server.features,
+                        brand_logo=self.server.brand_logo),
             True,
         )
 
@@ -3851,7 +3904,22 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         features = self.server.features
         if not segments:
-            self.send_html(render_index(self.collect_entries(), features=features), send_body)
+            self.send_html(
+                render_index(self.collect_entries(), features=features,
+                             brand_logo=self.server.brand_logo),
+                send_body,
+            )
+            return
+        if segments == ["brand"]:
+            self.send_html(render_brand_page(self.server), send_body)
+            return
+        if segments == ["favicon.svg"]:
+            self.send_svg(BRAND_DIR / f"{self.server.brand_logo}.svg", send_body)
+            return
+        if len(segments) == 2 and segments[0] == "brand" and segments[1] in {
+            f"{name}.svg" for name in BRAND_OPTIONS
+        }:
+            self.send_svg(BRAND_DIR / segments[1], send_body)
             return
         if segments == ["upload"]:
             if not feature_on(features, "upload"):
@@ -3864,6 +3932,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     consent_text=self.server.consent_text,
                     storage_html=storage_line(self.server),
                     credit_html=credit_line(self.server),
+                    brand_logo=self.server.brand_logo,
                 ),
                 send_body,
             )
@@ -3899,6 +3968,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     feedback_prefill=query_param(self.path, "feedback") or "",
                     reedit_open=parse_flag(self.path, "reedit"),
                     consent_text=self.server.consent_text,
+                    brand_logo=self.server.brand_logo,
                 ),
                 send_body,
             )
@@ -4011,6 +4081,25 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if send_body:
             self.wfile.write(data)
 
+    def send_svg(self, path, send_body):
+        """Serve one brand SVG from BRAND_DIR, or a 404 when it is missing or outside it."""
+        path = Path(path)
+        try:
+            inside = path.resolve().parent == BRAND_DIR.resolve()
+        except OSError:
+            inside = False
+        if not inside or not path.is_file():
+            self.send_not_found()
+            return
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if send_body:
+            self.wfile.write(data)
+
 
 class WorkspaceServer(http.server.ThreadingHTTPServer):
     """Threading HTTP server that knows the workspace root, inbox and limits."""
@@ -4019,7 +4108,8 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
 
     def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
                  ledger=None, requests=None, donation_links=None, features=None, consent_text=None,
-                 storage_gb=None, credit_warn_usd=None, project_totals_url=None):
+                 storage_gb=None, credit_warn_usd=None, project_totals_url=None,
+                 brand_logo=DEFAULT_BRAND_LOGO):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
@@ -4033,6 +4123,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         self.storage_gb = storage_gb
         self.credit_warn_usd = credit_warn_usd if credit_warn_usd is not None else DEFAULT_CREDIT_WARN_USD
         self.project_totals_url = project_totals_url
+        self.brand_logo = brand_logo
         super().__init__(address, WorkspaceHandler)
 
 
@@ -4040,7 +4131,8 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
                  max_file_bytes=None, max_total_bytes=None,
                  ledger=None, requests=None, donation_links=None,
                  features=None, consent_text=None,
-                 storage_gb=None, credit_warn_usd=None, project_totals_url=None):
+                 storage_gb=None, credit_warn_usd=None, project_totals_url=None,
+                 brand_logo=DEFAULT_BRAND_LOGO):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -4057,13 +4149,15 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         storage_gb,
         credit_warn_usd,
         project_totals_url,
+        brand_logo,
     )
 
 
 def build_summary(root, bind, port, projects, status, started, music_dir=None,
                   inbox=None, ledger=None, requests=None, donation_links=None,
                   features=None, consent_text=None,
-                  storage_gb=None, credit_warn_usd=None, project_totals_url=None):
+                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
+                  brand_logo=DEFAULT_BRAND_LOGO):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -4110,6 +4204,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "storage_gb": storage_gb,
         "credit_warn_usd": credit_warn_usd,
         "project_totals_url": project_totals_url,
+        "brand_logo": brand_logo,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -4188,6 +4283,7 @@ def main(argv=None):
         totals_url = project_totals_url(args.project_totals_url)
         if totals_url is None:
             print(f"[warn] {no_project_totals_message('--project-totals-url')}", file=sys.stderr)
+        logo = brand_logo(args.brand_logo)
         try:
             server = build_server(
                 root,
@@ -4205,6 +4301,7 @@ def main(argv=None):
                 storage,
                 warn_usd,
                 totals_url,
+                logo,
             )
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
@@ -4218,7 +4315,7 @@ def main(argv=None):
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
         music_dir, inbox, ledger, requests, donation, features, consent,
-        storage, warn_usd, totals_url,
+        storage, warn_usd, totals_url, logo,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

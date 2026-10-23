@@ -449,6 +449,12 @@ The **Feedback and requests** form posts to `/costs/request` and appends one JSO
 
 ---
 
+## Logo and brand
+
+The app logo is one of three flat SVG marks in `assets/brand/` (`option-1` clapperboard, `option-2` viewfinder, `option-3` reticle), own work under the repository licence. `GET /brand` shows all three side by side for the owner to choose. `brand.logo` in the config (or `--brand-logo`, else `YT_PIPELINE_BRAND_LOGO`; default `option-1`) picks the one this instance shows left of the app name in the top bar and uses as the SVG favicon (`GET /favicon.svg`). Each mark is a 48×48 square drawn in two theme colours (`--sea`, `--stone`) as CSS variables with hex fallbacks, so it adapts to the light and dark theme when inlined and still renders standalone.
+
+---
+
 ## Installation
 
 ```bash

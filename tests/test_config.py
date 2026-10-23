@@ -352,3 +352,26 @@ def test_no_project_totals_message_names_the_flag():
     assert "--project-totals-url" in message
     assert config.PROJECT_TOTALS_URL_ENV in message
     assert "costs.project_totals_url" in message
+
+
+def test_brand_logo_defaults_to_option_1(monkeypatch):
+    monkeypatch.delenv(config.BRAND_LOGO_ENV, raising=False)
+    assert config.brand_logo(config={}) == "option-1"
+
+
+def test_brand_logo_reads_flag_env_and_config(monkeypatch):
+    monkeypatch.delenv(config.BRAND_LOGO_ENV, raising=False)
+    assert config.brand_logo("option-2", {"brand": {"logo": "option-3"}}) == "option-2"
+    monkeypatch.setenv(config.BRAND_LOGO_ENV, "option-2")
+    assert config.brand_logo(None, {"brand": {"logo": "option-3"}}) == "option-2"
+    assert config.brand_logo("option-1", {"brand": {"logo": "option-3"}}) == "option-1"
+    monkeypatch.delenv(config.BRAND_LOGO_ENV, raising=False)
+    assert config.brand_logo(None, {"brand": {"logo": "option-3"}}) == "option-3"
+
+
+def test_brand_logo_rejects_an_unknown_value(monkeypatch):
+    monkeypatch.delenv(config.BRAND_LOGO_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.brand_logo("nope", {})
+    with pytest.raises(config.ConfigError):
+        config.brand_logo(None, {"brand": {"logo": "nope"}})
