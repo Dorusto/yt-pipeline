@@ -32,13 +32,18 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
+from common.ffmpeg_tools import probe_duration
 from common.schema import SchemaError, validate
+from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 FPS = 25
 
@@ -54,15 +59,6 @@ def load_config(config_path):
     if errors:
         raise SchemaError("fragments", errors)
     return cfg
-
-
-def probe_duration(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True,
-    )
-    return float(out.stdout.strip())
 
 
 def sec_to_tc(s):
@@ -97,6 +93,8 @@ def build(config_path, quiet=False):
         fname = frag["file"]
         if fname not in chain_id_by_file:
             dur = probe_duration(f"{source_dir}/{fname}")
+            if dur is None:
+                raise SchemaError("fragments", [f"could not read the duration of {fname}"])
             chain_id = f"chain{kid}"
             chain_id_by_file[fname] = chain_id
             out_tc = sec_to_tc(dur)
@@ -299,6 +297,7 @@ def build(config_path, quiet=False):
 
 
 def main(argv=None):
+    started = time.monotonic()
     parser = argparse.ArgumentParser(
         description="Generate a .kdenlive project timeline from a fragments YAML."
     )
@@ -310,11 +309,7 @@ def main(argv=None):
     try:
         out_path = build(args.fragments, quiet=args.json)
     except (SchemaError, FileNotFoundError) as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json, **summary_fields(started))
 
     if not args.skip_melt:
         result = subprocess.run(
@@ -327,17 +322,18 @@ def main(argv=None):
                     "output": out_path,
                     "error": "melt validation failed",
                     "stderr": result.stderr[-2000:],
+                    **summary_fields(started),
                 }))
             else:
                 print("melt validation FAILED:")
                 print(result.stderr[-2000:])
-            return 1
+            return EXIT_RUNTIME
         if not args.json:
             print("melt validation OK")
 
     if args.json:
-        print(json.dumps({"ok": True, "output": out_path}))
-    return 0
+        print(json.dumps({"ok": True, "output": out_path, **summary_fields(started)}))
+    return EXIT_OK
 
 
 if __name__ == "__main__":

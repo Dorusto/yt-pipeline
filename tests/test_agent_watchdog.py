@@ -4,7 +4,16 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import agent_watchdog as watchdog
+
+_REAL_TMUX_SESSION_FOR_AGENT = watchdog.tmux_session_for_agent
+
+
+@pytest.fixture(autouse=True)
+def _isolate_tmux(monkeypatch):
+    monkeypatch.setattr(watchdog, "tmux_session_for_agent", lambda: None)
 
 
 class _FakeProcess:
@@ -227,10 +236,20 @@ def test_main_stops_the_agent_over_the_cap(tmp_path, monkeypatch, capsys):
     import json
 
     stopped = []
+    running = {"value": True}
+
+    def fake_agent_running():
+        return running["value"]
+
+    def fake_stop():
+        stopped.append(1)
+        running["value"] = False
+        return 1
+
     monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
     monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 3.0)
-    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
-    monkeypatch.setattr(watchdog, "stop_agent", lambda: stopped.append(1) or 1)
+    monkeypatch.setattr(watchdog, "agent_running", fake_agent_running)
+    monkeypatch.setattr(watchdog, "stop_agent", fake_stop)
     monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -239,6 +258,7 @@ def test_main_stops_the_agent_over_the_cap(tmp_path, monkeypatch, capsys):
     summary = json.loads(capsys.readouterr().out)
     assert stopped == [1]
     assert summary["stopped"] == 1
+    assert summary["stop_verified"] is True
     assert any(alert.startswith("Stopped the agent") for alert in summary["alerts"])
 
 
@@ -276,7 +296,10 @@ def test_hard_stop_with_kill_no_commit_hours(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(watchdog, "stop_agent", lambda: stopped.append(1) or 1)
     monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
     repo = _old_commit_repo(tmp_path)
-    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+    state_file = tmp_path / "s.json"
+    started = datetime.now(timezone.utc) - timedelta(hours=4)
+    state_file.write_text(json.dumps({"run_started_at": started.isoformat()}))
+    watchdog.main(["--repo", str(repo), "--state-file", str(state_file),
                    "--watch", str(repo), "--kill-no-commit-hours", "2", "--json"])
     summary = json.loads(capsys.readouterr().out)
     assert stopped == [1]
@@ -405,3 +428,218 @@ def test_run_spend_ledger_appends_openrouter_delta(tmp_path, monkeypatch, capsys
     assert [entry["note"] for entry in entries] == ["openrouter-delta"]
     assert entries[0]["cost_usd"] == 1.5
     assert summary["run_spend_usd"] == 1.5
+
+
+class _FakeParentProcess:
+    def __init__(self, pid, name, parent=None):
+        self.pid = pid
+        self.info = {"name": name}
+        self._parent = parent
+
+    def parent(self):
+        return self._parent
+
+
+class _FakeTreePsutil:
+    class Error(Exception):
+        pass
+
+    def __init__(self, processes):
+        self._processes = list(processes)
+
+    def process_iter(self, attrs=None):
+        return iter(self._processes)
+
+
+def test_no_progress_clock_starts_at_agent_start():
+    now = 100000.0
+    last_commit = now - 10 * 3600
+    agent_start = now - 60
+    state = {}
+    assert watchdog.check_no_progress(True, last_commit, now, 5400, state, agent_start) is None
+    assert watchdog.kill_reason(True, 0.1, None, last_commit, now, 2.0, agent_start=agent_start) is None
+
+
+def test_no_commit_age_never_negative():
+    now = 100000.0
+    last_commit = now + 3600
+    state = {}
+    assert watchdog.check_no_progress(True, last_commit, now, 5400, state, 0.0) is None
+    assert watchdog.kill_reason(True, 0.1, None, last_commit, now, 2.0) is None
+
+
+def test_no_commit_clock_falls_back_to_last_commit():
+    now = 100000.0
+    last_commit = now - 3 * 3600
+    state = {}
+    assert "no commit" in watchdog.check_no_progress(True, last_commit, now, 5400, state, 0.0)
+    assert "no commit" in watchdog.kill_reason(True, 0.1, None, last_commit, now, 2.0, agent_start=0.0)
+
+
+def test_summary_age_clamped_when_commit_in_future(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 0.1)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: time.time() + 3600)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["hours_since_commit"] == 0.0
+    assert summary["idle_hours"] >= 0.0
+    assert summary["kill_reason"] is None
+
+
+def test_stop_not_verified_when_agent_still_running(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 3.0)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "stop_agent", lambda: 1)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    watchdog.main(["--repo", str(repo), "--kill-over-usd", "2", "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["stopped"] == 1
+    assert summary["stop_verified"] is False
+    assert any(
+        alert.startswith("Tried to stop the agent but it is still running")
+        for alert in summary["alerts"]
+    )
+
+
+def test_alerts_labelled_with_lot(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 7.0)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: False)
+    monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--lot", "S60 lot 0", "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["label"] == "S60 lot 0"
+    assert summary["alerts"]
+    assert all(alert.startswith("S60 lot 0: ") for alert in summary["alerts"])
+
+
+def test_alerts_labelled_with_tmux_session(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watchdog, "tmux_session_for_agent", lambda: "s60")
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 7.0)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: False)
+    monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["label"] == "s60"
+    assert summary["alerts"]
+    assert all(alert.startswith("s60: ") for alert in summary["alerts"])
+
+
+def test_alerts_unlabelled_without_lot_or_tmux(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 7.0)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: False)
+    monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--json"])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["label"] is None
+    assert summary["alerts"]
+    assert all(not alert.startswith("s60: ") for alert in summary["alerts"])
+
+
+def test_run_cap_stop_message_labelled_once(tmp_path, monkeypatch, capsys):
+    args, ledger, started, _stopped, _sent, _ = _run_cap_setup(tmp_path, monkeypatch, capsys)
+    ledger.write_text(json.dumps({"entries": [
+        {"ts": started.isoformat(), "cost_usd": 1.2, "note": "fake"},
+    ]}))
+    watchdog.main(args)
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["alerts"]
+    assert all(alert.startswith("S51 lot 0: ") for alert in summary["alerts"])
+    assert not any(alert.startswith("S51 lot 0: S51 lot 0:") for alert in summary["alerts"])
+
+
+def test_agent_start_time_prefers_run_marker():
+    state = {"run_started_at": "2026-10-22T10:00:00+00:00"}
+    assert watchdog.agent_start_time(state, True) == watchdog.parse_ts("2026-10-22T10:00:00+00:00")
+
+
+def test_main_accepts_explicit_now(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(watchdog, "read_api_key", lambda key_file: "key")
+    monkeypatch.setattr(watchdog, "fetch_daily_usage", lambda key: 0.1)
+    monkeypatch.setattr(watchdog, "agent_running", lambda: True)
+    monkeypatch.setattr(watchdog, "newest_mtime", lambda paths: 1.0)
+    monkeypatch.setattr(watchdog, "last_commit_time", lambda repo: 0.0)
+    monkeypatch.setattr(watchdog, "send", lambda *a, **k: None)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fixed = 1_800_000_000.0
+    watchdog.main(["--repo", str(repo), "--state-file", str(tmp_path / "s.json"),
+                   "--watch", str(repo), "--json"], now=fixed)
+    summary = json.loads(capsys.readouterr().out)
+    expected = datetime.fromtimestamp(fixed, tz=timezone.utc).isoformat(timespec="seconds")
+    assert summary["run_started_at"] == expected
+    assert summary["hours_since_commit"] == 0.0
+
+
+def test_agent_start_time_falls_back_to_process(monkeypatch):
+    monkeypatch.setattr(watchdog, "opencode_process_start", lambda: 5000.0)
+    assert watchdog.agent_start_time({}, True) == 5000.0
+    assert watchdog.agent_start_time({}, False) == 0.0
+
+
+def test_opencode_process_start_uses_create_time(monkeypatch):
+    class _Process:
+        info = {"name": "opencode"}
+
+        def create_time(self):
+            return 1234.5
+
+    monkeypatch.setitem(sys.modules, "psutil", _FakeTreePsutil([_Process()]))
+    assert watchdog.opencode_process_start() == 1234.5
+
+
+def test_tmux_session_for_agent_walks_parents(monkeypatch):
+    monkeypatch.setattr(watchdog, "tmux_session_for_agent", _REAL_TMUX_SESSION_FOR_AGENT)
+    pane = _FakeParentProcess(100, "bash")
+    agent = _FakeParentProcess(200, "opencode", parent=pane)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setitem(sys.modules, "psutil", _FakeTreePsutil([agent]))
+    monkeypatch.setattr(
+        watchdog.subprocess, "run", lambda *a, **k: _FakeCompleted(0, b"s60 100\nweb 300\n")
+    )
+    assert watchdog.tmux_session_for_agent() == "s60"
+
+
+def test_tmux_session_for_agent_none_without_tmux(monkeypatch):
+    monkeypatch.setattr(watchdog, "tmux_session_for_agent", _REAL_TMUX_SESSION_FOR_AGENT)
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: None)
+    assert watchdog.tmux_session_for_agent() is None
+
+
+def test_tmux_session_for_agent_none_without_match(monkeypatch):
+    monkeypatch.setattr(watchdog, "tmux_session_for_agent", _REAL_TMUX_SESSION_FOR_AGENT)
+    agent = _FakeParentProcess(200, "opencode")
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setitem(sys.modules, "psutil", _FakeTreePsutil([agent]))
+    monkeypatch.setattr(
+        watchdog.subprocess, "run", lambda *a, **k: _FakeCompleted(0, b"s60 100\n")
+    )
+    assert watchdog.tmux_session_for_agent() is None

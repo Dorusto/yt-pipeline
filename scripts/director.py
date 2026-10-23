@@ -36,10 +36,13 @@ from common.moves import (
     screen_factor,
     slot_screen_length,
 )
+from common.overlap import overlap_seconds
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/director.py"
 SCHEMA_VERSION = "0.1"
@@ -97,12 +100,12 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/director.py --workspace ~/Videos/ws\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --brief \"calm start\" \\\n"
+            "  python scripts/director.py --workspace <workspace>\n"
+            "  python scripts/director.py --workspace <workspace> --brief \"calm start\" \\\n"
             "      --target-duration-s 90 --order chronological --pacing calm-to-energy --json\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --order score --pacing uniform --force\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --important-max-s 6.0 --json\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --speed-ramp --json\n"
+            "  python scripts/director.py --workspace <workspace> --order score --pacing uniform --force\n"
+            "  python scripts/director.py --workspace <workspace> --important-max-s 6.0 --json\n"
+            "  python scripts/director.py --workspace <workspace> --speed-ramp --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -227,10 +230,6 @@ def load_shotlog(workspace):
         return None
     shots = data.get("shots") or []
     return {shot["key"]: shot for shot in shots if shot.get("key")}
-
-
-def overlap_seconds(a_start, a_end, b_start, b_end):
-    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 def load_ingest(workspace):
@@ -1794,14 +1793,15 @@ def main(argv=None):
     started = time.monotonic()
     try:
         summary, record = run(args, started)
-    except (DirectorError, SchemaError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (DirectorError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary, record)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ Usage:
     python3 scripts/publish.py --project DIR --context FILE \
         (--fcproj PROJ --sequence NAME [--track T] | --from-edit EDIT.json | --media FILE) \
         [--words-dir DIR] [--name NAME] [--resume] [--force] [--json] \
+        [--chapters FILE] \
         [--kit [--final-video FILE] [--kit-loudness] [--kit-title TITLE]]
 
 ``publish.py`` is the single entry point for the publish chain: it chains the
@@ -27,6 +28,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/publish.py"
@@ -68,6 +71,7 @@ class Context:
         kicker=None,
         previous_url=None,
         repo_url=None,
+        chapters=None,
         transcribe_backend="whisper",
         kit=False,
         final_video=None,
@@ -96,6 +100,7 @@ class Context:
         self.kicker = kicker
         self.previous_url = previous_url
         self.repo_url = repo_url
+        self.chapters = chapters
         self.transcribe_backend = transcribe_backend
         self.kit = kit
         self.final_video = final_video
@@ -114,7 +119,7 @@ def build_parser():
             " (--fcproj PROJ --sequence NAME [--track T] | --from-edit EDIT.json | --media FILE)"
             " [--words-dir DIR] [--name NAME]"
             " [--photo FILE --title T --keyword K --theme {tech,creator} [--kicker K]]"
-            " [--previous-url URL] [--repo-url URL]"
+            " [--previous-url URL] [--repo-url URL] [--chapters FILE]"
             " [--transcribe-backend {whisper,mock}] [--resume] [--force] [--json]"
             " [--kit [--final-video FILE] [--kit-loudness] [--kit-title TITLE]]"
         ),
@@ -175,6 +180,11 @@ def build_parser():
         dest="repo_url",
         default=None,
         help="the clip's own code repo for the metadata draft",
+    )
+    parser.add_argument(
+        "--chapters",
+        default=None,
+        help="chapters.json for the metadata step instead of the model's chapters",
     )
     parser.add_argument(
         "--transcribe-backend",
@@ -294,6 +304,7 @@ def build_context(args):
         kicker=args.kicker,
         previous_url=args.previous_url,
         repo_url=args.repo_url,
+        chapters=Path(args.chapters).expanduser().resolve() if args.chapters else None,
         transcribe_backend=args.transcribe_backend,
         kit=args.kit,
         final_video=Path(args.final_video).expanduser().resolve() if args.final_video else None,
@@ -418,6 +429,8 @@ def build_steps(ctx):
         metadata_argv += ["--previous-url", ctx.previous_url]
     if ctx.repo_url:
         metadata_argv += ["--repo-url", ctx.repo_url]
+    if ctx.chapters:
+        metadata_argv += ["--chapters", str(ctx.chapters)]
     metadata_argv.append("--json")
     steps.append({"name": "metadata", "argv": metadata_argv})
     if ctx.kit:
@@ -575,6 +588,7 @@ def build_options(ctx):
         "photo": str(ctx.photo) if ctx.photo else None,
         "previous_url": ctx.previous_url,
         "repo_url": ctx.repo_url,
+        "chapters": str(ctx.chapters) if ctx.chapters else None,
         "kit": ctx.kit,
         "final_video": str(ctx.final_video) if ctx.final_video else None,
         "kit_loudness": ctx.kit_loudness,
@@ -914,7 +928,7 @@ def execute_kit(ctx):
         if error is not None:
             return {
                 "status": "FAIL",
-                "returncode": 2,
+                "returncode": EXIT_RUNTIME,
                 "outputs": [],
                 "llm_cost_usd": 0.0,
                 "stderr": f"[error] loudness failed: {error}",
@@ -987,7 +1001,7 @@ def run(ctx):
         if result["status"] == "FAIL":
             record_step(state, name, "failed", command=step.get("argv"), outputs=[])
             write_state(ctx.project, state)
-            entries.append({"name": name, "status": "failed", "outputs": []})
+            entries.append({"name": name, "status": "failed", "outputs": [], "returncode": result["returncode"]})
             if name == "kit":
                 kit_result = result.get("kit")
                 for line in (result.get("stderr") or "").splitlines():
@@ -1064,15 +1078,16 @@ def main(argv=None):
     try:
         ctx = build_context(args)
     except PublishError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return report_error(exc, EXIT_USAGE, args.json)
     summary = run(ctx)
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary)
-    failed = any(entry["status"] == "failed" for entry in summary["steps"])
-    return 2 if failed else 0
+    failed = [entry for entry in summary["steps"] if entry["status"] == "failed"]
+    if not failed:
+        return EXIT_OK
+    return EXIT_USAGE if failed[0].get("returncode") == EXIT_USAGE else EXIT_RUNTIME
 
 
 if __name__ == "__main__":

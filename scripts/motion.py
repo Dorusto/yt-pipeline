@@ -30,6 +30,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.excluded import filter_excluded, load_excluded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.schema import SchemaError, validate, validate_or_raise
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
@@ -110,9 +113,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/motion.py clip.mp4 --workspace ~/Videos/workspace\n"
-            "  python scripts/motion.py ~/Videos/clip --workspace ~/Videos/workspace --json\n"
-            "  python scripts/motion.py clip.mp4 --workspace ~/Videos/workspace --force\n"
+            "  python scripts/motion.py clip.mp4 --workspace <workspace>\n"
+            "  python scripts/motion.py <trip-folder> --workspace <workspace> --json\n"
+            "  python scripts/motion.py clip.mp4 --workspace <workspace> --force\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1424,6 +1427,7 @@ def run(input_path, workspace, force=False, sample_fps=10.0, width=320):
     """Analyse every clip of ``input_path`` into ``workspace/motion``; return a summary."""
     started = time.monotonic()
     clips = resolve_inputs(input_path)
+    clips = filter_excluded(clips, load_excluded(workspace))
     output_dir = Path(workspace).expanduser().resolve() / "motion"
     output_dir.mkdir(parents=True, exist_ok=True)
     analyzed = 0
@@ -1458,14 +1462,15 @@ def main(argv=None):
             width=args.width,
         )
     except (MotionError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"analyzed {summary['analyzed']} clips, skipped {summary['skipped']} (of {summary['clips']})")
         print(f"wrote {summary['output_dir']}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

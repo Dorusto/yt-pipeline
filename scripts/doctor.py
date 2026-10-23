@@ -3,8 +3,8 @@
 """Check that this machine can run the recap pipeline and print what to fix.
 
 Usage:
-    python scripts/doctor.py --source ~/media/raw
-    python scripts/doctor.py --source ~/media/raw --workspace /tmp/recap --json
+    python scripts/doctor.py --source <source-folder>
+    python scripts/doctor.py --source <source-folder> --workspace <workspace> --json
 
 The tool runs thirteen setup checks in a fixed order: python dependencies,
 ``ffmpeg`` and ``ffprobe``, the project config, the models the recap chain
@@ -29,6 +29,9 @@ import time
 from pathlib import Path
 
 from common.config import ConfigError
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
+from common.sizes import BYTES_PER_GB, format_gb
 
 TOOL = "scripts/doctor.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -71,8 +74,8 @@ def build_parser():
         description="Check that this machine can run the recap pipeline and print what to fix.",
         epilog=(
             "examples:\n"
-            "  python scripts/doctor.py --source ~/media/raw\n"
-            "  python scripts/doctor.py --source ~/media/raw --workspace /tmp/recap --json\n"
+            "  python scripts/doctor.py --source <source-folder>\n"
+            "  python scripts/doctor.py --source <source-folder> --workspace <workspace> --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -184,8 +187,8 @@ def check_disk_space(workspace):
         usage = shutil.disk_usage(nearest_existing(path))
     except OSError as exc:
         return result("disk_space", "fail", f"could not read disk usage at {path}: {exc}", fix)
-    free = usage.free / (1024 ** 3)
-    detail = f"{free:.1f} GB free at {path}"
+    free = usage.free / BYTES_PER_GB
+    detail = f"{format_gb(usage.free)} free at {path}"
     if free < DISK_FAIL_GB:
         return result("disk_space", "fail", detail, fix)
     if free < DISK_WARN_GB:
@@ -353,14 +356,13 @@ def main(argv=None):
     try:
         checks = run_checks(source, workspace)
     except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_RUNTIME, args.json)
     summary = build_summary(checks, source, workspace, started)
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(checks)
-    return 0 if summary["ok"] else 1
+    return EXIT_OK if summary["ok"] else EXIT_ATTENTION
 
 
 if __name__ == "__main__":

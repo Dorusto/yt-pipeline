@@ -13,6 +13,33 @@ ROLE_REJECT_REASONS = {
     "accidental": "accidental",
 }
 
+REASON_GROUPS = (
+    ("near-duplicate", "near duplicate"),
+    ("setup/teardown", "setup/teardown"),
+    ("accidental", "accidental"),
+    ("shake", "shaky"),
+    ("blur", "blurry"),
+    ("defect", "defect"),
+    ("overlapping", "overlapping window"),
+    ("low score", "low score"),
+    ("did not fit", "did not fit the length"),
+    ("not eligible", "not eligible"),
+)
+
+
+def used_shot_keys(edit_document):
+    """The shot keys edit.json marks as used (status == 'used'), or an empty set."""
+    if not isinstance(edit_document, dict):
+        return set()
+    rows = edit_document.get("decisions")
+    if not isinstance(rows, list):
+        return set()
+    return {
+        str(row["id"])
+        for row in rows
+        if isinstance(row, dict) and row.get("status") == "used" and row.get("id")
+    }
+
 
 def _reject_reason(shot, in_pool, used_floor, used_ids=()):
     """The plain-word reason a shotlog shot was not used, from its own state."""

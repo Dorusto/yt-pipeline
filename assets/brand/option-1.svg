@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Clapperboard">
+  <rect x="5" y="20" width="38" height="23" rx="3" style="fill:var(--sea,#57b8c4)"/>
+  <rect x="5" y="12" width="38" height="8" rx="2" style="fill:var(--stone,#ece5d5)"/>
+  <path d="M9 12 L5 20 h5 L14 12 Z" style="fill:var(--sea,#57b8c4)"/>
+  <path d="M21 12 L17 20 h5 L26 12 Z" style="fill:var(--sea,#57b8c4)"/>
+  <path d="M33 12 L29 20 h5 L38 12 Z" style="fill:var(--sea,#57b8c4)"/>
+</svg>

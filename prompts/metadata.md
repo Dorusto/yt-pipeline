@@ -10,7 +10,7 @@ The tool appends these after this prompt:
 
 - `## Context` — the clip's angle and what the viewer leaves with (from `--context`).
 - `## Transcript` — the corrected Romanian transcript as `[HH:MM:SS] text` lines (timeline time).
-- `## Links` — `previous_url` (an earlier clip to link) and `repo_url` (the clip's own code repo) when the caller gave them.
+- `## Links` — `channel_url` (the channel's code URL, always given), `previous_url` (an earlier clip to link) and `repo_url` (the clip's own code repo) when the caller gave them.
 
 ## Output
 
@@ -44,7 +44,7 @@ Field rules:
 
 - `titles` — exactly 3 titles in Romanian, at most 70 characters each, the main keyword near the start. All three say the same thing as the thumbnail text will (title and thumbnail must say the same thing).
 - `intro` — 2-4 sentences: the hook and what the viewer leaves with, in the clip's own voice (`ro`) and in English (`en`).
-- `github_line` — a line pointing at the code shown in the clip. It links `https://github.com/Dorusto/resurse` and, when `repo_url` is given, the clip's own repo too. Use `null` only when the context shows a narrative clip with no code.
+- `github_line` — a line pointing at the code shown in the clip. It links the channel URL given in the Inputs (`channel_url`) and, when `repo_url` is given, the clip's own repo too. Use `null` only when the context shows a narrative clip with no code.
 - `previous_line` — a line linking `previous_url` when it is given ("dacă ți-a plăcut asta, vezi și …"), `null` when it is not.
 - `subscribe_line` — the subscribe call tied to one concrete reason ("abonează-te să vezi X când se întâmplă"), never a vague "subscribe for more".
 - `promo_lines` — optional, `[]` when there is nothing: an affiliate link or the channel's own offer, each line starting with the label ("link afiliat", "oferta mea"). Never invent a link the Inputs did not give.

@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 import ingest
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate
 
 try:
@@ -74,7 +75,7 @@ def read_ingest(workspace):
 
 def test_help_mentions_workspace_and_json():
     result = run_cli("--help")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     assert "--workspace" in result.stdout
     assert "--json" in result.stdout
 
@@ -88,7 +89,7 @@ def test_scan_two_clips_validates_and_sorts(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert summary["clips"] == 2
     data = read_ingest(workspace)
@@ -104,7 +105,7 @@ def test_clip_fields(tmp_path):
     make_clip(source / "one.mp4")
     workspace = tmp_path / "ws"
 
-    assert run_cli(source, "--workspace", workspace).returncode == 0
+    assert run_cli(source, "--workspace", workspace).returncode == EXIT_OK
     clip = read_ingest(workspace)["clips"][0]
 
     assert clip["duration_s"] == pytest.approx(1.0, abs=0.1)
@@ -125,7 +126,7 @@ def test_creation_time_from_filename(tmp_path):
     make_clip(source / "dji_mimo_20261012_113618_0051_x.mp4")
     workspace = tmp_path / "ws"
 
-    assert run_cli(source, "--workspace", workspace).returncode == 0
+    assert run_cli(source, "--workspace", workspace).returncode == EXIT_OK
     clip = read_ingest(workspace)["clips"][0]
 
     if clip["creation_time_source"] == "metadata":
@@ -174,7 +175,7 @@ def test_gyro_matches_handler_name():
 
 def test_missing_source_dir_errors(tmp_path):
     result = run_cli(tmp_path / "nope", "--workspace", tmp_path / "ws")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 
@@ -183,7 +184,7 @@ def test_empty_folder_errors(tmp_path):
     source.mkdir()
     (source / "note.txt").write_text("hi", encoding="utf-8")
     result = run_cli(source, "--workspace", tmp_path / "ws")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
     assert not (tmp_path / "ws" / "ingest.json").exists()
 
@@ -193,19 +194,24 @@ def test_json_success_is_parseable(tmp_path):
     source.mkdir()
     make_clip(source / "one.mp4")
     result = run_cli(source, "--workspace", tmp_path / "ws", "--json")
-    assert result.returncode == 0
-    assert set(json.loads(result.stdout)) == {
+    assert result.returncode == EXIT_OK
+    summary = json.loads(result.stdout)
+    assert set(summary) == {
         "clips",
         "photos",
         "output",
         "gyro_clips",
         "total_duration_s",
+        "wall_time_s",
+        "llm_cost_usd",
     }
+    assert summary["wall_time_s"] >= 0.0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_help_mentions_photo_extensions():
     result = run_cli("--help")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     for extension in (".jpg", ".jpeg", ".heic"):
         assert extension in result.stdout
 
@@ -218,7 +224,7 @@ def test_photo_with_exif_capture_time(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     assert json.loads(result.stdout)["photos"] == 1
     data = read_ingest(workspace)
     assert validate(data, "ingest") == []
@@ -238,7 +244,7 @@ def test_photo_without_exif_has_no_creation_time(tmp_path):
     make_photo(source / "plain.jpg")
     workspace = tmp_path / "ws"
 
-    assert run_cli(source, "--workspace", workspace).returncode == 0
+    assert run_cli(source, "--workspace", workspace).returncode == EXIT_OK
     photo = read_ingest(workspace)["photos"][0]
     assert photo["creation_time"] is None
     assert photo["creation_time_source"] is None
@@ -252,7 +258,7 @@ def test_heic_photo_decodes_width_and_height(tmp_path):
     make_photo(source / "still.heic", size=(48, 36))
     workspace = tmp_path / "ws"
 
-    assert run_cli(source, "--workspace", workspace).returncode == 0
+    assert run_cli(source, "--workspace", workspace).returncode == EXIT_OK
     photo = read_ingest(workspace)["photos"][0]
     assert photo["width"] == 48
     assert photo["height"] == 36
@@ -267,7 +273,7 @@ def test_only_photos_scans_without_error(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert summary["clips"] == 0
     assert summary["photos"] == 2
@@ -283,7 +289,7 @@ def test_extension_matching_is_case_insensitive(tmp_path):
     source.mkdir()
     make_clip(source / "ONE.MP4")
     result = run_cli(source, "--workspace", tmp_path / "ws", "--json")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     assert json.loads(result.stdout)["clips"] == 1
 
 
@@ -293,7 +299,7 @@ def test_scan_is_non_recursive(tmp_path):
     make_clip(source / "top.mp4")
     make_clip(source / "nested" / "deep.mp4")
     result = run_cli(source, "--workspace", tmp_path / "ws", "--json")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     assert json.loads(result.stdout)["clips"] == 1
 
 
@@ -303,11 +309,50 @@ def test_rerun_rewrites_identical_clips(tmp_path):
     make_clip(source / "one.mp4")
     workspace = tmp_path / "ws"
 
-    assert run_cli(source, "--workspace", workspace, "--json").returncode == 0
+    assert run_cli(source, "--workspace", workspace, "--json").returncode == EXIT_OK
     first = read_ingest(workspace)
-    assert run_cli(source, "--workspace", workspace, "--json").returncode == 0
+    assert run_cli(source, "--workspace", workspace, "--json").returncode == EXIT_OK
     second = read_ingest(workspace)
 
     assert validate(second, "ingest") == []
     assert second["clips"] == first["clips"]
     assert second["clip_count"] == first["clip_count"]
+
+
+def test_excluded_clip_is_skipped(tmp_path):
+    source = tmp_path / "clips"
+    source.mkdir()
+    make_clip(source / "a_clip.mp4")
+    make_clip(source / "b_clip.mp4")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "excluded.json").write_text(
+        json.dumps({"excluded": ["b_clip.mp4"]}), encoding="utf-8"
+    )
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == EXIT_OK, result.stderr
+    data = read_ingest(workspace)
+    assert validate(data, "ingest") == []
+    assert [clip["file"] for clip in data["clips"]] == ["a_clip.mp4"]
+    assert data["clip_count"] == 1
+
+
+def test_all_clips_excluded_writes_zero(tmp_path):
+    source = tmp_path / "clips"
+    source.mkdir()
+    make_clip(source / "only.mp4")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "excluded.json").write_text(
+        json.dumps({"excluded": ["only"]}), encoding="utf-8"
+    )
+
+    result = run_cli(source, "--workspace", workspace, "--json")
+
+    assert result.returncode == EXIT_OK, result.stderr
+    data = read_ingest(workspace)
+    assert validate(data, "ingest") == []
+    assert data["clip_count"] == 0
+    assert data["clips"] == []

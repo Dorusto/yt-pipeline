@@ -3,15 +3,20 @@
 """Pick a music track from a library by the brief and the shot tags.
 
 Usage:
-    python scripts/music_pick.py --library ~/media/music --brief "about 60 seconds" --workspace DIR
-    python scripts/music_pick.py --library ~/media/music --brief-file brief.txt --json
+    python scripts/music_pick.py --library <music-library> --brief "about 60 seconds" --workspace DIR
+    python scripts/music_pick.py --library <music-library> --brief-file brief.txt --json
+    python scripts/music_pick.py --list --json
 
-Every track in the library is measured with ``beats.py`` (BPM and energy, cached
-under ``<library>/.yt-beats``) and scored against the brief's pace words, the
-shot tags of the workspace shotlog and the target duration. The winner is
-written to ``music_choice.json``; with ``--workspace`` the chosen track's beat
-grid is also written to ``workspace/beats.json``. The library is read only; no
-model is called.
+The library folder comes from ``--library``, else the
+``YT_PIPELINE_MUSIC_LIBRARY`` environment variable, else ``music.library`` in
+the config; there is no personal default and nothing is ever downloaded. Every
+track in the library is measured with ``beats.py`` (BPM and energy, cached under
+``<library>/.yt-beats``) and scored against the brief's pace words, the shot tags
+of the workspace shotlog and the target duration. The winner is written to
+``music_choice.json``; with ``--workspace`` the chosen track's beat grid is also
+written to ``workspace/beats.json``. ``--list`` reports each track with its
+duration, BPM and licence file status. The library is read only; no model is
+called.
 """
 
 import argparse
@@ -23,9 +28,14 @@ import sys
 import time
 from pathlib import Path
 
+from common.config import ConfigError, music_library, no_music_library_message
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
+
 TOOL = "scripts/music_pick.py"
-DEFAULT_LIBRARY = "~/media/music"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
+LICENCE_SIDECAR_SUFFIXES = (".license", ".licence")
+LICENCE_LIBRARY_NAMES = ("license", "licence", "license.txt", "licence.txt", "copying")
 CACHE_DIR_NAME = ".yt-beats"
 BEATS_SCRIPT = Path(__file__).resolve().parent / "beats.py"
 CALM_WORDS = ("calm", "slow", "relax", "relaxing", "quiet", "chill", "soft", "ambient", "gentle")
@@ -45,6 +55,10 @@ class MusicPickError(RuntimeError):
     """Raised when no track can be chosen."""
 
 
+class MusicPickRuntimeError(MusicPickError):
+    """Raised when beats.py or the filesystem fails after the run started."""
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="music_pick.py",
@@ -54,12 +68,25 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/music_pick.py --library ~/media/music --brief \"about 60 seconds\" --workspace ~/ws\n"
-            "  python scripts/music_pick.py --library ~/media/music --brief-file brief.txt --json\n"
+            "  python scripts/music_pick.py --library <music-library> --brief \"about 60 seconds\" --workspace <workspace>\n"
+            "  python scripts/music_pick.py --library <music-library> --brief-file brief.txt --json\n"
+            "  python scripts/music_pick.py --list --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--library", default=DEFAULT_LIBRARY, help=f"folder of audio tracks (default {DEFAULT_LIBRARY})")
+    parser.add_argument(
+        "--library",
+        default=None,
+        help=(
+            "folder of audio tracks (or YT_PIPELINE_MUSIC_LIBRARY, or music.library "
+            "in the config; no personal default)"
+        ),
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="list the library's tracks with duration, BPM and licence file status, then exit",
+    )
     parser.add_argument("--brief", default=None, help="the brief in plain language")
     parser.add_argument("--brief-file", default=None, help="path to a file holding the brief")
     parser.add_argument("--workspace", default=None, help="workspace holding shotlog.json; also gets beats.json")
@@ -87,6 +114,14 @@ def tokenize(text):
     return [token for token in re.split(r"[^a-z0-9]+", str(text).lower()) if token]
 
 
+def resolve_library(cli_value):
+    """The library folder from the flag, the environment or the config."""
+    resolved = music_library(cli_value)
+    if resolved is None:
+        raise MusicPickError(no_music_library_message("--library"))
+    return resolved
+
+
 def library_tracks(library):
     root = Path(library).expanduser().resolve()
     if not root.is_dir():
@@ -100,6 +135,25 @@ def library_tracks(library):
         key=lambda entry: entry.name,
     )
     return root, tracks
+
+
+def library_entries(root):
+    return {entry.name.lower(): entry for entry in root.iterdir() if entry.is_file()}
+
+
+def licence_for(track, entries):
+    """The licence file of one track: a sidecar, else the library's licence file."""
+    names = {f"{track.stem}{suffix}" for suffix in LICENCE_SIDECAR_SUFFIXES}
+    names |= {f"{track.name}{suffix}" for suffix in LICENCE_SIDECAR_SUFFIXES}
+    for name in sorted(names):
+        found = entries.get(name.lower())
+        if found is not None:
+            return "sidecar", found
+    for name in LICENCE_LIBRARY_NAMES:
+        found = entries.get(name)
+        if found is not None:
+            return "library", found
+    return "missing", None
 
 
 def cache_path(library, track):
@@ -269,8 +323,39 @@ def write_beats(chosen_path, workspace):
         text=True,
     )
     if result.returncode != 0:
-        raise MusicPickError(f"beats.py failed on {chosen_path}: {result.stderr.strip()}")
+        raise MusicPickRuntimeError(f"beats.py failed on {chosen_path}: {result.stderr.strip()}")
     return out
+
+
+def run_list(library, force=False):
+    """One row per track: path, duration, BPM and the licence file status."""
+    started = time.monotonic()
+    root, tracks = library_tracks(library)
+    entries = library_entries(root)
+    rows = []
+    for track in tracks:
+        measurement = measure_track(track, cache_path(root, track), force=force)
+        if measurement is None:
+            print(f"[warn] could not measure {track.name}", file=sys.stderr)
+        status, licence_file = licence_for(track, entries)
+        rows.append(
+            {
+                "file": track.name,
+                "path": str(track),
+                "duration_s": round(measurement["duration_s"], 2) if measurement else None,
+                "bpm": round(measurement["bpm"], 2) if measurement else None,
+                "licence_status": status,
+                "licence_file": str(licence_file) if licence_file else None,
+            }
+        )
+    return {
+        "tool": TOOL,
+        "status": "listed",
+        "library": str(root),
+        "tracks": rows,
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": 0.0,
+    }
 
 
 def run(library, brief=None, brief_file=None, workspace=None, target_duration_s=None, out=None, force=False):
@@ -292,7 +377,7 @@ def run(library, brief=None, brief_file=None, workspace=None, target_duration_s=
         row["path"] = str(track)
         rows.append(row)
     if not rows:
-        raise MusicPickError(f"no track in {root} could be analysed")
+        raise MusicPickRuntimeError(f"no track in {root} could be analysed")
     rows.sort(key=lambda row: (-row["total"], row["file"]))
     winner = rows[0]
     chosen_path = Path(winner["path"])
@@ -336,24 +421,41 @@ def run(library, brief=None, brief_file=None, workspace=None, target_duration_s=
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary = run(
-            args.library,
-            brief=args.brief,
-            brief_file=args.brief_file,
-            workspace=args.workspace,
-            target_duration_s=args.target_duration_s,
-            out=args.out,
-            force=args.force,
-        )
-    except (MusicPickError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        root = resolve_library(args.library)
+        if args.list:
+            summary = run_list(root, force=args.force)
+        else:
+            summary = run(
+                root,
+                brief=args.brief,
+                brief_file=args.brief_file,
+                workspace=args.workspace,
+                target_duration_s=args.target_duration_s,
+                out=args.out,
+                force=args.force,
+            )
+    except (MusicPickRuntimeError, OSError) as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except MusicPickError as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except ConfigError as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
+    elif args.list:
+        print(f"library: {summary['library']}")
+        for row in summary["tracks"]:
+            duration = f"{row['duration_s']:g} s" if row["duration_s"] is not None else "? s"
+            bpm = f"{row['bpm']:g} BPM" if row["bpm"] is not None else "? BPM"
+            licence = row["licence_status"]
+            if row["licence_file"]:
+                licence = f"{licence} ({Path(row['licence_file']).name})"
+            print(f"{row['file']}  {duration}  {bpm}  licence: {licence}")
+        print(f"{len(summary['tracks'])} track{'s' if len(summary['tracks']) != 1 else ''}")
     else:
         print(f"chose {summary['chosen']} ({summary['path']})")
         print(f"why: {summary['why']}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

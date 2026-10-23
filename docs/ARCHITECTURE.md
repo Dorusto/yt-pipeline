@@ -58,6 +58,16 @@ Each fragment becomes one `<entry in=".." out=".." producer="chainN">` — reusi
 
 Independent of the `.kdenlive` file — reads the same `fragments.yaml`, finds every raw-SRT line whose time range overlaps a used fragment, clips it to the fragment boundary, and remaps it to `cumulative_duration_of_prior_fragments + (line_start - fragment_in)`. Output is a plain `.srt`, imported into Kdenlive the normal way (`Project → Subtitles → Import Subtitle File`) — no attempt to hand-generate Kdenlive's native subtitle XML structure (see `DECISIONS.md`).
 
+## Web app design
+
+The web app (`serve.py`) and the two standalone pages it embeds (`explain.py`, `index.py`) share one token set, defined in `THEME_CSS` in `scripts/common/theme.py` and imported by all three:
+
+- **Colour** — the "editing room" palette: a warm charcoal base (`--water`), warm off-white text (`--stone`), an amber accent (`--amber`, aliased `--accent`) for primary actions, teal (`--sea`, aliased `--clip`) only for clip blocks, plus `--keep` (ok), `--left` (danger), `--busy` (warn) and `--hero`, with the semantic aliases `--bg`, `--surface`, `--line`, `--text`, `--muted`, `--accent`, `--clip`, `--ok`, `--warn`, `--danger`. A `@media (prefers-color-scheme: light)` block overrides the same names for a light theme.
+- **Type** — `--font-display` (serif, headings and the mark), `--font-body` (system sans, body and controls), `--font-mono` (ids), the scale `--fs-xs`..`--fs-2xl` and the line heights `--lh-tight`/`--lh-body`. No external fonts.
+- **Space and shape** — `--sp-1`..`--sp-6`, `--radius-s`/`--radius-l`/`--radius-pill` and `--tap:44px` (the minimum height of a standalone control).
+
+The footage carries the pages: the Projects page is a grid of poster cards (`thumbs/poster.jpg`), the player uses the poster as its poster image, and the strip under the player is the app's signature element — proportional blocks, each with its own thumbnail (`thumbs/shot-N.jpg`) and the number on top, a hatch for photos and a marker for the block playing now. The thumbnails come from the `thumbs` station (`scripts/thumbs.py`), which runs after the render in `recap.py`.
+
 ## Design decisions
 
 → see `DECISIONS.md`

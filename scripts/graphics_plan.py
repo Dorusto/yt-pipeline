@@ -25,7 +25,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config, model_for
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.llm import LLMError, make_client
+from common.overlap import overlap_fraction, overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -349,13 +352,12 @@ def overlap_errors(entries):
             if any(as_number(value) is None for value in values):
                 continue
             first_start, first_duration, second_start, second_duration = (float(v) for v in values)
-            overlap = min(first_start + first_duration, second_start + second_duration) - max(
-                first_start, second_start
-            )
-            shorter = min(first_duration, second_duration)
-            if overlap > 0.5 * shorter:
+            first_end = first_start + first_duration
+            second_end = second_start + second_duration
+            overlap_s = overlap_seconds(first_start, first_end, second_start, second_end)
+            if overlap_fraction(first_start, first_end, second_start, second_end) > 0.5:
                 errors.append(
-                    f"entries/{left} and entries/{right} overlap by {overlap:.2f}s, "
+                    f"entries/{left} and entries/{right} overlap by {overlap_s:.2f}s, "
                     "more than half of the shorter"
                 )
     return errors
@@ -455,16 +457,17 @@ def main(argv=None):
             out_path=args.out,
             max_entries=args.max_entries,
         )
-    except (GraphicsPlanError, ConfigError, SchemaError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 2
+    except (GraphicsPlanError, ConfigError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except LLMError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
 
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"written: {summary['output']} ({summary['entries']} entries)")
         print("review the plan and flip approved to true on the entries you want, then run graphics.py --plan")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

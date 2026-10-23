@@ -4,6 +4,210 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Shared helpers extracted from serve.py and the tools (V010 lot fix2a)
+
+**Context:** Lot fix2 found the same small helpers copied across `serve.py` and the tools: tolerant JSON reads and atomic writes, a `git` runner, the OpenRouter key endpoint, GB formatting, the run.log tail and the spend-between-times sum, the append-only feedback line, the `sessionStorage` open-state script, the used-shot-keys set, the reason groups, the ffprobe duration and the ffmpeg frame extraction. A helper and its call sites had to change in several places at once.
+
+**Options:** (A) leave the copies and fix each one when it breaks; (B) extract the shared helpers into `scripts/common/` and point the tools at them, moving each tool's own copy only when a lot touches that tool.
+
+**Decision:** B. New modules: `common/jsonio.py` (`load_json`, `write_json`, `now_iso`, `parse_model_json`), `common/git.py` (`GitError`, `git_lines`), `common/openrouter.py` (`KEY_INFO_URL`, `key_info`), `common/sizes.py` (`BYTES_PER_GB`, `format_gb`), `common/runlog.py` (`RUN_MARKER`, `LOG_TAIL_BYTES`, `last_run_lines`, `last_run_start`, `spend_between`), `common/feedback.py` (`append_feedback`) and `common/html.py` (`open_state_script`). Moved into `common/decisions.py`: `used_shot_keys` and `REASON_GROUPS`. Moved into `common/ffmpeg_tools.py`: `probe_duration`; into `common/frames.py`: `extract_frame`. `recap_meta.py` and `serve.py` use the shared json helpers; `check_public.py` and `check_stable.py` use `common.git` and report a `GitError` as a runtime error; `agent_watchdog.py` and `serve.py` read the key endpoint through `common.openrouter`; `doctor.py` formats disk space through `common.sizes`; `llm_director.py` reads the run log and the director spend through `common.runlog` and appends feedback through `common.feedback`; `explain.py` and `index.py` share the open-state script and the reason groups; `thumbs.py`, `render.py` and `kdenlive_from_fragments.py` share `probe_duration`, and `thumbs.py` shares `extract_frame`. The `serve.py` shotlog change: the JavaScript overlay that moved used cards and pruned empty groups is gone; the used section carries its shot keys in `data-keys`, and the web app regenerates `shotlog.html` with `index.py` when the edit changed, then injects only the review buttons.
+
+**Why not:** A) the same fix would have to be repeated in every copy and the copies would drift.
+
+**Consequence:** the other tools keep their own json helpers for now; moved tool by tool when a lot touches them. `scripts/thumbs.py` gains the `yt-thumbs` skill.
+
+---
+
+## [2026-10-23] Files tab: see, add and leave out the files of a project (V010 lot files)
+
+**Context:** A project page shows the edit and the analyses but never the files themselves, so the user cannot see which clips and photos the project holds, add more into the same inbox source, or drop one from the edit without deleting it from disk. Every station lists clips by scanning the source or the proxy folder, so a file the user wants out would otherwise keep coming back.
+
+**Options:** (A) delete the unwanted file from disk; (B) a machine-owned `<workspace>/excluded.json` that every station reads and skips, plus a Files tab that lists the files, adds more into the recorded inbox source and toggles a name in and out; (C) a per-project ignore list only the director reads.
+
+**Decision:** B. `scripts/common/excluded.py` owns the interface: `load_excluded(workspace)` / `load_excluded_path(path)` return the set of names, `write_excluded` writes `{"excluded": [...]}` atomically and sorted, `exclude_name` / `include_name` add and remove one name, `is_excluded` matches a file name or its stem in both directions and `filter_excluded` drops the matching paths. `ingest.py`, `proxy.py` (`--exclude-file`), `motion.py`, `quality.py`, `describe.py`, `similarity.py` and `index.py` skip the excluded names; `recap.py` passes `<workspace>/excluded.json` to the proxy station and treats a source with no clips or photos as up to date when the proxy folder still holds files, so only the new files are proxied and analysed and the cached proxies are reused when the originals are gone. `serve.py` gains a Files tab (`?tab=files`, part of the `recap` feature) that lists every clip and photo from the proxies and the recorded inbox source with its state (`in the edit`, `new`, `left out`), an Add files form and a bin icon / Bring back button, and the write routes `POST /<project>/add-files` (streams into the recorded inbox source) and `POST /<project>/exclude-file` (writes `excluded.json`). No file is ever deleted from disk.
+
+**Why not:** A) destroys footage the user may want back; C) the stations would still list the file and the director would keep seeing it.
+
+**Consequence:** `<workspace>/excluded.json` is machine-owned and reversible; every station that lists clips or photos skips the names; the Files tab and the two routes are experimental in the v0.1.0 candidate.
+
+---
+
+## [2026-10-23] The director's reviewer visible, and a reply before a new version (V010 lot dialog)
+
+**Context:** The LLM director's reviewer approves the edit or sends fixes back, but the user never sees the verdict, so a weak edit has no explanation on the project page. And a re-edit starts straight from the feedback box, so a request the director reads differently than the user meant costs a full director run and a new version.
+
+**Options:** (A) show the reviewer verdict only in explain.html; (B) write the last verdict into edit.json meta.director.review, show it per version on the project page, and add a cheap --interpret-feedback call behind an "Ask the director" button that shows the reading and the estimate before the user clicks "Make the new version"; (C) always run the full re-edit and let the user judge the result.
+
+**Decision:** B. llm_director.py writes meta.director.review = {"approved", "objections": [{"slot", "shot", "text"}]} (old edits stay valid, the rule-based fallback writes none); the project page shows "Reviewer: approved/not approved" and the objections per version; --interpret-feedback TEXT --workspace DIR [--version vNNN] --json makes one cheap metadata-role call, writes no edit, appends an action "reply" line to feedback.jsonl and returns the reply plus estimate_usd/estimate_s from the last director run (run.log + llm_spend.json); the web "Ask the director" button posts to POST /<project>/feedback-reply and shows the reply with the estimate and two buttons, and the re-edit starts only from "Make the new version" (which appends an action "approved" line).
+
+**Why not:** A) the verdict is the one thing that explains a weak edit, and explain.html is a later lot; C) a misread request costs a full director run and a new version.
+
+**Consequence:** edit.json gains meta.director.review (schema updated); feedback.jsonl gains "reply" and "approved" actions; the serve.py write routes gain POST /<project>/feedback-reply; the reply is a model call charged to the workspace ledger like any other.
+
+---
+
+## [2026-10-23] Costs ledger: SQLite outside the repo, five kinds, idempotent imports
+
+**Context:** The project has no single place that answers what it costs and earns: model spend lives in per-workspace `llm_spend.json` files, build-agent spend in the watchdog's run-spend ledger, and fixed monthly costs, one-off investments and donations live nowhere. A later lot adds a Costs web page that needs one object to read.
+
+**Options:** (A) a JSON file in the repo; (B) a SQLite file outside the repository with a small CLI and a `totals` view; (C) a spreadsheet maintained by hand.
+
+**Decision:** B. The ledger is a SQLite file outside the repository (path from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`, else a three-ways usage error); five kinds (`model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`); imports are idempotent by `source` (project name for jobs, date for dev spend); `totals` computes the balance as donations minus model + dev + investments + fixed monthly × months since the first fixed entry.
+
+**Why not:** A) a ledger of money in a public repo invites accidental commits and has no query language; C) no idempotent imports and no machine-readable totals.
+
+**Consequence:** the web page (a later lot) reads `totals --json`; the totals computation moves to `scripts/common/costs.py` when the page needs it.
+
+---
+
+## [2026-10-22] Mode B finishing on the first talking-head clip: done by hand, to become tools
+
+**Context:** The first full talking-head clip was finished by hand — an assistant driving FilmCraft through `filmcraft-cli --bridge ... run steps.jsonl` — for every step the pipeline does not cover yet: camera picture-in-picture over screen spans (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes), intro layout (camera shifted right, brand background, fade, slide back), intro overlays synced to the speech (HyperFrames, left third), a hook cold open from the strongest sentence, SFX synced to animation events, background music under the intro and the outro at fixed levels (generated ducking overwrote the fades), the loudness recipe plus measurement of the final export, a supporters banner from one variable, the subtitle corrections list kept in `scripts/corrections.txt` plus lowercasing Whisper mid-sentence capitals except proper nouns, the thumbnail from the hook frame and the live-app batch path.
+
+**Options:** (A) keep the finishing steps as a documented manual recipe; (B) record them once as they were done and put every step on the roadmap as a tool to build.
+
+**Decision:** B. Every step goes to ROADMAP "Next → Mode B finishing" as an open item and becomes a tool; until then a human finishes a talking-head clip in FilmCraft. What was NOT through the pipeline this time is the gaps list: the graphics were hand-written HyperFrames compositions rendered with the HyperFrames CLI, not `graphics.py`/`graphics_plan.py`; the correction pass was a one-off script, not `correct_srt.py`; the picture-in-picture script lived outside the repo.
+
+**Why not:** A) leaves the finishing knowledge in an agent's working notes, which never leave that machine.
+
+**Consequence:** `scripts/corrections.txt` — the local, git-ignored list the tools read — carries the corrections approved on the clip (case-sensitive plain replaces, longer pattern first: `CloudCode|Claude Code`, `Cloud|Claude`, `cloud.md|CLAUDE.md`, `pasnicii|paznicii`, `notiților|notițelor`, `Arhives|Archives`, `să bilanotez|să le notez`); they are recorded here because the list itself stays out of the repo. The ROADMAP items are the backlog for the next Mode B sprint; no interface changes.
+
+---
+
+## [2026-10-21] Shorts layout policy auto/on/off and the web override (S59 follow-up 2)
+
+**Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. Doru asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.
+
+**Options:** (A) an extra field in the existing `director` scoring pass judging whether the screen is shown; (B) deterministic timeline signals — which angle each source clip is and what covers the candidate window; (C) decode sample frames of the screen file at candidate times and measure activity.
+
+**Decision:** B. `scripts/shorts_rank.py --layout-policy {auto,on,off}` (default from the config key `shorts_layout`, else `auto`; `--layout {face,split}` stays the hard override that skips the signals). `common.media.clip_kind(name)` classifies a source file name as `camera` (`camera …`), `screen` (a bare `YYYY-MM-DD HH-MM-SS` stem or a `screen` token) or neither (Mode A footage never splits); `has_both` is the input timeline holding both kinds and `screen_during` a screen clip's span overlapping the candidate (`auto` splits iff both, `on` iff `has_both`, `off` never). Spans come from `common.timeline_words.build_groups` (rough cut — a Mode B pair is one window with both angles) or the new `common.timeline_words.video_spans_from_fcproj` (every video-track clip); `--timeline-words` has no spans and stays `face`. Under a policy every written candidate carries `layout`. In `serve.py` a **Shorts layout** select (`auto`/`on`/`off`, default from config) sits with the other run settings and is recorded in the run options, and a **Shorts** tab lists the candidates with a per-candidate `face`/`split` select that writes the key back through `POST /<project>/shorts-candidates` (atomic, one candidate, camera-only projects offer `face` only and refuse `split`).
+
+**Why not:** A) a model call to answer a fact the timeline already carries, and the pass would have to change shape; C) media decoding at ranking time for the same fact.
+
+**Consequence:** `shorts_candidates.json` always carries `layout: face|split`; camera-only and Mode A sessions never get `split`; the policy is one config key and one CLI flag. The split render's cell order is unchanged (S59 lot 3c: face cell over screen cell); Doru's note "(screen on top, camera below)" is an open question in the S59 follow-up 2 report.
+
+---
+
+## [2026-10-21] No private addresses in the public repo (S59 follow-up 2)
+
+**Context:** The repository is public but carried the homelab's IP in docs (ntfy and serve URLs, bind addresses), in `scripts/common/notify.py`'s default URL and in tests.
+
+**Options:** (A) keep them (the repo is "public" but unlisted); (B) placeholders in docs, env/config for code, loopback for tests, and a `check_public.py` rule.
+
+**Decision:** B. Docs name `<agent-host>` and `<ntfy-url>`; `common.notify.resolve_url` reads `--url`/the call argument, else `NTFY_URL`, else the config key `ntfy_url`, and raises `NotifyError` when none is set (`scripts/notify.py` exits 1 with the message) — `DEFAULT_NTFY_URL` is gone and nothing defaults to a private address; tests use `127.0.0.1` or `example.invalid`; `scripts/check_public.py` fails on any IPv4 in 10/8, 172.16/12 or 192.168/16 outside `.gitignored` files (loopback and public addresses fine).
+
+**Why not:** A) publishes the homelab topology from a repo anyone can clone.
+
+**Consequence:** a deployment sets `NTFY_URL` or `config.yaml` `ntfy_url` (documented in `config.yaml.example`); the pre-commit hook and CI catch a private address before it lands.
+
+---
+
+## [2026-10-21] S59 follow-up answers: flat-layout screens, one lookup, check exit codes, candidates layout
+
+**Context:** The S59 reviews left open questions (matte exclusion, flat-layout screen candidates, the `find_words` suffix copy, `--check` when the face detector cannot load, the watchdog cron docs, the crossfade/word-midpoint/frame-reader copies, and the `layout` key no tool writes) and the final review section's problems 2-3 plus decision items 1-3.
+
+**Decision:**
+- **Matte exclusion stays** (`-Alpha`/`_matte`, `scripts/common/media.py`): `matte.py` outputs can sit next to the camera files and are never recordings (recorded in the S59 layout entry above).
+- **Flat layout:** only files whose name carries a `YYYY-MM-DD HH-MM-SS` timestamp are screen candidates; other videos in the folder are ignored silently (no warning, no session). Subfolder layouts are unchanged.
+- `mode_b.find_words` uses `common.timeline_words.words_file_for`; its private `WORDS_SUFFIXES` copy is gone.
+- **Screen checks stay on by default** in every `mode_b.py` run. When the face detector cannot load, the run warns `screen check incomplete: face detector unavailable: <error>` and the `--json` summary sets `screen_check_incomplete` (both `run()` and `check()`); `--check` exits `2` with that message (`0` all clear, `1` a suspect screen file found — a suspect found while the detector is unavailable still exits `2`, because a partial check never looks clean). The exit codes live in the module docstring, `--help` and the user guide.
+- `shorts_rank.py --layout {face,split}` writes that `layout` on every candidate (the schema already allows it); without the flag the output is unchanged. The generator's config precedence (candidate key, then top-level `layout:`, then `face`) is untouched, so both ways of setting `split` work.
+- **One crossfade rule and one word-midpoint rule:** `render.py` and `serve.py` call `common.timeline_words.fade_for_join` (their local `fade_for_join`/`crossfade_overlap` copies are gone, golden tests byte-identical), `rough_cut.py` and `eval_rough_cut.py` call `common.timeline_words.word_in_window`, and `explain.py`/`index.py` read thumbnails through `common.frames.read_frame`.
+- `mode_b.manifest_document` matches a recorded `sync_offset_s`/`sync_offset_confidence` on both the raw and the resolved `camera` path, so a hand-written manifest cannot lose its offset silently.
+- The live watchdog cron (`--run-cap 6 --lot <lot> --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10`) is what `docs/AGENT_SETUP.md` documents now.
+
+**Why not:** a `--check` that exits 0 when its own detector failed is how a broken check looks clean; per-tool copies of the crossfade and midpoint rules had already drifted once (the lot 2 review).
+
+**Consequence:** `--check`'s contract is 0/1/2 and tested in both cases (detector fine, detector unavailable); the flat layout ignores junk videos silently; `shorts_candidates.json` can carry `layout: split` per candidate. No schema change.
+
+---
+
+## [2026-10-21] S59 follow-ups: shared media helpers, audio sync, screen checks (issue #60)
+
+**Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). Doru also asked whether a screen file was really a screen file.
+
+**Options:** (A) keep per-tool copies and the name-only offset; (B) move the shared helpers to `scripts/common/media.py`, measure the camera-to-screen offset by sound in `rough_cut.py` and add a cheap screen-suspect check to `mode_b.py`; (C) also teach `mode_b.py` to write the offset.
+
+**Decision:** B — `scripts/common/media.py` holds `parse_stamp`, `stem_timestamp` and `video_files` (matte exports excluded), `rough_cut.py` computes the offset in one place: voice cross-correlation (ffmpeg mono 16 kHz, ±5 s search, first 60 s of overlap) with `sync_offset_confidence` (the normalised correlation peak, new key in `schemas/sessions.schema.json`), falling back to the name timestamps plus the container start time when the correlation is weak or an audio track is missing. A manifest `sync_offset_s` (hand-written or recorded) always wins and is used as is. `mode_b.py` flags a screen file that looks like a camera recording (YuNet face in ≥ 60 % of 8 sampled frames, or mean frame similarity ≥ 0.85 to the paired camera) and `--check` runs only these checks, nothing written, exit 1 on a suspect.
+
+**Why not:** C) two writers of one field is how the lot 1 bug happened; A) leaves the wrong offset and the duplicated helpers in place.
+
+**Consequence:** `mode_b.py` never writes `sync_offset_s` (the skill says so and the code keeps the promise — see the review entry below), `--check` is the post-recording sanity check, and `rough_cut.py` is the only place the offset is measured or recorded.
+
+---
+
+## [2026-10-21] Review fixes: one frame reader, one brand default, one colour parse, one keep rule (S59 review)
+
+**Context:** The lot 2/lot 3 reviews found shared logic written out per tool: the `VideoCapture` seek loop in `describe.py`, `similarity.py` and `mode_b.py` (three different contracts); `DEFAULT_BRAND` in `common/brand.py` plus `shorts_generator.py`, `thumbnail.py` and `graphics.py` (the `common` copy was dead); the `#RRGGBB` parse in `thumbnail.hex_to_rgb` and `shorts_generator.hex_to_ass_*`; the word-midpoint keep rule re-implemented in `shorts_generator.words_for_segment`; `PAUSE_SPLIT_S`, `TICKS_PER_SECOND`, `EPSILON`, `media_item_path` and `slot_length` duplicated across tools. The review also asked for a single source of truth for the word-to-edit mapping and for `chapters.json`/`shorts_candidates.json` to default to the clip's publish folder in `--fcproj` mode (Doru, 2026-10-21).
+
+**Decision:** `scripts/common/constants.py` holds `EPSILON`, `TICKS_PER_SECOND` and `PAUSE_SPLIT_S`; `scripts/common/frames.py` holds `read_frame_pairs` (near-seek retry option, strict or skip-on-missing, the caller's error class) used by `describe.py`, `similarity.py` and `mode_b.py`; `common/brand.DEFAULT_BRAND` is the only brand default and `common/brand.parse_hex_color` the only `#RRGGBB` parse (ASS colour formatting stays in `shorts_generator.py`); `common/timeline_words.word_in_window` is the keep rule used by `collect_words`, `map_words` and `words_for_segment`; `subs_from_edit.py` uses the shared `build_groups`/`map_words` (the crossfade overlap moved into `build_groups`); `mode_b.run_screen_checks` loads the YuNet detector only after readable screen frames were found; `mode_b.manifest_document` carries a recorded `sync_offset_s`/`sync_offset_confidence` over to a rewritten manifest (the skill's "the manifest value always wins" promise, kept after the lot 3 review); in `--fcproj` mode `chapters.py`/`shorts_rank.py` write `chapters.json`/`shorts_candidates.json` to the clip's publish folder (the parent of `--words-dir`), else next to the primary input.
+
+**Why not:** per-tool copies drift — they already had three `read_frames` contracts and two word mappings with different crossfade handling.
+
+**Consequence:** behaviour is unchanged except the `--fcproj` default output folder (documented in `yt-mode-b` and `yt-shorts`); `metadata.py --chapters` expands `~`; the tests cover the preserved sync offset, the lazy detector and the publish-folder default.
+
+---
+
+## [2026-10-21] Shorts split layout: face over screen (S59 lot 3c, issue #60)
+
+**Context:** For a face-over-screen recording (a screen capture with the presenter's face in it) the 9:16 Short cropped around the face and lost the screen content. The frame holds both regions, so they can be stacked instead of cropped.
+
+**Options:**
+- A) Keep only the `reframe.py` face crop
+- B) Add a `layout: split` option that stacks a face window (following the reframe path) over a static screen window of the same 16:9 frame
+
+**Decision:** B. `shorts_generator.py` resolves the layout per segment (segment key, then candidate `layout` in `--candidates` mode, then the top-level `layout:`, then `face`); a value outside `face`/`split` is a user error. `layout: split` builds one filtergraph: `split=2[fa][sc]`, a face crop whose centre follows the reframe path (clamped inside the source frame) scaled to the face cell, a static screen crop centred at `screen_x_frac`/`screen_y_frac` scaled to the screen cell, then `vstack`. The `split:` fractions (`face_h_frac`, `face_cell_frac`, `screen_h_frac`, `screen_x_frac`, `screen_y_frac`) are config, not code. `x_offset` is ignored in split layout with a warning; a failed reframe falls back to a still crop on the source centre. The `--json` summary gains a per-short `layout`.
+
+**Why not A:** the screen content is the point of a face-over-screen recording; cropping it away loses the demo.
+
+**Consequence:** `layout: face` is byte-for-byte today's behaviour; `layout: split` renders a 608x1080 Short with the face on top and the screen below. `scripts/common/`, `schemas/`, `brand.json` and `reframe.py` are unchanged.
+
+---
+
+## [2026-10-21] Shorts karaoke: timeline word times and the brand look (S59 lot 3b, issue #60)
+
+**Context:** `shorts_generator.py` interpolated word times evenly inside each corrected `.srt` line, so the karaoke highlight drifted from the speech on lines with pauses, and it hardcoded an Arial/white/yellow look with three words per line. The publish chain already writes a timeline `_words.json` (`subs_from_edit.py`) with real word times, and `brand.json` is the brand kit the thumbnail already reads.
+
+**Options:**
+- A) Keep the SRT interpolation and the hardcoded look
+- B) Burn the real word times of the timeline `_words.json` when given (SRT interpolation stays the fallback), take the caption font and colours from `brand.json`, and break captions on phrase boundaries
+
+**Decision:** B. `shorts_generator.py` gains `--words FILE` (the timeline `_words.json`; the words whose midpoint lies in `[start, end)` are shifted to segment time, hyphenated fragments merged and the corrections applied to the text, times unchanged), `--corrections FILE` (default `scripts/corrections.txt`, falling back to the example) and `--brand FILE` (default `brand.json` at the repo root). Both ASS generators take `fontname`/`fontsize` from `fonts.caption` (size scaled to the 1080-high ASS canvas), `colors.ink` as the primary, `colors.warm` as the active word and `colors.night` as the outline; `marginv` follows `karaoke.safe_zone_frac` (default 0.33) and `karaoke.scale_active_word` (default false) adds a 106% scale to the active word. Captions break on `.`/`!`/`?`/`…` and pauses over 0.6 s, pack into lines of at most 18 characters, at most 2 lines per caption. `render_short` passes the caption font directory to libass (`ass=…:fontsdir=…`). The `--json` summary gains `wall_time_s`, `llm_cost_usd` (0.0) and a per-short `words_source`.
+
+**Why not A:** the highlight drifts from the speech and the look is not the brand; the real word times already exist in the publish chain, so interpolating them again is a second, weaker source.
+
+**Consequence:** a Short cut from a timeline with a `_words.json` gets real word times and the brand look; without `--words` the SRT interpolation is unchanged. `scripts/common/`, `schemas/`, `brand.json`, `shorts_rank.py` and `subs_from_edit.py` are unchanged. `layout: split` is a later task.
+
+---
+
+## [2026-10-21] S59 lot 2 — one word mapping, final-edit chapter inputs, chapters.json in the publish chain
+
+**Context:** The word-to-timeline mapping was duplicated in `subs_from_edit.py`, `chapters.py` and `shorts_rank.py`, and the publish chain asked the model for chapters a second time even when `chapters.py` had already written the chapter source of truth. The Second Brain final edit is a FilmCraft project, so the chapter and Shorts tools had to read the final timeline, not only the rough cut.
+
+**Options:**
+- A) Keep the three copies of the mapping and let each tool grow its own final-edit input
+- B) Move the mapping to `scripts/common/timeline_words.py`, give `chapters.py`/`shorts_rank.py` the same three input modes as `subs_from_edit.py`, and let `metadata.py`/`publish.py` take `--chapters chapters.json`
+
+**Decision:** B — `scripts/common/timeline_words.py` holds the shared mapping (`subs_from_edit.py`, `chapters.py`, `shorts_rank.py` all use it; `collect_words` also finds `<stem>_words.json`). `chapters.py` and `shorts_rank.py` accept the rough cut as before, or the final FilmCraft project (`--fcproj --sequence --words-dir`, the same mapping as `subs_from_edit.py --fcproj`) or the timeline `_words.json` (`--timeline-words`). `metadata.py` and `publish.py` take `--chapters chapters.json` and use those chapters instead of the model's; without the flag nothing changes.
+
+**Why not:** A) leaves three mappings to drift and forces the final-edit tools to re-implement the FilmCraft mapping; the model's chapters are a second, weaker source once `chapters.py` has written the timeline chapters.
+
+**Consequence:** On the Second Brain final timeline (`Second Brain - 15 min`, 866.09 s, 1955 words mapped) `chapters.py` produced 9 chapters all inside the timeline and `shorts_rank.py` 5 Shorts candidates of 29-58 s each inside one chapter. `metadata.py --chapters` makes the model's `chapters` key optional and ignores it when present; a missing or invalid file exits 2. No schema change.
+
+## [2026-10-21] Mode B real folder layout and nearest-timestamp pairing
+
+**Context:** The Second Brain recordings live in a `camera/` + `ecran/` folder pair, not the flat folder `mode_b.py` assumed, and the OBS screen recording starts 1-2 s before the camera, so exact name matching pairs only 24 of the 31 sessions. The Whisper JSONs sit in a `json/` subfolder.
+
+**Options:**
+- A) Keep the flat layout and require the user to rename files so the stems match exactly
+- B) Accept both layouts and pair by the nearest name timestamp within a tolerance, falling back to the exact stem
+
+**Decision:** B — detect the subfolder layout (`camera/` plus `ecran/` or `screen/`, names configurable under `mode_b:`), pair each camera with the screen whose parsed name timestamp is nearest within `pair_tolerance_s` (default 10 s) assigned greedily one-to-one, fall back to the exact stem, and leave `sync_offset_s` to `rough_cut.py` (corrected 2026-10-21: the offset is measured by sound there, see the follow-up entry below — the pairing itself only matches files). Unpaired cameras run camera-only; unpaired screens are warnings. `find_words` also searches `FOLDER/<words_dir>` (default `json`).
+
+**Why not:** A) forces manual renames on every recording and loses the real offset; the schema already carries `sync_offset_s`, so the measured value belongs in the manifest.
+
+**Consequence:** `mode_b.py` reads a `mode_b:` mapping from the same YAML it passes to `rough_cut.py` (which ignores unknown keys); the `--json` summary gains a `pairing` object. Words found outside `<out-dir>/words` are copied into it (the manifest keeps the found path), so `chapters.py` sees every session. Derived matte exports (`*-Alpha.mov`, `*_matte.mov`, `scripts/common/media.py`) are excluded from the camera and screen candidates on purpose: `matte.py` outputs sit next to the camera files and are never recordings (kept, 2026-10-21). No schema change here (`sync_offset_confidence` arrived with the audio-sync follow-up, see below). The reference check pairs 27 of 31 sessions (the old exact-name rule paired 24).
+
 ## [2026-06-18] WhisperX forced alignment instead of re-running Whisper
 
 **Context:** `shorts_generator.py` was running Whisper a second time on the audio segment for word timestamps, independently of the first SRT-generating run.
@@ -347,7 +551,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - B) `urllib.request` from the standard library
 - C) A shell `curl` one-liner in the agent docs
 
-**Decision:** B. `scripts/common/notify.py` with `scripts/notify.py` as the CLI. URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`. Message is the POST body; title/priority/tags are ntfy headers.
+**Decision:** B. `scripts/common/notify.py` with `scripts/notify.py` as the CLI. URL from `NTFY_URL`, default `<ntfy-url>`. Message is the POST body; title/priority/tags are ntfy headers.
 
 **Rationale:** The notification is a single POST and must work even on a bare machine, so a new runtime dependency (A) is not justified. C is not testable and hides the target. Putting the function in `common/` lets later stages and the phase-report ritual share it without tool-to-tool imports.
 
@@ -1305,9 +1509,9 @@ only.
 **Acceptance (2026-10-14, budget 1 USD):** 5 clips copied (never moved) from
 `~/media/yt-test/raw` into `~/media/inbox-test/2026-10-14/` with a folder
 `brief.txt`; `inbox.py --once --quiet-minutes 0 --notify --preview-base
-http://10.10.1.61:8091` picked them up as project `2026-10-14` (brief_source
+http://<agent-host>:8091` picked them up as project `2026-10-14` (brief_source
 `folder`) and rendered `recap_720p.mp4` (1280x720, 19.5 s, 4 slots) for
-**$0.043** in 540 s. `serve.py --bind 10.10.1.61 --port 8091` lists the
+**$0.043** in 540 s. `serve.py --bind <agent-host> --port 8091` lists the
 project; index, project page, preview and shotlog all return 200 over the
 tailnet address, and the ntfy message (`Recap ready (720p)` + preview link)
 arrived with that exact URL. Second `--once` run: `skipped (nothing new)` at
@@ -2033,3 +2237,480 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not the API upload:** the audit gate above.
 
 **Consequence:** The manual upload is 3-5 minutes in Studio; the API upload can come back after a Google project audit (parked, not deleted from the plan — see the issue comment).
+
+---
+
+## [2026-10-21] Phone review taps write the workspace's expectations.yaml (S54 lot 2)
+
+**Context:** Issue #54 lot 2 adds two per-shot buttons on the Shots tab ("must be in" / "wrong label") that write "to the expectations file that `eval_edit.py` reads", and themes the run-progress `<progress>` bar from `brand.json` (Chrome on Android ignores `accent-color` on `<progress>`). D2-19 puts curated expectations in `eval/*.yaml` (committed regression fixtures); phone taps are live review data that belongs to one workspace.
+
+**Options (destination):** (A) append the taps to the repo's `eval/<project>-edit.yaml`; (B) write a workspace-local `expectations.yaml` that `eval_edit.py --workspace WS --expect WS/expectations.yaml` reads; (C) only append to the existing `feedback.jsonl` action log.
+
+**Decision:** B, with one extra top-level key. `serve.py` gains a single write route `POST /<project>/expectations` (urlencoded `shot` / `kind` / `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET on that path stays 404) that appends to `<workspace>/expectations.yaml` in the exact shape `eval_edit.py` already reads: `must_include: [{any_of: [shot], note}]` for "must be in" and `wrong_label: [{shot, note}]` for "wrong label". Taps are idempotent per (shot, kind), the write is atomic and the file is machine-owned (rewritten with a header comment, so hand-written YAML comments are lost). `eval_edit.py` is unchanged and ignores `wrong_label` — those rows are the record Doru and the agents read before the next re-edit or re-analysis. The progress bar takes `brand.json` `colors.cool` through `progress::-webkit-progress-value` / `progress::-moz-progress-bar` (fallback `#57b8c4`, never a start-up failure).
+
+**Why not A:** live taps would mix into the committed regression fixtures. **Why not C:** the issue names the expectations file, and `eval_edit.py` must be able to check what the taps said.
+
+**Consequence:** a phone review of the Shots tab becomes a file any agent can run (`eval_edit.py --expect WS/expectations.yaml`); curated expectations stay in `eval/`. The RULES serve line and the D2-19 expectations line grow the one write route and the workspace file.
+
+---
+
+## [2026-10-21] Mode B angles: paired edit.json slots sharing one id (S56 lot 1)
+
+**Context:** Issue #56 lot 1 has `rough_cut.py` write an `edit.json` (the existing schema) that `export_filmcraft.py` opens with "the screen on Video 1 and the camera on Video 2, the same cuts on both". The reference project lays every kept window on two parallel tracks at one timeline position. `edit.json` has one sequential `video[]` timeline and `additionalProperties: false` everywhere, so two clips at one timeline position are not representable with unique slots — and the issue forbids changing the schema ("the existing schema").
+
+**Options:** (A) extend `schemas/edit.schema.json` with a multi-angle field and teach every adapter; (B) encode the angle pair as two consecutive video slots sharing one `id` (screen first, then camera), understood by `export_filmcraft.py`; (C) only the camera angle in `edit.json`, the screen cloned by an export flag.
+
+**Decision:** B. `rough_cut.py` writes one slot per angle of a kept window, both with the window's `id`; `export_filmcraft.py`'s `build_timeline` groups consecutive video slots with the same `id`, gives the group one timeline start (the cursor advances once per group), routes the members to Screen 1 / Camera 1 as before, emits one audio clip from the first non-screen member and one marker per group (Green with the window's reason, Rose when any member is flagged). Unique-id slots — every existing edit — behave byte-for-byte as before (regression test on `tests/fixtures/filmcraft/edit.json`).
+
+**Why not A:** the schema is the interface the issue pins ("the existing schema"), and every adapter would need the multi-angle concept. **Why not C:** the pairing would live in a CLI flag instead of the edit list, breaking "edit.json is the only source of truth".
+
+**Consequence:** a rough-cut `edit.json` is consumable by `export_filmcraft.py` (and `eval_rough_cut.py`); `render.py`, `subs_from_edit.py` and the web app still treat slots sequentially and a Mode B rough cut is not rendered in this slice. A kept window's `reason` names the cut before it (`cut: pause 1.2 s`, `cut: filler 'deci'`, `cut: retake of w007`, `start: session`) and becomes the FilmCraft marker; every merged cut run is a rejected `decisions[]` entry. RULES.md grows the Mode B paired-slots line.
+
+---
+
+## [2026-10-21] Mode B cut rules: pauses, fillers, retakes (S56)
+
+**Context:** Issue #56 lot 1 turns talking-head + screen recording sessions into a rough cut a human finishes in FilmCraft; the reference is Doru's hand edit of the same material. The cut has to remove the dead air, the filler words and the restarted sentences without clipping words.
+
+**Options:** (A) cut silence by audio loudness (auto-editor's approach, `docs/research/prior-art.md` §2.6); (B) cut by the word timestamps Whisper already produced (gaps between words, filler tokens, restarted sentences); (C) let an LLM choose the cut list.
+
+**Decision:** B. A gap between words over `pause_gap_s` (0.6 s) is cut keeping `handle_s` (0.12 s) each side so words are not clipped; standalone filler tokens from a config file are dropped (`ă`, `îî`, `ăă`, `ăăă`; `deci`/`practic` only when repeated within 3 s); a sentence restarted by a later one within 60 s (normalised-word prefix similarity ≥ 0.55, ≥ 3 words) is cut, keeping the last take. Every cut run is a rejected `decisions[]` entry and the kept window's `reason` names the cut before it (the FilmCraft marker). Thresholds tuned on the reference eval (`docs/reports/S56-eval.md`): `retake_similarity` 0.75 → 0.55, `fillers.always` + `ok`.
+
+**Why not A:** word timestamps already mark the pauses and clipping words is the known pitfall of loudness cutting (it needs denoising first). **Why not C:** the rule cut is deterministic and free; the optional `--llm` pass only proposes extra cuts for human approval and never changes the edit.
+
+**Consequence:** `rough_cut.py` + `eval_rough_cut.py` + `mode_b.py`, the `yt-mode-b` skill, the sessions manifest schema; the cut rules are the Mode B defaults in `scripts/rough_cut_config_example.yaml`.
+
+---
+
+## [2026-10-21] Mode B one-command flow (S56 lot 3)
+
+**Context:** Issue #56 lot 3 asks for one command that runs the whole Mode B flow on a folder of OBS recordings, the way `recap.py` is the single entry point for Mode A.
+
+**Options:** (A) import `transcribe.py`/`rough_cut.py`/`export_filmcraft.py` and call their functions; (B) chain the three station CLIs as subprocesses (the `recap.py` pattern); (C) a shell script.
+
+**Decision:** B. `scripts/mode_b.py FOLDER [--out-dir DIR] [--backend {whisper,mock}] [--config FILE] [--llm] [--force] [--json]` scans the folder (a `camera ...` file plus an optional sibling screen file), transcribes every session with no words JSON yet, writes `<out-dir>/sessions.yaml`, runs `rough_cut.py` and exports `project.fcproj`. The skip rule is "output exists" (`--force` re-runs every step); a failing step stops the run and the next run resumes at it. Outputs go under `<folder>/mode_b/`; originals are read-only.
+
+**Why not A:** no tool imports another tool (the repo rule); the CLIs are the interfaces. **Why not C:** a shell script cannot carry the `--json` summary, the exit codes or the tests.
+
+**Consequence:** one command turns a folder of OBS recordings into a FilmCraft rough cut; `mode_b.py` is the Mode B front door, `rough_cut.py` and `export_filmcraft.py` stay the stations.
+
+---
+
+## [2026-10-21] Unfinished reference: eval on the finished stretch; retake_similarity reverted (S56 follow-up)
+
+**Context:** Doru has edited only the first 150 s of the Second Brain reference; the lot 2 precision_used 0.64 was not a real ceiling and the tuned thresholds were fitted to partly uncut material. `eval_rough_cut.py --until-s S` was added (commit 3d269b4) and the two lot 2 threshold changes were re-checked on the `--until-s 150` slice: A1 (`retake_similarity` 0.75, `fillers.always` with `ok`) gives precision_used 0.5619, recall_used 0.9629, F1_used 0.7097; B (`retake_similarity` 0.55, `fillers.always` with `ok`) gives precision_used 0.5638, recall_used 0.9496, F1_used 0.7075.
+
+**Decision:** the headline numbers are the `--until-s 150` ones (precision_used 0.5619, recall_used 0.9629, F1_used 0.7097 for the final config); the full-sequence numbers are indicative only. `fillers.always` keeps `ok`; `retake_similarity` goes back to 0.75 because 0.55 costs 0.0133 recall_used for 0.0018 precision_used on the finished stretch.
+
+**Consequence:** the Mode B cut rules run with `retake_similarity: 0.75` and the `ok` filler; **the eval is rerun when the reference edit is final** and the thresholds may move again.
+
+---
+
+## [2026-10-21] Phone cut review writes cut_review.yaml (S57 lot 1)
+
+**Context:** Issue #57 lot 1 adds a Cuts view to the web app so Doru can approve or reject each automatic Mode B cut from the phone. The taps must feed back into `rough_cut.py` on a rerun and into `eval_rough_cut.py` as ground truth.
+
+**Options:** (A) reuse `expectations.yaml`; (B) a workspace-local `cut_review.yaml` written by `serve.py` and read by both Mode B tools; (C) only a UI log with no tool integration.
+
+**Decision:** B. `serve.py` gains a Cuts tab (Mode B projects only) and two routes: `POST /<project>/cut-review` (urlencoded `id`/`action`/optional `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET stays 404) appends idempotently per cut id to `<workspace>/cut_review.yaml` (atomic, machine-owned, header comment), and `GET /<project>/cut-audio?id=` serves a cached `audio/wav` of the cut span plus one second each side from the `sources[]` media. `rough_cut.py --review` keeps a `keep` run in the edit (reason `kept by review`, run id stable) and `eval_rough_cut.py --review` treats each row as extra ground truth that wins over the `--fcproj` reference inside its span.
+
+**Why not A:** expectations are per-shot edit checks; cut review is per-cut-run and needs the clip/window. **Why not C:** the taps would not change the next rough cut.
+
+**Consequence:** a phone review of the Cuts tab becomes a file both Mode B tools read; `schemas/` is unchanged (`decisions[]` stays frozen, cut words are derived at render time from `sessions.yaml` + the word JSONs).
+
+---
+
+## [2026-10-21] chapters.json is the chapter source of truth (S57 lot 2)
+
+**Context:** Issue #57 lot 2 needs the topic chapters of a Mode B rough cut as a file the FilmCraft export can place as section markers and the publish kit can reuse, instead of asking the model for chapters again in `metadata.py`. The chapter rules already exist in `prompts/metadata.md` (first chapter at 0, non-decreasing, titles at most 40 characters, real topic changes).
+
+**Options:** (A) ask the model again in `metadata.py` and keep chapters only in the publish draft; (B) a `chapters.json` written by a new `chapters.py` station (role `metadata`, one pass over the kept transcript in timeline time) that `export_filmcraft.py --chapters` and `mode_b.py` consume; (C) hard-code chapter times from the cut reasons.
+
+**Decision:** B. `scripts/chapters.py edit.json WORDS [--out chapters.json] [--json]` maps the per-source Whisper words onto the edit timeline (the `subs_from_edit.py` midpoint rule; a Mode B pair is one window and its words are counted once), builds the kept transcript as `[MM:SS.d] words…` lines and asks the `metadata` role once (temperature 0.3, retry once on unparseable output). The first chapter is snapped to 0, starts must be non-decreasing and inside the transcript, titles are 1–40 and summaries 1–200 characters after strip; the file is validated against `schemas/chapters.schema.json` before the atomic write. `export_filmcraft.py --chapters` adds one Green section marker per chapter (`name` = title, `comment` = summary) and reports `markers.sections`; `mode_b.py` runs `chapters.py` between the rough cut and the export and passes `--chapters` when the file exists.
+
+**Why not A:** the publish kit would ask the model for the same chapters a second time and the two answers could disagree. **Why not C:** chapter times are a content judgement, not a cut artefact.
+
+**Consequence:** `chapters.json` is the chapter source of truth from `chapters.py`; the publish kit can read it instead of asking again (a later task), and the FilmCraft project opens with the chapters as Green section markers. `schemas/` and `scripts/common/` are unchanged.
+
+---
+
+## [2026-10-21] Shorts ranking writes shorts_candidates.json (S57 lot 3)
+
+**Context:** Issue #57 lot 3 needs the best Shorts spans of a Mode B rough cut as a file `shorts_generator.py` can cut and the FilmCraft export can mark, instead of the generator's own hand-written `shorts_config.yaml` pick. A Short is a self-contained 20-60 s span that opens with a hook and ends on a payoff.
+
+**Options:** (A) let the model propose spans freely from the transcript; (B) deterministic sentence-aligned candidates (20-60 s, inside one chapter) that the model only scores on hook and payoff; (C) a pure rules score with no model.
+
+**Decision:** B. `scripts/shorts_rank.py edit.json WORDS [--chapters chapters.json] [--out shorts_candidates.json] [--json]` maps the kept words onto the edit timeline (the `chapters.py` midpoint rule; a Mode B pair is one window and its words are counted once), splits them into sentences on pauses over 0.6 s and builds candidates: for every sentence start, the longest run of consecutive sentences inside one chapter whose span is 20-60 s. One `director` pass (temperature 0.3, retry once on unparseable output) scores every candidate on `hook` and `payoff` (0-100) with a one-line reason; `score = (hook + payoff) / 2`, ranked descending with the earlier start breaking ties, and the top 5 are written to `shorts_candidates.json` (validated against `schemas/shorts_candidates.schema.json` before the atomic write). `shorts_generator.py --candidates` cuts them (each candidate becomes `short<rank>`, no `x_offset`, so the existing auto reframe runs) and `export_filmcraft.py --shorts-candidates` marks the top 3 with Mango.
+
+**Why not A:** free spans can start mid-sentence or cross a chapter boundary, and the generator needs clean cut points. **Why not C:** hook and payoff are content judgements a rule cannot make; the model only ranks spans the rules already made safe.
+
+**Consequence:** `shorts_candidates.json` is the ranked Shorts list; the generator's own `segments:` pick stays the default and the file is opt-in. The candidate times are the timeline seconds of the edit they were ranked on, so the generator must run against a video with that same timeline. `schemas/` and `scripts/common/` are unchanged.
+
+---
+
+## [2026-10-22] mode_b.py --check exit codes 0/1/2/3
+
+**Context:** `mode_b.py --check` used exit code `2` for two different things: "the check could not run completely (the face detector unavailable)" and "usage error (missing folder, no camera files)". A caller could not tell a retryable incomplete check from a command that was called wrong.
+
+**Decision:** `0` all clear, `1` a suspect screen file was found, `2` the check could not run completely (the face detector could not load) or a failing step in a normal run, `3` a usage error (missing folder, not a folder, no camera files, bad `--config`). `ModeBError` raised by validation before any work starts exits `3`; `ModeBError` raised by a failing step inside `run()` exits `2`. The `--json` error object stays `{"ok": false, "error": ...}`.
+
+**Consequence:** `--check` callers can retry on `2` and fix the command on `3`; the module docstring, `ModeBError` docstring, `--help`, user guide, skill and tests state the four codes.
+
+---
+
+## [2026-10-22] Watchdog no-commit clock starts at the agent start; "Stopped" only when verified (S60 lot 0)
+
+**Context:** A freshly started agent was alerted "no commit for 10.1 h" and "Stopped the agent" while it kept running: the clock measured from the last commit (ref-file mtimes, possibly hours old or re-dated into the future) and the stop message was built from the kill reason alone.
+
+**Decision:** The no-commit age is `max(0, now - max(last_commit, agent_start))`, with `agent_start` from the run marker (`run_started_at`) or the opencode process start time; ages are clamped at 0.0 so a future-dated commit never reads as negative. After a kill the agent is re-checked: "Stopped the agent" only when it really ended, otherwise the alert says the stop failed. Every ntfy message carries a label (`--lot`, else the tmux session of the agent). Tests use a fake clock.
+
+**Consequence:** The watchdog no longer false-alarms on a fresh run; the stop claim is honest; alerts name the lot or session they are about.
+
+---
+
+## [2026-10-22] finish_pip.py: matte PiP over the screen spans in two steps files (S60 lot 1)
+
+**Context:** The by-hand finishing placed the matted camera as a picture-in-picture over the screen spans with an eased entry/exit. `filmcraft-cli run` assigns clip ids at run time (unpredictable: 50 then 52), so one steps file cannot keyframe clips it places itself.
+
+**Decision:** `scripts/finish_pip.py` writes `finish_pip.place.jsonl` (timeline.place of the mattes on one PiP track — first placement `track: "new"`, the rest `track: "V<n>"`) and `finish_pip.animate.jsonl` (motion keyframes on the placed clips, generated from a re-inspect after the place run). With `--bridge` (or `--project` for a headless file) the tool runs both phases itself; with neither it only mattes and plans, because `timeline.place` item ids come from the import into that same project. Spans snap to the screen span edges (a span ending mid camera-clip trims the placement), ranges are padded 0.5 s and merged under 2 s, PiP is 45 % bottom-right (36 % over full-screen explainer names) with a 0.30 s ease-out entry (slight overshoot) and a 0.25 s anticipation exit.
+
+**Consequence:** The picture-in-picture finishing is reproducible from one command and a steps file pair; the animate file always follows a place run or a fresh inspect JSON.
+
+---
+
+## [2026-10-22] finish_pip screen spans, edge leftovers and the re-run output (S60 lot 1b)
+
+**Context:** A dry-run of `finish_pip.py` on the finished first Mode B sequence planned to matte the intro: the still image `fundal_intro.png` on the screen track made a 43.8 s "screen span", and the short camera pieces at the span edges (fragments of the full-screen stretches between spans, 0.01–0.58 s of clip inside the span) were matted and placed like PiP content. The lot 1 review also found the matte-export detection duplicated between `finish_pip.py` and `scripts/common/media.py`, and the `filmcraft-cli` lookup duplicated between `finish_pip.py` and `loudness.py`.
+
+**Decision:** A screen span comes only from enabled, non-matte video items on the screen track (`common.media.is_video_name`); a still image, a PNG/JPG graphic or a nameless generator item never makes a span and never classifies a track. The screen-file name rule (`common.media.clip_kind`) identifies the track; inside a classified screen track every video clip is screen content, topic-named screen recordings included (the by-hand pass matted over them too, and excluding them would leave PiP holes). Short pieces at a span edge (the clip straddles the edge or its start/end sits within 0.05 s of it, overlap at most 1.0 s) are decided per piece: a `leftover` (straddles with the overlap under half the clip, or overlap under 0.5 s) is dropped — no matte, no placement — and a `seam` (a real camera cut at the edge) keeps its matte range and placement; every edge piece is reported (`edge checks:` / `edge_checks`) with its padded source range, overlap, clip length, verdict and reason. Placement `sourceIn` snaps once to the frame grid from the sequence's own `settings.frame_rate`, like the by-hand placement pass (the manual finishing of the first Mode B clip, done with a one-off helper script and steps built by hand, kept outside the repo), and the place steps, the plan and the animate `mediaTime` anchors all use the snapped value. The dry-run plan prints `matted=`/`placed=` per range and `nothing to do` when there is no new placement and every range is already matted (vacuously true with no ranges at all); a non-dry-run with nothing to do writes no steps files; `--force` never overrides `nothing to do`; `--json` adds `ranges[].placed`, `edge_checks[]` and `nothing_to_do`. Matte-export detection lives only in `common.media.is_matte_export` (which now also matches the by-hand range name `<stem>_<A:07.2f>-<B:07.2f>.mov`) and the `filmcraft-cli` lookup only in `common.filmcraft.cli_path` (used by `finish_pip.py` and `loudness.py`); `attach_clips` warns and skips the keyframes when a placed matte item carries no `clip` id.
+
+**Consequence:** A re-run on the finished project prints `nothing to do`, the intro is never matted, and the per-tool copies of the matte detection and the CLI lookup are gone. The per-tool atomic-write helpers stay duplicated (a pre-existing pattern in ten scripts; consolidating them is not this lot).
+
+---
+
+## [2026-10-22] Sequence frame rate in common, keyframes re-run state, still-free camera pieces (S60 lot 1c)
+
+**Context:** The lot 1b review of `finish_pip.py` (issue #71, lot 1) found the sequence frame rate duplicated across three tools (`DEFAULT_FPS`/`DEFAULT_FRAME_RATE` plus the num/den parse in `finish_pip.py`, `export_filmcraft.py` and `fcproj_markers.py`), no `finish_pip.py` section in the user guide or the README, stills on the camera track counted as camera pieces and matted, a re-run printing `nothing to do` while the animate phase was missing or failed (so `finish_pip.animate.jsonl` was never rewritten), an unused `import os` left in `loudness.py`, per-test copies of the `filmcraft-cli` lookup, and a machine-local path cited in DECISIONS as the by-hand reference.
+
+**Decision:** The FilmCraft sequence frame rate lives only in `common.filmcraft`: `DEFAULT_FRAME_RATE` 25.0, `parse_frame_rate(settings)` (num/den, defaulting to 25 on missing or unusable values) and `frame_rate_fraction(fps)` for the write side, used by `finish_pip.py`, `export_filmcraft.py` and `fcproj_markers.py` — `proxy.py`'s ffmpeg `-r` string and `graphics.py`'s 30 fps render default are different concepts and stay where they are. Camera pieces use the same video-name rule as the screen spans (`common.media.is_video_name`): a still or a graphic on the camera track is never a piece, a range or a placement. `nothing to do` now means mattes, placements AND keyframes are all in place: a placed item is keyframed when its inspected `effects` hold a `motion` effect with non-empty `scale` and `position` keyframes, or — when the inspect shape exposes no `effects` key — when `finish_pip.animate.jsonl` holds an `effects.setParam` step for that item's `clip` id (a placed item with no `clip` id is never keyframed). When the placements exist but the animate phase is missing or failed, a re-run rewrites `finish_pip.animate.jsonl` and runs it (with `--bridge`/`--project` it skips the import and the place phase entirely); a failed animate apply deletes the steps file so the fallback evidence cannot be fooled. `--json` adds `ranges[].keyframed` and the plan prints `keyframed=` per range. The by-hand reference is the manual finishing of the first Mode B clip (screen spans matted and placed bottom-right by hand with eased entry/exit through `filmcraft-cli` steps) and is described here, never cited by local path. Tests use `common.filmcraft.cli_path` instead of their own lookup and stub it for faked runs, so the suite is green with and without `filmcraft-cli` installed.
+
+**Consequence:** One default and one parser for the sequence frame rate, `finish_pip.py` documented in the user guide ("Mode B on a finished clip") and in the README, a re-run repairs a missing animate phase instead of claiming `nothing to do`, stills on the camera track are ignored, and the audit trail no longer points at a machine-local path.
+
+---
+
+## [2026-10-22] Shorts candidates: standalone spans, 20 % overlap cap, title + description (S60 lot 7)
+
+**Context:** A real 12-minute run of `shorts_rank.py` produced a ranked list that was not usable: candidate 1 was the video's own intro (0:00–0:58) and ended mid-topic, candidates 2 and 4 overlapped almost completely (same ending), and no candidate carried a title or a description. The layout machinery (`--layout-policy`, per-candidate `face`/`split`) worked and is not part of the defect.
+
+**Options:** (A) keep the deterministic candidates and only add title/description; (B) add the standalone/intro filters and the 20 % overlap cap to the deterministic candidates and get title/description from the same scoring pass; (C) let the model propose the spans freely.
+
+**Decision:** B. `build_candidates` drops a candidate with `start_s <= INTRO_START_EPS` (0.5) — the edit's own opening cut — and a candidate with `start_s < INTRO_END_S` (60.0) and `end_s <= INTRO_END_S` — a span that lies entirely inside the first 60 s; a cut that starts later and runs past the 60 s mark (`start_s < 60 and end_s > 60`) is kept as a different cut of the opening material. `rank_candidates` keeps the single score `(hook + payoff) / 2`, ranks descending with the earlier start breaking ties, and accepts greedily in rank order only candidates whose `overlap_s / min(duration_s)` against every already accepted candidate is at most `MAX_OVERLAP_FRAC` (0.2), until 5 are accepted. The same `director` pass now also returns `title` (after strip 1..60 characters, hook first) and `description` (after strip 1..400 characters; the prompt asks for exactly 2 sentences with no payoff spoilers); `request_scores` retries once on unparseable output or on any validation failure (missing/empty/over-long title or description included), then exits 2 naming the id. `--json` adds `dropped_overlap` and `dropped_intro`; without `--json` the ranked list is printed before the `written:` line. `SCHEMA_VERSION` is `0.2`.
+
+**Why not A:** the intro and the near-duplicate candidates are exactly what made the list unusable; a title alone does not fix the cut. **Why not C:** free spans can start mid-sentence or cross a chapter boundary, and the generator needs clean cut points; the model only ranks spans the rules already made safe.
+
+**Consequence:** `shorts_candidates.json` now guarantees standalone sentence-aligned 20-60 s spans, no two written candidates overlapping by more than 20 %, and a title plus a description on every candidate, all from one model pass. The layout machinery (`candidate_layout`, `screen_during`, `has_both`, `clip_kind`, `--layout-policy`, `--layout`) is untouched, as are `shorts_generator.py`, `serve.py` and `export_filmcraft.py`. `schemas/shorts_candidates.schema.json` requires `title` and `description`; `SCHEMA_VERSION` is `0.2`.
+
+
+## [2026-10-22] Music library: no personal default, three-way resolution, `--list` (S60 lot 8)
+
+**Context:** `music_pick.py` defaulted to a personal music folder and `recap.py`/`serve.py` repeated the same default for `--music-dir`, so any agent on another machine (Claude Code, opencode, a web client) either edited the tools or copied a library into that folder. The lot also asked for a listing of the library so a collection kept elsewhere is used in place. User decision, overriding the lot text: no personal default path in code, docs or examples.
+
+**Options:** (A) keep the default and let the flag override it; (B) no default anywhere, the folder resolved from the flag, then an environment variable, then the config, with a usage error when none is set; (C) config only, no flag.
+
+**Decision:** B. The library folder comes from `--library` (`music_pick.py`) or `--music-dir` (`recap.py`, `serve.py`), else the `YT_PIPELINE_MUSIC_LIBRARY` environment variable, else `music.library` in the config (`common.config.music_library`); with none set the tool exits with a usage error naming those three ways (`music_pick.py` and `recap.py --music auto` exit 1 with `[error] no music library configured: ...` — `recap.py` fails before the stations run). `serve.py` does not stop: it starts with no tracks and warns with the same message, because the web app must still run for projects that use no music. `music_pick.py --list [--json]` reports every track with `file`, `path`, `duration_s`, `bpm`, `licence_status` and `licence_file`: a `<stem>.license`/`.licence` (or `<file>.license`/`.licence`) sidecar counts as `sidecar`, else the library's `LICENSE`/`LICENCE`/`LICENSE.txt`/`LICENCE.txt`/`COPYING` file counts as `library`, else `missing`; a track that cannot be measured keeps nulls and the listing still succeeds. Tools only read the library and never download music. Docs and examples write `<music-library>`.
+
+**Why not A:** a personal default is exactly what broke the tools on any other setup. **Why not C:** an agent that keeps several libraries needs a per-call override.
+
+**Consequence:** `scripts/music_pick.py`, `scripts/recap.py` and `scripts/serve.py` have no personal music path; `config.yaml.example` documents `music.library`; the user guide, the `yt-music-pick` and `yt-recap` skills and the RULES music line name `<music-library>` and the three ways. Dated history entries in this log and in the old reports keep the wording they had at the time. The build machine sets `music.library` in its git-ignored `config.yaml`.
+
+
+---
+
+## [2026-10-22] Shared usage messages, auto-music library hand-off, inbox without a personal default (S60 lot 8b)
+
+**Context:** The lot 8 review (76c68c0..31e929a) found `serve.py build_recap_command` not passing the resolved library to `recap.py --music auto` (the Upload page and the child recap could use different libraries), the "no music library configured" message written in three tools (against "shared code only in `scripts/common/`"), `recap.py --music` help and the `yt-recap` skill lagging behind, `music_pick.py` not catching `ConfigError` (traceback on a broken config) and `recap.py` no longer resolving the library path, and `serve.py --inbox` still defaulting to a personal inbox. User decision: the no-personal-default rule applies to `serve.py --inbox` and to the user-guide examples too; dated DECISIONS entries and old reports stay as history.
+
+**Decision:** The usage-error messages live in `scripts/common/config.py`: `no_music_library_message(flag_name)` (used by `music_pick.py` as `--library` and by `recap.py`/`serve.py` as `--music-dir`) and its inbox twin `no_inbox_message(flag_name)`. `serve.py build_recap_command` passes `--music-dir` (the resolved library) together with `--music auto`, so the web Upload page and the recap share one library. `recap.py` resolves the library path again (`music_library(...).resolve()`, as before lot 8) and its `--music` help names the three ways; the `yt-recap` skill lists `music_library` in the `--json` summary. `music_pick.py` catches `ConfigError` like the other tools — one `[error]` line, exit 2 (a config problem is a usage error; the tool's own errors stay exit 1, as documented in the skill). The inbox has no personal default: `serve.py --inbox`, else `YT_PIPELINE_INBOX`, else `inbox.path` in the config (`common.config.inbox_path`), else a usage error naming those three ways; `config.yaml.example` documents `inbox.path`, and docs and examples write `<inbox>`, `<workspaces>` and `<trip-folder>`. The remaining personal paths in tools not named here (`inbox.py --projects`, `docs/guides/phone-flow.md`, example strings in older scripts) stay for the audit sweep.
+
+**Consequence:** One message and one resolver per setting, the recap from the web uses the music library the Upload page lists, a broken config is one `[error]` line and never a traceback, and `serve.py` cannot start on someone else's inbox default. The RULES phone-flow line names the inbox three ways.
+
+
+---
+
+## [2026-10-22] Overlap math in common, Shorts tab titles, description warning, intro at 60 s (S60 lot 7b)
+
+**Context:** The lot 7 review (943aff2..76c68c0) found `overlap_fraction` a fourth copy of the "overlap over the shorter" math (already in `index.py`, `graphics_plan.py` and three `overlap_seconds` copies), `title`/`description` written but read by no tool (dead fields on the phone review path), the 2-sentence description rule checked only as prompt text while the code validated the length, and an intro rule whose "different cut" clause appeared only in a report. User decision on the intro rule: a candidate must start at or after 60 s of the edit, no exceptions.
+
+**Options:** (A) keep the per-tool overlap helpers and only fix the intro rule; (B) one shared overlap module plus the review fixes; (C) also move the layout and score helpers into common. **Decision:** B. `scripts/common/overlap.py` holds `overlap_seconds(a_start, a_end, b_start, b_end)` and `overlap_fraction(a_start, a_end, b_start, b_end)` (overlap over the shorter span, 0.0 for a zero-length span); `shorts_rank.py`, `index.py`, `director.py`, `llm_director.py` and `graphics_plan.py` use them and no longer define their own (a zero-length graphics entry is no longer an overlap error, as it cannot exceed "half of the shorter"). The Shorts tab of `serve.py` (the phone review) shows each candidate's `title` and `description`; the `tests/test_serve.py` fixture is the 0.2 schema. A description that is not exactly two sentences is a warning in the `--json` `warnings` and in the printed list, never a rejection — the schema keeps rejecting only what it declares (empty, over 400 characters). `is_standalone(start_s)` is now `start_s >= INTRO_END_S` (60 s): the intro block never becomes a candidate, whatever the span's end, and the "different cut" clause is gone. `test_reference_final_project` requires at most 5 written candidates and no pair over the 20 % overlap cap instead of exactly 5.
+
+**Why not A:** the copy was the defect (RULES "shared code only in `scripts/common/`"). **Why not C:** the lot names only the overlap helpers.
+
+**Consequence:** one overlap implementation, the phone review reads the titles and descriptions the schema already required, the 2-sentence rule is a visible warning the model can fail harmlessly, and the intro rule is one line that matches what the user decided. RULES, the `yt-shorts` skill and the S60 report carry the new rule.
+
+---
+
+## [2026-10-23] No tool depends on one person's setup (S60 lot 1d, user decision)
+
+**Context:** Lot 8 did it for the music library and lot 8b for the inbox, each with its own flag/env/config resolution and usage error; the user generalised it.
+
+**Decision:** No tool depends on one person's setup: a setting comes from a flag, else an environment variable, else the config file, else a clear error naming those three ways; docs and examples use placeholders like `<trip-folder>`, `<workspaces>`, `<inbox>`, `<music-library>`, never personal paths. It holds for every tool and every setting.
+
+**Consequence:** The RULES line exists now; the sweep of the tools not yet converted (`inbox.py --projects`, `docs/guides/phone-flow.md`, example strings in older scripts) comes from the audit; old dated DECISIONS entries and old reports stay history.
+
+---
+
+## [2026-10-23] finish_pip post-run state, applied animate evidence, `--check` without an inbox (S60 lot 1d)
+
+**Context:** The lot 1c review found `ranges[].placed`/`keyframed` stale from the input inspect and the un-run `finish_pip.animate.jsonl` counted as keyframe evidence, and the lot 8b review found `--check` unable to validate without an inbox.
+
+**Decision:** `finish_pip.py` `--json` `ranges[].placed`/`keyframed` reflect the state the run leaves behind (a range is placed when every placement was already on the PiP track or this run placed it; keyframed when it is placed and every placement was already keyframed or this run's animate phase applied and the placement carries a clip id), computed from the run outcome and never from a mid-run inspect; the animate steps file counts as keyframe evidence only when a `finish_pip.animate.applied` marker sits next to it (written after a successful apply, removed on every regeneration and on a failed apply, which also deletes the steps file); and `serve.py --check` warns with the shared three-ways message and validates the root and the bind without an inbox (serving still requires one).
+
+**Consequence:** A successful `--bridge`/`--project` run reports the state it leaves behind, `nothing to do` is never claimed from an animate file that was only written, and `--check` runs on machines with no inbox configured.
+
+---
+
+## [2026-10-23] Overlap bounds in common, animate marker cleared before the write (AUDIT 2026-10 lot 1)
+
+**Context:** AUDIT findings F20 and F21: the intersection math was still hand-written at four sites in `eval_labels.py`, `quality.py` and `finish_pip.py` instead of using `scripts/common/overlap.py`, and `finish_pip.py write_animate_steps` wrote `finish_pip.animate.jsonl` before removing the `finish_pip.animate.applied` marker, so a crash between the two left an old marker beside the new, un-applied file — which then counted as keyframe evidence.
+
+**Decision:** `scripts/common/overlap.py` gains `overlap_bounds(a_start, a_end, b_start, b_end)` — the intersection `(start, end)` of two spans, with `end <= start` when they do not overlap — and the four hand copies use `overlap_seconds` / `overlap_bounds` instead of their own min/max math. `write_animate_steps` clears the applied marker first and writes the steps file second: a crash in between leaves the old file without a marker (never a stale "applied" claim), which is the conservative side.
+
+**Consequence:** one overlap implementation for seconds, fraction and bounds (`tests/test_overlap.py`), and a crashed regeneration can no longer mark an un-applied animate file as applied (`test_write_animate_steps_clears_marker_before_the_write`). No behaviour change for the callers.
+
+---
+
+## [2026-10-23] Correction: a zero-length graphics entry never reaches the overlap check (AUDIT F27)
+
+**Context:** The 2026-10-22 S60 lot 7b entry ended its decision paragraph with "(a zero-length graphics entry is no longer an overlap error, as it cannot exceed "half of the shorter")". S60 lot 1d deleted that parenthetical from the old entry in place; old entries stay history (2026-10-23 rule), so the text is restored above and the correction lives here.
+
+**Decision:** The claim was inaccurate on both counts. `schemas/graphics_plan.schema.json` declares `duration_s` with `exclusiveMinimum: 0`, so a zero-length graphics entry is rejected by the schema validation and never reaches `graphics_plan.overlap_errors` at all; and the reasoning "cannot exceed half of the shorter" is wrong (half of a zero-length span is 0, and the unclamped overlap of a zero-length entry inside another entry can exceed it). The `0.0 for a zero-length span` guard in `common.overlap.overlap_fraction` is a safety net of the shared helper, not a change in the graphics validation behaviour.
+
+**Consequence:** the lot 7b entry reads exactly as written on 2026-10-22, and the accurate behaviour is stated here. No code change.
+
+---
+
+## [2026-10-23] No personal setup: projects folder three ways, placeholder sweep, channel URL from config (AUDIT 2026-10 lot 2)
+
+**Context:** The AUDIT 2026-10 review found the last personal-setup values in tracked files: (F01) `scripts/inbox.py` defaulted `--projects` to a personal projects folder silently; (F09) `--help` epilogs, docs and skills carried personal example paths (home-relative video, media, projects and watchdog folders, and an absolute eval folder); (F10) `prompts/metadata.md` hardcoded the channel's GitHub URL; (F33) `CLAUDE.md` "How to run" kept home-relative clip examples. A stranger with only the repo could not run the tools without editing code.
+
+**Decision:** (F01) `--projects` is resolved flag → `YT_PIPELINE_PROJECTS` → `projects.path` in the config → a usage error naming those three ways (`common.config.projects_path` / `no_projects_message`, mirroring the inbox and music resolvers); `DEFAULT_PROJECTS` is gone. (F09/F33) one placeholder sweep across `scripts/`, `prompts/`, `.claude/skills/`, `README.md`, `CLAUDE.md`, `docs/guides/` and `docs/AGENT_SETUP.md` using `<repo>`, `<trip-folder>`, `<clip-folder>`, `<source-folder>`, `<workspace>`, `<workspaces>`, `<projects>`, `<inbox>`, `<music-library>`, `<eval-folder>`, `<watchdog-checkout>`; the documented overridable defaults (`~/.cache/yt-pipeline/...`, `~/.config/opencode/...`, `~/.local/share/opencode/...`) and the repo's own clone URL stay. (F10) `channel.github_url` is required config next to `channel.members` (same error style, exit 2) and is handed to the model as `channel_url` in the `## Links` section; the prompt names no URL of ours. A new `tests/test_no_personal_setup.py` scans the swept paths for the banned strings and is the regression guard.
+
+**Consequence:** `inbox.py --projects` is optional and a missing folder is a clear `[error]` with exit 1; `metadata.py` exits 2 when `channel.github_url` is missing or empty; `config.yaml.example` documents `projects.path` and `channel.github_url` (placeholder only — the real URL stays in the git-ignored `config.yaml`); docs and skills carry no personal path. No schema change.
+
+---
+
+## [2026-10-23] Blocking prompts behind flags, one `--json` summary helper for wall time and cost (AUDIT 2026-10 lot 3a)
+
+**Context:** AUDIT findings F06, F07 and F31: `analyze_srt.py` and `shorts_generator.py` blocked on `input()` with no TTY and no flag alternative (an agent hung); `ingest.py`, `notify.py`, `kdenlive_from_fragments.py`, `srt_from_fragments.py` and `reframe.py` printed `--json` summaries without `wall_time_s`/`llm_cost_usd`; `analyze_srt.py`, `correct_srt.py`, `daily_summary_srt.py` and `translate_srt.py` had no `--json` at all, so an agent could not read an LLM run's cost.
+
+**Decision:** `scripts/common/summary.py` gains `summary_fields(started, llm_cost_usd=0.0)` — the one helper for the two keys every `--json` summary reports (RULES 2026-10-13) — and the five F07 tools use it on every `--json` object they print (success and error). `reframe.py`'s summary key `cost_usd` becomes `llm_cost_usd` (the crop-path record keeps `cost_usd`, `schemas/reframe.schema.json` declares it). The four legacy tools gain `--json` with the sibling shape `{"ok": true|false, ..., **summary_fields(...)}`; with `--json` their human chatter goes to stderr (the `mode_b.py` pattern) so stdout is one JSON object. Every prompt is behind a flag — `analyze_srt.py --select 1,3,5|all|none` (parsed by the same grammar the prompt accepted), `shorts_generator.py --video`/`--audio`/`--srt` — and without the flag and without a TTY the tool fails with a usage error naming the flag (exit 2, the argparse convention) instead of blocking. The lot 3a review also moved `srt_from_fragments.py`'s fragment clipping onto `common.overlap.overlap_bounds` (a cue exactly on a fragment edge is dropped, as before; a degenerate zero-length cue inside a fragment is now dropped too).
+
+**Consequence:** an agent can run every one of these tools non-interactively and read cost and wall time from `--json`; `tests/test_summary.py` and the tool tests hold the keys; the `yt-ingest`, `yt-reframe`, `yt-shorts`, `yt-transcript` and `yt-rough-cut` skills document the flags. Exit codes for usage errors are the argparse convention for now; AUDIT F08 (lot 3b) writes the exit-code table.
+
+---
+
+## [2026-10-23] Allowed tool-to-tool subprocess calls (AUDIT F35)
+
+**Context:** F35: `music_pick.py` (`beats.py`), `shorts_generator.py` (`reframe.py`), `finish_pip.py` (`matte.py`), `eval_rough_cut.py` (`subs_from_edit.py`) and `render.py` (`reframe.py`) shell out to another tool's script instead of only `scripts/common/`. It matters when one tool is moved, renamed or run from another checkout. The alternative — moving each shared step behind a `common/` helper — would drag model runners and station CLIs into the shared library.
+
+**Decision:** orchestrator-style subprocess calls are accepted, limited to this set: flow orchestrators chain station CLIs (`recap.py` → the stations; `inbox.py` and `serve.py` → `recap.py`; `publish.py` → `transcribe.py`, `subs_from_edit.py`, `correct_srt.py`, `translate_srt.py`, `thumbnail.py`, `metadata.py`, `loudness.py`; `mode_b.py` → `transcribe.py`, `rough_cut.py`, `export_filmcraft.py`, `chapters.py`); fallbacks and evals (`llm_director.py` → `director.py`, `eval_rough_cut.py` → `subs_from_edit.py`); data steps (`music_pick.py` → `beats.py`; `shorts_generator.py` and `render.py` → `reframe.py`; `finish_pip.py` → `matte.py`); probes (`doctor.py` → each tool's `--help`). Every call resolves the sibling script next to the caller's own file (or the repo `scripts/` root) and runs it with the same interpreter, `--json` where the callee has it. Nothing outside this list shells out to another tool; a step needed by more than one tool goes behind `scripts/common/`. RULES carries the list.
+
+**Consequence:** moving or renaming a script means updating its named pairs; a new tool-to-tool call is a new DECISIONS entry first. No code change in this lot.
+
+---
+
+## [2026-10-23] edit_drop.py is an orchestrator step (V010 lot fix1)
+
+**Context:** `serve.py` shells out to `edit_drop.py` (the Shots-tab bin icon) and `edit_drop.py` shells out to `render.py`; neither pair was in the F35 allowed list, so the calls sat outside the rule.
+
+**Decision:** the F35 list gains `serve.py` → `edit_drop.py` and `edit_drop.py` → `render.py` as flow-orchestrator steps. Both resolve the sibling script next to the caller and run it with the same interpreter and `--json`, as the rest of the list.
+
+**Consequence:** RULES carries the two pairs; no code change.
+
+---
+
+## [2026-10-23] Correction: a zero-length graphics entry does reach the overlap check (AUDIT lot 3a review)
+
+**Context:** The 2026-10-23 F27 correction entry says a zero-length graphics entry "is rejected by the schema validation and never reaches `graphics_plan.overlap_errors` at all". The review of lot 1 (33d18f6) found that wrong: `graphics_plan.validate_plan` calls `validate(plan, "graphics_plan")` and then `overlap_errors(plan["entries"])` unconditionally on the same list, so a zero-length entry is checked by both.
+
+**Decision:** what rejects a zero-length entry is the schema (`schemas/graphics_plan.schema.json`, `duration_s` `exclusiveMinimum: 0`); it still reaches `overlap_errors`, where the shared `overlap_fraction` returns 0.0 for a zero-length span and raises no overlap error. The same review notes that `quality.py`'s `_longest_source` is now clamped at 0: since lot 1 it ranks sources with `common.overlap.overlap_seconds` (`max(0.0, ...)`), where the hand-rolled `min(end_s, ...) - max(start_s, ...)` could come back negative.
+
+**Consequence:** the 2026-10-22 entry and the F27 correction stay as written (old entries are history); the accurate behaviour is stated here. No code change.
+
+---
+
+## [2026-10-23] One exit-code table for every tool (AUDIT 2026-10 lot 3b1, F08)
+
+**Context:** F08: the exit codes meant different things in different tools — `mode_b.py` documented 0/1/2/3 (all clear / suspect / incomplete / error), `music_pick.py` used 0/1/2, most other tools 0/2, and generic errors returned 1 where the table reserves 1 for a verdict. An agent could not branch on the code without reading each tool. The coordinator fixed the table; this entry records it and the classification rule the sweep applied.
+
+**Decision:** the table is `0` `EXIT_OK` success; `1` `EXIT_ATTENTION` finished, but found something a human must look at (check-type tools, suspect results); `2` `EXIT_USAGE` usage, input or config error, nothing ran (bad flags, missing input file, missing or broken config); `3` `EXIT_RUNTIME` runtime failure after work started (external program, model call, disk). The four constants live in `scripts/common/exit_codes.py` and every `main()` (and every `run()` that returns an exit code) returns them; argparse keeps its own exit 2 on bad flags, which already matches. `scripts/mode_b.py` is the one exception and keeps its documented 0/1/2/3 meanings. Classification rule: a tool reports `EXIT_USAGE` for the input and config problems it detects itself (its own flags, files, config, refused output paths, `ConfigError`, `SchemaError` on a user-provided file) and `EXIT_RUNTIME` for failures of the work it started — an external program missing or failing, a model call failing, an unparseable model answer, a disk write, a bare `except Exception` — whatever the failing child program's own exit code was. Check and eval tools (`check_public.py`, `doctor.py`, `eval_edit.py`) return `EXIT_ATTENTION` for their verdict and `EXIT_USAGE`/`EXIT_RUNTIME` for errors. Where one tool error class was raised at both kinds of site, a `<Tool>RuntimeError` sibling carries the runtime raises (the convention already in `matte.py`, `finish_pip.py`, `graphics.py`); in `chapters.py`, `metadata.py` and `shorts_rank.py` it subclasses the base class so the model-answer retry loop still catches it. `publish.py` maps a failed chain step by the step's own returncode (`2` → `EXIT_USAGE`, else `EXIT_RUNTIME`) and records that returncode on the failed step entry. A missing `OPENROUTER_API_KEY` is a config error: `common/llm.py` raises `ConfigError` for it (`EXIT_USAGE`), not `LLMError`. `inbox.py` catches `ConfigError` from `projects_path`/`load_config` like the other tools (one `[error]` line, `EXIT_USAGE`, no traceback) — the lot 3b addition (a).
+
+**Why not one code for all errors:** the whole point of F08 is that an agent can tell "fix your input" from "the run broke" without reading the tool.
+
+**Consequence:** every tool returns the constants, the tests assert the constants (and the test names name the code they assert), the table is in `docs/RULES.md` and in the README's Exit codes section, and the skills name the new codes. `mode_b.py` and its skill keep their own table. No schema change.
+
+---
+
+## [2026-10-23] One structured error helper for every `--json` tool (AUDIT 2026-10 lot 3b2, F24)
+
+**Context:** F24: only 12 of 50 scripts printed a structured `{"ok": false, "error": ...}` on their error paths and none carried the exit code; the rest printed a bare `[error]` line to stderr, so an agent could not read a failure as data. The lot 3b1 exit-code table gave the codes a meaning; this lot gives the error object one shape.
+
+**Decision:** `scripts/common/errors.py` gains `report_error(error, exit_code, json_out, **extra)`: it prints the human `[error] {error}` line to stderr and, when `json_out`, one `{"ok": false, "error": str(error), "exit_code": exit_code, **extra}` object on stdout, and returns `exit_code` so a caller writes `return report_error(exc, EXIT_USAGE, args.json)`. Every tool with `--json` uses it on its tool-level error paths (the `main()` handlers and the legacy `sys.exit` paths); `extra` carries the `summary_fields(...)` keys where the tool already reported them. `mode_b.py` drops its private `report_error` for the shared one (its own 0/1/2/3 codes are passed through). Per-item errors that let the tool continue (proxy's per-file failures, the chain tools' child-step lines) and `llm_director`'s post-run detail line stay as they are: they are not the tool's error path.
+
+**Consequence:** an agent reads the same error object from every `--json` tool, with the exit code inside it; `tests/test_explain.py` and `tests/test_eval_rough_cut.py` assert the new shape. The no-personal-setup guard gains `~/ws` and scans `config.yaml.example` and `docs/VISION.md`; `tests/test_inbox.py` imports the one banned list. No schema change.
+
+---
+
+## [2026-10-23] Release protocol: stable tools, tags and the real test
+
+**Context:** The project has no written release process: no version tags, no stable/experimental split, no rule that a released tool changes only when a lot names it. The owner asked for the protocol as documentation before the first release.
+
+**Options:** (A) keep the process in the owner's head and in chat; (B) write it as rules for the owner and every agent, with a stable list per version and a reviewer question that flags an unannounced change to a stable file.
+
+**Decision:** B. `docs/RELEASING.md` holds the protocol (before a version: everything merged, the full suite green, the owner's real test on real footage, a regression test per feature that passed, release notes, a tag and a GitHub Release; after a version: the stable list in `docs/RELEASES.md`, a stable tool changes only in a lot that names it with the owner's approval, a fix is a new patch version, the pilot host runs tags only and rolls back on a failed smoke test). `docs/RELEASES.md` starts with `v0.1.0 (candidate, not released)`: stable candidate is the holiday flow in the web app (upload with progress, the recap run, the run notice with step times and model cost, versions); everything else is experimental. `CHANGELOG.md` (Keep a Changelog) carries the changes on this branch under `Unreleased`. `docs/RULES.md` points to the protocol. The reviewer checklist gains one question: did the range change a file of a tool listed as stable in `docs/RELEASES.md` without a lot that names it?
+
+**Why not:** A) leaves the process unverifiable and lets a stable tool change silently.
+
+**Consequence:** a version is a tag on `master` plus a GitHub Release, never a moved or deleted tag; the stable list is the one place that says what may change only in a named lot; the reviewer flags an unannounced change to a stable file. `docs/REVIEW_CHECKLIST.md` is brought onto this branch from the unmerged `reviewer-agent` branch (commit `193d637`) because the protocol references it; the merge of `reviewer-agent` will need to keep the added question.
+
+---
+
+## [2026-10-23] Costs page and feedback/requests in serve.py
+
+**Context:** The costs ledger CLI (`costs.py`) had a `totals` view but no web page, and the app had no way for a visitor to leave feedback or a feature request. The totals computation lived inside `costs.py`, so a page could not read it without importing another tool.
+
+**Decision:** the totals computation moves to `scripts/common/costs.py` so `costs.py` and `serve.py` share it (no tool imports another tool). `GET /costs` is read-only and shows the per-clip model cost and version count plus the ledger totals, and says the ledger is not set up when none is configured. The donation link comes from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_url` in the config (a single link), and the app never handles payments. The feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set. `--check` warns about a missing ledger or requests file without failing.
+
+---
+
+## [2026-10-23] Correction: donation links are a list (V010 lot fix1)
+
+**Context:** The review of lot fix1 found that one donation link is not enough: an instance may want to show several ways to support the project.
+
+**Decision:** the donation links come from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_links`, a list of `{label, url}`; `costs.donation_url` with one link stays accepted; the app never handles payments.
+
+**Consequence:** the costs page shows the list as plain links; the real links live only in each instance's local `config.yaml`, never in the repo or `config.yaml.example`.
+
+---
+
+## [2026-10-23] serve.py calls llm_director.py for the feedback reply (V010 lot fix2b)
+
+**Context:** The "Ask the director" button needs the director's reading of a feedback request before a new version is made, but `serve.py` may not import another tool.
+
+**Decision:** `serve.py` runs `llm_director.py --interpret-feedback` as a subprocess (the `--interpret-feedback` mode only, which writes no edit), added to the named tool-to-tool set.
+
+**Consequence:** the RULES tool-to-tool list names `serve.py -> llm_director.py`; the reply is a model call charged to the workspace ledger like any other.
+
+---
+
+## [2026-10-23] Shaky review is the default (V010 lot fix1)
+
+**Context:** commit 8fae888 made the review policy the default after the first real holiday test: long shaky runs keep their move or hold role and reach the vision model and the director with their shake defect, instead of being upgraded to `accidental`. The code changed but the docs did not.
+
+**Decision:** the 2026-10-13 accidental run rule now covers junk frames only by default (obstruction, near-uniform frame, static low-detail frame). A long shaky run keeps its role and its shake defect; `YT_PIPELINE_SHAKY=drop` restores the old upgrade to `accidental`. The policy passed the real test, so it is listed as stable in the v0.1.0 candidate.
+
+**Consequence:** RULES, the user guide and the `yt-quality` skill state the default and the switch; `docs/RELEASES.md` moves the shaky review policy to the stable candidate.
+
+---
+
+## [2026-10-23] Recap title, description and hashtags (V010 lot meta)
+
+**Context:** A finished recap has no upload text: the title, the description and the hashtags are written by hand from the brief and the shots. The web app already shows the recap, its versions and the explanation, so the text belongs next to them.
+
+**Options:** (A) a new web route that calls the model on demand; (B) a standalone station `recap_meta.py` that reads `edit.json` and writes `recap_meta.json`, wired into `recap.py` after `explain`, kept in versions and rendered server-side in the Recap tab.
+
+**Decision:** B. `scripts/recap_meta.py` builds the deterministic facts (the brief text, the place line, the date from `ingest.json` and the deduplicated shot descriptions), asks the `metadata` text role (the role `metadata.py` and `chapters.py` use) for one title, a 2-3 sentence description and 5-10 hashtags, retries once on an invalid answer and writes `recap_meta.json` validated against `schemas/recap_meta.schema.json`. The facts the brief did not carry are listed in `missing` (`place name`, `date`). The station runs after `explain` in `recap.py` and follows the existing recap skip rule (its output newer than `edit.json`); `recap_meta.json` is added to `common.versions.RENDER_NAMES` so each version keeps its own text. The Recap tab renders the shown version's `recap_meta.json` as a box with a Copy button per field and a hint per missing fact.
+
+**Why not:** A) a model call behind a web route has no re-run safety, no versioned output and no `--json` summary; the station keeps the same contract as every other tool.
+
+**Consequence:** `recap_meta.json` is a new interface file (schema `recap_meta`); the Recap tab shows the text for the shown version; no RULES change (the station is covered by the existing recap skip rule and the `recap.py` → the stations tool-to-tool pair).
+
+---
+
+## [2026-10-23] Friend-ready web app: consent, delete, feature switches and brief help (V010 lot friend)
+
+**Context:** The web app was built for the owner's own tailnet. Handing it to a friend needs a consent checkbox on the upload page, a way to delete a project from its page, per-instance feature switches the server enforces (not just hidden links), and help writing the brief.
+
+**Decision:** `scripts/common/config.py` gains `WEB_FEATURES` (`upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`), a `web` validation block, `consent_text()` and `web_features()` (flag, else environment variable, else config, else every part; an unknown name is a `ConfigError`). `serve.py` gains `--features` / `--consent-text`, a required consent checkbox on the upload page (an upload without it is refused), a project-page bin icon that deletes the workspace and its inbox source (refused while a run is going), feature gating on the routes and nav/tabs (a part that is off is refused with a 404, not just hidden) and brief hint chips with a multi-line example placeholder that is never sent. The `web` section is documented in `config.yaml.example`.
+
+**Consequence:** the RULES route list names the delete route and the feature switches; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.
+
+## [2026-10-23] Pilot host install, update and rollback, and the stable-files check (V010 lot host)
+
+**Context:** The pilot host needs a repeatable update path with a rollback, and the release protocol's stable-files rule had no enforcement.
+
+**Decision:** `deploy/update.sh <tag>` fetches tags, checks out the tag, installs `requirements.txt` (with `requirements-constraints.txt` when it exists), runs the smoke test (`serve.py --check --port 0` and an HTTP GET of `SMOKE_URL` expecting 200), restarts the `yt-pipeline-web` service and writes the tag to `.deployed-tag`; on failure it checks out the previous tag from `.deployed-tag`, reinstalls, restarts and exits 3. `deploy/yt-pipeline-web.service` is the systemd unit template with an `EnvironmentFile` at `/etc/yt-pipeline/env` (not in the repo). `docs/guides/pilot-host.md` describes one container per person (Tailscale node share, NAS share, storage quota, one OpenRouter key per instance, `costs.project_totals_url`). `scripts/check_stable.py` and `.github/workflows/stable-check.yml` fail a pull request that touches a file in the `stable-files` block of `docs/RELEASES.md` unless a commit in the range carries `Stable-change: approved`; the block sits under the latest version section and is not enforced while that version is a candidate (the rule applies only after the first tag).
+
+**Consequence:** the pilot host runs tags only and rolls back on a failed smoke test; the stable list is machine-readable; the trailer is named in `RELEASING.md`; the guide documents the Lot limits settings ahead of that lot.
+
+---
+
+## [2026-10-23] Instance limits and shared project costs (V010 lot limits)
+
+**Context:** Each pilot instance is reached by one person through a Tailscale node share, so it needs its own storage cap and its own OpenRouter credit view; the owner instance also needs to publish the project-wide totals so every instance can show them without reading the owner's ledger.
+
+**Decision:** `scripts/common/config.py` gains `limits.storage_gb` (`--storage-gb`, else `YT_PIPELINE_STORAGE_GB`, else the config; unset = no limit shown), `limits.credit_warn_usd` (default 1.0) and `costs.project_totals_url` (`--project-totals-url`, else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config). `serve.py` shows "X GB of Y GB used" (the workspaces + inbox size) on the Upload and Costs pages, warns over 80 % and refuses an upload that would pass the limit with a 413 before any byte is written. The model credit is read from `GET https://openrouter.ai/api/v1/key` (cached 10 minutes) and shown as "Model credit: $3.20 left of $5.00", with a warning under `limits.credit_warn_usd`, "no credit limit set" when the key has no limit and "credit unknown" on a failed call (never blocking the app). The owner instance serves `GET /costs.json` (the `compute_totals` object, no notes and no requests); an instance with `costs.project_totals_url` fetches it (cached 10 minutes) and shows "Project costs (everyone)" next to "This instance". `--check` reports the three settings and warns when the storage limit or the project totals URL is unset.
+
+**Consequence:** RULES names the new settings and the `GET /costs.json` route; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.
+
+## [2026-10-23] Web app visual design: one token set, light and dark (V010 lot design)
+
+**Context:** The web app grew page by page (upload, project, costs, explain, shotlog) and each page carried its own ad-hoc colours, sizes and spacing; several classes had no rule at all. A friend who only wants their holiday clip should see a finished, calm app on a phone and on a laptop.
+
+**Options:** (A) a CSS framework or a CDN font; (B) one hand-written token set in `:root` shared by every page, with a light and dark theme, no external assets.
+
+**Decision:** B. `THEME_CSS` in `scripts/serve.py` holds the colour tokens (the existing nautical names `water`, `deck`, `rope`, `stone`, `haze`, `sea`, `keep`, `left`, `busy` plus the semantic aliases `bg`, `surface`, `line`, `text`, `muted`, `accent`, `ok`, `warn`, `danger`), a type scale (`--fs-*`, `--lh-*`, `--font-display`/`--font-body`/`--font-mono`), a spacing scale (`--sp-1`..`--sp-6`), radii and `--tap:44px`, with a `@media (prefers-color-scheme: light)` override of the same names. `explain.py` and `index.py` carry the same `:root` block so their standalone pages match. Every standalone control is at least 44 px tall; the in-strip bin icon stays small because it sits on a proportional timeline block. The header keeps a `.brand-slot` placeholder for the logo of the next lot. No external fonts or CDNs (the app works offline on the tailnet).
+
+**Why not:** A) a framework or a CDN font adds a dependency and a network call the tailnet app must not need; the app already has a coherent palette to refine.
+
+**Consequence:** the look is one token set; a future page uses the same tokens; RULES gains one line; the new look is experimental in the v0.1.0 candidate; no route, form field or behaviour changes.
+
+---
+
+## [2026-10-23] Continuous deployment to the pilot containers (V010 lot deploy)
+
+**Context:** The pilot host is updated by hand with `deploy/update.sh <tag>`; every container must reach the same released tag without a person logging in to each one.
+
+**Decision:** `.github/workflows/deploy.yml` runs on `release: published` and on `workflow_dispatch` with a `tag` input. One job per pilot container comes from a matrix over the repository variable `PILOT_RUNNERS` (a JSON list of runner labels); each job runs on `[self-hosted, <label>]`, has `concurrency` per label with `cancel-in-progress: false`, and runs `cd "$YT_PIPELINE_PATH" && deploy/update.sh "<tag>"`. There is no `pull_request` trigger, so a self-hosted runner never runs code from a fork. `docs/guides/pilot-host.md` documents the runner install, `YT_PIPELINE_PATH`, the `PILOT_RUNNERS` variable and the outside-collaborator approval setting; `docs/RELEASING.md` names the deploy step.
+
+**Consequence:** publishing a release deploys it to every container in `PILOT_RUNNERS`; `update.sh` still rolls back to the previous tag when the smoke test fails; the new part is experimental in the v0.1.0 candidate; no tool, schema or route changes.
+
+## [2026-10-23] App logo and favicon (V010 lot logo)
+
+**Context:** The web app's header carried a `.brand-slot` placeholder left by the design lot, and the app had no favicon. The owner wants a simple, flat mark that fits the token set.
+
+**Options:** (A) a raster logo or an icon font; (B) three hand-drawn flat SVG marks in `assets/brand/`, drawn in two theme colours, chosen per instance by `brand.logo`.
+
+**Decision:** B. `assets/brand/option-1.svg` (clapperboard), `option-2.svg` (viewfinder brackets) and `option-3.svg` (focus reticle) are 48x48 square marks, own work under the repository licence (AGPL-3.0-or-later), drawn in `--sea` (accent) and `--stone` (text) written as CSS variables with hex fallbacks so a mark adapts to the light and dark theme when inlined and still renders standalone as the favicon. `scripts/common/config.py` gains `BRAND_OPTIONS`, `brand_logo()` (`--brand-logo`, else `YT_PIPELINE_BRAND_LOGO`, else `brand.logo`, else `option-1`) and a `brand` validation block. `serve.py` inlines the chosen mark left of the app name in the top bar, links it as the SVG favicon (`GET /favicon.svg`) and serves the three files (`GET /brand/<name>.svg`); `GET /brand` shows the three options side by side for the owner to choose. No new dependency.
+
+**Why not:** A) a raster logo or an icon font adds a dependency and does not adapt to the light and dark theme; the app already ships no external assets.
+
+**Consequence:** the header placeholder becomes the chosen mark; the favicon is the chosen SVG; `brand.logo` is documented in `config.yaml.example`; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.
+
+---
+
+## [2026-10-23] Web app redesign: the editing room look and poster thumbnails (V010 lot design2)
+
+**Context:** The first design lot (V010 lot design) only renamed the tokens and kept the old blue-slate look, so the owner still saw the old design. The app also showed no picture of the footage: the projects page was a list of rows and the shot strip was coloured blocks with a number.
+
+**Options:** (A) keep the token set and only restyle a few components; (B) a decided visual direction ("editing room": a warm charcoal base, an amber accent for primary actions, teal only for clip blocks, a light theme that mirrors it) applied to every page, plus poster thumbnails so the footage carries the pages.
+
+**Decision:** B. `THEME_CSS` and `PROGRESS_CSS` move to `scripts/common/theme.py` and are imported by `serve.py`, `explain.py` and `index.py` (the tokens were written three times); the palette is warm charcoal (`--water:#1b1917`) with warm off-white text, an amber accent (`--amber`, `--accent`) for primary actions, teal (`--sea`, `--clip`) only for clip blocks, and `--hero` defined in both themes; the progress bar reads `var(--accent)` instead of a brand.json colour. A new `thumbs` station (`scripts/thumbs.py`) writes `<workspace>/thumbs/poster.jpg` (30 % of the recap) and `thumbs/shot-N.jpg` (the middle frame of each timeline slot), 320 px wide, skipped when newer than the recap; `serve.py` serves them (`GET /<project>/thumbs/<poster|shot-N>.jpg` and the version path) and shows a grid of poster cards on Projects, the poster on the player and a thumbnail with its number on each strip block. The timeline math moves to `scripts/common/edit_timeline.py` so `serve.py` and `thumbs.py` agree on where every slot starts. `versions.py` keeps the thumbs folder in a version. No route, form field or behaviour changes beyond the thumbs routes and the station.
+
+**Why not:** A) the owner had already rejected the look; the tokens alone do not change what people see.
+
+**Consequence:** the app looks clearly different (warm charcoal and amber, footage-forward); the thumbs station and the served thumbnails are experimental in the v0.1.0 candidate; RULES gains the thumbs routes and the station line; no schema change.
+
+---
+
+## [2026-10-23] Brief facts fields and the title rewrite (V010 lot facts)
+
+**Context:** The Recap tab's title box hinted "add the place name to the brief for a better title", but the brief is written before the edit and there was no way to act on the hint afterwards; the four facts the title needs (place, when, who, occasion) had no home of their own.
+
+**Options:** (A) keep the hint and ask the person to rewrite the brief; (B) four optional fact fields (place, when, who, occasion) on the Upload and Re-edit forms and in the Recap tab's Rewrite form, stored as `brief_facts.json` in the inbox source and the workspace, read as facts by the director prompt and `recap_meta.py`, plus a `POST /<project>/rewrite-meta` route that saves the fields and re-runs `recap_meta.py --force` for the shown version only.
+
+**Decision:** B. `scripts/common/brief_facts.py` holds the four fields, the labels and the atomic read/write; `serve.py` renders the fields above the brief on the Upload and Re-edit forms and in the Recap tab's collapsed Rewrite form, writes `brief_facts.json` to the inbox source and the workspace, and the new `POST /<project>/rewrite-meta` route saves the fields and re-runs `recap_meta.py --force` for the shown version (no new edit). `recap_meta.py` reads the facts (winning over the brief syntax and the ingest date) and lists the missing ones by field name; `llm_director.py` appends the facts block to the brief so the screenwriter, editor and reviewer prompts carry them.
+
+**Why not:** A) the hint gives no way to act on it, and the brief is written before the edit exists.
+
+**Consequence:** `brief_facts.json` is a new machine-owned file (no schema, four optional string keys); `recap_meta.py` `missing` now uses the field names (`place`, `when`, `who`, `occasion`); the new route is in RULES; the new parts are experimental in the v0.1.0 candidate.

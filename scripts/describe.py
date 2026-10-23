@@ -41,6 +41,10 @@ import numpy as np
 from PIL import Image
 
 from common.config import ConfigError, load_config
+from common.excluded import is_excluded, load_excluded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
+from common.frames import read_frame_pairs
 from common.llm import BudgetExceeded, LLMError
 from common.peak import valid_vision_peak
 from common.photos import PHOTO_FLAWS, PhotoError, jpeg_bytes, open_photo, sharpness
@@ -114,6 +118,10 @@ class DescribeError(RuntimeError):
     """Raised when a clip cannot be described."""
 
 
+class DescribeRuntimeError(RuntimeError):
+    """Raised when the run fails after it started (frame encoding, disk)."""
+
+
 class RunState:
     """Model calls, spend and the reason a run stopped early."""
 
@@ -138,11 +146,11 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace --json\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/describe.py --workspace <workspace>\n"
+            "  python scripts/describe.py --workspace <workspace> --json\n"
+            "  python scripts/describe.py --workspace <workspace> \\\n"
             "      --clips 0067,0081 --backend mock --force --json\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/describe.py --workspace <workspace> \\\n"
             "      --backend mock --photos-only\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -335,55 +343,21 @@ def build_mosaic(pairs):
         canvas[row * tile_h : (row + 1) * tile_h, col * MOSAIC_TILE_W : (col + 1) * MOSAIC_TILE_W] = tile
     ok, buffer = cv2.imencode(".jpg", canvas, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
     if not ok:
-        raise DescribeError("could not encode a mosaic as JPEG")
+        raise DescribeRuntimeError("could not encode a mosaic as JPEG")
     return buffer.tobytes()
 
 
 def read_raw_frames(path, times):
     """Read one BGR frame per timestamp from a clip; frames stay in memory."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise DescribeError(f"cannot read video: {path}")
-    frames = []
-    try:
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        for t_s in times:
-            frame = _read_frame_near(capture, t_s, fps)
-            if frame is None:
-                raise DescribeError(f"cannot read frame at {t_s:.2f}s from {path}")
-            frames.append((t_s, frame))
-    finally:
-        capture.release()
-    return frames
+    return read_frame_pairs(path, times, error=DescribeError, near_seek=True)
 
 
 def read_frames(path, times, width):
     """Read one JPEG frame per timestamp from a clip; frames stay in memory."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise DescribeError(f"cannot read video: {path}")
-    frames = []
-    try:
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        for t_s in times:
-            frame = _read_frame_near(capture, t_s, fps)
-            if frame is None:
-                raise DescribeError(f"cannot read frame at {t_s:.2f}s from {path}")
-            frames.append(VisionFrame(t_s=t_s, jpeg_bytes=_encode_jpeg(frame, width)))
-    finally:
-        capture.release()
-    return frames
-
-
-def _read_frame_near(capture, t_s, fps):
-    """Read the frame at t_s, stepping one frame back when the seek lands past the end."""
-    step = 1.0 / fps if fps and fps > 0 else 0.04
-    for attempt in range(4):
-        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_s - attempt * step) * 1000.0)
-        ok, frame = capture.read()
-        if ok:
-            return frame
-    return None
+    return [
+        VisionFrame(t_s=t_s, jpeg_bytes=_encode_jpeg(frame, width))
+        for t_s, frame in read_frame_pairs(path, times, error=DescribeError, near_seek=True)
+    ]
 
 
 def build_prompt(base_prompt, clip_file, segment, times, frame_mode="legacy"):
@@ -804,10 +778,11 @@ def run(
     if model is None:
         model = make_vision_model(effective, ledger_path=spend_ledger)
     photos = _load_photos(workspace_path)
+    excluded = load_excluded(workspace_path)
     if photos_only:
         selected = []
     elif quality_dir.is_dir():
-        selected = _select_quality_files(quality_dir, clips)
+        selected = _select_quality_files(quality_dir, clips, excluded)
     elif photos:
         selected = []
     else:
@@ -885,7 +860,7 @@ def run(
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(state.cost_usd, 8),
     }
-    return summary, (2 if state.stop_reason is not None else 0)
+    return summary, (EXIT_RUNTIME if state.stop_reason is not None else EXIT_OK)
 
 
 def main(argv=None):
@@ -906,9 +881,14 @@ def main(argv=None):
             photos_only=args.photos_only,
             frame_mode=args.frame_mode,
         )
-    except (DescribeError, ConfigError, SchemaError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    except DescribeRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (DescribeError, ConfigError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except LLMError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
@@ -1117,7 +1097,7 @@ def _encode_jpeg(frame, width):
         frame = cv2.resize(frame, (width, scaled_height), interpolation=cv2.INTER_AREA)
     ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
     if not ok:
-        raise DescribeError("could not encode a frame as JPEG")
+        raise DescribeRuntimeError("could not encode a frame as JPEG")
     return buffer.tobytes()
 
 
@@ -1178,10 +1158,12 @@ def _normalize_tags(value):
     return tags
 
 
-def _select_quality_files(quality_dir, clips):
+def _select_quality_files(quality_dir, clips, excluded=None):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
-    selected = [path for path in files if _matches(path.stem, tokens)]
+    selected = [
+        path for path in files if _matches(path.stem, tokens) and not is_excluded(path.stem, excluded)
+    ]
     if not selected:
         raise DescribeError(f"no quality files matched in {quality_dir}")
     return selected

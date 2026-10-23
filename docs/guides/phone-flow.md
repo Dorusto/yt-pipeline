@@ -8,13 +8,13 @@ date: 2026-10-14
 Film on the phone, get the clips onto the LXC, open one link and watch the
 recap. **Two ways to get the clips over** — pick one:
 
-1. **The web app (no setup).** Open `http://10.10.1.61:8091/upload` in the
+1. **The web app (no setup).** Open `http://<agent-host>:8091/upload` in the
    phone browser, pick the clips and photos, type the project folder name and
-   the brief, press **Start**. The files stream into `~/media/inbox/<folder>/`
+   the brief, press **Start**. The files stream into `<inbox>/<folder>/`
    and `recap.py` starts in the background; the Projects page shows the
    status. This is the path the demo uses.
 2. **Syncthing (optional, automatic).** Syncthing copies the camera folder
-   into `~/media/inbox/`; `inbox.py` waits until the inbox is quiet, groups the
+   into `<inbox>/`; `inbox.py` waits until the inbox is quiet, groups the
    clips per day and runs `recap.py` per day. Use it when you want the phone
    to sync by itself without opening a page.
 
@@ -26,22 +26,23 @@ and these instructions.
 
 ## What runs where
 
-| Phone | LXC `10.10.1.61` |
+| Phone | LXC `<agent-host>` |
 |:---|:---|
 | Browser (Upload page, preview link, Re-edit) | `serve.py` on port 8091 (projects, upload, recap/why/shots) |
 | ntfy app (subscribed to the topic) | ntfy server on port 8090 |
-| Syncthing (send-only camera folder) — *optional* | Syncthing (receive-only → `~/media/inbox`) — *optional* |
+| Syncthing (send-only camera folder) — *optional* | Syncthing (receive-only → `<inbox>`) — *optional* |
 |  | `inbox.py` (watches the inbox, runs `recap.py`) — *optional* |
 |  | `recap.py` (analysis → edit → 720p MP4) |
 
 ## 0. LXC: the web app (the only step that is required)
 
 ```bash
-cd ~/projects/yt-pipeline
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
+cd <repo>
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
-Keep it running (see the `yt-serve.service` unit in step 4). Then from the
+Keep it running (see `deploy/yt-pipeline-web.service` and
+[`pilot-host.md`](pilot-host.md)). Then from the
 phone browser: **Upload** → pick files → folder name + brief → **Start**. The
 project appears on **Projects** with a `running` badge and turns `done` when
 the recap is ready. The project page's tabs are **Recap**, **Why?** (why the
@@ -73,7 +74,7 @@ session instead.
 ## 3. Share the camera folder
 
 On the phone share the camera folder (e.g. `DCIM/Camera`) with the LXC. On the
-LXC set that folder to **receive only** and point it at `~/media/inbox`. On the
+LXC set that folder to **receive only** and point it at `<inbox>`. On the
 phone set it to **send only**, so nothing the pipeline does can ever delete
 clips from the phone. Optionally add ignore patterns (`.thumbnails`, `.*`).
 
@@ -82,11 +83,11 @@ clips from the phone. Optionally add ignore patterns (`.thumbnails`, `.*`).
 Doru runs these on the LXC, in two terminals or two tmux windows:
 
 ```bash
-cd ~/Proiecte-AI/YouTube/yt-pipeline
+cd <repo>
 export OPENROUTER_API_KEY=...        # never commit it
-.venv/bin/python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects \
-    --quiet-minutes 5 --notify --preview-base http://10.10.1.61:8091
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects --bind 10.10.1.61 --port 8091
+.venv/bin/python scripts/inbox.py --inbox <inbox> --projects <projects> \
+    --quiet-minutes 5 --notify --preview-base http://<agent-host>:8091
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --bind <agent-host> --port 8091
 ```
 
 `--once` makes `inbox.py` do a single scan and exit instead of watching. Every
@@ -102,11 +103,11 @@ Create two files under `~/.config/systemd/user/` and enable them yourself:
 [Unit]
 Description=yt-pipeline inbox watcher
 [Service]
-WorkingDirectory=%h/Proiecte-AI/YouTube/yt-pipeline
+WorkingDirectory=<repo>
 Environment=OPENROUTER_API_KEY=...
-ExecStart=%h/Proiecte-AI/YouTube/yt-pipeline/.venv/bin/python scripts/inbox.py \
-    --inbox %h/media/inbox --projects %h/media/projects --notify \
-    --preview-base http://10.10.1.61:8091
+ExecStart=<repo>/.venv/bin/python scripts/inbox.py \
+    --inbox <inbox> --projects <projects> --notify \
+    --preview-base http://<agent-host>:8091
 Restart=on-failure
 [Install]
 WantedBy=default.target
@@ -117,9 +118,9 @@ WantedBy=default.target
 [Unit]
 Description=yt-pipeline preview server
 [Service]
-WorkingDirectory=%h/Proiecte-AI/YouTube/yt-pipeline
-ExecStart=%h/Proiecte-AI/YouTube/yt-pipeline/.venv/bin/python scripts/serve.py \
-    --workspaces %h/media/projects --bind 10.10.1.61 --port 8091
+WorkingDirectory=<repo>
+ExecStart=<repo>/.venv/bin/python scripts/serve.py \
+    --workspaces <workspaces> --bind <agent-host> --port 8091
 Restart=on-failure
 [Install]
 WantedBy=default.target
@@ -133,7 +134,7 @@ Creating and enabling these units is Doru's step.
 ## 5. Phone: subscribe to ntfy
 
 Install the *ntfy* app (Android Play / iOS App Store), add the self-hosted
-server `http://10.10.1.61:8090` and subscribe to the topic in `NTFY_URL`
+server `<ntfy-url>` and subscribe to the topic in `NTFY_URL`
 (default `opencode-doru`). When a recap finishes the message title is
 `Recap ready (720p)` and the body carries the preview link.
 
@@ -142,13 +143,13 @@ server `http://10.10.1.61:8090` and subscribe to the topic in `NTFY_URL`
 Copy `.claude/skills/yt-recap/` into Hermes' skills folder, or start Hermes with
 this repo as its working directory (or the `--add-dir` equivalent). Hermes needs
 the repo path, `.venv/bin/python`, `OPENROUTER_API_KEY`, `NTFY_URL` and network
-access to `10.10.1.61`. Then, in Telegram, send one of the phrases in the skill
+access to `<agent-host>`. Then, in Telegram, send one of the phrases in the skill
 ("fă-mi un recap din clipurile de azi") and confirm Hermes answers with the
 preview link. Enabling and maintaining Hermes itself is Doru's step.
 
 ## 7. Test the loop end to end
 
-Copy a few clips into `~/media/inbox/2026-10-14/` (a `YYYY-MM-DD` folder names
+Copy a few clips into `<inbox>/2026-10-14/` (a `YYYY-MM-DD` folder names
 the project day), wait `--quiet-minutes`, check the ntfy message and open the
 preview link on the phone. A recap costs a few cents per run, capped by
 `--budget-usd`.

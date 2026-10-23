@@ -32,6 +32,9 @@ from pathlib import Path
 
 import yaml
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
+from common.overlap import overlap_seconds
 from common.schema import SchemaError, validate_or_raise
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
@@ -124,11 +127,6 @@ def label_credit(expected, predicted):
     if (expected, predicted) in FAMILY_LABELS:
         return 0.5
     return 0.0
-
-
-def overlap(start_a, end_a, start_b, end_b):
-    """Overlap in seconds of two intervals; zero when they do not touch."""
-    return max(0.0, min(end_a, end_b) - max(start_a, start_b))
 
 
 def predicted_label_intervals(motion_doc):
@@ -244,7 +242,7 @@ def role_component(gt_segments, quality_doc, predicted=None):
         seconds_exact = 0.0
         seconds_wrong = 0.0
         for quality_segment in predicted:
-            covered = overlap(
+            covered = overlap_seconds(
                 start,
                 end,
                 float(quality_segment.get("start_s", 0.0)),
@@ -302,7 +300,7 @@ def horizon_component(gt_segments, quality_doc, tolerance):
         level_seconds = 0.0
         abstain_seconds = 0.0
         for quality_segment in predicted:
-            covered = overlap(
+            covered = overlap_seconds(
                 start,
                 end,
                 float(quality_segment.get("start_s", 0.0)),
@@ -653,19 +651,17 @@ def main(argv=None):
         }
         validate_or_raise(report, "eval")
     except (EvalError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.out:
         try:
             _atomic_write_json(Path(args.out).expanduser(), report)
         except OSError as exc:
-            print(f"[error] cannot write {args.out}: {exc}", file=sys.stderr)
-            return 1
+            return report_error(f"cannot write {args.out}: {exc}", EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print(format_table(report))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

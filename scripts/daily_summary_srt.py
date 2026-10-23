@@ -11,18 +11,24 @@ de memorie pentru autor, separat de orice structură de video deja aleasă.
 
 Utilizare:
     python3 daily_summary_srt.py transcripts_raw/ [output.md]
+    python3 daily_summary_srt.py transcripts_raw/ [output.md] --json
 
 Necesită: OPENROUTER_API_KEY în environment
 Necesită: pip install openai
 """
 
+import json
 import re
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
 from common.config import ConfigError
 from common.llm import LLMError, make_client
+from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 BATCH_CHARS = 80000
 DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{6})")
@@ -90,53 +96,71 @@ TRANSCRIPT BRUT ({date}):
     return response.text.strip()
 
 
+def spent_usd():
+    return _client.spent_usd if _client is not None else 0.0
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Utilizare: python3 daily_summary_srt.py transcripts_raw/ [output.md]")
-        sys.exit(1)
+    started = time.monotonic()
+    json_out = "--json" in sys.argv[1:]
+    stream = sys.stderr if json_out else sys.stdout
+    positionals = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not positionals:
+        print("Utilizare: python3 daily_summary_srt.py transcripts_raw/ [output.md] [--json]", file=stream)
+        sys.exit(EXIT_USAGE)
 
-    srt_dir = Path(sys.argv[1]).expanduser().resolve()
+    srt_dir = Path(positionals[0]).expanduser().resolve()
     if not srt_dir.is_dir():
-        print(f"[eroare] Folder negăsit: {srt_dir}")
-        sys.exit(1)
+        print(f"[eroare] Folder negăsit: {srt_dir}", file=stream)
+        sys.exit(EXIT_USAGE)
 
-    output_path = Path(sys.argv[2]).expanduser().resolve() if len(sys.argv) > 2 \
+    output_path = Path(positionals[1]).expanduser().resolve() if len(positionals) > 1 \
         else srt_dir.resolve().parent / "rezumat_pe_zile.md"
 
     days, skipped = group_by_day(srt_dir)
     if skipped:
-        print(f"[atenție] {len(skipped)} fișiere fără dată recognoscibilă în nume, ignorate:")
+        print(f"[atenție] {len(skipped)} fișiere fără dată recognoscibilă în nume, ignorate:", file=stream)
         for f in skipped:
-            print(f"  - {f}")
+            print(f"  - {f}", file=stream)
 
     if not days:
-        print("[eroare] Niciun fișier .srt cu dată recognoscibilă în nume.")
-        sys.exit(1)
+        print("[eroare] Niciun fișier .srt cu dată recognoscibilă în nume.", file=stream)
+        sys.exit(EXIT_USAGE)
 
-    print(f"{len(days)} zile găsite: {', '.join(days.keys())}")
+    print(f"{len(days)} zile găsite: {', '.join(days.keys())}", file=stream)
 
     try:
         sections = []
         for date, files in days.items():
-            print(f"\nProcesez {date} ({len(files)} fișier{'e' if len(files) > 1 else ''})...")
+            print(f"\nProcesez {date} ({len(files)} fișier{'e' if len(files) > 1 else ''})...", file=stream)
             transcript_text = "\n".join(parse_srt(path) for _, path in files)
             if len(transcript_text) > BATCH_CHARS:
-                print(f"  Transcript lung ({len(transcript_text)} chars) — trimit primele {BATCH_CHARS} chars")
+                print(f"  Transcript lung ({len(transcript_text)} chars) — trimit primele {BATCH_CHARS} chars", file=stream)
                 transcript_text = transcript_text[:BATCH_CHARS]
             summary = summarize_day(date, transcript_text)
             sections.append(f"## {date}\n\n{summary}\n")
-            print("  ✓ rezumat generat")
+            print("  ✓ rezumat generat", file=stream)
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("# Rezumat pe zile\n\n")
             f.write("\n".join(sections))
 
-        print(f"\nSalvat: {output_path}")
-    except (ConfigError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(2)
+        print(f"\nSalvat: {output_path}", file=stream)
+    except ConfigError as exc:
+        sys.exit(report_error(exc, EXIT_USAGE, json_out, **summary_fields(started, spent_usd())))
+    except LLMError as exc:
+        sys.exit(report_error(exc, EXIT_RUNTIME, json_out, **summary_fields(started, spent_usd())))
 
-    print(f"LLM cost: ${get_client().spent_usd:.4f}")
+    if json_out:
+        print(json.dumps({
+            "ok": True,
+            "output": str(output_path),
+            "days": list(days),
+            "skipped": skipped,
+            **summary_fields(started, spent_usd()),
+        }))
+    else:
+        print(f"LLM cost: ${get_client().spent_usd:.4f}")
 
 
 if __name__ == "__main__":

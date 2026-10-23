@@ -31,7 +31,10 @@ saliency); there is no model call and no spend.
   `~/.cache/yt-pipeline/models/face_detection_yunet_2026may.onnx`, downloaded
   once from the OpenCV Zoo when missing).
 - `--force` recomputes; without it a valid output newer than the video is
-  skipped (re-run safety). Exit 0 on success or skip, 1 on error.
+  skipped (re-run safety). Exit 0 on success or skip, 2 on a usage error, 3 on a runtime failure.
+- The `--json` summary reports `ok`, `skipped`, `out`, `points`, `warnings`,
+  `wall_time_s` and `llm_cost_usd` (always 0.0). The crop-path record itself
+  keeps `cost_usd`, which `schemas/reframe.schema.json` declares.
 
 ## How the subject is chosen
 

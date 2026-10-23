@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 import beats
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 
 def ffmpeg(args):
@@ -76,7 +77,7 @@ def make_silent_video(path):
 
 def analyse(capsys, music, *extra):
     code = beats.main([str(music), *extra, "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     return json.loads(capsys.readouterr().out)
 
 
@@ -191,7 +192,7 @@ def test_out_writes_same_object(tmp_path, capsys):
 
 def test_error_missing_file(tmp_path, capsys):
     code = beats.main([str(tmp_path / "nope.wav"), "--json"])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -199,7 +200,7 @@ def test_error_no_audio_stream(tmp_path, capsys):
     video = tmp_path / "silent.mp4"
     make_silent_video(video)
     code = beats.main([str(video), "--json"])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -208,12 +209,12 @@ def test_rerun_safety_and_source_untouched(tmp_path, capsys):
     make_click(click, duration=8.0)
     original = (click.stat().st_size, click.stat().st_mtime_ns)
     out = tmp_path / "beats.json"
-    assert beats.main([str(click), "--out", str(out), "--json"]) == 0
+    assert beats.main([str(click), "--out", str(out), "--json"]) == EXIT_OK
     capsys.readouterr()
     out_before = (out.stat().st_size, out.stat().st_mtime_ns)
     assert (click.stat().st_size, click.stat().st_mtime_ns) == original
 
-    assert beats.main([str(click), "--out", str(out), "--json"]) == 0
+    assert beats.main([str(click), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "skipped"
     assert (click.stat().st_size, click.stat().st_mtime_ns) == original
@@ -224,9 +225,9 @@ def test_force_rewrites(tmp_path, capsys):
     click = tmp_path / "click.wav"
     make_click(click, duration=8.0)
     out = tmp_path / "beats.json"
-    assert beats.main([str(click), "--out", str(out), "--json"]) == 0
+    assert beats.main([str(click), "--out", str(out), "--json"]) == EXIT_OK
     capsys.readouterr()
-    assert beats.main([str(click), "--out", str(out), "--json", "--force"]) == 0
+    assert beats.main([str(click), "--out", str(out), "--json", "--force"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "ok"
 
@@ -234,7 +235,7 @@ def test_force_rewrites(tmp_path, capsys):
 def test_help_lists_flags_with_examples(capsys):
     with pytest.raises(SystemExit) as excinfo:
         beats.main(["--help"])
-    assert excinfo.value.code == 0
+    assert excinfo.value.code == EXIT_OK
     out = capsys.readouterr().out
     for flag in (
         "--out",

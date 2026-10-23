@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 import graphics_plan
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.llm import MockClient
 from common.schema import validate
 
@@ -98,7 +99,7 @@ def test_both_shapes_flatten_to_same_words(tmp_path):
 def test_bad_words_exit_2(tmp_path, capsys, payload, needle):
     path = write_words(tmp_path, payload)
     rc = graphics_plan.main([str(path)])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert needle in capsys.readouterr().err
 
 
@@ -126,7 +127,7 @@ def test_markers_object_shape(tmp_path):
 def test_marker_without_time_exits_2(tmp_path, capsys):
     path = write_markers(tmp_path, [{"colour": "Mango", "name": "x"}])
     rc = graphics_plan.main([str(write_words(tmp_path)), "--markers", str(path)])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "time_s" in capsys.readouterr().err
 
 
@@ -157,7 +158,7 @@ def test_plan_normalisation(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     out = tmp_path / "plan.json"
     rc = graphics_plan.main([str(words), "--markers", str(markers), "--out", str(out), "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     plan = json.loads(out.read_text(encoding="utf-8"))
     assert validate(plan, "graphics_plan") == []
@@ -187,7 +188,7 @@ def test_context_and_transcript_reach_the_prompt(tmp_path, monkeypatch):
     client = CountingClient(text=model_text([]), config=CONFIG)
     patch(monkeypatch, client)
     rc = graphics_plan.main([str(words), "--context", str(context), "--out", str(tmp_path / "plan.json")])
-    assert rc == 0
+    assert rc == EXIT_OK
     message = client.messages[0][0]["content"]
     assert "Angle: test" in message
     assert "[00:00] doi trei patru cinci" in message
@@ -200,7 +201,7 @@ def test_invalid_model_json_retries_once_then_exit_2(tmp_path, monkeypatch, caps
     patch(monkeypatch, client)
     out = tmp_path / "plan.json"
     rc = graphics_plan.main([str(words), "--out", str(out)])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert client.calls == 2
     assert "duration_s" in capsys.readouterr().err
     assert not out.exists()
@@ -224,7 +225,7 @@ def test_missing_props_caught(tmp_path, monkeypatch, capsys):
     )
     patch(monkeypatch, client)
     rc = graphics_plan.main([str(words), "--out", str(tmp_path / "plan.json")])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert client.calls == 2
     assert "role" in capsys.readouterr().err
 
@@ -247,7 +248,7 @@ def test_time_outside_span_caught(tmp_path, monkeypatch, capsys):
     )
     patch(monkeypatch, client)
     rc = graphics_plan.main([str(words), "--out", str(tmp_path / "plan.json")])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "outside" in capsys.readouterr().err
 
 
@@ -276,7 +277,7 @@ def test_overlap_caught(tmp_path, monkeypatch, capsys):
     )
     patch(monkeypatch, client)
     rc = graphics_plan.main([str(words), "--out", str(tmp_path / "plan.json")])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "overlap" in capsys.readouterr().err
 
 
@@ -296,7 +297,7 @@ def test_max_entries_caps(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     out = tmp_path / "plan.json"
     rc = graphics_plan.main([str(words), "--max-entries", "1", "--out", str(out), "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     plan = json.loads(out.read_text(encoding="utf-8"))
     assert len(plan["entries"]) == 1
     assert plan["entries"][0]["time_s"] == 0.0
@@ -308,7 +309,7 @@ def test_max_entries_zero_writes_empty_plan(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     out = tmp_path / "plan.json"
     rc = graphics_plan.main([str(words), "--max-entries", "0", "--out", str(out), "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     assert client.calls == 0
     plan = json.loads(out.read_text(encoding="utf-8"))
     assert plan["entries"] == []
@@ -318,7 +319,7 @@ def test_max_entries_zero_writes_empty_plan(tmp_path, monkeypatch, capsys):
 def test_negative_max_entries_exit_2(tmp_path, capsys):
     words = write_words(tmp_path)
     rc = graphics_plan.main([str(words), "--max-entries", "-1"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "max-entries" in capsys.readouterr().err
 
 
@@ -328,7 +329,7 @@ def test_human_line(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     out = tmp_path / "plan.json"
     rc = graphics_plan.main([str(words), "--out", str(out)])
-    assert rc == 0
+    assert rc == EXIT_OK
     text = capsys.readouterr().out
     assert "plan.json" in text
     assert "approved" in text
@@ -337,7 +338,7 @@ def test_human_line(tmp_path, monkeypatch, capsys):
 def test_help_lists_the_interface(capsys):
     with pytest.raises(SystemExit) as excinfo:
         graphics_plan.main(["--help"])
-    assert excinfo.value.code == 0
+    assert excinfo.value.code == EXIT_OK
     out = capsys.readouterr().out
     for flag in ("--markers", "--context", "--out", "--max-entries", "--json"):
         assert flag in out
@@ -387,7 +388,7 @@ def test_chain_with_mock_llm(tmp_path):
         cwd=str(ROOT),
         env=env,
     )
-    assert run1.returncode == 0, run1.stderr
+    assert run1.returncode == EXIT_OK, run1.stderr
     summary1 = json.loads(run1.stdout)
     assert summary1["entries"] == 2
     assert summary1["approved"] == 0
@@ -418,7 +419,7 @@ def test_chain_with_mock_llm(tmp_path):
         cwd=str(ROOT),
         env=env,
     )
-    assert run2.returncode == 0, run2.stderr
+    assert run2.returncode == EXIT_OK, run2.stderr
     summary2 = json.loads(run2.stdout)
     assert len(summary2["outputs"]) == 1
     assert summary2["outputs"][0]["id"] == "g1"

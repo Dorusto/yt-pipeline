@@ -1,0 +1,107 @@
+{
+  "schema_version": "0.1",
+  "generated_at": "2026-10-21T00:00:00+00:00",
+  "tool": "tests/fixtures/filmcraft",
+  "brief": {
+    "text": "a tiny synthetic edit for the FilmCraft export tests",
+    "target_duration_s": 8,
+    "order": "chronological",
+    "pacing": "uniform"
+  },
+  "sources": [
+    {
+      "file": "camera A.mp4",
+      "path": "/footage/camera/camera A.mp4",
+      "duration_s": 10.0,
+      "media_type": "video"
+    },
+    {
+      "file": "screen B.mp4",
+      "path": "/footage/screen/screen B.mp4",
+      "duration_s": 10.0,
+      "media_type": "video"
+    },
+    {
+      "file": "pic.jpg",
+      "path": "/footage/photos/pic.jpg",
+      "duration_s": null,
+      "media_type": "photo"
+    }
+  ],
+  "video": [
+    {
+      "id": "v1",
+      "clip": "camera A.mp4",
+      "in_s": 1.0,
+      "out_s": 3.0,
+      "score": 0.9,
+      "reason": "clean opening hold",
+      "shot_key": "0071/s2",
+      "speed": 1.0,
+      "role": "hold",
+      "motion_label": "static",
+      "description": null
+    },
+    {
+      "id": "p1",
+      "kind": "photo",
+      "photo": "pic.jpg",
+      "duration_s": 3.0,
+      "ken_burns": {
+        "move": "zoom_in",
+        "amount": 0.08,
+        "focus_x": 0.5,
+        "focus_y": 0.5
+      },
+      "score": 0.8,
+      "reason": "hero photo",
+      "shot_key": "0072/p1",
+      "description": null,
+      "capture_time": null
+    },
+    {
+      "id": "v2",
+      "clip": "screen B.mp4",
+      "in_s": 2.0,
+      "out_s": 5.0,
+      "score": 0.7,
+      "reason": "screen demo",
+      "shot_key": "0073/s1",
+      "speed": 1.0,
+      "role": "move",
+      "motion_label": "pan",
+      "description": null
+    }
+  ],
+  "audio": {
+    "ambience": {
+      "enabled": true,
+      "gain_db": 0,
+      "source": "slot",
+      "file": null
+    },
+    "music": null,
+    "sfx": [],
+    "levels": {
+      "target_lufs": null,
+      "true_peak_db": null
+    }
+  },
+  "captions": [],
+  "graphics": [
+    {
+      "id": "g1",
+      "template": "lower_third",
+      "props": {
+        "name": "Doru",
+        "role": "creator"
+      },
+      "slot": "v1"
+    }
+  ],
+  "meta": {
+    "tool": "tests/fixtures/filmcraft",
+    "wall_time_s": 0.0,
+    "llm_cost_usd": 0.0
+  }
+}

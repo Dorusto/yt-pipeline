@@ -1,0 +1,17 @@
+{
+  "text": "Alfa beta gama",
+  "language": "ro",
+  "segments": [
+    {
+      "id": 0,
+      "start": 2.0,
+      "end": 6.0,
+      "text": "Alfa beta gama",
+      "words": [
+        {"word": " Alfa", "start": 2.5, "end": 3.0, "probability": 0.9},
+        {"word": " beta", "start": 4.0, "end": 4.5, "probability": 0.9},
+        {"word": " gama", "start": 5.5, "end": 6.0, "probability": 0.9}
+      ]
+    }
+  ]
+}

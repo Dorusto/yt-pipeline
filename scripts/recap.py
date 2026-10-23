@@ -3,9 +3,9 @@
 """Run every pipeline station from a folder of clips and a brief to a recap MP4.
 
 Usage:
-    python scripts/recap.py --source ~/media/raw --brief "about 90 seconds, calm start"
-    python scripts/recap.py --source ~/media/raw --brief-file brief.txt --final --json
-    python scripts/recap.py --source ~/media/raw --brief "..." --feedback "drop 0071/s2" --json
+    python scripts/recap.py --source <source-folder> --brief "about 90 seconds, calm start"
+    python scripts/recap.py --source <source-folder> --brief-file brief.txt --final --json
+    python scripts/recap.py --source <source-folder> --brief "..." --feedback "drop 0071/s2" --json
 
 ``recap.py`` is the single entry point: it chains the existing station CLIs as
 subprocesses in order (proxy, ingest, motion, quality, describe, similarity,
@@ -28,8 +28,13 @@ import urllib.parse
 from pathlib import Path
 
 from common import notify, versions
+from common.config import ConfigError, music_library, no_music_library_message
+from common.edit_timeline import edit_summary
+from common.media import video_files
+from common.photos import is_photo
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/recap.py"
 
@@ -100,8 +105,8 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/recap.py --source ~/media/raw --brief \"about 90 seconds\"\n"
-            "  python scripts/recap.py --source ~/media/raw --brief-file brief.txt"
+            "  python scripts/recap.py --source <source-folder> --brief \"about 90 seconds\"\n"
+            "  python scripts/recap.py --source <source-folder> --brief-file brief.txt"
             " --final --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -131,12 +136,19 @@ def build_parser():
     parser.add_argument(
         "--music",
         default=None,
-        help="music track: a file to detect beats and mix under the recap, or 'auto' to pick one from --music-dir",
+        help=(
+            "music track: a file to detect beats and mix under the recap, or 'auto' to pick "
+            "one from the music library (found via --music-dir, else YT_PIPELINE_MUSIC_LIBRARY, "
+            "else music.library in the config)"
+        ),
     )
     parser.add_argument(
         "--music-dir",
         default=None,
-        help="folder of tracks for --music auto (default ~/media/music)",
+        help=(
+            "folder of tracks for --music auto (or YT_PIPELINE_MUSIC_LIBRARY, or "
+            "music.library in the config; no personal default)"
+        ),
     )
     parser.add_argument(
         "--target-duration-s",
@@ -220,21 +232,6 @@ def is_within(path, directory):
     return path == directory or directory in path.parents
 
 
-def video_files(directory):
-    """Return the video files directly inside ``directory``, sorted by name."""
-    directory = Path(directory)
-    if not directory.is_dir():
-        return []
-    return sorted(
-        (
-            path
-            for path in directory.iterdir()
-            if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
-        ),
-        key=lambda path: path.name,
-    )
-
-
 def load_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -295,7 +292,14 @@ def is_up_to_date(name, ctx):
     proxies = video_files(proxy_dir)
     if name == "proxy":
         clips = video_files(src)
-        return bool(clips) and all((proxy_dir / clip.name).is_file() for clip in clips)
+        photos = (
+            [path for path in Path(src).iterdir() if path.is_file() and is_photo(path)]
+            if Path(src).is_dir()
+            else []
+        )
+        if not clips and not photos:
+            return bool(directory_files(proxy_dir))
+        return all((proxy_dir / clip.name).is_file() for clip in clips)
     if name == "ingest":
         return all_newer(ws / "ingest.json", proxies)
     if name == "beats":
@@ -356,10 +360,21 @@ def is_up_to_date(name, ctx):
         )
     if name == "explain":
         return is_newer(ws / "explain.html", ws / "edit.json")
+    if name == "recap_meta":
+        return is_newer(ws / "recap_meta.json", ws / "edit.json")
     if name == "render":
         return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
     if name == "render_vertical":
         return is_newer(ws / VERTICAL_PREVIEW_NAME, ws / "edit.json")
+    if name == "thumbs":
+        recap = ws / "recap_720p.mp4"
+        if not recap.is_file():
+            recap = ws / VERTICAL_PREVIEW_NAME
+        document = load_json(ws / "edit.json")
+        summary = edit_summary(document) if isinstance(document, dict) else None
+        if summary is None:
+            return False
+        return versions.thumbs_are_fresh(ws / "thumbs", recap, summary["shots"])
     if name == "render_final":
         return is_newer(ws / "recap_final.mp4", ws / "edit.json")
     if name == "render_final_vertical":
@@ -383,7 +398,6 @@ INDEPENDENT_RENDERS = ("render", "render_vertical", "render_final", "render_fina
 VERTICAL_PREVIEW_NAME = "recap_720p_9x16.mp4"
 VERTICAL_FINAL_NAME = "recap_final_9x16.mp4"
 MUSIC_TOKEN = "@music@"
-DEFAULT_MUSIC_DIR = "~/media/music"
 MUSIC_CHOICE_NAME = "music_choice.json"
 
 
@@ -470,7 +484,16 @@ def build_stations(ctx):
             "name": "proxy",
             "argv": [
                 station_command(
-                    ctx, "proxy.py", [str(src), "--out", str(proxy_dir)], force=force
+                    ctx,
+                    "proxy.py",
+                    [
+                        str(src),
+                        "--out",
+                        str(proxy_dir),
+                        "--exclude-file",
+                        str(ws / "excluded.json"),
+                    ],
+                    force=force,
                 )
             ],
         },
@@ -548,6 +571,16 @@ def build_stations(ctx):
             "argv": [station_command(ctx, "explain.py", ["--workspace", str(ws)], force=force)],
         }
     )
+    stations.append(
+        {
+            "name": "recap_meta",
+            "argv": [
+                station_command(
+                    ctx, "recap_meta.py", ["--workspace", str(ws)], force=force, budget=True
+                )
+            ],
+        }
+    )
     if ctx.frame_format in ("16x9", "both"):
         stations.append(
             {
@@ -573,15 +606,21 @@ def build_stations(ctx):
                 ],
             }
         )
+    stations.append(
+        {
+            "name": "thumbs",
+            "argv": [station_command(ctx, "thumbs.py", ["--workspace", str(ws)], force=force)],
+        }
+    )
     if ctx.music == "auto":
         pick_args = [
-            "--library",
-            str(ctx.music_dir or DEFAULT_MUSIC_DIR),
             "--brief-file",
             str(ws / "brief.txt"),
             "--workspace",
             str(ws),
         ]
+        if ctx.music_dir is not None:
+            pick_args = ["--library", str(ctx.music_dir)] + pick_args
         if ctx.target_duration_s:
             pick_args += ["--target-duration-s", str(ctx.target_duration_s)]
         index_at = next(i for i, station in enumerate(stations) if station["name"] == "index")
@@ -1029,9 +1068,12 @@ def main(argv=None):
                 music = Path(args.music).expanduser().resolve()
                 if not music.is_file():
                     raise RecapError(f"music file not found: {music}")
-    except RecapError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        library = music_library(args.music_dir) if (args.music or args.music_dir) else None
+        music_dir = library.resolve() if library is not None else None
+        if music == "auto" and music_dir is None:
+            raise RecapError(no_music_library_message("--music-dir"))
+    except (RecapError, ConfigError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
     ctx = Context(
         source=source,
         workspace=workspace,
@@ -1047,7 +1089,7 @@ def main(argv=None):
         notify=args.notify,
         preview_base=args.preview_base,
         feedback=args.feedback,
-        music_dir=Path(args.music_dir).expanduser().resolve() if args.music_dir else None,
+        music_dir=music_dir,
         target_duration_s=args.target_duration_s,
         order=args.order,
         no_audio_clean=args.no_audio_clean,
@@ -1060,7 +1102,7 @@ def main(argv=None):
         print(json.dumps(summary))
     else:
         print_human(summary)
-    return 1 if summary["status"] == "failed" else 0
+    return EXIT_RUNTIME if summary["status"] == "failed" else EXIT_OK
 
 
 if __name__ == "__main__":

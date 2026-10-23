@@ -30,6 +30,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.excluded import filter_excluded, load_excluded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
+from common.overlap import overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
@@ -92,9 +96,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/quality.py clip.mp4 --workspace ~/Videos/workspace\n"
-            "  python scripts/quality.py ~/Videos/clip --workspace ~/Videos/workspace --json\n"
-            "  python scripts/quality.py clip.mp4 --workspace ~/Videos/workspace --force\n"
+            "  python scripts/quality.py clip.mp4 --workspace <workspace>\n"
+            "  python scripts/quality.py <trip-folder> --workspace <workspace> --json\n"
+            "  python scripts/quality.py clip.mp4 --workspace <workspace> --force\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -550,7 +554,7 @@ def _longest_source(sources, start_s, end_s):
     """Return the source span overlapping a merged interval the most."""
 
     def overlap(source):
-        return min(end_s, source["end_s"]) - max(start_s, source["start_s"])
+        return overlap_seconds(start_s, end_s, source["start_s"], source["end_s"])
 
     return max(sources, key=overlap)
 
@@ -572,7 +576,7 @@ def _overlapping_move(moves, start_s, end_s):
     best = None
     best_overlap = 0.0
     for move in moves:
-        overlap = min(end_s, move["end_s"]) - max(start_s, move["start_s"])
+        overlap = overlap_seconds(start_s, end_s, move["start_s"], move["end_s"])
         if overlap > best_overlap:
             best_overlap = overlap
             best = move
@@ -788,6 +792,26 @@ def _is_stable_content(segment, steadiness, move):
     return move is not None and move.get("steadiness") in STABLE_STEADINESS
 
 
+def shaky_policy():
+    """``review`` (default) keeps long shaky runs; ``drop`` turns them into ``accidental``.
+
+    With ``review`` the segment keeps its move or hold role, so the vision model and
+    the director see it with its shake defect and decide. Junk frames (obstruction,
+    near-uniform, static low-detail) stay ``accidental`` either way. Test switch for
+    the holiday pilot; review is the default since the first real test, and
+    ``YT_PIPELINE_SHAKY=drop`` brings back the old behaviour.
+    """
+    value = os.environ.get("YT_PIPELINE_SHAKY", "review").strip().lower()
+    return value if value in ("drop", "review") else "review"
+
+
+def _keep_for_review(segment, evidence):
+    """Leave a shaky segment's role alone and record why it was not dropped."""
+    segment["role_evidence"] = list(segment.get("role_evidence") or []) + [
+        f"{evidence}; kept for review (shaky policy)"
+    ]
+
+
 def _upgrade_to_accidental(segment, fact, confidence, evidence):
     """Set the accidental role, keeping uncertainty and flagging a contradicted move."""
     if segment["role"] == "move" and fact["move"] is not None:
@@ -835,16 +859,23 @@ def apply_accidental_runs(segments, facts, duration_s):
     if not qualifying:
         return
     covered_s = sum(run_s for _, _, run_s in qualifying)
+    review = shaky_policy() == "review"
     if covered_s >= ACCIDENTAL_RUN_FRACTION * duration_s:
         evidence = f"junk take: {covered_s:.1f}s of {duration_s:.1f}s has no stable move or hold"
         for segment, fact in zip(segments, facts):
-            _upgrade_to_accidental(segment, fact, ACCIDENTAL_TAKE_CONFIDENCE, evidence)
+            if review:
+                _keep_for_review(segment, evidence)
+            else:
+                _upgrade_to_accidental(segment, fact, ACCIDENTAL_TAKE_CONFIDENCE, evidence)
         return
     for start, end, run_s in qualifying:
         mean_shake = _mean([segments[i]["metrics"].get("shake", 0.0) for i in range(start, end)])
         evidence = f"chaotic run of {run_s:.1f}s with no stable move or hold (shake {mean_shake:.2f})"
         for i in range(start, end):
-            _upgrade_to_accidental(segments[i], facts[i], ACCIDENTAL_RUN_CONFIDENCE, evidence)
+            if review:
+                _keep_for_review(segments[i], evidence)
+            else:
+                _upgrade_to_accidental(segments[i], facts[i], ACCIDENTAL_RUN_CONFIDENCE, evidence)
 
 
 def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, duration_s):
@@ -1043,6 +1074,7 @@ def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, wid
     """Analyse every clip of ``input_path`` into ``workspace/quality``; return a summary."""
     started = time.monotonic()
     clips = resolve_inputs(input_path)
+    clips = filter_excluded(clips, load_excluded(workspace))
     workspace_path = Path(workspace).expanduser().resolve()
     output_dir = workspace_path / "quality"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1088,14 +1120,15 @@ def main(argv=None):
             width=args.width,
         )
     except (QualityError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"analyzed {summary['analyzed']} clips, skipped {summary['skipped']} (of {summary['clips']})")
         print(f"wrote {summary['output_dir']}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

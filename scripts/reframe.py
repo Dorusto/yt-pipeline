@@ -21,27 +21,27 @@ import argparse
 import json
 import math
 import os
-import shutil
 import sys
 import time
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from common.faces import (
+    DEFAULT_MODEL_PATH,
+    FacesError,
+    detect_faces,
+    ensure_model,
+    make_detector,
+)
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.schema import SchemaError, validate_or_raise
+from common.summary import summary_fields
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_URL = (
-    "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/"
-    "face_detection_yunet_2026may.onnx"
-)
-DEFAULT_MODEL_PATH = Path.home() / ".cache" / "yt-pipeline" / "models" / "face_detection_yunet_2026may.onnx"
-DETECT_WIDTH = 640
-SCORE_THRESHOLD = 0.6
-NMS_THRESHOLD = 0.3
 SUBJECT_GATE = 0.5
 SALIENCY_SIZE = 64
 SALIENCY_PEAK = 0.6
@@ -54,6 +54,10 @@ SOURCES = ("face", "track", "saliency", "hold")
 
 class ReframeError(RuntimeError):
     """Raised when a crop path cannot be produced."""
+
+
+class ReframeRuntimeError(ReframeError):
+    """Raised when a frame cannot be decoded after the video opened."""
 
 
 def build_parser():
@@ -130,50 +134,6 @@ def sample_times(start_s, end_s, sample_fps):
         t_s += step
     times.append(round(end_s, 3))
     return times
-
-
-def ensure_model(path, url=DEFAULT_MODEL_URL):
-    """Return the YuNet model path, downloading it once when it is missing."""
-    path = Path(path).expanduser()
-    if path.exists():
-        return path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    try:
-        with urllib.request.urlopen(url) as response, open(temporary, "wb") as handle:
-            shutil.copyfileobj(response, handle)
-        os.replace(temporary, path)
-    except Exception as exc:
-        if temporary.exists():
-            temporary.unlink()
-        raise ReframeError(f"cannot download model from {url}: {exc}") from exc
-    print(f"[info] fetched {url} -> {path} ({path.stat().st_size} bytes)", file=sys.stderr)
-    return path
-
-
-def make_detector(model_path):
-    """Create the YuNet face detector on the given ONNX model."""
-    detector = cv2.FaceDetectorYN_create(
-        str(model_path), "", (DETECT_WIDTH, DETECT_WIDTH), SCORE_THRESHOLD, NMS_THRESHOLD, 5000
-    )
-    return detector
-
-
-def detect_faces(detector, frame):
-    """Detect faces on a DETECT_WIDTH copy and return boxes in source pixels."""
-    height, width = frame.shape[:2]
-    scale = DETECT_WIDTH / width
-    small = cv2.resize(frame, (DETECT_WIDTH, max(1, int(round(height * scale)))), interpolation=cv2.INTER_AREA)
-    detector.setInputSize((small.shape[1], small.shape[0]))
-    _, faces = detector.detect(small)
-    boxes = []
-    if faces is None:
-        return boxes
-    for face in faces:
-        x, y, w, h = [float(value) / scale for value in face[:4]]
-        score = float(face[-1])
-        boxes.append((x, y, w, h, score))
-    return boxes
 
 
 def pick_subject(boxes, current_centre, width):
@@ -405,7 +365,7 @@ def analyse(video_path, start_s, end_s, aspect, sample_fps, model_path, smooth_s
         for t_s in times:
             frame = read_frame_near(capture, t_s, fps)
             if frame is None:
-                raise ReframeError(f"cannot read frame at {t_s:.2f}s from {video_path}")
+                raise ReframeRuntimeError(f"cannot read frame at {t_s:.2f}s from {video_path}")
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             boxes = detect_faces(detector, frame)
             subject = pick_subject(boxes, current_centre, width)
@@ -527,10 +487,9 @@ def run(args):
                 "out": str(out_path),
                 "points": len(data.get("points") or []),
                 "warnings": list(data.get("warnings") or []),
-                "wall_time_s": round(time.monotonic() - started, 2),
-                "cost_usd": 0.0,
+                **summary_fields(started),
             },
-            0,
+            EXIT_OK,
         )
     model_path = ensure_model(Path(args.model).expanduser() if args.model else DEFAULT_MODEL_PATH)
     record = analyse(
@@ -554,10 +513,9 @@ def run(args):
             "out": str(out_path),
             "points": len(record["points"]),
             "warnings": record["warnings"],
-            "wall_time_s": record["wall_time_s"],
-            "cost_usd": 0.0,
+            **summary_fields(started),
         },
-        0,
+        EXIT_OK,
     )
 
 
@@ -565,9 +523,12 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary, exit_code = run(args)
+    except ReframeRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (FacesError, OSError) as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ReframeError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
@@ -575,7 +536,7 @@ def main(argv=None):
         print(f"crop path {state}: {summary['out']} ({summary['points']} points)")
         for warning in summary["warnings"]:
             print(f"[warn] {warning}")
-        print(f"{summary['wall_time_s']}s, cost ${summary['cost_usd']:.4f}")
+        print(f"{summary['wall_time_s']}s, cost ${summary['llm_cost_usd']:.4f}")
     return exit_code
 
 

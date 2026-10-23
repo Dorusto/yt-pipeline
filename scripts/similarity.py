@@ -33,7 +33,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.excluded import is_excluded, load_excluded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.photos import PhotoError, read_bgr
+from common.frames import read_frame_pairs
 from common.schema import SchemaError, validate, validate_or_raise
 
 FRAME_COUNT = 3
@@ -60,6 +64,10 @@ class SimilarityError(RuntimeError):
     """Raised when the workspace cannot be embedded."""
 
 
+class SimilarityRuntimeError(RuntimeError):
+    """Raised when the run fails after it started (model load, download, disk)."""
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="similarity.py",
@@ -71,9 +79,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/similarity.py --workspace ~/Videos/workspace\n"
-            "  python scripts/similarity.py --workspace ~/Videos/workspace --json\n"
-            "  python scripts/similarity.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/similarity.py --workspace <workspace>\n"
+            "  python scripts/similarity.py --workspace <workspace> --json\n"
+            "  python scripts/similarity.py --workspace <workspace> \\\n"
             "      --backend hist --force --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -128,20 +136,10 @@ def photo_keys(photos):
 
 def read_frames(path, times, width=FRAME_WIDTH):
     """Read one BGR frame per timestamp from a clip, resized to ``width``; frames stay in memory."""
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise SimilarityError(f"cannot read video: {path}")
-    frames = []
-    try:
-        for t_s in times:
-            capture.set(cv2.CAP_PROP_POS_MSEC, t_s * 1000.0)
-            ok, frame = capture.read()
-            if not ok:
-                raise SimilarityError(f"cannot read frame at {t_s:.2f}s from {path}")
-            frames.append(_resize_width(frame, width))
-    finally:
-        capture.release()
-    return frames
+    return [
+        _resize_width(frame, width)
+        for _t_s, frame in read_frame_pairs(path, times, error=SimilarityError)
+    ]
 
 
 def embed_mobilenet(frames, net):
@@ -180,7 +178,7 @@ def load_mobilenet(model_path, model_url):
     try:
         return cv2.dnn.readNetFromONNX(str(path))
     except cv2.error as exc:
-        raise SimilarityError(f"cannot load ONNX model {path}: {exc}") from exc
+        raise SimilarityRuntimeError(f"cannot load ONNX model {path}: {exc}") from exc
 
 
 def run(
@@ -199,8 +197,9 @@ def run(
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
     photos = _load_photos(workspace_path)
+    excluded = load_excluded(workspace_path)
     if quality_dir.is_dir():
-        selected = _select_quality_files(quality_dir, clips)
+        selected = _select_quality_files(quality_dir, clips, excluded)
     elif photos:
         selected = []
     else:
@@ -208,7 +207,7 @@ def run(
     ingest_path = workspace_path / "ingest.json"
     output_path = workspace_path / "similarity.json"
     if not force and _output_is_up_to_date(output_path, _input_paths(selected, ingest_path, photos)):
-        return _skipped_summary(output_path, started), 0
+        return _skipped_summary(output_path, started), EXIT_OK
     net = load_mobilenet(model_path, model_url) if backend == "mobilenet" else None
     model_name = Path(model_path).name if backend == "mobilenet" else "none"
     segments = []
@@ -275,7 +274,7 @@ def run(
         "output": str(output_path),
         "skipped": False,
     }
-    return summary, 0
+    return summary, EXIT_OK
 
 
 def main(argv=None):
@@ -290,9 +289,12 @@ def main(argv=None):
             clips=args.clips,
             force=args.force,
         )
-    except (SimilarityError, SchemaError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    except SimilarityRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (SimilarityError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
@@ -407,16 +409,18 @@ def _download_model(path, url):
     except Exception as exc:
         if temporary.exists():
             temporary.unlink()
-        raise SimilarityError(
+        raise SimilarityRuntimeError(
             f"cannot download model from {url}: {exc}; use --backend hist for an offline run"
         ) from exc
     print(f"[info] fetched {url} -> {path} ({path.stat().st_size} bytes)", file=sys.stderr)
 
 
-def _select_quality_files(quality_dir, clips):
+def _select_quality_files(quality_dir, clips, excluded=None):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
-    selected = [path for path in files if _matches(path.stem, tokens)]
+    selected = [
+        path for path in files if _matches(path.stem, tokens) and not is_excluded(path.stem, excluded)
+    ]
     if not selected:
         raise SimilarityError(f"no quality files matched in {quality_dir}")
     return selected

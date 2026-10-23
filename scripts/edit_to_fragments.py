@@ -20,8 +20,8 @@ clamped so it never lands before ``in`` and rounded to milliseconds.
 Usage:
     python3 edit_to_fragments.py --edit edit.json --out fragments.yaml
     python3 edit_to_fragments.py --edit edit.json --out fragments.yaml \\
-        --source-dir ~/media/yt-test/raw \\
-        --kdenlive-out ~/media/yt-test/workspace/recap.kdenlive
+        --source-dir <source-folder> \\
+        --kdenlive-out <workspace>/recap.kdenlive
 """
 import argparse
 import json
@@ -32,6 +32,8 @@ from pathlib import Path
 
 import yaml
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.moves import middle_speed_of
 from common.schema import SchemaError, validate_or_raise
 
@@ -55,8 +57,8 @@ def build_parser():
             "examples:\n"
             "  python scripts/edit_to_fragments.py --edit edit.json --out fragments.yaml\n"
             "  python scripts/edit_to_fragments.py --edit edit.json --out fragments.yaml \\\n"
-            "      --source-dir ~/media/yt-test/raw \\\n"
-            "      --kdenlive-out ~/media/yt-test/workspace/recap.kdenlive\n"
+            "      --source-dir <source-folder> \\\n"
+            "      --kdenlive-out <workspace>/recap.kdenlive\n"
             "  python scripts/edit_to_fragments.py --edit edit.json --out fragments.yaml --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -209,14 +211,15 @@ def main(argv=None):
     started = time.monotonic()
     try:
         summary = run(args, started)
-    except (EditToFragmentsError, SchemaError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    except (EditToFragmentsError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

@@ -59,8 +59,8 @@
     },
     "fonts": {
       "type": "object",
-      "description": "font files and sizes; title and keyword share the title face",
-      "required": ["title", "kicker", "tag"],
+      "description": "font files and sizes; title and keyword share the title face; caption is the shorts/subtitle face (size_px at the brand canvas height, scaled by the consumer to its own resolution)",
+      "required": ["title", "kicker", "tag", "caption"],
       "additionalProperties": false,
       "properties": {
         "title": {
@@ -96,6 +96,16 @@
             "path": {"$ref": "#/$defs/font_path"},
             "family": {"type": "string", "minLength": 1},
             "size_px": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "caption": {
+          "type": "object",
+          "required": ["path", "family", "size_px"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {"$ref": "#/$defs/font_path"},
+            "family": {"type": "string", "minLength": 1, "description": "informational family name"},
+            "size_px": {"type": "number", "exclusiveMinimum": 0, "description": "caption size at the brand canvas height"}
           }
         }
       }

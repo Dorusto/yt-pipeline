@@ -18,7 +18,7 @@ Measure how the camera moved in a clip before any editing decision. A Lucas-Kana
 - `--workspace` is required. `DIR/motion/<stem>.json` is written per clip, created if missing. The source folder is never written to.
 - `--sample-fps` (default 10) sets the analysis sampling rate; frames between samples are skipped. `--width` (default 320) scales frames down before the optical-flow pass.
 - `--force` re-analyses a clip whose output already exists. Without it, a clip whose JSON exists and validates against the `motion` schema is skipped and counted as `skipped`.
-- On any error (missing input, unreadable video, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing input, unreadable video) or `3` (runtime failure after work started: disk write failed). It never asks questions.
 
 ## Step 2: read the result
 

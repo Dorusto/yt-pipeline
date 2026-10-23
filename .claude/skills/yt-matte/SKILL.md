@@ -23,9 +23,10 @@ editor's job — this tool only produces the file.
 - `--start` / `--end` are float seconds and limit the range (end exclusive;
   default: the whole clip). `0 <= start < end <= duration`, else exit 2 naming
   the values and the duration.
-- `--ratio` is RVM's `downsample_ratio`, `> 0` and `<= 1`, default `0.6`
-  (steadier edges, slower). `0.25` is the faster option; the useful band is
-  roughly 0.25–0.6.
+- `--ratio` is RVM's `downsample_ratio`, `> 0` and `<= 1`, an explicit override.
+  Its default is auto from the input height: `0.125` at 4K (`>= 1600`), `0.25`
+  at 1080p (`>= 900`), `0.4` at 720p and smaller. The `--json` summary reports
+  the effective value actually used.
 - `--out` is the output `.mov` (default `<video parent>/<stem>_matte.mov`). An
   `--out` that resolves to the input is refused (exit 2) — an original is never
   overwritten. Re-running overwrites the output file (a derived artifact).

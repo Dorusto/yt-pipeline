@@ -8,10 +8,13 @@ description deterministically: the channel-members sentence and the closing are
 fixed and never taken from the model. A human reviews the draft; nothing is
 uploaded. It also writes ``metadata.json`` next to ``metadata.md`` with the
 validated fields, so the publish kit is deterministic from the model JSON.
+With ``--chapters`` the chapters come from a ``chapters.json`` (the chapter
+source of truth) instead of the model answer.
 
 Usage:
-    python3 metadata.py SRT --context CONTEXT.md [--previous-url URL] [--repo-url URL]
-        [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+    python3 metadata.py SRT --context CONTEXT.md [--chapters chapters.json]
+        [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME]
+        [--prompt PATH] [--json]
 """
 
 import argparse
@@ -23,6 +26,9 @@ from pathlib import Path
 
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
+from common.schema import SchemaError, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "metadata.md"
 MEMBERS_SENTENCE = (
@@ -38,6 +44,9 @@ _client = None
 class MetadataError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
 
+
+class MetadataRuntimeError(MetadataError):
+    """Raised when the model answer cannot be used after the call."""
 
 def get_client():
     global _client
@@ -94,16 +103,15 @@ def format_transcript(cues):
     return "\n".join(f"[{format_clock(cue['start'])}] {cue['text']}" for cue in cues)
 
 
-def build_message(prompt_text, context_text, transcript_text, previous_url, repo_url):
+def build_message(prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url):
     parts = [prompt_text, "## Context", context_text, "## Transcript", transcript_text]
-    links = []
+    links = [f"channel_url: {channel_url}"]
     if previous_url:
         links.append(f"previous_url: {previous_url}")
     if repo_url:
         links.append(f"repo_url: {repo_url}")
-    if links:
-        parts.append("## Links")
-        parts.extend(links)
+    parts.append("## Links")
+    parts.extend(links)
     return "\n\n".join(parts)
 
 
@@ -114,21 +122,21 @@ def parse_model_json(text):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise MetadataError(f"model response is not valid JSON: {exc}")
+        raise MetadataRuntimeError(f"model response is not valid JSON: {exc}")
 
 
 def require_key(data, key):
     if key not in data:
-        raise MetadataError(f"model JSON is missing key '{key}'")
+        raise MetadataRuntimeError(f"model JSON is missing key '{key}'")
     return data[key]
 
 
 def require_localized(value, key):
     if not isinstance(value, dict):
-        raise MetadataError(f"model JSON key '{key}' must be an object with 'ro' and 'en'")
+        raise MetadataRuntimeError(f"model JSON key '{key}' must be an object with 'ro' and 'en'")
     for lang in ("ro", "en"):
         if not isinstance(value.get(lang), str):
-            raise MetadataError(f"model JSON key '{key}.{lang}' must be a string")
+            raise MetadataRuntimeError(f"model JSON key '{key}.{lang}' must be a string")
     return value
 
 
@@ -138,14 +146,18 @@ def optional_localized(value, key):
     return require_localized(value, key)
 
 
-def validate_model_json(data):
-    """Validate the model contract and return the normalized fields."""
+def validate_model_json(data, require_chapters=True):
+    """Validate the model contract and return the normalized fields.
+
+    When ``require_chapters`` is False the ``chapters`` key is optional and its
+    value is ignored (the caller supplies the chapters from a file).
+    """
     if not isinstance(data, dict):
-        raise MetadataError("model response is not a JSON object")
+        raise MetadataRuntimeError("model response is not a JSON object")
 
     titles = require_key(data, "titles")
     if not isinstance(titles, list) or len(titles) != 3 or not all(isinstance(t, str) for t in titles):
-        raise MetadataError("model JSON key 'titles' must be a list of exactly 3 strings")
+        raise MetadataRuntimeError("model JSON key 'titles' must be a list of exactly 3 strings")
 
     intro = require_localized(require_key(data, "intro"), "intro")
     github_line = optional_localized(require_key(data, "github_line"), "github_line")
@@ -154,36 +166,38 @@ def validate_model_json(data):
 
     promo_lines = require_key(data, "promo_lines")
     if not isinstance(promo_lines, list):
-        raise MetadataError("model JSON key 'promo_lines' must be a list")
+        raise MetadataRuntimeError("model JSON key 'promo_lines' must be a list")
     for index, promo in enumerate(promo_lines):
         if not isinstance(promo, dict):
-            raise MetadataError(f"model JSON key 'promo_lines[{index}]' must be an object")
+            raise MetadataRuntimeError(f"model JSON key 'promo_lines[{index}]' must be an object")
         for field in ("ro", "en", "label"):
             if not isinstance(promo.get(field), str):
-                raise MetadataError(f"model JSON key 'promo_lines[{index}].{field}' must be a string")
+                raise MetadataRuntimeError(f"model JSON key 'promo_lines[{index}].{field}' must be a string")
 
-    chapters = require_key(data, "chapters")
-    if not isinstance(chapters, list):
-        raise MetadataError("model JSON key 'chapters' must be a list")
-    for index, chapter in enumerate(chapters):
-        if not isinstance(chapter, dict):
-            raise MetadataError(f"model JSON key 'chapters[{index}]' must be an object")
-        if not isinstance(chapter.get("timestamp"), str):
-            raise MetadataError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
-        if not isinstance(chapter.get("title"), str):
-            raise MetadataError(f"model JSON key 'chapters[{index}].title' must be a string")
+    chapters = None
+    if require_chapters:
+        chapters = require_key(data, "chapters")
+        if not isinstance(chapters, list):
+            raise MetadataRuntimeError("model JSON key 'chapters' must be a list")
+        for index, chapter in enumerate(chapters):
+            if not isinstance(chapter, dict):
+                raise MetadataRuntimeError(f"model JSON key 'chapters[{index}]' must be an object")
+            if not isinstance(chapter.get("timestamp"), str):
+                raise MetadataRuntimeError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
+            if not isinstance(chapter.get("title"), str):
+                raise MetadataRuntimeError(f"model JSON key 'chapters[{index}].title' must be a string")
 
     tags = require_key(data, "tags")
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
-        raise MetadataError("model JSON key 'tags' must be a list of strings")
+        raise MetadataRuntimeError("model JSON key 'tags' must be a list of strings")
 
     pinned_comment = require_key(data, "pinned_comment")
     if not isinstance(pinned_comment, str):
-        raise MetadataError("model JSON key 'pinned_comment' must be a string")
+        raise MetadataRuntimeError("model JSON key 'pinned_comment' must be a string")
 
     thumbnail_concepts = require_key(data, "thumbnail_concepts")
     if not isinstance(thumbnail_concepts, list) or not 2 <= len(thumbnail_concepts) <= 3:
-        raise MetadataError("model JSON key 'thumbnail_concepts' must be a list of 2 or 3 concepts")
+        raise MetadataRuntimeError("model JSON key 'thumbnail_concepts' must be a list of 2 or 3 concepts")
     for index, concept in enumerate(thumbnail_concepts):
         validate_thumbnail_concept(concept, index)
 
@@ -273,6 +287,29 @@ def validate_chapters(chapters, srt_end):
         normalized.append({"timestamp": stamp, "title": chapter["title"]})
         previous = seconds
     return normalized
+
+
+def load_chapters_file(path):
+    """Read a ``chapters.json``, validate it against the schema and return model-shaped chapters."""
+    resolved = Path(path).expanduser()
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise MetadataError(f"chapters file not found: {resolved}")
+    except OSError as exc:
+        raise MetadataError(f"cannot read chapters file '{resolved}': {exc}")
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise MetadataError(f"chapters file '{resolved}' is not valid JSON: {exc}")
+    try:
+        validate_or_raise(document, "chapters")
+    except SchemaError as exc:
+        raise MetadataError(f"chapters file '{resolved}' is not valid chapters.json: {exc}")
+    return [
+        {"timestamp": format_clock(chapter["start_s"]), "title": chapter["title"]}
+        for chapter in document["chapters"]
+    ]
 
 
 def validate_thumbnail_concepts(concepts, srt_end):
@@ -374,7 +411,16 @@ def build_markdown(name, fields, chapters, ro_description, en_description):
     return "\n".join(lines)
 
 
-def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, name=None, prompt_path=None):
+def run(
+    srt_path,
+    context_path,
+    previous_url=None,
+    repo_url=None,
+    out_dir=None,
+    name=None,
+    prompt_path=None,
+    chapters_path=None,
+):
     """Build the draft and return the ``--json`` summary; raise ``MetadataError`` on bad input."""
     started = time.monotonic()
 
@@ -388,6 +434,9 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
     if not isinstance(members, str) or not members.strip():
         raise MetadataError("config is missing channel.members (a non-empty string)")
     members_sentence = MEMBERS_SENTENCE.replace("{members}", members)
+    channel_url = (config.get("channel") or {}).get("github_url")
+    if not isinstance(channel_url, str) or not channel_url.strip():
+        raise MetadataError("config is missing channel.github_url (a non-empty string)")
 
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
     prompt_text = read_text(prompt_file, "prompt")
@@ -396,15 +445,23 @@ def run(srt_path, context_path, previous_url=None, repo_url=None, out_dir=None, 
     srt_end = max((cue["end"] for cue in cues), default=0.0)
     transcript_text = format_transcript(cues)
 
-    message = build_message(prompt_text, context_text, transcript_text, previous_url, repo_url)
+    file_chapters = load_chapters_file(chapters_path) if chapters_path else None
+
+    message = build_message(
+        prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url
+    )
     response = get_client().complete(
         "metadata",
         [{"role": "user", "content": message}],
         temperature=0.3,
     )
 
-    fields = validate_model_json(parse_model_json(response.text))
-    chapters = validate_chapters(fields["chapters"], srt_end)
+    fields = validate_model_json(
+        parse_model_json(response.text), require_chapters=chapters_path is None
+    )
+    chapters = validate_chapters(
+        file_chapters if file_chapters is not None else fields["chapters"], srt_end
+    )
     fields["thumbnail_concepts"] = validate_thumbnail_concepts(
         fields["thumbnail_concepts"], srt_end
     )
@@ -466,6 +523,11 @@ def build_parser():
     )
     parser.add_argument("srt", help="corrected Romanian .srt (timeline time)")
     parser.add_argument("--context", required=True, help="markdown note with the clip's angle")
+    parser.add_argument(
+        "--chapters",
+        default=None,
+        help="chapters.json to use instead of the model's chapters (schemas/chapters.schema.json)",
+    )
     parser.add_argument("--previous-url", default=None, help="relevant earlier clip to link")
     parser.add_argument("--repo-url", default=None, help="the clip's own code repo")
     parser.add_argument("--out-dir", default=None, help="output folder (default: the SRT's parent)")
@@ -486,10 +548,12 @@ def main(argv=None):
             out_dir=args.out_dir,
             name=args.name,
             prompt_path=args.prompt,
+            chapters_path=args.chapters,
         )
-    except (MetadataError, ConfigError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 2
+    except (MetadataRuntimeError, LLMError) as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (MetadataError, ConfigError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps(summary))
@@ -498,7 +562,7 @@ def main(argv=None):
             f"written: {summary['output']} "
             f"({summary['titles']} titles, {summary['chapters']} chapters, {summary['tags']} tags)"
         )
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

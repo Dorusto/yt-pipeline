@@ -20,7 +20,7 @@ Describe every kept quality segment with the vision model before any editing dec
 - `--frame-width` (default 640) is the width frames are resized to before sending in `legacy` mode; mosaic tiles are always 480 px wide. JPEG quality is 85.
 - `--frame-mode` (`mosaic` or `legacy`, default `mosaic`) chooses how frames reach the model: `mosaic` tiles 6–9 event-picked frames per image, `legacy` sends the old fixed-position frames as separate images.
 - `--force` re-describes a clip or photo whose output already exists. Without it, a clip or photo whose JSON exists and validates against the `describe` schema is skipped.
-- On any error (missing workspace, unreadable quality file, missing clip, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing workspace, unreadable quality file, missing clip, broken config) or `3` (runtime failure after work started: model call, encode, disk write). It never asks questions.
 
 ## Step 2: describe the still photos
 
@@ -60,8 +60,8 @@ The `--json` output is a single object, e.g. `{"clips": 4, "described": 4, "skip
 ## Budget and caps
 
 - Every call is charged to the spend ledger (`WORKSPACE/llm_spend.json` by default, `--spend-ledger` overrides) and `llm_budget_usd` (or `--budget-usd`) caps the job.
-- `--max-calls` stops after that many model calls. When the budget is reached or `--max-calls` is hit, the remaining segments are marked `status: "skipped"` with `skip_reason: "budget_exceeded"` / `"max_calls"`, the outputs written so far stay on disk, the summary is printed and the tool exits **2**.
-- Exit codes: `0` success, `1` bad input or I/O error, `2` stopped because the budget or `--max-calls` was reached.
+- `--max-calls` stops after that many model calls. When the budget is reached or `--max-calls` is hit, the remaining segments are marked `status: "skipped"` with `skip_reason: "budget_exceeded"` / `"max_calls"`, the outputs written so far stay on disk, the summary is printed and the tool exits **3**.
+- Exit codes: `0` success, `2` bad flags, input or config (nothing ran), `3` runtime failure after work started (model call, budget or `--max-calls` cut the run short, encode, disk).
 
 ## Notes
 

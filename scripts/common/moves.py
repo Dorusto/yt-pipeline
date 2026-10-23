@@ -22,6 +22,7 @@ through :func:`slot_screen_length`.
 
 import math
 
+from common.constants import EPSILON
 from common.peak import centre_window
 
 MIDDLE_SPEED_MAX = 1.2
@@ -32,7 +33,6 @@ STAR_MIN_SCORE = 0.85
 MOVE_ROLES = {"move", "transition_in", "transition_out"}
 STATIC_LABELS = {"static", "minor_motion"}
 MIN_GAIN_S = 0.05
-EPSILON = 1e-9
 
 
 def is_star(candidate):

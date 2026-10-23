@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/shorts_candidates.schema.json",
+  "title": "shorts_candidates",
+  "description": "Ranked Shorts candidates of an edit, written by scripts/shorts_rank.py: self-contained spans of 20-60 seconds inside one chapter that start on a sentence start and end on a sentence end, scored by the model on hook and payoff and carrying a title and a description from the same model pass. The top candidates are the input of shorts_generator.py (--candidates) and the top 3 become Mango markers in the FilmCraft export. Times are timeline seconds of the edit they were ranked on.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "tool",
+    "candidates"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UTC timestamp the file was written"
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the script that wrote the file, e.g. scripts/shorts_rank.py"
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "the top 5 candidates, best first",
+      "items": {
+        "type": "object",
+        "required": [
+          "rank",
+          "start_s",
+          "end_s",
+          "duration_s",
+          "score",
+          "hook",
+          "payoff",
+          "reason",
+          "title",
+          "description"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1 for the best candidate"
+          },
+          "start_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "timeline start in seconds, on a sentence start"
+          },
+          "end_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "timeline end in seconds, on a sentence end"
+          },
+          "duration_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "end_s - start_s"
+          },
+          "score": {
+            "type": "number",
+            "description": "final score: (hook + payoff) / 2"
+          },
+          "hook": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "model score for how well the span opens a Short"
+          },
+          "payoff": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "model score for how well the span pays off"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "one line on why this span works as a Short"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "Short title from the same model pass: hook first, at most 60 characters"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "two sentences from the same model pass that tease the span without spoiling the payoff"
+          },
+          "chapter_start_s": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "timeline start of the chapter the span sits in, when chapters.json was given"
+          },
+          "chapter_title": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "title of that chapter, when chapters.json was given"
+          },
+          "layout": {
+            "type": "string",
+            "enum": ["face", "split"],
+            "description": "how shorts_generator.py builds the 9:16 frame: 'face' (default) is the reframe.py face crop; 'split' stacks the face region over the screen region of the same 16:9 frame"
+          }
+        }
+      }
+    }
+  }
+}

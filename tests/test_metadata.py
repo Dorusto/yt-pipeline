@@ -4,6 +4,7 @@ import pytest
 
 import metadata
 from common.llm import MockClient
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 SRT = (
     "1\n00:00:00,000 --> 00:00:02,000\nBună ziua\n\n"
@@ -14,8 +15,13 @@ CONFIG = {
     "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
     "llm_budget_usd": None,
     "llm_backend": "mock",
-    "channel": {"members": "Andrei, Mihai și Maria"},
+    "channel": {
+        "members": "Andrei, Mihai și Maria",
+        "github_url": "https://example.invalid/channel",
+    },
 }
+
+CHANNEL_URL = "https://example.invalid/channel"
 
 MEMBERS = metadata.MEMBERS_SENTENCE.replace("{members}", "Andrei, Mihai și Maria")
 
@@ -157,11 +163,48 @@ def test_missing_channel_members_exits_2(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in err
 
 
-def test_missing_json_key_exits_2(tmp_path, monkeypatch, capsys):
+def test_missing_channel_github_url_exits_2(tmp_path, monkeypatch, capsys):
+    config = {
+        "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
+        "llm_budget_usd": None,
+        "llm_backend": "mock",
+        "channel": {"members": "Andrei, Mihai și Maria"},
+    }
+    code, _ = run_main(tmp_path, monkeypatch, FULL, config=config)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "channel.github_url" in err
+    assert "Traceback" not in err
+
+
+class RecordingClient(MockClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.messages = []
+
+    def complete(self, role, messages, model=None, **kwargs):
+        self.messages.append(messages)
+        return super().complete(role, messages, model=model, **kwargs)
+
+
+def test_channel_url_sent_to_model(tmp_path, monkeypatch):
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=CONFIG)
+    patch(monkeypatch, client)
+    code = metadata.main(
+        [str(srt), "--context", str(context), "--out-dir", str(tmp_path / "out")]
+    )
+    assert code == 0
+    message = client.messages[0][0]["content"]
+    assert "## Links" in message
+    assert f"channel_url: {CHANNEL_URL}" in message
+
+
+def test_missing_json_key_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     del data["subscribe_line"]
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "subscribe_line" in err
     assert "Traceback" not in err
@@ -201,10 +244,10 @@ BAD_CONCEPT_COUNTS = [
 
 
 @pytest.mark.parametrize("name,picks", BAD_CONCEPT_COUNTS, ids=[case[0] for case in BAD_CONCEPT_COUNTS])
-def test_bad_thumbnail_concept_count_exits_2(tmp_path, monkeypatch, capsys, name, picks):
+def test_bad_thumbnail_concept_count_exits_3(tmp_path, monkeypatch, capsys, name, picks):
     data = dict(FULL, thumbnail_concepts=[FULL["thumbnail_concepts"][i] for i in picks])
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "thumbnail_concepts" in err
     assert "Traceback" not in err
@@ -324,3 +367,145 @@ def test_missing_srt_exits_2(tmp_path, monkeypatch, capsys):
     code = metadata.main([str(tmp_path / "nope.srt"), "--context", str(context)])
     assert code == 2
     assert "not found" in capsys.readouterr().err
+
+
+def write_chapters(tmp_path, chapters, name="chapters.json"):
+    document = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-21T00:00:00+00:00",
+        "tool": "scripts/chapters.py",
+        "chapters": chapters,
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+FILE_CHAPTERS = [
+    {"start_s": 0.0, "title": "FileOne", "summary": "one"},
+    {"start_s": 1.0, "title": "FileTwo", "summary": "two"},
+    {"start_s": 2.0, "title": "FileThree", "summary": "three"},
+]
+
+
+def test_chapters_file_overrides_model(tmp_path, monkeypatch):
+    chapters_file = write_chapters(tmp_path, FILE_CHAPTERS)
+    data = dict(
+        FULL,
+        chapters=[
+            {"timestamp": "00:00:00", "title": "ModelIntro"},
+            {"timestamp": "00:00:03", "title": "ModelEnd"},
+        ],
+    )
+    code, out = run_main(tmp_path, monkeypatch, data, extra=["--chapters", str(chapters_file)])
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["chapters"] == [
+        {"timestamp": "00:00:00", "title": "FileOne"},
+        {"timestamp": "00:00:01", "title": "FileTwo"},
+        {"timestamp": "00:00:02", "title": "FileThree"},
+    ]
+    text = out.read_text(encoding="utf-8")
+    assert "00:00:00 FileOne" in text
+    assert "00:00:01 FileTwo" in text
+    assert "00:00:02 FileThree" in text
+    assert "ModelIntro" not in text
+    assert "ModelEnd" not in text
+
+
+def test_chapters_file_model_may_omit_chapters(tmp_path, monkeypatch):
+    chapters_file = write_chapters(tmp_path, FILE_CHAPTERS)
+    data = dict(FULL)
+    del data["chapters"]
+    code, _ = run_main(tmp_path, monkeypatch, data, extra=["--chapters", str(chapters_file)])
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert [chapter["title"] for chapter in payload["chapters"]] == [
+        "FileOne",
+        "FileTwo",
+        "FileThree",
+    ]
+
+
+def test_without_flag_model_chapters_used(tmp_path, monkeypatch):
+    code, _ = run_main(tmp_path, monkeypatch, FULL)
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["chapters"] == [
+        {"timestamp": "00:00:00", "title": "Intro"},
+        {"timestamp": "00:00:02", "title": "Lume"},
+    ]
+
+
+def test_without_flag_missing_chapters_key_exits_3(tmp_path, monkeypatch, capsys):
+    data = dict(FULL)
+    del data["chapters"]
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == EXIT_RUNTIME
+    err = capsys.readouterr().err
+    assert "chapters" in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_first_not_zero_exits_2(tmp_path, monkeypatch, capsys):
+    chapters_file = write_chapters(
+        tmp_path, [{"start_s": 1.0, "title": "Late", "summary": "late"}]
+    )
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(chapters_file)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "chapter 1" in err
+    assert "00:00:01" in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_beyond_srt_end_exits_2(tmp_path, monkeypatch, capsys):
+    chapters_file = write_chapters(
+        tmp_path,
+        [
+            {"start_s": 0.0, "title": "Start", "summary": "start"},
+            {"start_s": 10.0, "title": "Far", "summary": "far"},
+        ],
+    )
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(chapters_file)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "beyond the transcript end" in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_invalid_schema_exits_2(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "chapters.json"
+    path.write_text(
+        json.dumps({"chapters": [{"start_s": 0.0, "title": "NoSummary"}]}), encoding="utf-8"
+    )
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(path)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert str(path) in err
+    assert "Traceback" not in err
+
+
+def test_chapters_file_missing_exits_2(tmp_path, monkeypatch, capsys):
+    missing = tmp_path / "nope.json"
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--chapters", str(missing)])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "not found" in err
+    assert "nope.json" in err
+
+
+def test_chapters_file_json_summary(tmp_path, monkeypatch, capsys):
+    chapters_file = write_chapters(tmp_path, FILE_CHAPTERS)
+    code, _ = run_main(
+        tmp_path,
+        monkeypatch,
+        FULL,
+        extra=["--chapters", str(chapters_file), "--json"],
+        cost_per_call=0.005,
+    )
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["chapters"] == 3
+    assert summary["wall_time_s"] >= 0
+    assert summary["llm_cost_usd"] == 0.005

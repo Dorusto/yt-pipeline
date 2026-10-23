@@ -9,6 +9,7 @@ import pytest
 
 import common.notify as notify
 import recap
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def make_clip(path, duration=1.0, size="160x120", rate=10, audio=True):
@@ -84,11 +85,20 @@ class Recorder:
         elif name == "router":
             self.touch(ws / "route.json", json.dumps({"brief": {"text": brief_text}}))
         elif name == "llm_director":
-            self.touch(ws / "edit.json", json.dumps({"brief": {"text": brief_text}, "made": self.clock}))
+            self.touch(ws / "edit.json", json.dumps({
+                "brief": {"text": brief_text},
+                "made": self.clock,
+                "video": [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.0}],
+            }))
         elif name == "explain":
             self.touch(ws / "explain.html", "<html></html>")
+        elif name == "recap_meta":
+            self.touch(ws / "recap_meta.json", "{}")
         elif name == "render":
             self.touch(ws / "recap_720p.mp4", "video")
+        elif name == "thumbs":
+            self.touch(ws / "thumbs" / "poster.jpg", "jpg")
+            self.touch(ws / "thumbs" / "shot-1.jpg", "jpg")
         elif name == "render_final":
             self.touch(ws / "recap_final.mp4", "video")
         elif name == "export_kdenlive":
@@ -152,7 +162,9 @@ def test_station_order_without_final(tmp_path, monkeypatch, capsys):
         "router",
         "llm_director",
         "explain",
+        "recap_meta",
         "render",
+        "thumbs",
     ]
 
 
@@ -173,7 +185,9 @@ def test_station_order_with_final(tmp_path, monkeypatch, capsys):
         "router",
         "llm_director",
         "explain",
+        "recap_meta",
         "render",
+        "thumbs",
         "render_final",
         "export_kdenlive",
     ]
@@ -204,7 +218,7 @@ def test_new_brief_redoes_only_the_edit(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     recorder.calls.clear()
     assert run_recap(source, workspace, brief="brief B", extra=["--json"]) == 0
-    assert recorder.calls == ["router", "llm_director", "explain", "render"]
+    assert recorder.calls == ["router", "llm_director", "explain", "recap_meta", "render", "thumbs"]
 
 
 def test_failure_stops_the_chain(tmp_path, monkeypatch, capsys):
@@ -212,7 +226,7 @@ def test_failure_stops_the_chain(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / "workspace"
     recorder = Recorder(fail_at="quality")
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--json"]) == 1
+    assert run_recap(source, workspace, extra=["--json"]) == EXIT_RUNTIME
     assert recorder.calls == ["proxy", "ingest", "motion", "quality"]
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
@@ -255,7 +269,7 @@ def test_progress_lines_format(tmp_path, monkeypatch, capsys):
         for line in lines
         if re.match(r"^\[\s*\d+/\d+\] \S+\s+(done|skip|FAIL)\s", line)
     ]
-    assert len(progress) == 11
+    assert len(progress) == 13
     assert any(line.startswith("recap:") for line in lines)
     assert run_recap(source, workspace, extra=["--json"]) == 0
     captured = capsys.readouterr()
@@ -299,7 +313,7 @@ def test_no_start_line_for_skipped_stations(tmp_path, monkeypatch, capsys):
     start_pattern = re.compile(r"^\[\s*\d+/\d+\] \S+\s+start$")
     assert not [line for line in lines if start_pattern.match(line)]
     skips = [line for line in lines if re.match(r"^\[\s*\d+/\d+\] \S+\s+skip\s", line)]
-    assert len(skips) == 11
+    assert len(skips) == 13
 
 
 def test_start_line_format(tmp_path, monkeypatch, capsys):
@@ -343,7 +357,7 @@ def test_real_execute_parses_child_json(tmp_path):
 def test_refuses_workspace_inside_source(tmp_path, capsys):
     source = make_source(tmp_path, names=("clip.mp4",))
     workspace = source / "workspace"
-    assert run_recap(source, workspace) == 1
+    assert run_recap(source, workspace) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "inside the source" in err
@@ -460,7 +474,7 @@ def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
         run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
         == 0
     )
-    assert recorder.calls == ["llm_director", "explain", "render"]
+    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render", "thumbs"]
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
     statuses = {entry["name"]: entry["status"] for entry in summary["stations"]}
@@ -585,7 +599,7 @@ def test_failed_run_does_not_notify(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(recap, "execute", recorder)
     sent = NotifyRecorder()
     monkeypatch.setattr(notify, "send", sent)
-    assert run_recap(source, workspace, extra=["--notify", "--json"]) == 1
+    assert run_recap(source, workspace, extra=["--notify", "--json"]) == EXIT_RUNTIME
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "failed"
     assert summary["notified"] is False
@@ -716,6 +730,17 @@ def test_vertical_station_skip_rule_follows_its_own_file(tmp_path):
     assert recap.is_up_to_date("render_vertical", ctx) is True
 
 
+def test_recap_meta_station_skip_rule_follows_its_own_file(tmp_path):
+    ctx = make_context(tmp_path)
+    edit = ctx.workspace / "edit.json"
+    edit.write_text("{}", encoding="utf-8")
+    assert recap.is_up_to_date("recap_meta", ctx) is False
+    out = ctx.workspace / "recap_meta.json"
+    out.write_text("{}", encoding="utf-8")
+    os.utime(out, (edit.stat().st_mtime + 5, edit.stat().st_mtime + 5))
+    assert recap.is_up_to_date("recap_meta", ctx) is True
+
+
 def test_format_flag_reaches_the_context_and_the_outputs(tmp_path, monkeypatch, capsys):
     source = make_source(tmp_path)
     workspace = tmp_path / "workspace"
@@ -723,7 +748,7 @@ def test_format_flag_reaches_the_context_and_the_outputs(tmp_path, monkeypatch, 
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--format", "both", "--json"]) == 0
     summary = json.loads(capsys.readouterr().out)
-    assert recorder.calls[-2:] == ["render", "render_vertical"]
+    assert recorder.calls[-3:] == ["render", "render_vertical", "thumbs"]
     assert summary["outputs"]["preview_vertical"] == str(workspace / "recap_720p_9x16.mp4")
 
 
@@ -781,8 +806,8 @@ def test_a_failed_vertical_render_does_not_stop_the_other_renders(tmp_path, monk
     workspace = tmp_path / "workspace"
     recorder = Recorder(fail_at="render_vertical")
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--format", "both", "--final", "--json"]) == 1
-    assert recorder.calls[-4:] == ["render_vertical", "render_final", "render_final_vertical", "export_kdenlive"]
+    assert run_recap(source, workspace, extra=["--format", "both", "--final", "--json"]) == EXIT_RUNTIME
+    assert recorder.calls[-5:] == ["render_vertical", "thumbs", "render_final", "render_final_vertical", "export_kdenlive"]
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "failed"
     assert (workspace / "recap_720p.mp4").is_file()
@@ -816,7 +841,7 @@ def test_a_failed_render_keeps_the_new_edit_without_a_video(tmp_path, monkeypatc
     later = Recorder(fail_at="render")
     later.clock += 10000.0
     monkeypatch.setattr(recap, "execute", later)
-    assert run_recap(source, workspace, extra=["--feedback", "shorter", "--json"]) == 1
+    assert run_recap(source, workspace, extra=["--feedback", "shorter", "--json"]) == EXIT_RUNTIME
     summary = json.loads(capsys.readouterr().out)
     kept = workspace / "versions" / summary["version"]
     assert (kept / "edit.json").is_file()
@@ -834,7 +859,144 @@ def test_new_edit_reruns_the_edit_without_feedback(tmp_path, monkeypatch, capsys
     recorder.clock += 10000.0
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--new-edit", "--json"]) == 0
-    assert recorder.calls == ["llm_director", "explain", "render"]
+    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render", "thumbs"]
     director_argv = dict(recorder.argvs)["llm_director"]
     flat = director_argv[0] if isinstance(director_argv[0], list) else director_argv
     assert "--force" in flat
+
+
+def write_isolated_config(tmp_path, monkeypatch, library=None):
+    text = (
+        "models:\n  director: deepseek/deepseek-v4.1-flash\n"
+        "llm_budget_usd: 5.0\nllm_backend: mock\n"
+    )
+    if library is not None:
+        text += f"music:\n  library: {library}\n"
+    path = tmp_path / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(path))
+    return path
+
+
+def test_music_auto_omits_library_when_unset(tmp_path):
+    ctx = make_context(tmp_path, music="auto")
+    ctx.music_dir = None
+    stations = recap.build_stations(ctx)
+    pick = next(station for station in stations if station["name"] == "music_pick")
+    argv = pick["argv"][0]
+    assert "--library" not in argv
+    assert "--workspace" in argv
+
+
+def test_music_auto_without_library_is_a_usage_error(tmp_path, monkeypatch, capsys):
+    write_isolated_config(tmp_path, monkeypatch)
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    assert run_recap(source, tmp_path / "ws", extra=["--music", "auto", "--json"]) == EXIT_USAGE
+    error = capsys.readouterr().err
+    assert "no music library configured" in error
+    for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
+        assert way in error
+
+
+class MusicRecorder(Recorder):
+    def create_outputs(self, name, ctx):
+        super().create_outputs(name, ctx)
+        if name == "music_pick":
+            self.touch(ctx.workspace / "music_choice.json", json.dumps({"path": "track.mp3"}))
+
+
+def test_music_auto_reads_the_library_from_the_config(tmp_path, monkeypatch, capsys):
+    library = tmp_path / "music"
+    library.mkdir()
+    write_isolated_config(tmp_path, monkeypatch, library=str(library))
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    recorder = MusicRecorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, tmp_path / "ws", extra=["--music", "auto", "--json"]) == 0
+    commands = dict(recorder.argvs)
+    argv = commands["music_pick"][0]
+    assert argv[argv.index("--library") + 1] == str(library)
+    capsys.readouterr()
+
+
+def test_main_resolves_the_music_library_path(tmp_path, monkeypatch):
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    real = tmp_path / "real-lib"
+    real.mkdir()
+    link = tmp_path / "link-lib"
+    link.symlink_to(real)
+    captured = {}
+
+    def fake_run(ctx):
+        captured["music_dir"] = ctx.music_dir
+        return {"status": "done"}
+
+    monkeypatch.setattr(recap, "run", fake_run)
+    code = recap.main(
+        [
+            "--source",
+            str(source),
+            "--brief",
+            "a calm recap",
+            "--workspace",
+            str(tmp_path / "ws"),
+            "--music",
+            "auto",
+            "--music-dir",
+            str(link),
+            "--json",
+        ]
+    )
+    assert code == 0
+    assert captured["music_dir"] == real.resolve()
+
+
+def test_music_help_names_the_three_ways():
+    actions = {action.dest: action for action in recap.build_parser()._actions}
+    help_text = actions["music"].help
+    for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
+        assert way in help_text
+
+
+def test_proxy_up_to_date_when_source_gone_and_proxies_remain(tmp_path):
+    ctx = make_context(tmp_path)
+    (ctx.workspace / "proxy").mkdir(parents=True, exist_ok=True)
+    (ctx.workspace / "proxy" / "clip.mp4").write_bytes(b"proxy")
+    assert recap.is_up_to_date("proxy", ctx) is True
+
+
+def test_proxy_station_carries_the_exclude_file(tmp_path):
+    ctx = make_context(tmp_path)
+    stations = recap.build_stations(ctx)
+    proxy = next(station for station in stations if station["name"] == "proxy")
+    argv = proxy["argv"][0]
+    assert "--exclude-file" in argv
+    assert argv[argv.index("--exclude-file") + 1] == str(ctx.workspace / "excluded.json")
+
+
+def test_thumbs_station_after_render(tmp_path):
+    ctx = make_context(tmp_path)
+    names = [station["name"] for station in recap.build_stations(ctx)]
+    assert names.index("thumbs") == names.index("render") + 1
+
+
+def test_thumbs_skip_rule(tmp_path):
+    ctx = make_context(tmp_path)
+    recap_file = ctx.workspace / "recap_720p.mp4"
+    recap_file.write_bytes(b"video")
+    (ctx.workspace / "edit.json").write_text(
+        json.dumps({"video": [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.0}]}),
+        encoding="utf-8",
+    )
+    assert recap.is_up_to_date("thumbs", ctx) is False
+    poster = ctx.workspace / "thumbs" / "poster.jpg"
+    poster.parent.mkdir()
+    poster.write_bytes(b"jpg")
+    stamp = recap_file.stat().st_mtime + 5
+    os.utime(poster, (stamp, stamp))
+    assert recap.is_up_to_date("thumbs", ctx) is False
+    shot = ctx.workspace / "thumbs" / "shot-1.jpg"
+    shot.write_bytes(b"jpg")
+    os.utime(shot, (stamp, stamp))
+    assert recap.is_up_to_date("thumbs", ctx) is True

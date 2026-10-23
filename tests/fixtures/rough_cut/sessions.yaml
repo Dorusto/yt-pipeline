@@ -1,0 +1,4 @@
+sessions:
+  - camera: /rec/camera 2026-10-17 22-25-44.mp4
+    screen: /rec/2026-10-17 22-25-44.mp4
+    words: tests/fixtures/rough_cut/camera 2026-10-17 22-25-44.json

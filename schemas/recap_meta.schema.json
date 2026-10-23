@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/recap_meta.schema.json",
+  "title": "recap_meta",
+  "description": "YouTube title, description and hashtags for a recap, written by scripts/recap_meta.py from the workspace edit.json and the deterministic facts the tool builds (brief text, the four facts place/when/who/occasion from brief_facts.json winning over the brief syntax and the ingest date, shot descriptions). The web app's Recap tab shows the fields with a Copy button each and marks the fact fields missing from the brief and brief_facts.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "title",
+    "description",
+    "hashtags",
+    "model",
+    "llm_cost_usd"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "UTC timestamp the file was written"
+    },
+    "tool": {
+      "type": "string",
+      "description": "the script that wrote the file, e.g. scripts/recap_meta.py"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "the YouTube title, at most 100 characters"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "the YouTube description, 2-3 sentences, at most 1000 characters"
+    },
+    "hashtags": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 10,
+      "description": "5-10 hashtags, each starting with '#'",
+      "items": {
+        "type": "string",
+        "pattern": "^#\\S"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "description": "the fact fields the brief and brief_facts.json did not carry (place, when, who, occasion); the web app marks them",
+      "items": {
+        "type": "string"
+      }
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the model id that answered"
+    },
+    "llm_cost_usd": {
+      "type": "number",
+      "minimum": 0,
+      "description": "USD the model calls of this run cost"
+    }
+  }
+}

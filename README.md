@@ -12,12 +12,13 @@ Licensed under [AGPL-3.0-or-later](LICENSE); external contributions need a signe
 git clone https://github.com/Dorusto/yt-pipeline && cd yt-pipeline
 uv venv && uv pip install -r requirements.txt
 export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.ai/keys
-.venv/bin/python scripts/doctor.py --source ~/media/trip/raw
-.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace \
+.venv/bin/python scripts/doctor.py --source <trip-folder>/raw
+.venv/bin/python scripts/recap.py --source <trip-folder>/raw --workspace <trip-folder>/workspace \
     --brief "90 s, chronological, calm start, ambient sound only"
-# -> ~/media/trip/workspace/recap_720p.mp4 (plus edit.json and shotlog.html)
+# -> <trip-folder>/workspace/recap_720p.mp4 (plus edit.json, shotlog.html and thumbs/)
+# the recap also writes thumbs/poster.jpg and thumbs/shot-N.jpg for the web app
 # full quality from the originals + a Kdenlive project:
-.venv/bin/python scripts/recap.py --source ~/media/trip/raw --workspace ~/media/trip/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
+.venv/bin/python scripts/recap.py --source <trip-folder>/raw --workspace <trip-folder>/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
 # re-running skips finished stations; a new brief only redoes the edit
 ```
 
@@ -27,36 +28,57 @@ For the details see [docs/guides/user-guide.md](docs/guides/user-guide.md); agen
 
 Phone-only flow (Syncthing → inbox.py → serve.py → ntfy): [docs/guides/phone-flow.md](docs/guides/phone-flow.md).
 
+## Pilot host
+
+One small container per person, all on the same released tag; each person
+reaches only their own container through a Tailscale node share, and the inbox
+and the workspaces live on a NAS share mounted into the container. The owner
+sets up the Tailscale share, the NAS share, the mount and the env file; the
+update script does the rest.
+
+```bash
+cd <repo>
+sudo deploy/update.sh <tag>          # fetch the tag, install, restart, smoke test, roll back on failure
+deploy/update.sh <tag> --dry-run     # print the steps, change nothing
+```
+
+The systemd unit template is `deploy/yt-pipeline-web.service` (an
+`EnvironmentFile` at `/etc/yt-pipeline/env`, not in the repo). The full guide,
+including the storage quota, the per-instance OpenRouter key and the project
+costs URL, is [docs/guides/pilot-host.md](docs/guides/pilot-host.md).
+
 ---
 
 ## Workflow
 
 ```
-1. Export final video from editor (.mp4)
-2. whisper Clip.mp4 --language Romanian --model turbo --output_format srt \
-       --word_timestamps True --max_line_width 42 --max_line_count 2 \
-       --output_dir /path/to/export/
-3. python scripts/correct_srt.py raw.srt Clip_RO.srt
-4. [Manual SRT review — fix remaining errors directly in the file]
-5. python scripts/translate_srt.py Clip_RO.srt Clip_EN.srt
-6. [DEPRECATED 2026-09-06, see docs/DECISIONS.md] python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
-   → no longer used for the main video's metadata — a generic transcript-only model can't
-     see narrative decisions already made (angle, what got cut, pre-selected Shorts moments).
-     Main video metadata is now written directly by Claude from the project's own structure doc.
-7. Edit scripts/shorts_config.yaml with segments already decided in the project's own planning
-   doc (not from a generated candidates file)
-8. .venv/bin/python scripts/shorts_generator.py --video Clip.mp4
-9. [Upload main video → add youtube_url to scripts/shorts_config.yaml]
-10. [Also deprecated for the same reason as step 6] python scripts/analyze_srt.py Clip_RO.srt Clip.mp4
-    --shorts-config scripts/shorts_config.yaml — per-short title/description are now written
-    manually (by Claude, from the pre-decided segment), not generated here
+1. Export the final video from the editor (.mp4) — the edit is the source of truth
+   (a FilmCraft project, an edit.json, or just the media file)
+2. Transcribe once when no word JSON exists yet — one Whisper pass per source:
+   .venv/bin/python scripts/transcribe.py Clip.mp4 --out-dir words/
+   (raw .srt + _words.json; --backend mock for an offline run)
+3. Run the publish chain (skill: yt-publish):
+   .venv/bin/python scripts/publish.py --project out/ --context context.md \
+       --fcproj project.fcproj --sequence Main --words-dir words/ --json
+   (also --from-edit edit.json or --media Clip.mp4; steps: subtitles -> corrections
+    -> human-review stop -> EN translation -> thumbnail -> metadata draft,
+    publish_state.json tracks them and re-runs skip finished steps)
+4. [Manual SRT review at the stop — fix remaining errors in the file]
+5. Continue past the review stop: repeat step 3 with --resume
+6. Build the manual-upload kit for YouTube Studio:
+   .venv/bin/python scripts/publish.py ... --resume --kit --final-video final.mp4 --kit-loudness
+   (publish-kit/: video, RO/EN SRTs, thumbnail, studio.md copy-ready blocks + checklist)
+7. For Shorts from the finished video: edit scripts/shorts_config.yaml with the
+   segments decided in the project's own planning doc, then
+   .venv/bin/python scripts/shorts_generator.py --video Clip.mp4 (skill: yt-shorts)
+8. [Upload main video → add youtube_url to scripts/shorts_config.yaml]
 ```
 
 Note: Whisper accepts `.mp4` directly — no separate audio export needed.
 
-`analyze_srt.py` itself is not removed (client now points at OpenRouter, see below) — only its use for metadata/Shorts-description generation is deprecated. `shorts_generator.py` (video cropping + karaoke burn-in) is unaffected — it does no text generation.
+Each chain step is also a standalone script (`transcribe.py`, `correct_srt.py`, `translate_srt.py`, `thumbnail.py`, `metadata.py`) when only one of them is needed. `analyze_srt.py` metadata generation is deprecated since 2026-09-06 (a generic transcript-only model can't see the narrative decisions already made — angle, what got cut, pre-selected Shorts moments) and is not part of the chain; the script itself stays (client now points at OpenRouter, see below). `shorts_generator.py` (video cropping + karaoke burn-in) is unaffected — it does no text generation.
 
-All outputs (translated SRT, cropped shorts) are saved next to the video file.
+Outputs: the publish chain writes under `--project`; `translate_srt.py` and `shorts_generator.py` save next to the video file.
 
 ---
 
@@ -75,9 +97,20 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `thumbnail.py` | portrait photo + title | `thumbnail.jpg` (1280x720) + optional `thumbnail.psd` |
 | `kdenlive_from_fragments.py` | `fragments.yaml` | `.kdenlive` rough-cut project |
 | `srt_from_fragments.py` | `fragments.yaml` + raw SRTs | retimed `.srt` for the rough cut |
+| `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | read-only preview of the workspaces on the tailnet |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the reviewer verdict per version and the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches, the upload consent checkbox, the Details tab group, the summary-first Why?/Shots pages, the poster cards and the shot-strip thumbnails |
+| `thumbs.py` | workspace with `edit.json` + recap | `thumbs/poster.jpg` + `thumbs/shot-N.jpg` (320 px); skill `yt-thumbs` |
+| `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
+| `edit_drop.py` | workspace with `versions/` | new version with shots removed (no model call) |
+| `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
+
+Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
+
+**Exit codes** (every tool, constants in `scripts/common/exit_codes.py`): `0` success, `1` finished but something needs a human look (check-type tools, suspect results), `2` usage/input/config error and nothing ran, `3` runtime failure after work started (external program, model call, disk). `scripts/mode_b.py` is the one exception and keeps its own documented `0`/`1`/`2`/`3` meanings (all clear / suspect / incomplete / error).
+
+**Structured errors** (`--json`): when a `--json` run fails, every tool prints one `{"ok": false, "error": "...", "exit_code": N}` object on stdout (the human `[error]` line stays on stderr), through `scripts/common/errors.py` `report_error`, so an agent reads the same shape everywhere.
 
 ---
 
@@ -85,12 +118,12 @@ All scripts live in `scripts/` (see paths above for exact commands).
 
 Shared building blocks for the AI Director track (see `docs/VISION.md`). Independent of the finished-clip pipeline above.
 
-- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `__init__.py`.
+- `scripts/common/` — shared code no tool may duplicate: `notify.py` (ntfy), `ffmpeg_tools.py` (encoder selection), `schema.py` (JSON-Schema validation), `config.py` (AI Director config loader), `summary.py` (`--json` wall time and LLM cost fields), `__init__.py`.
 - `config.yaml` — project-wide AI Director config: OpenRouter model id per role, per-job `llm_budget_usd`, `llm_backend`, optional `spend_ledger`. Copy from the committed `config.yaml.example`; `config.yaml` is git-ignored and holds no secrets (API keys stay in `OPENROUTER_API_KEY`).
 - `scripts/common/llm.py` — OpenRouter client with `llm_budget_usd` spend tracking against a per-project ledger file (`<workspace>/llm_spend.json`), role-to-model resolution and a mock backend for offline tests and dry runs. An OpenRouter response without `usage.cost` raises `MissingUsageCost` instead of counting as free.
 - `schemas/` — JSON Schemas for the artifacts that pass between stages. `fragments.schema.json` describes the edit decision list read by `kdenlive_from_fragments.py` and `srt_from_fragments.py`; `ingest.schema.json`, `motion.schema.json` and `quality.schema.json` describe the D1a analysis outputs; `reframe.schema.json` describes the crop path written by `reframe.py`.
 - `tests/` — pytest suite with tiny offline fixtures. Runs on a CPU-only machine (no GPU, no torch/whisperx).
-- `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL`, default `http://10.10.1.61:8090/opencode-doru`).
+- `scripts/notify.py` — post a short message to the project ntfy server (URL from `NTFY_URL` or the config key `ntfy_url` — no built-in default).
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -180,6 +213,27 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ---
 
+## Picture-in-picture finishing (finish_pip.py)
+
+`finish_pip.py` finishes a Mode B clip in the open FilmCraft project: from a sequence inspect JSON it finds the screen spans (only real screen video items — a still or a graphic on the screen track never makes a span), mattes the camera source ranges covering them and places the mattes as a bottom-right picture-in-picture, snapped to the span edges. Skill: `yt-finish-pip`.
+
+```bash
+.venv/bin/python scripts/finish_pip.py --sequence sequence.json \
+  --camera-dir <clip-folder>/camera --matte-dir <clip-folder>/matte \
+  --out-dir <clip-folder>/finish --bridge 127.0.0.1:7714 --dry-run
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `finish_pip.py` | `sequence.json` + `camera/` | `finish_pip.place.jsonl`, `finish_pip.animate.jsonl` |
+
+- The camera ranges are padded 0.5 s and merged under 2 s, one `matte.py` call each; the mattes go to `--matte-dir`, never into the camera folder (originals are read-only). A still or a graphic on the camera track is not a camera piece.
+- The PiP is 45 % of the frame (36 % over full-screen explainer scenes) with an eased entry (quick ease-out with slight overshoot) and a short anticipation exit.
+- `--dry-run` prints the plan; `--bridge` (or `--project` for a headless file) runs both phases through `filmcraft-cli run steps.jsonl`. `--json` reports `ranges[]` with `matted`/`placed`/`keyframed`, `edge_checks[]`, `nothing_to_do`, `wall_time_s` and `llm_cost_usd`.
+- Re-run safe: a re-run on a finished project prints `nothing to do`; when the placements exist but the animate phase is missing or failed it rewrites `finish_pip.animate.jsonl` instead. Exit codes: `0` ok, `2` usage error, `1` unexpected.
+
+---
+
 ## Graphics overlays (graphics.py)
 
 `graphics.py` renders branded graphic overlays (lower third, counter, callout) as ProRes 4444 `.mov` files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0): a composition HTML per template in `assets/graphics/` is filled with the brand values from `brand.json` and the entry props, then rendered by the pinned `hyperframes@0.8.181` CLI. Skill: `yt-graphics`.
@@ -223,6 +277,8 @@ Skill: `yt-director`.
 | Script | Input | Output |
 |:---|:---|:---|
 | `director.py` | `ws/ingest.json` + `ws/motion/*.json` + `ws/quality/*.json` | `ws/edit.json` — video slots (clip, in/out, score, reason) + audio/captions/graphics plan |
+
+The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate.
 
 ---
 
@@ -283,6 +339,52 @@ See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured,
 
 ---
 
+## FilmCraft export (export_filmcraft.py)
+
+`export_filmcraft.py` turns an `edit.json` edit list into an editable FilmCraft `.fcproj` project. It writes the project JSON directly (route `json`) with the exact shapes a real FilmCraft save produces, so no FilmCraft is needed at export time. Media is referenced by path, never embedded. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj --json
+.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+  --graphics-plan graphics_plan.json --graphics-dir overlays/ --sequence Main
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `export_filmcraft.py` | `edit.json` (+ optional `graphics_plan.json` + overlays) | `.fcproj` project (atomic replace, re-run safe) |
+
+Video slots go on `Camera 1`, screen slots on `Screen 1`, each video slot's audio on `Audio 1`, overlays on `Graphics 1` above the picture. One Green marker per used slot carries its reason; a slot flagged for a human check (`centred` or a speed ramp) gets a Rose "to redo" marker instead; each placed overlay gets a Mango marker. Missing media is a warning (the project opens with offline media), photo slots export as stills with a "Ken Burns not exported" warning and speed ramps export at real time with a warning. `filmcraft-cli` is only needed to open or inspect the result (`$FILMCRAFT_CLI` or PATH). `--json` reports the placed counts, marker counts, missing media and warnings.
+
+Consecutive video slots sharing the same `id` are two angles of one cut window: they are placed at one shared timeline start, with one audio clip per pair and one marker per pair. This is how a Mode B rough cut (below) opens with the screen and the camera cut identically.
+
+---
+
+## Mode B rough cut (rough_cut.py)
+
+`rough_cut.py` turns one or more talking-head + screen recording sessions into an `edit.json` rough cut: silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason. The output opens through `export_filmcraft.py` with the screen on `Screen 1` and the camera on `Camera 1`, the same cuts on both, ready for a human edit. Skill: `yt-mode-b`.
+
+```bash
+.venv/bin/python scripts/mode_b.py FOLDER --json
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --json
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --config scripts/rough_cut_config_example.yaml
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --llm --json
+.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --review cut_review.yaml --json
+```
+
+| Script | Input | Output |
+|:---|:---|:---|
+| `mode_b.py` | a folder of OBS recordings (`camera ...` files + optional sibling screen files) | `mode_b/words/`, `mode_b/sessions.yaml`, `mode_b/edit.json`, `mode_b/project.fcproj` (one command, skip rule, `--force`) |
+| `rough_cut.py` | `sessions.yaml` (camera + optional screen + Whisper words JSON) | `edit.json` rough cut (atomic replace, re-run safe; `--review cut_review.yaml` honours the phone cut review) |
+| `eval_rough_cut.py` | `edit.json` + `sessions.yaml` + a reference `.fcproj` + `--words-dir` | precision/recall of the kept words vs a hand edit, the sessions/sections the reference did not use, the biggest disagreements, a `subs_from_edit.py` cross-check (table, or `--json`/`--out`); `--review cut_review.yaml` adds the phone cut review as ground truth |
+
+`mode_b.py` is the one-command front door: it transcribes every session with no words JSON yet (`--backend mock` for offline runs), writes the manifest, runs `rough_cut.py` and exports the FilmCraft project, skipping any step whose output already exists (`--force` re-runs everything). `--config` and `--llm` are passed to `rough_cut.py`; outputs go under `<folder>/mode_b/` and the last human line is `project: <path>`.
+
+`sessions.yaml` is validated against `schemas/sessions.schema.json`. The cut rules (`pause_gap_s`, `handle_s`, `retake_window_s`, `retake_similarity`, `retake_min_words`, `repeat_window_s`, `fillers`) come from `--config` or the built-in defaults (see `scripts/rough_cut_config_example.yaml`). Word times come only from the given word JSON files — the tool never transcribes. `--llm` (off by default) proposes extra cuts for human approval in `<out-dir>/rough_cut_proposals.json` and never changes the edit. `--json` reports `outputs`, `sessions`, `windows`, `slots`, `words_read`, `words_kept`, `cuts`, `warnings`, `wall_time_s`, `llm_cost_usd`.
+
+`eval_rough_cut.py` scores a rough cut against a hand-made FilmCraft edit of the same material: it maps both sides' words with the same midpoint rule and reports `precision`/`recall`, the same numbers minus the sessions and long sections the reference did not use (`precision_used`/`recall_used`), the ten biggest disagreement runs with timecodes, and a `subs_from_edit.py` cross-check. It is a measuring tool with no pass/fail gate (exit `0` on success, `2` on a user error) and calls no model.
+
+---
+
 ## Loudness (loudness.py)
 
 `loudness.py` applies the audio loudness recipe as one command, with two backends. Skill: `yt-filmcraft`.
@@ -310,6 +412,48 @@ See `docs/ARCHITECTURE.md` for how the generated Kdenlive/MLT XML is structured,
 ```
 
 `--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500). There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
+
+---
+
+## Costs ledger (costs.py)
+
+`costs.py` keeps a small SQLite ledger of what the project costs and earns: model jobs, build-agent spend, fixed monthly costs, one-off investments and donations. It calls no model, so `llm_cost_usd` is always `0.0`. Skill: `yt-costs`.
+
+The ledger is a SQLite file **outside the repository**. Its path comes from `--ledger`, else the `YT_PIPELINE_COSTS_DB` environment variable, else `costs.path` in the config; with none set the tool stops with a usage error naming those three ways. Docs and examples write `<costs.db>`.
+
+```bash
+.venv/bin/python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+.venv/bin/python scripts/costs.py --ledger <costs.db> totals --month 2026-10 --json
+.venv/bin/python scripts/costs.py --ledger <costs.db> list --kind model_job
+```
+
+- Five kinds: `model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`.
+- `import-jobs` reads each workspace's `llm_spend.json`; `import-dev` reads the build agents' run-spend JSON. Both are idempotent by `source` (the project name for jobs, the date for dev spend), so re-running never duplicates a row.
+- `totals` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance (donations minus model + dev + investments + fixed monthly × months). `costs.py totals --json` and the web page share `compute_totals` from `scripts/common/costs.py`.
+
+---
+
+## Costs page
+
+The web app has a read-only **Costs** page (`GET /costs`, linked in the top bar). It shows, per project, the model cost from the workspace's `llm_spend.json` and the number of versions, then the ledger totals (monthly running cost, development total, donations and the balance, coloured green when positive and red when negative) and an optional donation link. The page reads the same totals object as `costs.py totals --json`, through the shared `scripts/common/costs.py`; it never writes the ledger and never handles payments.
+
+The ledger path comes from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`; the donation links from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_links` (a list of `{label, url}`; `costs.donation_url` with one link stays accepted) in the config. With no ledger configured the page says the ledger is not set up. The per-workspace `feedback.jsonl` (about an edit) and the per-instance requests file (feature requests to the owner) are two separate stores.
+
+The **Feedback and requests** form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file. Its path comes from `--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`; with none set the form is hidden and the page says requests are not set up. `--check` warns about a missing ledger or requests file without failing.
+
+---
+
+## Web app parts and consent
+
+`serve.py` can be handed to a friend with only some parts on. `--features` (comma-separated), else `YT_PIPELINE_FEATURES`, else `web.features` in the config lists the parts shown on this instance — `upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`; with none set every part is on. The server refuses the routes of a part that is off with a 404, not just hiding the links. `--consent-text`, else `YT_PIPELINE_CONSENT_TEXT`, else `web.consent_text` is optional: when set, the upload page shows it with a required "I agree" checkbox and an upload without it is refused. The upload and re-edit brief fields carry hint chips and a multi-line example placeholder that is never sent. A project page has a bin icon that deletes the workspace and its inbox source, refused while a run is going.
+
+---
+
+## Logo and brand
+
+The app logo is one of three flat SVG marks in `assets/brand/` (`option-1` clapperboard, `option-2` viewfinder, `option-3` reticle), own work under the repository licence. `GET /brand` shows all three side by side for the owner to choose. `brand.logo` in the config (or `--brand-logo`, else `YT_PIPELINE_BRAND_LOGO`; default `option-1`) picks the one this instance shows left of the app name in the top bar and uses as the SVG favicon (`GET /favicon.svg`). Each mark is a 48×48 square drawn in two theme colours (`--sea`, `--stone`) as CSS variables with hex fallbacks, so it adapts to the light and dark theme when inlined and still renders standalone.
 
 ---
 

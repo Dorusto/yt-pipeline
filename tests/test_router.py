@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import router
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def run_cli(*args, cwd=None):
 def route_from(tmp_path, brief, *extra):
     out = tmp_path / "route.json"
     result = run_cli("--brief", brief, "--out", out, *extra, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     return json.loads(out.read_text(encoding="utf-8")), json.loads(result.stdout)
 
 
@@ -75,7 +76,7 @@ def test_content_type_from_keywords(tmp_path, content_type):
 def test_flag_wins_over_brief(tmp_path):
     out = tmp_path / "route.json"
     result = run_cli("--brief", "a travel trip", "--content-type", "tutorial", "--out", out, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["content_type"] == "tutorial"
     assert record["content_type_source"] == "flag"
@@ -101,7 +102,7 @@ def test_workspace_detects_vacation(tmp_path):
     )
     out = workspace / "route.json"
     result = run_cli("--brief", "make a nice video", "--workspace", workspace, "--out", out, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["content_type"] == "vacation"
     assert record["content_type_source"] == "workspace"
@@ -119,7 +120,7 @@ def test_workspace_detects_talking_head(tmp_path):
     )
     out = workspace / "route.json"
     result = run_cli("--brief", "make a nice video", "--workspace", workspace, "--out", out, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["content_type"] == "talking-head"
     assert record["content_type_source"] == "workspace"
@@ -228,7 +229,7 @@ def test_rerun_is_skipped(tmp_path):
     first = run_cli("--brief", S1_BRIEF, "--out", out, "--json")
     assert json.loads(first.stdout)["status"] == "written"
     second = run_cli("--brief", S1_BRIEF, "--out", out, "--json")
-    assert second.returncode == 0
+    assert second.returncode == EXIT_OK
     assert json.loads(second.stdout)["status"] == "skipped"
     forced = run_cli("--brief", S1_BRIEF, "--out", out, "--force", "--json")
     assert json.loads(forced.stdout)["status"] == "written"
@@ -240,7 +241,7 @@ def test_brief_file_and_workspace_default_out(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     result = run_cli("--brief-file", brief, "--workspace", workspace, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert Path(summary["out"]) == workspace / "route.json"
     assert (workspace / "route.json").is_file()
@@ -248,7 +249,7 @@ def test_brief_file_and_workspace_default_out(tmp_path):
 
 def test_missing_brief_errors():
     result = run_cli("--out", "/tmp/route-nowhere.json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     lines = [line for line in result.stderr.splitlines() if line.strip()]
     assert len(lines) == 1
     assert lines[0].startswith("[error]")
@@ -257,14 +258,14 @@ def test_missing_brief_errors():
 def test_missing_workspace_warns(tmp_path):
     out = tmp_path / "route.json"
     result = run_cli("--brief", S1_BRIEF, "--workspace", tmp_path / "nope", "--out", out, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     record = json.loads(out.read_text(encoding="utf-8"))
     assert any("workspace" in warning for warning in record["warnings"])
 
 
 def test_help_mentions_flags():
     result = run_cli("--help")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     assert "--brief" in result.stdout
     assert "--workspace" in result.stdout
     assert "--json" in result.stdout

@@ -1,0 +1,17 @@
+{
+  "text": "Unu doi trei",
+  "language": "ro",
+  "segments": [
+    {
+      "id": 0,
+      "start": 0.5,
+      "end": 3.0,
+      "text": "Unu doi trei",
+      "words": [
+        {"word": " Unu", "start": 0.5, "end": 0.9, "probability": 0.9},
+        {"word": " doi", "start": 1.2, "end": 1.6, "probability": 0.9},
+        {"word": " trei", "start": 2.0, "end": 2.5, "probability": 0.9}
+      ]
+    }
+  ]
+}

@@ -7,15 +7,19 @@ Usage:
     echo "blocked on vision model" | python scripts/notify.py - --title Blocked
     python scripts/notify.py "done" --json
 
-The server URL comes from NTFY_URL, default
-http://10.10.1.61:8090/opencode-doru.
+The server URL comes from NTFY_URL or the config key ``ntfy_url``; there is no
+built-in default (never a private address in this public repository).
 """
 
 import argparse
 import json
 import sys
+import time
 
 from common.notify import NotifyError, resolve_url, send
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
+from common.summary import summary_fields
 
 
 def build_parser():
@@ -32,6 +36,7 @@ def build_parser():
 
 
 def main(argv=None):
+    started = time.monotonic()
     args = build_parser().parse_args(argv)
 
     if args.message == "-":
@@ -39,15 +44,18 @@ def main(argv=None):
     else:
         message = args.message
 
-    target = resolve_url(args.url)
+    try:
+        target = resolve_url(args.url)
+    except NotifyError as exc:
+        return report_error(exc, EXIT_USAGE, args.json, sent=False, url=None, **summary_fields(started))
 
     if args.dry_run:
-        summary = {"sent": False, "url": target, "message": message}
+        summary = {"sent": False, "url": target, "message": message, **summary_fields(started)}
         if args.json:
             print(json.dumps(summary))
         else:
             print(f"dry-run: would post to {target}")
-        return 0
+        return EXIT_OK
 
     tags = args.tags.split(",") if args.tags else None
     try:
@@ -60,18 +68,14 @@ def main(argv=None):
             timeout=args.timeout,
         )
     except NotifyError as exc:
-        if args.json:
-            print(json.dumps({"sent": False, "url": target, "error": str(exc)}))
-        else:
-            print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_RUNTIME, args.json, sent=False, url=target, **summary_fields(started))
 
-    summary = {"sent": True, "url": target, "status": status}
+    summary = {"sent": True, "url": target, "status": status, **summary_fields(started)}
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"sent to {target} (HTTP {status})")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

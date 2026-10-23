@@ -28,10 +28,13 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from common.schema import SchemaError, validate_or_raise
+from common.brand import BrandError, parse_hex_color
+from common.brand import load_brand as load_brand_kit
+from common.brand import resolve_font as resolve_font_kit
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/thumbnail.py"
-DEFAULT_BRAND = Path(__file__).resolve().parents[1] / "brand.json"
 FONT_KEYS = ("title", "kicker", "tag")
 TITLE_FLOOR_PX = 40
 TITLE_STEP_PX = 4
@@ -40,6 +43,10 @@ KEYWORD_STEP_PX = 4
 KICKER_FLOOR_PX = 16
 KICKER_STEP_PX = 2
 JPEG_QUALITY = 92
+
+
+class ThumbnailRuntimeError(RuntimeError):
+    """Raised when the cut-out model is missing or fails."""
 
 
 class ThumbnailError(RuntimeError):
@@ -80,32 +87,21 @@ def build_parser():
 
 
 def hex_to_rgb(value):
-    digits = value.lstrip("#")
-    return tuple(int(digits[index:index + 2], 16) for index in (0, 2, 4))
+    return parse_hex_color(value)
 
 
 def load_brand(path):
-    brand_path = Path(path).expanduser()
-    if not brand_path.is_file():
-        raise ThumbnailError(f"brand kit not found: {brand_path}")
     try:
-        brand = json.loads(brand_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ThumbnailError(f"cannot read brand kit {brand_path}: {exc}") from exc
-    try:
-        validate_or_raise(brand, "brand")
-    except SchemaError as exc:
-        raise ThumbnailError(f"invalid brand kit {brand_path}: {exc}") from exc
-    return brand, brand_path
+        return load_brand_kit(path)
+    except BrandError as exc:
+        raise ThumbnailError(str(exc))
 
 
 def resolve_font(brand, brand_dir, key):
-    font_path = Path(brand["fonts"][key]["path"])
-    if not font_path.is_absolute():
-        font_path = brand_dir / font_path
-    if not font_path.is_file():
-        raise ThumbnailError(f'font file not found for brand key "fonts.{key}": {font_path}')
-    return str(font_path)
+    try:
+        return str(resolve_font_kit(brand, brand_dir, key))
+    except BrandError as exc:
+        raise ThumbnailError(str(exc))
 
 
 _font_cache = {}
@@ -144,6 +140,33 @@ def draw_tracked(draw, xy, text, font, fill, tracking_px):
     for char in text:
         draw.text((pen_x, baseline), char, font=font, fill=fill, anchor="ls")
         pen_x += font.getlength(char) + tracking_px
+
+
+def line_ink_band(line, font, tracking_px):
+    """Ink extent of one tracked line relative to its baseline: ``(top, bottom)`` inclusive."""
+    ascent, descent = font.getmetrics()
+    margin = 16
+    baseline = ascent + margin
+    width = int(math.ceil(tracked_width(line, font, tracking_px))) + 2 * margin
+    height = ascent + descent + 2 * margin
+    probe = Image.new("L", (max(1, width), max(1, height)), 0)
+    draw_tracked(ImageDraw.Draw(probe), (margin, baseline), line, font, 255, tracking_px)
+    bbox = probe.getbbox()
+    if bbox is None:
+        return 0, 0
+    return bbox[1] - baseline, bbox[3] - 1 - baseline
+
+
+def keyword_leading(lines, font, tracking_px, base_leading, min_gap_px=2):
+    """Effective leading keeping at least ``min_gap_px`` clear rows between consecutive lines."""
+    if len(lines) < 2:
+        return base_leading
+    bands = [line_ink_band(line, font, tracking_px) for line in lines]
+    required = max(
+        min_gap_px + 1 - bands[index + 1][0] + bands[index][1]
+        for index in range(len(lines) - 1)
+    )
+    return max(base_leading, math.ceil(required))
 
 
 def fit_title(text, font_path, spec, column_width):
@@ -314,7 +337,7 @@ def cutout_portrait(photo_image, model_name):
     try:
         from rembg import new_session, remove
     except ImportError as exc:
-        raise ThumbnailError(
+        raise ThumbnailRuntimeError(
             "rembg is not installed: pip install rembg (or re-run with --skip-cutout)"
         ) from exc
     session = new_session(model_name)
@@ -453,7 +476,7 @@ def render_keyword(text, brand, font_path, theme, column_width):
     tracking_px = tracking_em * size
     origin_x = brand["layout"]["text_x"]
     baseline = brand["layout"]["keyword_baseline_y"]
-    leading = brand["layout"]["keyword_leading_px"]
+    leading = keyword_leading(lines, font, tracking_px, brand["layout"]["keyword_leading_px"])
     color = hex_to_rgb(brand["colors"][theme["keyword"]])
 
     def glyphs(draw, dx, dy, fill):
@@ -549,7 +572,7 @@ def human_summary(summary):
 
 
 def render(args, started):
-    brand, brand_path = load_brand(args.brand or DEFAULT_BRAND)
+    brand, brand_path = load_brand(args.brand)
     width = brand["canvas"]["width"]
     height = brand["canvas"]["height"]
     theme = brand["themes"][args.theme]
@@ -643,14 +666,15 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary = render(args, started)
+    except ThumbnailRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (ThumbnailError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
         print(human_summary(summary))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

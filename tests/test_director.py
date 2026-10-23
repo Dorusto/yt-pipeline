@@ -9,6 +9,7 @@ from PIL import Image
 import director
 from common.moves import slot_screen_length
 from common.schema import validate
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "director.py"
@@ -567,7 +568,7 @@ def test_force_rewrites(tmp_path):
 
 def test_missing_workspace_is_an_error(tmp_path):
     result = run_director("--workspace", tmp_path / "nope", "--json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 

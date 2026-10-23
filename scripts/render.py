@@ -4,7 +4,7 @@
 
 Usage:
     python scripts/render.py --edit edit.json --out recap_720p.mp4
-    python scripts/render.py --edit edit.json --out final.mp4 --originals-dir ~/media/yt-test/raw
+    python scripts/render.py --edit edit.json --out final.mp4 --originals-dir <source-folder>
 
 The tool cuts each video slot from the clip named in ``sources[]`` (the proxy)
 or, when ``--originals-dir`` is given, from the full-resolution original of the
@@ -38,11 +38,14 @@ from common.ambience import (
     build_filters,
     resolve_denoiser,
 )
-from common.ffmpeg_tools import ffmpeg_path
+from common.ffmpeg_tools import ffmpeg_path, probe_duration
 from common.moves import middle_speed_of, slot_screen_length
+from common.timeline_words import fade_for_join
 from common.photos import ensure_jpeg, open_photo
 from common import vertical
 from common.schema import SchemaError, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 FPS = 25
 SAMPLE_RATE = 48000
@@ -54,6 +57,10 @@ MUSIC_DUCK_THRESHOLD = 0.1
 MUSIC_DUCK_RATIO = 3.0
 MUSIC_DUCK_ATTACK_MS = 20
 MUSIC_DUCK_RELEASE_MS = 400
+
+
+class RenderRuntimeError(RuntimeError):
+    """Raised when a render fails after it started (ffprobe, ffmpeg)."""
 
 
 class RenderError(RuntimeError):
@@ -68,7 +75,7 @@ def build_parser():
             "examples:\n"
             "  python scripts/render.py --edit edit.json --out recap_720p.mp4\n"
             "  python scripts/render.py --edit edit.json --out final.mp4"
-            " --originals-dir ~/media/yt-test/raw\n"
+            " --originals-dir <source-folder>\n"
             "  python scripts/render.py --edit edit.json --out recap_720p_9x16.mp4 --format 9x16\n"
             "  python scripts/render.py --edit edit.json --out recap_720p.mp4 --format both\n"
         ),
@@ -195,14 +202,14 @@ def run_ffprobe(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise RenderError(f"could not run ffprobe: {exc}") from exc
+        raise RenderRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise RenderError(f"ffprobe failed for {path}: {detail}")
+        raise RenderRuntimeError(f"ffprobe failed for {path}: {detail}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise RenderError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+        raise RenderRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
 
 
 def probe_output(path):
@@ -213,13 +220,6 @@ def probe_output(path):
     if video is None:
         raise RenderError(f"no video stream in {path}")
     return duration, int(video["width"]), int(video["height"])
-
-
-def probe_duration(path):
-    try:
-        return round(float(run_ffprobe(path)["format"]["duration"]), 3)
-    except (RenderError, KeyError, TypeError, ValueError):
-        return None
 
 
 def has_audio_stream(path):
@@ -238,14 +238,14 @@ def has_audio_stream(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise RenderError(f"could not run ffprobe: {exc}") from exc
+        raise RenderRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise RenderError(f"ffprobe failed for {path}: {detail}")
+        raise RenderRuntimeError(f"ffprobe failed for {path}: {detail}")
     try:
         return bool(json.loads(result.stdout).get("streams"))
     except json.JSONDecodeError as exc:
-        raise RenderError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+        raise RenderRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
 
 
 def resolve_clip(clip, sources, media_dir, originals_dir):
@@ -334,19 +334,6 @@ def probe_video_size(path):
         return width, height
     except RenderError:
         return None
-
-
-def fade_for_join(slot, dur_prev, dur_next, xfade_s):
-    """Return the crossfade length used at the join into ``slot``; 0 means cut."""
-    transition = slot.get("transition") or {}
-    if transition.get("type") != "crossfade":
-        return 0.0
-    requested = transition.get("duration_s") or 0.0
-    if requested <= 0:
-        requested = xfade_s
-    if requested <= 0:
-        return 0.0
-    return min(requested, dur_prev / 2, dur_next / 2)
 
 
 def total_duration(slots, durations, xfade_s):
@@ -973,10 +960,10 @@ def render(
         if result.returncode != 0:
             lines = (result.stderr or "").strip().splitlines()
             detail = lines[-1] if lines else "unknown error"
-            raise RenderError(f"ffmpeg failed: {detail}")
+            raise RenderRuntimeError(f"ffmpeg failed: {detail}")
         duration, out_width, out_height = probe_output(tmp_path)
         if (out_width, out_height) != (width, height):
-            raise RenderError(f"unexpected output resolution: {out_width}x{out_height}")
+            raise RenderRuntimeError(f"unexpected output resolution: {out_width}x{out_height}")
         os.replace(tmp_path, out_path)
     finally:
         if tmp_path.exists():
@@ -1034,9 +1021,10 @@ def main(argv=None):
         summary = dict(summaries[0])
         if len(summaries) > 1:
             summary["vertical"] = summaries[1]
-    except (RenderError, SchemaError, AmbienceError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    except (RenderRuntimeError, AmbienceError) as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (RenderError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
@@ -1063,7 +1051,7 @@ def main(argv=None):
             print(f"vertical: {extra['out']} {extra['width']}x{extra['height']} {extra['duration_s']}s")
             for warning in extra["warnings"]:
                 print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

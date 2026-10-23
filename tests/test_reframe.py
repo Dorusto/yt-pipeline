@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import reframe
+from common.exit_codes import EXIT_OK
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,7 +76,7 @@ def test_path_follows_a_moving_subject(tmp_path, monkeypatch, capsys):
         boxes[0] = (100.0 + index * 12.0, 120.0, 80.0, 80.0, 0.9)
     install_detector(monkeypatch, sequence)
     code = run_cli(["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     data = json.loads(out.read_text(encoding="utf-8"))
     assert validate(data, "reframe") == []
     xs = [point["x"] for point in data["points"]]
@@ -84,7 +85,7 @@ def test_path_follows_a_moving_subject(tmp_path, monkeypatch, capsys):
     assert abs((xs[-1] + data["crop_w"] / 2) - (100.0 + 12.0 * (len(data["points"]) - 1) + 40.0)) < 120.0
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary["ok"] is True
-    assert summary["cost_usd"] == 0.0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_smoothing_limits_speed_and_never_jumps(tmp_path, monkeypatch):
@@ -97,7 +98,7 @@ def test_smoothing_limits_speed_and_never_jumps(tmp_path, monkeypatch):
     code = run_cli(
         ["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--max-speed", "0.35", "--json"]
     )
-    assert code == 0
+    assert code == EXIT_OK
     data = json.loads(out.read_text(encoding="utf-8"))
     width = data["width"]
     dt = 1.0 / 4.0
@@ -114,7 +115,7 @@ def test_window_stays_inside_the_frame(tmp_path, monkeypatch):
     sequence = [[(560.0, 260.0, 80.0, 80.0, 0.9)] for _ in range(64)]
     install_detector(monkeypatch, sequence)
     code = run_cli(["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     data = json.loads(out.read_text(encoding="utf-8"))
     for point in data["points"]:
         assert 0 <= point["x"] <= data["width"] - data["crop_w"]
@@ -127,7 +128,7 @@ def test_no_face_falls_back_and_holds(tmp_path, monkeypatch):
     sequence = [[(100.0, 120.0, 80.0, 80.0, 0.9)]] + [[] for _ in range(63)]
     install_detector(monkeypatch, sequence)
     code = run_cli(["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     data = json.loads(out.read_text(encoding="utf-8"))
     assert validate(data, "reframe") == []
     sources = {point["source"] for point in data["points"]}
@@ -143,15 +144,15 @@ def test_rerun_without_force_skips(tmp_path, monkeypatch, capsys):
     out = tmp_path / "crop.json"
     sequence = [[(100.0, 120.0, 80.0, 80.0, 0.9)] for _ in range(64)]
     install_detector(monkeypatch, sequence)
-    assert run_cli(["--video", str(clip), "--out", str(out), "--json"]) == 0
+    assert run_cli(["--video", str(clip), "--out", str(out), "--json"]) == EXIT_OK
     capsys.readouterr()
     first_mtime = out.stat().st_mtime_ns
     time.sleep(0.02)
-    assert run_cli(["--video", str(clip), "--out", str(out), "--json"]) == 0
+    assert run_cli(["--video", str(clip), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary["skipped"] is True
     assert out.stat().st_mtime_ns == first_mtime
-    assert run_cli(["--video", str(clip), "--out", str(out), "--force", "--json"]) == 0
+    assert run_cli(["--video", str(clip), "--out", str(out), "--force", "--json"]) == EXIT_OK
     assert out.stat().st_mtime_ns != first_mtime
 
 
@@ -160,20 +161,20 @@ def test_json_summary_has_wall_time_and_zero_cost(tmp_path, monkeypatch, capsys)
     out = tmp_path / "crop.json"
     sequence = [[(100.0, 120.0, 80.0, 80.0, 0.9)] for _ in range(64)]
     install_detector(monkeypatch, sequence)
-    assert run_cli(["--video", str(clip), "--out", str(out), "--json"]) == 0
+    assert run_cli(["--video", str(clip), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert summary["ok"] is True
     assert summary["out"] == str(out)
     assert summary["points"] >= 2
     assert summary["wall_time_s"] >= 0.0
-    assert summary["cost_usd"] == 0.0
+    assert summary["llm_cost_usd"] == 0.0
 
 
 def test_range_without_any_face_keeps_a_still_crop(tmp_path, monkeypatch):
     clip = write_video(tmp_path / "clip.mp4")
     out = tmp_path / "crop.json"
     install_detector(monkeypatch, [[] for _ in range(64)])
-    assert run_cli(["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--json"]) == 0
+    assert run_cli(["--video", str(clip), "--out", str(out), "--sample-fps", "4", "--json"]) == EXIT_OK
     data = json.loads(out.read_text(encoding="utf-8"))
     assert validate(data, "reframe") == []
     assert len({point["x"] for point in data["points"]}) == 1

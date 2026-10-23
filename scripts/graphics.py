@@ -24,10 +24,14 @@ import time
 from pathlib import Path
 
 from common.ffmpeg_tools import ffmpeg_path
-from common.schema import SchemaError, validate, validate_or_raise
+from common.brand import BrandError
+from common.brand import load_brand as load_brand_kit
+from common.brand import resolve_font as resolve_font_kit
+from common.schema import validate
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BRAND = REPO_ROOT / "brand.json"
 TEMPLATES_DIR = REPO_ROOT / "assets" / "graphics"
 HYPERFRAMES_VERSION = "0.8.181"
 BACKENDS = ("hyperframes", "mock")
@@ -145,28 +149,18 @@ def validate_canvas(width, height, fps, duration):
 
 def load_brand(path):
     """Load and validate the brand kit, returning ``(brand, brand_path)``."""
-    brand_path = Path(path).expanduser()
-    if not brand_path.is_file():
-        raise GraphicsError(f"brand kit not found: {brand_path}")
     try:
-        brand = json.loads(brand_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise GraphicsError(f"cannot read brand kit {brand_path}: {exc}") from exc
-    try:
-        validate_or_raise(brand, "brand")
-    except SchemaError as exc:
-        raise GraphicsError(f"invalid brand kit {brand_path}: {exc}") from exc
-    return brand, brand_path
+        return load_brand_kit(path)
+    except BrandError as exc:
+        raise GraphicsError(str(exc))
 
 
 def resolve_font(brand, brand_dir, key):
     """Return the absolute font path for a brand key, or raise naming path and key."""
-    font_path = Path(brand["fonts"][key]["path"])
-    if not font_path.is_absolute():
-        font_path = brand_dir / font_path
-    if not font_path.is_file():
-        raise GraphicsError(f'font file not found for brand key "fonts.{key}": {font_path}')
-    return font_path
+    try:
+        return resolve_font_kit(brand, brand_dir, key)
+    except BrandError as exc:
+        raise GraphicsError(str(exc))
 
 
 def resolve_fonts(brand, brand_dir):
@@ -416,7 +410,7 @@ def run_single(template, props_json, out, width, height, fps, duration, brand_pa
     props = parse_props(props_json)
     validate_props(template, props)
     validate_canvas(width, height, fps, duration)
-    brand, brand_path = load_brand(brand_path or DEFAULT_BRAND)
+    brand, brand_path = load_brand(brand_path)
     brand_dir = brand_path.parent
     output = Path(out).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -474,7 +468,7 @@ def run_plan(plan_path, out_dir, width, height, fps, brand_path, backend):
     if errors:
         raise GraphicsError(f"invalid plan {plan_file}: " + "; ".join(errors))
     validate_canvas(width, height, fps, DEFAULT_DURATION)
-    brand, brand_path = load_brand(brand_path or DEFAULT_BRAND)
+    brand, brand_path = load_brand(brand_path)
     brand_dir = brand_path.parent
     output_dir = Path(out_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -546,14 +540,11 @@ def main(argv=None):
                 args.backend,
             )
     except GraphicsError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return report_error(exc, EXIT_USAGE, args.json)
     except GraphicsRuntimeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except Exception as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_RUNTIME, args.json)
 
     if args.json:
         print(json.dumps(summary))
@@ -564,7 +555,7 @@ def main(argv=None):
             print(f"written: {item['output']} ({item['template']})")
     else:
         print(f"written: {summary['output']} ({summary['template']})")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

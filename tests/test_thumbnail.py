@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import thumbnail
 from common.schema import validate
+from fs_probe import safe_is_file
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +20,7 @@ except ImportError as exc:
         f"psd-tools is a hard requirement of thumbnail.py --psd; install it with pip install psd-tools ({exc})"
     ) from exc
 from psd_tools import PSDImage
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def _rembg_model_present():
@@ -30,7 +32,7 @@ def _rembg_model_present():
         Path.home() / ".u2net" / "birefnet-portrait.onnx",
         Path.home() / ".rembg" / "models" / "birefnet-portrait" / "birefnet-portrait.onnx",
     ]
-    return any(candidate.is_file() for candidate in candidates)
+    return any(safe_is_file(candidate) for candidate in candidates)
 
 
 def synthetic_portrait(path, width=800, height=1000):
@@ -101,7 +103,7 @@ def test_creator_without_background_fails(tmp_path, capsys):
         "--photo", str(photo), "--title", "AI-UL MEU", "--keyword", "RULEAZĂ ACASĂ",
         "--theme", "creator", "--out", str(out), "--skip-cutout",
     ])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "--background" in captured.err
@@ -166,6 +168,30 @@ def test_json_summary_keys_and_keyword_fit(tmp_path, capsys):
     assert fits or summary["warnings"]
 
 
+def test_keyword_two_lines_with_comma_below_do_not_touch():
+    brand = json.loads((ROOT / "brand.json").read_text(encoding="utf-8"))
+    brand["shadow"] = None
+    font_path = str(ROOT / brand["fonts"]["title"]["path"])
+    column = brand["layout"]["text_right_x"] - brand["layout"]["text_x"]
+    theme = brand["themes"]["tech"]
+    element, size, lines, warnings = thumbnail.render_keyword(
+        "A IEȘIT HAOS", brand, font_path, theme, column
+    )
+    assert len(lines) == 2
+    assert "Ș" in lines[0]
+    font = thumbnail.load_font(font_path, size)
+    tracking = brand["fonts"]["title"]["tracking_em"] * size
+    leading = thumbnail.keyword_leading(lines, font, tracking, brand["layout"]["keyword_leading_px"])
+    bands = [thumbnail.line_ink_band(line, font, tracking) for line in lines]
+    gap = leading + bands[1][0] - bands[0][1] - 1
+    assert gap >= 2
+    alpha = np.asarray(element["image"].getchannel("A"))
+    ink_rows = np.where((alpha > 0).any(axis=1))[0]
+    expected_top = min(bands[0][0], leading + bands[1][0])
+    expected_bottom = max(bands[0][1], leading + bands[1][1])
+    assert ink_rows[-1] - ink_rows[0] == expected_bottom - expected_top
+
+
 def test_missing_font_fails_naming_path_and_key(tmp_path, capsys):
     brand = json.loads((ROOT / "brand.json").read_text(encoding="utf-8"))
     brand["fonts"]["title"]["path"] = "assets/fonts/DoesNotExist.ttf"
@@ -173,7 +199,7 @@ def test_missing_font_fails_naming_path_and_key(tmp_path, capsys):
     brand_path.write_text(json.dumps(brand), encoding="utf-8")
     photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
     code = thumbnail.main(base_args(photo, tmp_path / "out") + ["--skip-cutout", "--brand", str(brand_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "DoesNotExist.ttf" in captured.err
@@ -187,7 +213,7 @@ def test_invalid_brand_canvas_fails_via_schema(tmp_path, capsys):
     brand_path.write_text(json.dumps(brand), encoding="utf-8")
     photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
     code = thumbnail.main(base_args(photo, tmp_path / "out") + ["--skip-cutout", "--brand", str(brand_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "brand" in captured.err
@@ -200,7 +226,7 @@ def test_invalid_brand_color_fails_via_schema(tmp_path, capsys):
     brand_path.write_text(json.dumps(brand), encoding="utf-8")
     photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
     code = thumbnail.main(base_args(photo, tmp_path / "out") + ["--skip-cutout", "--brand", str(brand_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 

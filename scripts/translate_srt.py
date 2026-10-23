@@ -7,6 +7,7 @@ Pastreaza exact structura .srt: numere, timestamps, linii goale.
 Utilizare:
     python3 translate_srt.py input.srt
     python3 translate_srt.py input.srt output_EN.srt
+    python3 translate_srt.py input.srt video.mp4 --json
 
 Daca nu specifici output, il genereaza automat: input_EN.srt
 
@@ -14,13 +15,18 @@ Necesita: OPENROUTER_API_KEY in environment
 Necesita: pip install openai
 """
 
+import json
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from common.config import ConfigError
 from common.llm import LLMError, make_client
+from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 BATCH_SIZE = 20
 WORKERS = 4
@@ -90,30 +96,38 @@ def translate_batch(texts):
     return translations
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Utilizare: python3 translate_srt.py input.srt [video.mp4 | output_EN.srt]")
-        sys.exit(1)
+def spent_usd():
+    return _client.spent_usd if _client is not None else 0.0
 
-    input_file = Path(sys.argv[1])
-    if len(sys.argv) > 2 and sys.argv[2].lower().endswith(".mp4"):
-        video_dir = Path(sys.argv[2]).expanduser().resolve().parent
+
+def main():
+    started = time.monotonic()
+    json_out = "--json" in sys.argv[1:]
+    stream = sys.stderr if json_out else sys.stdout
+    positionals = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not positionals:
+        print("Utilizare: python3 translate_srt.py input.srt [video.mp4 | output_EN.srt] [--json]", file=stream)
+        sys.exit(EXIT_USAGE)
+
+    input_file = Path(positionals[0])
+    if len(positionals) > 1 and positionals[1].lower().endswith(".mp4"):
+        video_dir = Path(positionals[1]).expanduser().resolve().parent
         basename_en = input_file.name.replace(".srt", "_EN.srt")
         output_file = video_dir / basename_en
-    elif len(sys.argv) > 2:
-        output_file = Path(sys.argv[2])
+    elif len(positionals) > 1:
+        output_file = Path(positionals[1])
     else:
         output_file = input_file.with_name(input_file.name.replace(".srt", "_EN.srt"))
 
     segments = parse_srt(input_file)
-    print(f"Segmente găsite: {len(segments)}")
+    print(f"Segmente găsite: {len(segments)}", file=stream)
 
     texts = [s["text"].replace("\n", " ") for s in segments]
     translated_texts = {}
 
     try:
         starts = list(range(0, len(texts), BATCH_SIZE))
-        print(f"Traduc {len(texts)} segmente în {len(starts)} loturi, câte {WORKERS} odată...")
+        print(f"Traduc {len(texts)} segmente în {len(starts)} loturi, câte {WORKERS} odată...", file=stream)
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
             results = pool.map(lambda i: (i, translate_batch(texts[i:i + BATCH_SIZE])), starts)
             for i, result in results:
@@ -125,12 +139,21 @@ def main():
                 translation = wrap_subtitle(translated_texts.get(idx + 1, seg["text"]))
                 f.write(f"{seg['num']}\n{seg['time']}\n{translation}\n\n")
 
-        print(f"Salvat: {output_file}")
-    except (ConfigError, LLMError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(2)
+        print(f"Salvat: {output_file}", file=stream)
+    except ConfigError as exc:
+        sys.exit(report_error(exc, EXIT_USAGE, json_out, **summary_fields(started, spent_usd())))
+    except LLMError as exc:
+        sys.exit(report_error(exc, EXIT_RUNTIME, json_out, **summary_fields(started, spent_usd())))
 
-    print(f"LLM cost: ${get_client().spent_usd:.4f}")
+    if json_out:
+        print(json.dumps({
+            "ok": True,
+            "output": str(output_file),
+            "segments": len(segments),
+            **summary_fields(started, spent_usd()),
+        }))
+    else:
+        print(f"LLM cost: ${get_client().spent_usd:.4f}")
 
 
 if __name__ == "__main__":

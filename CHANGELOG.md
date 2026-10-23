@@ -1,0 +1,50 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-10-23
+
+yt-pipeline turns the clips from a trip into a short video. Upload your clips and photos from your phone or laptop, write a few words about the day, and the AI director makes the edit and explains its choices. You can leave a shot out, ask for another version, or ask the director what it would change before it starts. Every edit comes with a title, a description and hashtags ready to copy. The Costs page shows what the project costs and how to support it.
+
+### Added
+
+- Web app: one visual direction for every page — a shared token set (colour, type, spacing, radii) with a light and dark theme, a consistent button, field, strip, notice and tab-bar style, and a header slot for the logo.
+- Web app: three flat SVG logo marks (assets/brand/), a GET /brand chooser, the brand.logo setting and the chosen mark as the SVG favicon and in the top bar.
+- Web app: upload with progress and drag and drop, a run notice with live total time and the time of each step, and the model cost of the running edit and of each version.
+- Mode B finishing: `finish_pip.py` places the camera picture-in-picture over the screen spans with an eased entry and exit.
+- Music: the library path comes from a flag, an environment variable or the config, and `music_pick.py --list` reports each track's licence status.
+- Shorts: `shorts_rank.py` writes standalone candidates with titles and descriptions.
+- Costs: `costs.py` keeps a SQLite ledger of model jobs, build-agent spend, fixed monthly costs, investments and donations, with idempotent imports and a `totals` view.
+- Web app: a read-only Costs page (per-clip model cost, ledger totals, donation link) and a feedback/requests form that appends one JSON line to the requests file.
+- Recap metadata: `recap_meta.py` writes `recap_meta.json` (title, description, hashtags) from `edit.json`, the Recap tab shows it with a Copy button per field, and each version keeps its own text.
+- Web app: four optional brief facts (place, when, who, occasion) on the Upload and Re-edit forms and in the Recap tab's Rewrite button, stored as `brief_facts.json` in the inbox source and the workspace and read as facts by the director prompt and `recap_meta.py`; the Rewrite button re-runs `recap_meta.py --force` for the shown version.
+- Web app: an optional upload consent checkbox, a per-project delete (bin icon, removes the workspace and its inbox source), per-instance feature switches (`--features` / `YT_PIPELINE_FEATURES` / `web.features`, enforced with a 404) and brief hint chips with a multi-line example placeholder.
+- Pilot host: `deploy/update.sh` updates a container to a released tag with a smoke test and a rollback, `deploy/yt-pipeline-web.service` is the systemd unit template, and `docs/guides/pilot-host.md` describes one container per person.
+- Releasing: `scripts/check_stable.py` and the `stable-check` CI job fail a pull request that changes a file in the `stable-files` block of `docs/RELEASES.md` without the `Stable-change: approved` trailer.
+- Web app: per-instance storage and model-credit limits on the Upload and Costs pages, and a shared project-costs view (`GET /costs.json`).
+- Web app: the project page shows the director's reviewer verdict per version, and the Re-edit box has an "Ask the director" button that shows how the director reads a request with a cost/time estimate before a new version is made (llm_director.py --interpret-feedback).
+- Web app: a Files tab that lists every clip and photo of a project, adds more files into the inbox source and leaves a file out (reversibly, `excluded.json`); every station skips the left-out names.
+- Deploy: `.github/workflows/deploy.yml` deploys a published release (or a manual dispatch with a tag) to every pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner.
+- Web app: a `thumbs` station (`scripts/thumbs.py`) writes `thumbs/poster.jpg` (30 % of the recap) and `thumbs/shot-N.jpg` (the middle frame of each slot) after the render; the Projects page shows poster cards and the shot strip shows each shot's thumbnail.
+- Release: `.github/workflows/release.yml` creates the GitHub Release from the version's `CHANGELOG.md` and `RELEASES.md` sections when a `v*` tag is pushed.
+
+### Changed
+
+- One exit-code table for every tool and one structured error object for every `--json` tool.
+- No tool depends on one person's setup: settings come from a flag, an environment variable or the config, and docs use placeholders.
+- Shared overlap math in `scripts/common/overlap.py`.
+- Docs: the shaky review policy is the default (long shaky runs reach the director with their shake defect; `YT_PIPELINE_SHAKY=drop` restores the old upgrade), the `yt-edit-drop` skill, the `drop-shot` write route and the donation-links wording.
+- The Why? and Shots pages now open with a plain-language summary and collapsed, grouped sections, and the two tabs moved under a Details group.
+- Web app: the "editing room" redesign — a warm charcoal base with an amber accent for primary actions and teal only for clip blocks, one token set in `scripts/common/theme.py` shared by every page, and a footage-forward layout (poster cards, the player poster, shot thumbnails).
+- Shared helpers extracted into `scripts/common/` (`jsonio`, `git`, `openrouter`, `sizes`, `runlog`, `feedback`, `html`, plus `used_shot_keys`/`REASON_GROUPS`/`probe_duration`/`extract_frame`); the web app's shotlog grouping is regenerated from `index.py` instead of a JavaScript overlay; new `yt-thumbs` skill.
+- Review fixes (V010 lot fix2b): `recap_meta.py` reads the place from the brief in plain words and its limits from the schema, `check_stable.py` reads the highest released version, `storage_gb` rejects a non-positive value, `brand.logo` is validated once, `edit_drop.py` regenerates the thumbnails and `recap.py` checks every thumbnail, the web app shares one bin icon and one Yes/No helper, refuses the recap artifacts with the recap part off, disables Start until consent is ticked, caches a failed credit/totals fetch for two minutes with a 3 s timeout, shows the filming date on the project card and builds its fact fields from `FACT_LABELS`; `deploy/update.sh` takes the smoke URL from `YT_PIPELINE_SMOKE_URL` and installs with `uv pip` when available.
+
+### Fixed
+
+- `finish_pip.py` reports the state it leaves behind and clears the animate marker before writing the steps file.
+- `shorts_rank.py` keeps candidates inside the edit after the 60 s intro.

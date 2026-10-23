@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import motion
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,7 +90,7 @@ def assert_tiles(phases, duration):
 
 def test_help_lists_flags():
     result = run_cli("--help")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     for flag in ("--workspace", "--force", "--sample-fps", "--json"):
         assert flag in result.stdout
 
@@ -387,7 +388,7 @@ def test_end_to_end_static_clip(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_motion(workspace, "still")
     assert validate(data, "motion") == []
     assert data["moves"] == []
@@ -402,7 +403,7 @@ def test_end_to_end_synthetic_pan(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_motion(workspace, "pan")
     assert validate(data, "motion") == []
     assert_tiles(data["phases"], data["duration_s"])
@@ -419,7 +420,7 @@ def test_folder_skip_and_force(tmp_path):
     workspace = tmp_path / "workspace"
 
     first = run_cli(source, "--workspace", workspace, "--json")
-    assert first.returncode == 0, first.stderr
+    assert first.returncode == EXIT_OK, first.stderr
     first_summary = json.loads(first.stdout)
     assert first_summary["clips"] == 2
     assert first_summary["analyzed"] == 2
@@ -431,18 +432,18 @@ def test_folder_skip_and_force(tmp_path):
     assert (workspace / "motion" / "two.json").exists()
 
     second = run_cli(source, "--workspace", workspace, "--json")
-    assert second.returncode == 0, second.stderr
+    assert second.returncode == EXIT_OK, second.stderr
     assert json.loads(second.stdout)["skipped"] == 2
     assert json.loads(second.stdout)["analyzed"] == 0
 
     third = run_cli(source, "--workspace", workspace, "--force", "--json")
-    assert third.returncode == 0, third.stderr
+    assert third.returncode == EXIT_OK, third.stderr
     assert json.loads(third.stdout)["analyzed"] == 2
 
 
 def test_missing_input_errors(tmp_path):
     result = run_cli(tmp_path / "missing.mp4", "--workspace", tmp_path / "workspace")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
     assert not (tmp_path / "workspace" / "motion").exists()
 
@@ -451,7 +452,7 @@ def test_non_video_file_errors(tmp_path):
     source = tmp_path / "notes.txt"
     source.write_text("not a video", encoding="utf-8")
     result = run_cli(source, "--workspace", tmp_path / "workspace")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 
@@ -459,7 +460,7 @@ def test_unreadable_video_errors(tmp_path):
     source = tmp_path / "broken.mp4"
     source.write_bytes(b"not really a video")
     result = run_cli(source, "--workspace", tmp_path / "workspace")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 
@@ -610,7 +611,7 @@ def test_moves_carry_new_fields_and_validate(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_motion(workspace, "pan")
     assert validate(data, "motion") == []
     assert data["moves"]
@@ -752,7 +753,7 @@ def test_moves_carry_parallax_and_validate(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_motion(workspace, "pan")
     assert validate(data, "motion") == []
     assert data["moves"]
@@ -940,7 +941,7 @@ def test_scene_activity_moving_object_beats_static(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     moving = read_motion(workspace, "moving")
     static = read_motion(workspace, "static")
     moving_peak = max(row["activity"] for row in moving["scene_activity"])
@@ -957,7 +958,7 @@ def test_motion_doc_validates_with_and_without_events(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_motion(workspace, "still")
     assert validate(data, "motion") == []
     assert data["events"] == []
@@ -1114,7 +1115,7 @@ def test_phases_and_moves_validate_with_uncertainty(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_motion(workspace, "pan")
     assert validate(data, "motion") == []
     for phase in data["phases"]:

@@ -26,7 +26,6 @@ outputs are written atomically.
 """
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -36,11 +35,17 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
-import cv2
-
+from common.decisions import used_shot_keys
+from common.excluded import is_excluded, load_excluded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
+from common.frames import thumbnail_data_uri
+from common.html import open_state_script
+from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
+from common.theme import THEME_CSS
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
 DEFAULT_WEIGHT_VISION = 0.55
@@ -66,13 +71,15 @@ PHOTO_CONFIDENCE = 0.7
 BURST_WINDOW_S = 30.0
 BURST_SHARPNESS_FLOOR = 0.7
 HOOK_WORDS = 8
-THUMBNAIL_WIDTH = 320
-THUMBNAIL_QUALITY = 70
 HTML_NAME = "shotlog.html"
 
 
 class ShotlogError(RuntimeError):
     """Raised when a workspace cannot be turned into a shotlog."""
+
+
+class ShotlogRuntimeError(RuntimeError):
+    """Raised when the run fails after it started (disk write)."""
 
 
 def build_parser():
@@ -84,13 +91,13 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace --json\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/index.py --workspace <workspace>\n"
+            "  python scripts/index.py --workspace <workspace> --json\n"
+            "  python scripts/index.py --workspace <workspace> \\\n"
             "      --clips 0072,0081 --force --json\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/index.py --workspace <workspace> \\\n"
             "      --html /tmp/shotlog.html\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace --no-html\n"
+            "  python scripts/index.py --workspace <workspace> --no-html\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -120,10 +127,6 @@ def segment_key(counter, segment_id):
     return f"{counter}/{segment_id}"
 
 
-def overlap_seconds(a_start, a_end, b_start, b_end):
-    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
-
-
 def run(
     workspace,
     weight_vision=DEFAULT_WEIGHT_VISION,
@@ -141,10 +144,11 @@ def run(
         raise ShotlogError("weight vision + weight labels must be positive")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
+    excluded = load_excluded(workspace_path)
     ingest_photos = _load_ingest_photos(workspace_path)
-    photo_describes = _load_photo_describes(workspace_path)
+    photo_describes = _load_photo_describes(workspace_path, excluded)
     if quality_dir.is_dir():
-        selected = _select_quality_files(quality_dir, clips, required=not photo_describes)
+        selected = _select_quality_files(quality_dir, clips, excluded, required=not photo_describes)
     else:
         selected = []
     if not selected and not photo_describes:
@@ -153,7 +157,7 @@ def run(
     output_path = workspace_path / "shotlog.json"
     inputs = _input_files(workspace_path, selected, photo_describes)
     if not force and _output_is_up_to_date(output_path, inputs):
-        return _skipped_summary(output_path, started, html_path), 0
+        return _skipped_summary(output_path, started, html_path), EXIT_OK
     clip_paths = _clip_path_map(workspace_path, selected)
     similarity_map = _similarity_map(_load_json(workspace_path / "similarity.json"))
     shots = []
@@ -231,11 +235,14 @@ def run(
         "warnings": [],
     }
     validate_or_raise(record, "shotlog")
-    _atomic_write_json(output_path, record)
-    if html_path is not None:
-        _write_html(html_path, record, clip_paths)
+    try:
+        _atomic_write_json(output_path, record)
+        if html_path is not None:
+            _write_html(html_path, record, clip_paths)
+    except OSError as exc:
+        raise ShotlogRuntimeError(str(exc)) from exc
     summary = _summary(shots, weights, wall_time_s, output_path, html_path)
-    return summary, 0
+    return summary, EXIT_OK
 
 
 def main(argv=None):
@@ -250,9 +257,12 @@ def main(argv=None):
             html=args.html,
             no_html=args.no_html,
         )
-    except (ShotlogError, SchemaError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+    except ShotlogRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (ShotlogError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
@@ -593,9 +603,11 @@ def _apply_suppression(shots):
 
 
 def _suppressing_overlap(first, second):
-    overlap = overlap_seconds(first["start_s"], first["end_s"], second["start_s"], second["end_s"])
-    shorter = min(first["end_s"] - first["start_s"], second["end_s"] - second["start_s"])
-    return shorter > 0 and overlap > SUPPRESS_OVERLAP_RATIO * shorter
+    return (
+        overlap_fraction(
+            first["start_s"], first["end_s"], second["start_s"], second["end_s"]
+        ) > SUPPRESS_OVERLAP_RATIO
+    )
 
 
 def _apply_burst_suppression(shots):
@@ -749,12 +761,14 @@ def _photo_shot_key(describe_record, describe_path, lookup):
     return segment_key(clip_counter(name), PHOTO_SEGMENT_ID)
 
 
-def _load_photo_describes(workspace_path):
+def _load_photo_describes(workspace_path, excluded=None):
     describe_dir = workspace_path / "describe"
     if not describe_dir.is_dir():
         return []
     records = []
     for path in sorted(describe_dir.glob("*.json")):
+        if is_excluded(path.stem, excluded):
+            continue
         data = _load_json(path)
         if isinstance(data, dict) and data.get("media_type") == "photo":
             records.append((path, data))
@@ -776,10 +790,12 @@ def _input_files(workspace_path, quality_files, photo_describes=None):
     return files
 
 
-def _select_quality_files(quality_dir, clips, required=True):
+def _select_quality_files(quality_dir, clips, excluded=None, required=True):
     tokens = _clip_tokens(clips)
     files = sorted(quality_dir.glob("*.json"))
-    selected = [path for path in files if _matches(path.stem, tokens)]
+    selected = [
+        path for path in files if _matches(path.stem, tokens) and not is_excluded(path.stem, excluded)
+    ]
     if not selected and required:
         raise ShotlogError(f"no quality files matched in {quality_dir}")
     return selected
@@ -901,9 +917,21 @@ def _clip_path_map(workspace_path, quality_files):
 def _write_html(html_path, record, clip_paths):
     shots = sorted(record.get("shots") or [], key=lambda shot: shot.get("score") or 0.0, reverse=True)
     workspace_name = Path(record.get("workspace") or "").name
-    eligible = sum(1 for shot in shots if shot.get("eligible"))
-    cards = "\n".join(_shot_card(shot, clip_paths) for shot in shots)
-    document = _html_document(workspace_name, len(shots), eligible, record.get("generated_at"), cards)
+    used_keys = _used_shot_keys(record)
+    sections = []
+    for verdict, title in (
+        ("used", "Used in the edit"),
+        ("kept", "Kept but not used"),
+        ("unusable", "Not usable"),
+    ):
+        rows = [shot for shot in shots if _verdict_of(shot, used_keys) == verdict]
+        sections.append(_shots_section(verdict, title, rows, clip_paths, used_keys=used_keys))
+    document = _html_document(
+        workspace_name,
+        _summary_line(shots),
+        record.get("generated_at"),
+        "\n".join(sections),
+    )
     html_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = html_path.with_name(html_path.name + ".tmp")
     try:
@@ -912,6 +940,77 @@ def _write_html(html_path, record, clip_paths):
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def _used_shot_keys(record):
+    """The shot keys the workspace's edit.json marks as used, or an empty set."""
+    workspace = record.get("workspace")
+    if not workspace:
+        return set()
+    return used_shot_keys(_load_json(Path(workspace) / "edit.json"))
+
+
+def _verdict_of(shot, used_keys):
+    if str(shot.get("key") or "") in used_keys:
+        return "used"
+    if shot.get("eligible"):
+        return "kept"
+    return "unusable"
+
+
+def _summary_line(shots):
+    """One plain line about the shots: pieces, clips, usable, shaky, moves and scenes."""
+    pieces = len(shots)
+    clips = len({str(shot.get("clip") or "") for shot in shots})
+    usable = sum(1 for shot in shots if shot.get("eligible"))
+    shaky = sum(1 for shot in shots if "shake" in (shot.get("defects") or []))
+    parts = [f"{pieces} pieces from {clips} clips", f"{usable} usable", f"{shaky} shaky"]
+    moves = _top_values(shots, "motion_label")
+    if moves:
+        parts.append("moves: " + ", ".join(moves))
+    scenes = _top_values(shots, "scenery")
+    if scenes:
+        parts.append("scenes: " + ", ".join(scenes))
+    return " · ".join(parts)
+
+
+def _top_values(shots, field):
+    counts = {}
+    for shot in shots:
+        value = shot.get(field)
+        if value is None:
+            continue
+        counts[str(value)] = counts.get(str(value), 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [name for name, _ in ordered[:2]]
+
+
+def _shots_section(verdict, title, rows, clip_paths, used_keys=None):
+    groups = _clip_groups(rows, clip_paths) if rows else '<p class="missing">None.</p>'
+    keys_attr = ""
+    if verdict == "used":
+        keys = ",".join(sorted(used_keys or ()))
+        keys_attr = f' data-keys="{escape(keys)}"'
+    return (
+        f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}"{keys_attr} data-keep>'
+        f'<summary>{escape(title)} (<span class="count">{len(rows)}</span>)</summary>'
+        f'<div class="groups">{groups}</div>'
+        f"</details>"
+    )
+
+
+def _clip_groups(rows, clip_paths):
+    by_clip = {}
+    for shot in rows:
+        by_clip.setdefault(str(shot.get("clip") or ""), []).append(shot)
+    parts = []
+    for clip in sorted(by_clip):
+        cards = "\n".join(_shot_card(shot, clip_paths) for shot in by_clip[clip])
+        parts.append(
+            f'<section class="clip-group" data-clip="{escape(clip)}">'
+            f"<h3>{escape(clip)}</h3>{cards}</section>"
+        )
+    return "\n".join(parts)
 
 
 def _shot_card(shot, clip_paths):
@@ -962,38 +1061,10 @@ def _thumbnail_html(shot, clip_paths):
         start = float(shot.get("start_s") or 0.0)
         end = float(shot.get("end_s") or 0.0)
         t_s = start + (end - start) / 2
-    data_uri = _thumbnail_data_uri(path, t_s)
+    data_uri = thumbnail_data_uri(path, t_s)
     if data_uri is None:
         return f'<div class="thumb placeholder">{escape(clip)}</div>'
     return f'<img class="thumb" src="{data_uri}" alt="{escape(clip)}">'
-
-
-def _thumbnail_data_uri(path, t_s):
-    if not path:
-        return None
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        capture.release()
-        return None
-    try:
-        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_s) * 1000.0)
-        ok, frame = capture.read()
-        if not ok:
-            return None
-        return _encode_thumbnail(frame)
-    finally:
-        capture.release()
-
-
-def _encode_thumbnail(frame):
-    height, width = frame.shape[:2]
-    if width > THUMBNAIL_WIDTH:
-        scaled_height = max(1, int(round(height * THUMBNAIL_WIDTH / width)))
-        frame = cv2.resize(frame, (THUMBNAIL_WIDTH, scaled_height), interpolation=cv2.INTER_AREA)
-    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_QUALITY])
-    if not ok:
-        return None
-    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
 def _score_text(shot):
@@ -1014,7 +1085,7 @@ def _format_time(seconds):
     return f"{minutes:02d}:{remainder:04.1f}"
 
 
-def _html_document(workspace_name, shot_count, eligible_count, generated_at, cards):
+def _html_document(workspace_name, summary_line, generated_at, sections):
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -1023,47 +1094,51 @@ def _html_document(workspace_name, shot_count, eligible_count, generated_at, car
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>shotlog · {escape(workspace_name)}</title>\n"
         "<style>\n"
-        ":root { color-scheme: dark; --water:#13202b; --deck:#1b2a37; --rope:#2b3d4d; "
-        "--stone:#ece5d5; --haze:#9badbb; --sea:#57b8c4; --keep:#a3cf7f; --left:#e2806f; --hero:#e8b54d; }\n"
-        "* { box-sizing: border-box; }\n"
-        "body { margin: 0; padding: 14px; font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; "
-        "background: var(--deck); color: var(--stone); }\n"
+        f"{THEME_CSS}\n"
+        "body { margin: 0; padding: 14px; background: var(--bg); color: var(--text); }\n"
         "header { margin-bottom: 14px; }\n"
-        "h1 { font-family: ui-serif, Georgia, serif; font-weight: 500; font-size: 1.35rem; margin: 0 0 2px; }\n"
-        "header p { margin: 0; color: var(--haze); font-size: 0.88rem; }\n"
-        "main { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }\n"
-        ".card { background: var(--water); border-radius: 12px; overflow: hidden; }\n"
+        "h1 { font-family: var(--font-display); font-weight: 500; font-size: 1.35rem; margin: 0 0 2px; }\n"
+        "header p { margin: 0; color: var(--muted); font-size: 0.88rem; }\n"
+        "main { display: flex; flex-direction: column; gap: 18px; }\n"
+        ".shots-section { border-top: 1px solid var(--line); padding-top: 12px; }\n"
+        ".shots-section summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; "
+        "font-family: var(--font-display); font-weight: 500; font-size: 1.15rem; }\n"
+        ".groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }\n"
+        ".clip-group h3 { font-family: var(--font-display); font-weight: 500; font-size: 1rem; "
+        "margin: 0 0 8px; color: var(--muted); overflow-wrap: anywhere; }\n"
+        ".card { background: var(--surface); border-radius: 12px; overflow: hidden; }\n"
         ".card.ineligible { opacity: 0.55; }\n"
-        ".thumb { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--rope); }\n"
+        ".thumb { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--line); }\n"
         ".thumb.placeholder { display: flex; align-items: center; justify-content: center; "
-        "color: var(--haze); font-size: 0.8rem; padding: 24px 8px; text-align: center; }\n"
+        "color: var(--muted); font-size: 0.8rem; padding: 24px 8px; text-align: center; }\n"
         ".body { padding: 10px 12px 14px; }\n"
-        ".range { font-size: 0.8rem; color: var(--haze); margin-bottom: 6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n"
+        ".range { font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }\n"
         ".summary { font-size: 1rem; margin: 0 0 8px; }\n"
         ".tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }\n"
-        ".tag { border: 1px solid var(--rope); border-radius: 999px; padding: 1px 8px; "
-        "font-size: 0.75rem; color: var(--haze); }\n"
+        ".tag { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; "
+        "font-size: 0.75rem; color: var(--muted); }\n"
         ".score { font-size: 1.15rem; font-weight: 650; font-variant-numeric: tabular-nums; }\n"
-        ".components { font-size: 0.78rem; color: var(--haze); margin-left: 6px; font-weight: 400; }\n"
+        ".components { font-size: 0.78rem; color: var(--muted); margin-left: 6px; font-weight: 400; }\n"
         ".badges { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; }\n"
         ".badge { font-size: 0.78rem; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }\n"
         ".badge::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }\n"
         ".badge.hero { color: var(--hero); }\n"
-        ".badge.eligible { color: var(--keep); }\n"
-        ".badge.ineligible { color: var(--left); }\n"
-        ".badge.media { color: var(--sea); }\n"
-        ".meta { font-size: 0.78rem; color: var(--haze); overflow-wrap: anywhere; }\n"
+        ".badge.eligible { color: var(--ok); }\n"
+        ".badge.ineligible { color: var(--danger); }\n"
+        ".badge.media { color: var(--accent); }\n"
+        ".meta { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }\n"
         "</style>\n"
         "</head>\n"
         "<body>\n"
         "<header>\n"
         f"<h1>{escape(workspace_name)}</h1>\n"
-        f"<p>{shot_count} shots · {eligible_count} eligible</p>\n"
+        f'<p class="summary">{escape(summary_line)}</p>\n'
         f'<p class="generated">generated {escape(str(generated_at or ""))}</p>\n'
         "</header>\n"
         "<main>\n"
-        f"{cards}\n"
+        f"{sections}\n"
         "</main>\n"
+        f"{open_state_script('shots')}"
         "</body>\n"
         "</html>\n"
     )

@@ -24,6 +24,9 @@ import sys
 import time
 from pathlib import Path
 
+from common.excluded import filter_excluded, load_excluded_path
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder, video_encode_args
 from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo
 
@@ -38,14 +41,18 @@ class ProxyError(RuntimeError):
     """Raised when a proxy run cannot be completed."""
 
 
+class ProxyRuntimeError(ProxyError):
+    """Raised when ffmpeg or ffprobe fails after the run started."""
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="proxy.py",
         description="Build 720p H.264 constant-frame-rate proxies with audio from originals.",
         epilog=(
             "examples:\n"
-            "  python scripts/proxy.py ~/media/raw\n"
-            "  python scripts/proxy.py ~/media/raw --out ~/media/workspace/proxy --json\n"
+            "  python scripts/proxy.py <source-folder>\n"
+            "  python scripts/proxy.py <source-folder> --out <workspace>/proxy --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -73,6 +80,10 @@ def build_parser():
         "--force",
         action="store_true",
         help="rebuild even when the proxy exists",
+    )
+    parser.add_argument(
+        "--exclude-file",
+        help="excluded.json whose names are skipped (or none)",
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -125,14 +136,14 @@ def run_ffprobe(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise ProxyError(f"could not run ffprobe: {exc}") from exc
+        raise ProxyRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise ProxyError(f"ffprobe failed for {path.name}: {detail}")
+        raise ProxyRuntimeError(f"ffprobe failed for {path.name}: {detail}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise ProxyError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
+        raise ProxyRuntimeError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
 
 
 def probe_frame_rate(path):
@@ -193,7 +204,7 @@ def run_ffmpeg(command):
     try:
         return subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise ProxyError(f"could not run ffmpeg: {exc}") from exc
+        raise ProxyRuntimeError(f"could not run ffmpeg: {exc}") from exc
 
 
 def last_stderr_line(result):
@@ -216,7 +227,7 @@ def encode_clip(source, out_path, height, crf, encoder):
             active = "libx264"
             result = run_ffmpeg(build_command(source, tmp_path, height, crf, active, frame_rate))
         if result.returncode != 0:
-            raise ProxyError(f"{source.name}: {last_stderr_line(result)}")
+            raise ProxyRuntimeError(f"{source.name}: {last_stderr_line(result)}")
         os.replace(tmp_path, out_path)
     finally:
         if tmp_path.exists():
@@ -224,7 +235,7 @@ def encode_clip(source, out_path, height, crf, encoder):
     return active
 
 
-def build_proxies(source, out, height, crf, force):
+def build_proxies(source, out, height, crf, force, exclude_file=None):
     """Build proxies for ``source`` into ``out`` and return the run summary."""
     started = time.monotonic()
     source = Path(source).expanduser().resolve()
@@ -239,6 +250,10 @@ def build_proxies(source, out, height, crf, force):
                 f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) or photos "
                 f"({', '.join(sorted(PHOTO_EXTENSIONS))}) in {source}"
             )
+        if exclude_file is not None:
+            excluded = load_excluded_path(exclude_file)
+            clips = filter_excluded(clips, excluded)
+            photos = filter_excluded(photos, excluded)
     elif source.is_file():
         clips = [source]
     else:
@@ -255,9 +270,9 @@ def build_proxies(source, out, height, crf, force):
         raise ProxyError(f"--out must not be inside the source: {out}")
 
     if shutil.which("ffmpeg") is None:
-        raise ProxyError("ffmpeg not found on PATH")
+        raise ProxyRuntimeError("ffmpeg not found on PATH")
     if shutil.which("ffprobe") is None:
-        raise ProxyError("ffprobe not found on PATH")
+        raise ProxyRuntimeError("ffprobe not found on PATH")
     try:
         encoder = pick_video_encoder()
     except RuntimeError as exc:
@@ -338,10 +353,13 @@ def build_proxies(source, out, height, crf, force):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary = build_proxies(args.source, args.out, args.height, args.crf, args.force)
+        summary = build_proxies(
+            args.source, args.out, args.height, args.crf, args.force, args.exclude_file
+        )
+    except ProxyRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except ProxyError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
     else:
@@ -351,7 +369,7 @@ def main(argv=None):
             f" skipped {counts['skipped']}, failed {counts['failed']}"
             f" -> {summary['out']}"
         )
-    return 1 if summary["status"] == "failed" else 0
+    return EXIT_RUNTIME if summary["status"] == "failed" else EXIT_OK
 
 
 if __name__ == "__main__":

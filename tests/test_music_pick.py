@@ -3,7 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import music_pick
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "music_pick.py"
@@ -96,7 +99,7 @@ def test_empty_library_exits_one(tmp_path):
     library = tmp_path / "empty"
     library.mkdir()
     result = run_pick("--library", library, "--brief", "hello", "--json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 
@@ -122,7 +125,7 @@ def test_cli_json_summary_shape(tmp_path):
     write_wav(library / "slow calm.wav", frequency=180.0)
     write_wav(library / "fast party.wav", frequency=440.0)
     result = run_pick("--library", library, "--brief", "calm", "--json", "--out", tmp_path / "c.json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     for key in ("chosen", "path", "why", "scores", "wall_time_s", "llm_cost_usd", "tracks", "library", "status"):
         assert key in summary
@@ -145,3 +148,144 @@ def test_workspace_writes_beats_json(tmp_path, monkeypatch):
     assert (workspace / "beats.json").is_file()
     assert (workspace / "music_choice.json").is_file()
     assert summary["chosen"] == "slow calm.mp3"
+
+
+CONFIG_WITHOUT_MUSIC = (
+    "models:\n  director: deepseek/deepseek-v4.1-flash\n"
+    "llm_budget_usd: 5.0\nllm_backend: mock\n"
+)
+
+
+def write_config(tmp_path, library=None):
+    text = CONFIG_WITHOUT_MUSIC
+    if library is not None:
+        text += f"music:\n  library: {library}\n"
+    path = tmp_path / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def isolate_library_config(tmp_path, monkeypatch, library=None):
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, library=library)))
+
+
+def test_missing_library_names_the_three_ways(tmp_path, monkeypatch):
+    isolate_library_config(tmp_path, monkeypatch)
+    result = run_pick("--brief", "calm", "--list")
+    assert result.returncode == EXIT_USAGE
+    for way in ("--library", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):
+        assert way in result.stderr
+    result = run_pick("--brief", "calm")
+    assert result.returncode == EXIT_USAGE
+    assert "no music library configured" in result.stderr
+
+
+def test_resolve_library_chain(tmp_path, monkeypatch):
+    isolate_library_config(tmp_path, monkeypatch)
+    with pytest.raises(music_pick.MusicPickError) as exc:
+        music_pick.resolve_library(None)
+    assert "no music library configured" in str(exc.value)
+    monkeypatch.setenv("YT_PIPELINE_MUSIC_LIBRARY", str(tmp_path / "from-env"))
+    assert music_pick.resolve_library(None) == (tmp_path / "from-env").expanduser()
+    assert music_pick.resolve_library(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+
+
+def test_library_from_env_and_config(tmp_path, monkeypatch):
+    library = build_library(tmp_path, ["slow calm.mp3"])
+    isolate_library_config(tmp_path, monkeypatch, library=str(library))
+    result = run_pick("--list", "--json")
+    assert result.returncode == EXIT_OK, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["library"] == str(library.resolve())
+    assert summary["tracks"][0]["file"] == "slow calm.mp3"
+    isolate_library_config(tmp_path, monkeypatch)
+    monkeypatch.setenv("YT_PIPELINE_MUSIC_LIBRARY", str(library))
+    summary = json.loads(run_pick("--list", "--json").stdout)
+    assert summary["library"] == str(library.resolve())
+
+
+def test_list_reports_duration_bpm_and_licence(tmp_path, monkeypatch):
+    monkeypatch.setattr(music_pick, "measure_track", fake_measure)
+    library = build_library(tmp_path)
+    (library / "slow calm.license").write_text("cc-by", encoding="utf-8")
+    (library / "LICENCE.txt").write_text("cc0", encoding="utf-8")
+    summary = music_pick.run_list(library)
+    assert summary["status"] == "listed"
+    assert summary["llm_cost_usd"] == 0.0
+    rows = {row["file"]: row for row in summary["tracks"]}
+    assert rows["slow calm.mp3"]["licence_status"] == "sidecar"
+    assert rows["slow calm.mp3"]["licence_file"].endswith("slow calm.license")
+    assert rows["mid groove.mp3"]["licence_status"] == "library"
+    assert rows["mid groove.mp3"]["licence_file"].endswith("LICENCE.txt")
+    assert rows["mid groove.mp3"]["duration_s"] == 180.0
+    assert rows["mid groove.mp3"]["bpm"] == 110.0
+    for row in rows.values():
+        assert Path(row["path"]).is_absolute()
+
+
+def test_list_marks_missing_licence_and_keeps_unmeasurable_tracks(tmp_path, monkeypatch):
+    monkeypatch.setattr(music_pick, "measure_track", lambda track, cache, force=False: None)
+    library = build_library(tmp_path, ["mid groove.mp3"])
+    summary = music_pick.run_list(library)
+    row = summary["tracks"][0]
+    assert row["licence_status"] == "missing"
+    assert row["licence_file"] is None
+    assert row["bpm"] is None
+    assert row["duration_s"] is None
+
+
+def test_cli_list_json_shape(tmp_path):
+    library = build_library(tmp_path, ["slow calm.wav", "fast party.wav"])
+    write_wav(library / "slow calm.wav", frequency=180.0)
+    write_wav(library / "fast party.wav", frequency=440.0)
+    (library / "fast party.licence").write_text("cc-by", encoding="utf-8")
+    result = run_pick("--library", library, "--list", "--json")
+    assert result.returncode == EXIT_OK, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["status"] == "listed"
+    assert summary["wall_time_s"] >= 0.0
+    assert summary["llm_cost_usd"] == 0.0
+    assert {row["file"] for row in summary["tracks"]} == {"slow calm.wav", "fast party.wav"}
+    for row in summary["tracks"]:
+        for key in ("path", "duration_s", "bpm", "licence_status", "licence_file"):
+            assert key in row
+        assert row["duration_s"] is not None
+        assert row["bpm"] is not None
+    plain = run_pick("--library", library, "--list")
+    assert plain.returncode == EXIT_OK
+    assert "licence: sidecar (fast party.licence)" in plain.stdout
+    assert "2 tracks" in plain.stdout
+
+
+def test_broken_config_is_one_error_line_and_exit_two(tmp_path, monkeypatch):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("models: []\n", encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(bad))
+    result = run_pick("--brief", "calm", "--list")
+    assert result.returncode == EXIT_USAGE
+    assert result.stdout == ""
+    assert result.stderr.count("\n") == 1
+    assert result.stderr.startswith("[error]")
+    assert "Traceback" not in result.stderr
+
+
+def test_invalid_yaml_config_is_not_a_traceback(tmp_path, monkeypatch):
+    bad = tmp_path / "config.yaml"
+    bad.write_text("models: [\ninvalid: yaml\n", encoding="utf-8")
+    monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(bad))
+    result = run_pick("--brief", "calm", "--list")
+    assert result.returncode == EXIT_USAGE
+    assert result.stderr.startswith("[error]")
+    assert "Traceback" not in result.stderr
+
+
+def test_no_library_message_is_the_shared_one(tmp_path, monkeypatch):
+    import common.config as config_module
+
+    isolate_library_config(tmp_path, monkeypatch)
+    with pytest.raises(music_pick.MusicPickError) as exc:
+        music_pick.resolve_library(None)
+    assert str(exc.value) == config_module.no_music_library_message("--library")

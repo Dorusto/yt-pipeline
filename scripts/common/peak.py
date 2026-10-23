@@ -19,6 +19,8 @@ A peak always lies inside the candidate window. A window never leaves the
 candidate window; a landing floor (``min_out``) still wins over the peak.
 """
 
+from common.constants import EPSILON
+
 PEAK_VISION = "vision"
 PEAK_MOTION = "motion"
 PEAK_MIDDLE = "middle"
@@ -26,7 +28,6 @@ PEAK_SOURCES = (PEAK_VISION, PEAK_MOTION, PEAK_MIDDLE)
 MOTION_SMOOTH_BINS = 3
 MOTION_MIN_CONTRAST = 0.001
 TOLERANCE_S = 0.05
-EPSILON = 1e-9
 
 
 def _number(value):

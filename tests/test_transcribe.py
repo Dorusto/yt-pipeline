@@ -8,6 +8,7 @@ import pytest
 
 import subs_from_edit
 import transcribe
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 EXPECTED_TEXT = "Bună ziua. Aceasta este o înregistrare de test."
 EXPECTED_WORDS = [
@@ -91,7 +92,7 @@ def test_hidden_whisper_module_is_a_clear_error(tmp_path, monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "whisper", None)
     out = tmp_path / "out"
     rc = transcribe.main([str(media), "--backend", "whisper", "--out-dir", str(out), "--json"])
-    assert rc == 2
+    assert rc == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "openai-whisper is not installed" in err
     assert "pip install openai-whisper" in err
@@ -199,7 +200,7 @@ def test_extract_audio_writes_mono_16k_wav(tmp_path):
 def test_extract_audio_error_names_the_input(tmp_path):
     bad = tmp_path / "bad.wav"
     bad.write_text("definitely not audio")
-    with pytest.raises(transcribe.TranscribeError) as excinfo:
+    with pytest.raises(transcribe.TranscribeRuntimeError) as excinfo:
         transcribe.extract_audio(bad, tmp_path / "out.wav")
     assert "bad.wav" in str(excinfo.value)
 

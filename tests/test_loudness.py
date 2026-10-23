@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import loudness
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 
 TICKS = 254016000000
 
@@ -139,7 +140,7 @@ def read_log(path):
 def test_video_backend_writes_output(tmp_path, capsys):
     clip = make_clip(tmp_path / "clip.mp4")
     rc = loudness.main(["--video", str(clip), "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["backend"] == "ffmpeg"
     assert summary["output"] == str(tmp_path / "clip_loud.mp4")
@@ -155,7 +156,7 @@ def test_video_backend_copies_video_stream(tmp_path, capsys):
     clip = make_clip(tmp_path / "clip.mp4")
     before = probe_video(clip)
     rc = loudness.main(["--video", str(clip), "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     capsys.readouterr()
     after = probe_video(tmp_path / "clip_loud.mp4")
     assert after["codec_name"] == before["codec_name"]
@@ -166,13 +167,13 @@ def test_video_backend_copies_video_stream(tmp_path, capsys):
 def test_video_backend_refuses_input_overwrite(tmp_path, capsys):
     clip = make_clip(tmp_path / "clip.mp4")
     rc = loudness.main(["--video", str(clip), "--out", str(clip), "--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "refusing to overwrite" in capsys.readouterr().err
 
 
 def test_video_backend_missing_file(tmp_path, capsys):
     rc = loudness.main(["--video", str(tmp_path / "nope.mp4"), "--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "not found" in capsys.readouterr().err
 
 
@@ -185,7 +186,7 @@ def test_fcproj_runs_three_commands_and_inspect(tmp_path, capsys, monkeypatch):
     original = project.read_bytes()
 
     rc = loudness.main(["--fcproj", str(project), "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["backend"] == "filmcraft"
     assert summary["sequence"] == "Main"
@@ -227,7 +228,7 @@ def test_fcproj_in_place_runs_against_original(tmp_path, capsys, monkeypatch):
     original = project.read_bytes()
 
     rc = loudness.main(["--fcproj", str(project), "--in-place", "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["output"] == str(project)
     assert not (tmp_path / "proj_loudness.fcproj").exists()
@@ -244,7 +245,7 @@ def test_fcproj_dry_run_does_not_invoke_stub(tmp_path, capsys, monkeypatch):
     project = write_project(tmp_path / "proj.fcproj", [(1, True), (2, True)])
 
     rc = loudness.main(["--fcproj", str(project), "--dry-run", "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["dry_run"] is True
     assert summary["measured"] is None
@@ -263,7 +264,7 @@ def test_fcproj_dry_run_prints_commands(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("STUB_LOG", str(tmp_path / "stub.log"))
     project = write_project(tmp_path / "proj.fcproj", [(1, True)])
     rc = loudness.main(["--fcproj", str(project), "--dry-run"])
-    assert rc == 0
+    assert rc == EXIT_OK
     out = capsys.readouterr().out
     assert out.count("essentialSound.") == 3
 
@@ -273,7 +274,7 @@ def test_fcproj_missing_binary(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("PATH", "")
     project = write_project(tmp_path / "proj.fcproj", [(1, True)])
     rc = loudness.main(["--fcproj", str(project), "--json"])
-    assert rc == 2
+    assert rc == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "FILMCRAFT_CLI" in err and "filmcraft-cli" in err
 
@@ -283,7 +284,7 @@ def test_fcproj_dry_run_without_binary(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("PATH", "")
     project = write_project(tmp_path / "proj.fcproj", [(1, True)])
     rc = loudness.main(["--fcproj", str(project), "--dry-run", "--json"])
-    assert rc == 0
+    assert rc == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["dry_run"] is True
     assert len(summary["commands"]) == 3
@@ -296,7 +297,7 @@ def test_fcproj_unknown_track(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("STUB_LOG", str(tmp_path / "stub.log"))
     project = write_project(tmp_path / "proj.fcproj", [(1, True)])
     rc = loudness.main(["--fcproj", str(project), "--track", "Nope", "--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     err = capsys.readouterr().err
     assert "Nope" in err and "Audio 1" in err
 
@@ -307,7 +308,7 @@ def test_fcproj_no_enabled_clip(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("STUB_LOG", str(tmp_path / "stub.log"))
     project = write_project(tmp_path / "proj.fcproj", [(1, False)])
     rc = loudness.main(["--fcproj", str(project), "--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "no enabled clip" in capsys.readouterr().err
 
 
@@ -318,24 +319,24 @@ def test_fcproj_cli_failure_exits_one(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("FILMCRAFT_CLI", str(failing))
     project = write_project(tmp_path / "proj.fcproj", [(1, True)])
     rc = loudness.main(["--fcproj", str(project), "--json"])
-    assert rc == 1
+    assert rc == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "essentialSound.setType" in err and "boom" in err
 
 
 def test_both_backends_is_an_error(tmp_path, capsys):
     rc = loudness.main(["--video", "a.mp4", "--fcproj", "b.fcproj", "--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "exactly one" in capsys.readouterr().err
 
 
 def test_neither_backend_is_an_error(capsys):
     rc = loudness.main(["--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "exactly one" in capsys.readouterr().err
 
 
 def test_out_and_in_place_are_mutually_exclusive(tmp_path, capsys):
     rc = loudness.main(["--fcproj", "b.fcproj", "--out", "c.fcproj", "--in-place", "--json"])
-    assert rc == 2
+    assert rc == EXIT_USAGE
     assert "mutually exclusive" in capsys.readouterr().err

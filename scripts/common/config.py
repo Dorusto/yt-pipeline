@@ -62,6 +62,12 @@ def model_for(config, role):
     return models[role]
 
 
+def _check_brand_logo(value):
+    """Raise a ConfigError when ``value`` is not one of the brand options."""
+    if value is not None and value not in BRAND_OPTIONS:
+        raise ConfigError(f"brand.logo must be one of: {', '.join(BRAND_OPTIONS)}")
+
+
 def _validate(data):
     if not isinstance(data, dict):
         raise ConfigError("config root must be a mapping")
@@ -103,4 +109,499 @@ def _validate(data):
         else:
             raise ConfigError("llm_mock_text must be a string or a mapping of role to string")
 
+    music = data.get("music")
+    if music is not None:
+        if not isinstance(music, dict):
+            raise ConfigError("music must be a mapping")
+        library = music.get("library")
+        if library is not None and (not isinstance(library, str) or not library):
+            raise ConfigError("music.library must be a non-empty string")
+
+    inbox = data.get("inbox")
+    if inbox is not None:
+        if not isinstance(inbox, dict):
+            raise ConfigError("inbox must be a mapping")
+        folder = inbox.get("path")
+        if folder is not None and (not isinstance(folder, str) or not folder):
+            raise ConfigError("inbox.path must be a non-empty string")
+
+    projects = data.get("projects")
+    if projects is not None:
+        if not isinstance(projects, dict):
+            raise ConfigError("projects must be a mapping")
+        folder = projects.get("path")
+        if folder is not None and (not isinstance(folder, str) or not folder):
+            raise ConfigError("projects.path must be a non-empty string")
+
+    costs = data.get("costs")
+    if costs is not None:
+        if not isinstance(costs, dict):
+            raise ConfigError("costs must be a mapping")
+        ledger = costs.get("path")
+        if ledger is not None and (not isinstance(ledger, str) or not ledger):
+            raise ConfigError("costs.path must be a non-empty string")
+        donation = costs.get("donation_url")
+        if donation is not None and (not isinstance(donation, str) or not donation):
+            raise ConfigError("costs.donation_url must be a non-empty string")
+        links = costs.get("donation_links")
+        if links is not None:
+            if not isinstance(links, list):
+                raise ConfigError("costs.donation_links must be a list")
+            for item in links:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("label"), str)
+                    or not item["label"]
+                    or not isinstance(item.get("url"), str)
+                    or not item["url"]
+                ):
+                    raise ConfigError(
+                        "costs.donation_links entries must map a non-empty label and url"
+                    )
+        for key in ("upkeep_percent", "usd_to_eur", "owner_hours", "owner_rate_eur"):
+            value = costs.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
+                raise ConfigError(f"costs.{key} must be a number of zero or more")
+        totals_url = costs.get("project_totals_url")
+        if totals_url is not None and (not isinstance(totals_url, str) or not totals_url):
+            raise ConfigError("costs.project_totals_url must be a non-empty string")
+
+    limits = data.get("limits")
+    if limits is not None:
+        if not isinstance(limits, dict):
+            raise ConfigError("limits must be a mapping")
+        storage = limits.get("storage_gb")
+        if storage is not None:
+            if (
+                isinstance(storage, bool)
+                or not isinstance(storage, (int, float))
+                or not math.isfinite(storage)
+                or storage <= 0
+            ):
+                raise ConfigError("limits.storage_gb must be a positive number")
+        warn = limits.get("credit_warn_usd")
+        if warn is not None:
+            if (
+                isinstance(warn, bool)
+                or not isinstance(warn, (int, float))
+                or not math.isfinite(warn)
+                or warn < 0
+            ):
+                raise ConfigError("limits.credit_warn_usd must be a non-negative number")
+
+    requests = data.get("requests")
+    if requests is not None:
+        if not isinstance(requests, dict):
+            raise ConfigError("requests must be a mapping")
+        path = requests.get("path")
+        if path is not None and (not isinstance(path, str) or not path):
+            raise ConfigError("requests.path must be a non-empty string")
+
+    web = data.get("web")
+    if web is not None:
+        if not isinstance(web, dict):
+            raise ConfigError("web must be a mapping")
+        consent = web.get("consent_text")
+        if consent is not None and (not isinstance(consent, str) or not consent):
+            raise ConfigError("web.consent_text must be a non-empty string")
+        features = web.get("features")
+        if features is not None:
+            if not isinstance(features, list):
+                raise ConfigError("web.features must be a list")
+            for name in features:
+                if name not in WEB_FEATURES:
+                    raise ConfigError(
+                        f"web.features entries must be one of: {', '.join(WEB_FEATURES)}"
+                    )
+
+    brand = data.get("brand")
+    if brand is not None:
+        if not isinstance(brand, dict):
+            raise ConfigError("brand must be a mapping")
+        logo = brand.get("logo")
+        _check_brand_logo(logo)
+
     return data
+
+
+MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
+INBOX_ENV = "YT_PIPELINE_INBOX"
+PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
+COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
+DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
+UPKEEP_PERCENT_ENV = "YT_PIPELINE_UPKEEP_PERCENT"
+USD_TO_EUR_ENV = "YT_PIPELINE_USD_TO_EUR"
+REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
+STORAGE_GB_ENV = "YT_PIPELINE_STORAGE_GB"
+PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
+DEFAULT_DONATION_LABEL = "Support the project"
+DEFAULT_CREDIT_WARN_USD = 1.0
+WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
+CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
+FEATURES_ENV = "YT_PIPELINE_FEATURES"
+BRAND_OPTIONS = ("option-1", "option-2", "option-3")
+BRAND_LOGO_ENV = "YT_PIPELINE_BRAND_LOGO"
+DEFAULT_BRAND_LOGO = "option-1"
+
+
+def no_music_library_message(flag_name):
+    """The one usage error for an unconfigured music library, naming the flag."""
+    return (
+        f"no music library configured: pass {flag_name} DIR, set the "
+        f"{MUSIC_LIBRARY_ENV} environment variable, or set music.library in the config"
+    )
+
+
+def no_inbox_message(flag_name):
+    """The one usage error for an unconfigured inbox, naming the flag."""
+    return (
+        f"no inbox configured: pass {flag_name} DIR, set the "
+        f"{INBOX_ENV} environment variable, or set inbox.path in the config"
+    )
+
+
+def no_projects_message(flag_name):
+    """The one usage error for an unconfigured projects folder, naming the flag."""
+    return (
+        f"no projects folder configured: pass {flag_name} DIR, set the "
+        f"{PROJECTS_ENV} environment variable, or set projects.path in the config"
+    )
+
+
+def no_costs_message(flag_name):
+    """The one usage error for an unconfigured costs ledger, naming the flag."""
+    return (
+        f"no costs ledger configured: pass {flag_name} PATH, set the "
+        f"{COSTS_DB_ENV} environment variable, or set costs.path in the config"
+    )
+
+
+def no_requests_message(flag_name):
+    """The one usage error for an unconfigured requests file, naming the flag."""
+    return (
+        f"no requests file configured: pass {flag_name} PATH, set the "
+        f"{REQUESTS_ENV} environment variable, or set requests.path in the config"
+    )
+
+
+def no_storage_message(flag_name):
+    """The one usage error for an unconfigured storage limit, naming the flag."""
+    return (
+        f"no storage limit configured: pass {flag_name} GB, set the "
+        f"{STORAGE_GB_ENV} environment variable, or set limits.storage_gb in the config"
+    )
+
+
+def no_project_totals_message(flag_name):
+    """The one usage error for an unconfigured project totals URL, naming the flag."""
+    return (
+        f"no project totals URL configured: pass {flag_name} URL, set the "
+        f"{PROJECT_TOTALS_URL_ENV} environment variable, or set "
+        f"costs.project_totals_url in the config"
+    )
+
+
+def music_library(cli_value=None, config=None):
+    """The music library folder: CLI flag, else MUSIC_LIBRARY_ENV, else music.library.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(MUSIC_LIBRARY_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("music")
+    if isinstance(section, dict):
+        value = section.get("library")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def inbox_path(cli_value=None, config=None):
+    """The inbox folder: CLI flag, else INBOX_ENV, else inbox.path.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(INBOX_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("inbox")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def projects_path(cli_value=None, config=None):
+    """The projects folder: CLI flag, else PROJECTS_ENV, else projects.path.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(PROJECTS_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("projects")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def costs_db(cli_value=None, config=None):
+    """The costs ledger file: CLI flag, else COSTS_DB_ENV, else costs.path.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(COSTS_DB_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def donation_links(cli_value=None, config=None):
+    """The donation links: CLI flag, else DONATION_URL_ENV, else costs.donation_links / costs.donation_url.
+
+    Returns a list of ``{"label", "url"}`` dicts, or None when none is set — it is
+    optional, so the caller shows no link rather than failing. There is no
+    personal default.
+    """
+    if cli_value:
+        return [{"label": DEFAULT_DONATION_LABEL, "url": cli_value}]
+    from_env = os.environ.get(DONATION_URL_ENV)
+    if from_env:
+        return [{"label": DEFAULT_DONATION_LABEL, "url": from_env}]
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict):
+        links = section.get("donation_links")
+        if links:
+            return [{"label": item["label"], "url": item["url"]} for item in links]
+        value = section.get("donation_url")
+        if value:
+            return [{"label": DEFAULT_DONATION_LABEL, "url": value}]
+    return None
+
+
+def upkeep_percent(config=None):
+    """The owner's upkeep share in percent: UPKEEP_PERCENT_ENV, else costs.upkeep_percent, else 0.
+
+    Optional: without it the costs page shows no upkeep line.
+    """
+    from_env = os.environ.get(UPKEEP_PERCENT_ENV)
+    if from_env:
+        return max(0.0, float(from_env))
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict) and section.get("upkeep_percent") is not None:
+        return max(0.0, float(section["upkeep_percent"]))
+    return 0.0
+
+
+def usd_to_eur(config=None):
+    """The display rate from US dollars to euros: USD_TO_EUR_ENV, else costs.usd_to_eur, else None.
+
+    The ledger stays in US dollars (the model provider bills in dollars); with a rate
+    the web app shows euros, without one it shows dollars.
+    """
+    from_env = os.environ.get(USD_TO_EUR_ENV)
+    if from_env:
+        return float(from_env)
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict) and section.get("usd_to_eur"):
+        return float(section["usd_to_eur"])
+    return None
+
+
+def owner_time(config=None):
+    """The owner's own time for the Costs page: costs.owner_hours, costs.owner_rate_eur, costs.owner_hours_note.
+
+    Shown only on the owner's instance, never in the balance and never in /costs.json.
+    Returns None when no hours are set.
+    """
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if not isinstance(section, dict) or not section.get("owner_hours"):
+        return None
+    return {
+        "hours": float(section["owner_hours"]),
+        "rate_eur": float(section["owner_rate_eur"]) if section.get("owner_rate_eur") else None,
+        "note": str(section.get("owner_hours_note") or ""),
+    }
+
+
+def requests_path(cli_value=None, config=None):
+    """The feedback/requests file: CLI flag, else REQUESTS_ENV, else requests.path.
+
+    Returns None when none of the three is set — it is optional, so the caller
+    hides the form rather than failing. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(REQUESTS_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("requests")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def _positive_storage(value, source):
+    """Return ``value`` as a float, or raise a ConfigError when it is not positive."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{source} must be a positive number") from exc
+    if not math.isfinite(number) or number <= 0:
+        raise ConfigError(f"{source} must be a positive number")
+    return number
+
+
+def storage_gb(cli_value=None, config=None):
+    """The storage limit in GB: CLI flag, else STORAGE_GB_ENV, else limits.storage_gb.
+
+    Returns None when none of the three is set — the caller shows no limit. A
+    non-numeric or non-positive value is a ConfigError. There is no personal default.
+    """
+    if cli_value is not None:
+        return _positive_storage(cli_value, "storage limit")
+    from_env = os.environ.get(STORAGE_GB_ENV)
+    if from_env:
+        try:
+            value = float(from_env)
+        except ValueError as exc:
+            raise ConfigError(f"{STORAGE_GB_ENV} must be a number") from exc
+        return _positive_storage(value, STORAGE_GB_ENV)
+    data = config if config is not None else load_config()
+    section = data.get("limits")
+    if isinstance(section, dict):
+        value = section.get("storage_gb")
+        if value is not None:
+            return float(value)
+    return None
+
+
+def credit_warn_usd(config=None):
+    """The credit warning threshold in USD: limits.credit_warn_usd, default 1.0."""
+    data = config if config is not None else load_config()
+    section = data.get("limits")
+    if isinstance(section, dict):
+        value = section.get("credit_warn_usd")
+        if value is not None:
+            return float(value)
+    return DEFAULT_CREDIT_WARN_USD
+
+
+def project_totals_url(cli_value=None, config=None):
+    """The project totals URL: CLI flag, else PROJECT_TOTALS_URL_ENV, else costs.project_totals_url.
+
+    Returns None when none of the three is set — the page then shows only this
+    instance. There is no personal default.
+    """
+    if cli_value:
+        return cli_value
+    from_env = os.environ.get(PROJECT_TOTALS_URL_ENV)
+    if from_env:
+        return from_env
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict):
+        value = section.get("project_totals_url")
+        if value:
+            return value
+    return None
+
+
+def consent_text(cli_value=None, config=None):
+    """The upload-page consent text: CLI flag, else CONSENT_TEXT_ENV, else web.consent_text.
+
+    Returns None when none of the three is set — it is optional, so the caller
+    shows no checkbox rather than failing. There is no personal default.
+    """
+    if cli_value:
+        return cli_value
+    from_env = os.environ.get(CONSENT_TEXT_ENV)
+    if from_env:
+        return from_env
+    data = config if config is not None else load_config()
+    section = data.get("web")
+    if isinstance(section, dict):
+        value = section.get("consent_text")
+        if value:
+            return value
+    return None
+
+
+def web_features(cli_value=None, config=None):
+    """The enabled web parts: CLI flag (comma-separated), else FEATURES_ENV, else web.features.
+
+    Returns a tuple in WEB_FEATURES order. Defaults to every part when none of
+    the three is set. An unknown name is a ConfigError.
+    """
+    names = None
+    if cli_value:
+        names = [part.strip() for part in cli_value.split(",") if part.strip()]
+    else:
+        from_env = os.environ.get(FEATURES_ENV)
+        if from_env:
+            names = [part.strip() for part in from_env.split(",") if part.strip()]
+    if names is None:
+        data = config if config is not None else load_config()
+        section = data.get("web")
+        if isinstance(section, dict) and section.get("features") is not None:
+            names = list(section["features"])
+    if names is None:
+        return WEB_FEATURES
+    for name in names:
+        if name not in WEB_FEATURES:
+            raise ConfigError(
+                f"web.features entries must be one of: {', '.join(WEB_FEATURES)}"
+            )
+    return tuple(name for name in WEB_FEATURES if name in names)
+
+
+def brand_logo(cli_value=None, config=None):
+    """The app logo mark: CLI flag, else BRAND_LOGO_ENV, else brand.logo, else option-1.
+
+    An unknown value is a ConfigError naming the three options. There is a
+    default, so this is not a three-ways error.
+    """
+    value = cli_value
+    if not value:
+        value = os.environ.get(BRAND_LOGO_ENV)
+    if not value:
+        data = config if config is not None else load_config()
+        section = data.get("brand")
+        if isinstance(section, dict):
+            value = section.get("logo")
+    if not value:
+        return DEFAULT_BRAND_LOGO
+    _check_brand_logo(value)
+    return value

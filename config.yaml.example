@@ -17,8 +17,11 @@ models:
 
 # Names thanked verbatim in the publish description (the channel members
 # sentence). Never commit real names; config.yaml is git-ignored.
+# github_url is the channel's code URL the metadata draft links; it is handed
+# to the model in the Inputs. Never commit the real URL here.
 channel:
   members: "Andrei, Mihai și Maria"
+  github_url: "<channel-code-url>"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
@@ -27,8 +30,93 @@ llm_budget_usd: 5.0
 # Backend used by scripts/common/llm.py: openrouter or mock.
 llm_backend: openrouter
 
+# Optional Shorts layout policy for scripts/shorts_rank.py: auto, on or off.
+# auto (default) writes 'split' only when the session has a camera and a screen
+# recording and the screen shows something during the candidate; on writes
+# 'split' for every candidate of a camera+screen session; off always writes
+# 'face'. Quote the value so YAML does not read on/off as booleans.
+# shorts_layout: "auto"
+
+# Optional ntfy server URL for scripts/notify.py and the watchdog (also read
+# from the NTFY_URL environment variable; no built-in default). Never commit a
+# private address — this public repository only names `<ntfy-url>`.
+# ntfy_url: http://ntfy.example.invalid/opencode-doru
+
 # Optional per-project spend ledger (JSON) so llm_budget_usd caps a whole job
 # across separate tool runs. Prefer the workspace copy: <workspace>/llm_spend.json.
 # Overridden by the YT_SPEND_LEDGER environment variable; when neither is set,
 # YT_WORKSPACE/llm_spend.json is used if YT_WORKSPACE is set.
 # spend_ledger: /path/to/workspace/llm_spend.json
+
+# Music library folder for music_pick.py, recap.py --music auto and the web
+# Upload page. There is no personal default in code: set the folder here, in the
+# YT_PIPELINE_MUSIC_LIBRARY environment variable, or pass --library /
+# --music-dir. Docs and examples write <music-library>. Tools only read the
+# folder; they never download music.
+# music:
+#   library: <music-library>
+
+# Inbox folder for serve.py uploads and the phone flow. There is no personal
+# default in code: set the folder here, in the YT_PIPELINE_INBOX environment
+# variable, or pass --inbox. Docs and examples write <inbox>.
+# inbox:
+#   path: <inbox>
+
+# Projects folder for inbox.py: it holds one workspace per day. There is no
+# personal default in code: set the folder here, in the YT_PIPELINE_PROJECTS
+# environment variable, or pass --projects. Docs and examples write <projects>.
+# projects:
+#   path: <projects>
+
+# Costs ledger for costs.py: a SQLite file outside the repository. There is no
+# personal default in code: set the file here, in the YT_PIPELINE_COSTS_DB
+# environment variable, or pass --ledger. Docs and examples write <costs.db>.
+# donation_links is optional and shown on the web app's Costs page as plain
+# links; set it here, in the YT_PIPELINE_DONATION_URL environment variable, or
+# pass --donation-url. A single costs.donation_url is still accepted. Never
+# commit the real links; the example uses placeholders.
+# costs:
+#   path: <costs.db>
+#   donation_links:
+#     - label: Support the project
+#       url: https://example.org/donate
+#   project_totals_url is the owner instance's GET /costs.json; when set, the
+#   Costs page shows "Project costs (everyone)" next to "This instance". Set it
+#   here, in the YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or pass
+#   --project-totals-url.
+#   project_totals_url: https://example.org/costs.json
+
+# Feedback/requests file for the web app's Costs page: one JSON line per
+# request. There is no personal default in code: set the file here, in the
+# YT_PIPELINE_REQUESTS environment variable, or pass --requests. Docs and
+# examples write <requests.jsonl>.
+# requests:
+#   path: <requests.jsonl>
+
+# Instance limits for the web app. limits.storage_gb caps the workspaces and the
+# inbox size: the Upload and Costs pages show "X GB of Y GB used", warn over 80 %
+# and refuse an upload that would pass the limit before any byte is written.
+# limits.credit_warn_usd (default 1.0) warns when the OpenRouter key's remaining
+# credit falls below it. There is no personal default: set storage_gb here, in the
+# YT_PIPELINE_STORAGE_GB environment variable, or pass --storage-gb.
+# limits:
+#   storage_gb: 100
+#   credit_warn_usd: 1.0
+
+# Web app parts and consent. web.features lists the parts shown on this
+# instance (upload, recap, why, shots, shorts, costs, requests); the server
+# refuses the routes of a part that is off. There is no personal default: set
+# it here, in the YT_PIPELINE_FEATURES environment variable (comma-separated),
+# or pass --features. web.consent_text is optional: when set, the upload page
+# shows it with a required "I agree" checkbox; set it here, in the
+# YT_PIPELINE_CONSENT_TEXT environment variable, or pass --consent-text.
+# web:
+#   features: [upload, recap, why, shots, shorts, costs, requests]
+#   consent_text: "I have the rights to upload this footage."
+
+# App logo: one of the three flat SVG marks in assets/brand/ (option-1
+# clapperboard, option-2 viewfinder, option-3 reticle). There is a default:
+# set it here, in the YT_PIPELINE_BRAND_LOGO environment variable, or pass
+# --brand-logo. GET /brand shows all three side by side.
+# brand:
+#   logo: option-1

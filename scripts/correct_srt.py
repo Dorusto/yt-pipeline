@@ -6,6 +6,7 @@ Corectează termenii greșiți dintr-un fișier .srt folosind o listă de corect
 Utilizare:
     python3 correct_srt.py input.srt
     python3 correct_srt.py input.srt output_corectat.srt
+    python3 correct_srt.py input.srt output_corectat.srt --json
 
 Dacă nu specifici output, generează automat: input_corectat.srt
 
@@ -15,58 +16,46 @@ Liniile care încep cu # sunt ignorate.
 Dacă corrections.txt lipsește, se folosește corrections_example.txt (0 corecturi).
 """
 
+import json
 import sys
-import re
-from pathlib import Path
+import time
 
-CORRECTIONS_FILE = Path(__file__).parent / "corrections.txt"
-CORRECTIONS_EXAMPLE_FILE = Path(__file__).parent / "corrections_example.txt"
-
-
-def load_corrections(path: Path) -> list[tuple[str, str]]:
-    corrections = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split("|", 1)
-            if len(parts) == 2:
-                corrections.append((parts[0], parts[1]))
-    return corrections
-
-
-def resolve_corrections_file(path: Path) -> Path | None:
-    """Return the corrections file to read, falling back to the example when missing."""
-    if path.exists():
-        return path
-    print(
-        f"[warning] Fișierul de corecturi lipsește: {path}. "
-        f"Folosesc exemplul: {CORRECTIONS_EXAMPLE_FILE}",
-        file=sys.stderr,
-    )
-    if CORRECTIONS_EXAMPLE_FILE.exists():
-        return CORRECTIONS_EXAMPLE_FILE
-    return None
-
-
-def apply_corrections(text: str, corrections: list[tuple[str, str]]) -> str:
-    for wrong, correct in corrections:
-        text = text.replace(wrong, correct)
-    return text
+from common.corrections import (
+    CORRECTIONS_EXAMPLE_FILE,
+    CORRECTIONS_FILE,
+    CorrectionsError,
+    apply_corrections,
+    load_corrections,
+    resolve_corrections_file,
+)
+from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Utilizare: python3 correct_srt.py input.srt [output.srt]")
-        sys.exit(1)
+    started = time.monotonic()
+    json_out = "--json" in sys.argv[1:]
+    try:
+        run(json_out, started)
+    except CorrectionsError as exc:
+        sys.exit(report_error(exc, EXIT_USAGE, json_out, **summary_fields(started)))
 
-    input_file = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else input_file.replace(".srt", "_corectat.srt")
 
-    corrections_path = resolve_corrections_file(CORRECTIONS_FILE)
+def run(json_out=False, started=None):
+    started = time.monotonic() if started is None else started
+    stream = sys.stderr if json_out else sys.stdout
+    positionals = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not positionals:
+        print("Utilizare: python3 correct_srt.py input.srt [output.srt] [--json]", file=stream)
+        sys.exit(EXIT_USAGE)
+
+    input_file = positionals[0]
+    output_file = positionals[1] if len(positionals) > 1 else input_file.replace(".srt", "_corectat.srt")
+
+    corrections_path = resolve_corrections_file(CORRECTIONS_FILE, CORRECTIONS_EXAMPLE_FILE)
     corrections = load_corrections(corrections_path) if corrections_path else []
-    print(f"Corecturi încărcate: {len(corrections)}")
+    print(f"Corecturi încărcate: {len(corrections)}", file=stream)
 
     with open(input_file, encoding="utf-8") as f:
         content = f.read()
@@ -74,12 +63,20 @@ def main():
     corrected = apply_corrections(content, corrections)
 
     changes = sum(1 for wrong, _ in corrections if wrong in content)
-    print(f"Termeni înlocuiți: {changes}")
+    print(f"Termeni înlocuiți: {changes}", file=stream)
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(corrected)
 
-    print(f"Salvat: {output_file}")
+    print(f"Salvat: {output_file}", file=stream)
+    if json_out:
+        print(json.dumps({
+            "ok": True,
+            "output": str(output_file),
+            "corrections": len(corrections),
+            "changes": changes,
+            **summary_fields(started),
+        }))
 
 
 if __name__ == "__main__":

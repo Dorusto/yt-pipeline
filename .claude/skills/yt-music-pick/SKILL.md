@@ -17,12 +17,17 @@ from the repository root.
 ## Step 1: pick the track
 
 ```bash
-.venv/bin/python scripts/music_pick.py --library ~/media/music \
+.venv/bin/python scripts/music_pick.py --library <music-library> \
     --brief "about 60 seconds, chronological, calm start" --workspace /path/to/workspace --json
 ```
 
-- `--library DIR` (default `~/media/music`): only the audio files directly in
-  the folder (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`). Never recursive.
+- `--library DIR`: the music library folder. There is no personal default — it
+  comes from `--library`, else the `YT_PIPELINE_MUSIC_LIBRARY` environment
+  variable, else `music.library` in the config; with none set the tool exits 2
+  with `[error] no music library configured` naming those three ways. Only the
+  audio files directly in the folder (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`)
+  are used. Never recursive. The folder is read only: no music is ever
+  downloaded.
 - `--brief TEXT` / `--brief-file PATH`: one of them is required — the brief
   decides the pace band.
 - `--workspace DIR` (optional): the shotlog's tags/summary/subject/scenery join
@@ -32,8 +37,15 @@ from the repository root.
   ties.
 - `--out PATH` (default `WORKSPACE/music_choice.json`), `--force` (ignore the
   measurement cache), `--json`, `--help`.
-- Exit 1 with one `[error]` line when the library is empty or nothing could be
-  analysed.
+- `--list` reports the library without choosing anything: one row per track
+  with `file`, `path`, `duration_s`, `bpm` and the licence file status
+  (`licence_status` `sidecar`/`library`/`missing` plus `licence_file`), as text
+  or `--json` for an agent. A track that cannot be measured keeps nulls and the
+  list still succeeds.
+- Exit 2 with one `[error]` line when no library is configured, the library is
+  empty or the brief flags are wrong; a missing or invalid config also exits 2
+  with one `[error]` line. Exit 3 when the work failed after it started
+  (`beats.py` failing on a track, no track analysable, a filesystem error).
 
 ## How it scores
 
@@ -57,6 +69,11 @@ The `--json` summary (and `music_choice.json`) is one object: `status`,
 
 ## Notes
 
-- The library is read only: a track is never moved, renamed or rewritten.
+- The library is read only: a track is never moved, renamed or rewritten, and
+  no tool downloads music.
+- Licence file status per track: a `<stem>.license` / `<stem>.licence` (or
+  `<file>.license` / `<file>.licence`) sidecar counts as `sidecar`, else the
+  library's `LICENSE` / `LICENCE` / `LICENSE.txt` / `LICENCE.txt` / `COPYING`
+  file counts as `library`, else `missing`.
 - For the whole pipeline in one command use `recap.py --music auto`
   (`yt-recap`); this tool is the decision step it calls.

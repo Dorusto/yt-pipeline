@@ -25,6 +25,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 MISSING_WHISPER = (
     "openai-whisper is not installed (pip install openai-whisper); "
@@ -46,6 +48,10 @@ MOCK_WORD_TIMES = (
     ("de", 3.3, 3.5),
     ("test.", 3.6, 4.2),
 )
+
+
+class TranscribeRuntimeError(Exception):
+    """Raised when transcription fails after it started (whisper, ffmpeg)."""
 
 
 class TranscribeError(Exception):
@@ -106,7 +112,7 @@ class WhisperTranscriber(Transcriber):
         try:
             import whisper
         except ImportError:
-            raise TranscribeError(MISSING_WHISPER)
+            raise TranscribeRuntimeError(MISSING_WHISPER)
         self._whisper = whisper
         self.device = "cuda" if _cuda_available() else "cpu"
         self.model_name = model or (GPU_MODEL if self.device == "cuda" else CPU_MODEL)
@@ -117,7 +123,7 @@ class WhisperTranscriber(Transcriber):
             try:
                 self.model = self._whisper.load_model(self.model_name, device=self.device)
             except Exception as exc:
-                raise TranscribeError(
+                raise TranscribeRuntimeError(
                     f"failed to load Whisper model '{self.model_name}': {exc}"
                 )
         language_arg = None if language in (None, "auto") else language
@@ -126,7 +132,7 @@ class WhisperTranscriber(Transcriber):
                 str(media_path), language=language_arg, word_timestamps=True, verbose=False
             )
         except Exception as exc:
-            raise TranscribeError(f"Whisper failed on '{media_path}': {exc}")
+            raise TranscribeRuntimeError(f"Whisper failed on '{media_path}': {exc}")
 
 
 def make_transcriber(backend, model):
@@ -162,11 +168,11 @@ def extract_audio(media_path, out_path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise TranscribeError(f"could not run ffmpeg: {exc}")
+        raise TranscribeRuntimeError(f"could not run ffmpeg: {exc}")
     if result.returncode != 0:
         tail = (result.stderr or "").strip().splitlines()
         detail = tail[-1] if tail else "unknown error"
-        raise TranscribeError(f"ffmpeg could not extract audio from {media_path}: {detail}")
+        raise TranscribeRuntimeError(f"ffmpeg could not extract audio from {media_path}: {detail}")
     return Path(out_path)
 
 
@@ -293,9 +299,10 @@ def main(argv=None):
             language=args.language,
             backend=args.backend,
         )
+    except TranscribeRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except TranscribeError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps(summary))
@@ -304,7 +311,7 @@ def main(argv=None):
             f"written: {summary['outputs']['srt']} and {summary['outputs']['words_json']} "
             f"({summary['segments']} segments, {summary['words']} words)"
         )
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

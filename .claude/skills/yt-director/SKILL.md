@@ -24,7 +24,7 @@ Pick the cut windows of an edit from the shotlog and the labels the analysis too
 - `--speed-ramp` (default off) lets the middle half of long camera moves play up to 1.2x; without it every slot has `middle_speed` 1.0.
 - `--allow-similar` lets visually similar shots into the same edit; they are then only forbidden from being adjacent. Without it, a shot similar to any already chosen shot is skipped.
 - `--force` rewrites even when the output is up to date. `--json` prints the machine-readable summary.
-- On any error (missing workspace, no usable candidates, schema violation, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing workspace, no usable candidates, schema violation) or `3` (runtime failure after work started: disk write). It never asks questions.
 
 ## Step 2: read the result
 

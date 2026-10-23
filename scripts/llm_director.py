@@ -31,10 +31,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config
+from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
+from common.feedback import append_feedback
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
+from common import runlog
 from common.moves import (
     EXCEPTION_SHARE,
     SAME_TAKE_MIN_GAP_S,
@@ -48,8 +51,11 @@ from common.moves import (
     screen_factor,
     slot_screen_length,
 )
+from common.overlap import overlap_seconds
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 
 TOOL = "scripts/llm_director.py"
 SCHEMA_VERSION = "0.1"
@@ -86,6 +92,7 @@ CLIP_COUNTER = re.compile(r"_(\d{4})_")
 CONTENT_TYPES = ("vacation", "tutorial", "presentation", "talking-head")
 TRAVEL_LABELS = {"travel_forward", "travel_backward", "orbit", "orbit_candidate"}
 
+DIRECTOR_PROGRESS_RE = re.compile(r"^\[\s*\d+/\s*\d+\]\s+llm_director\s+\S+\s+(\d+(?:\.\d+)?)s\b")
 DURATION_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(seconds|second|secs|sec|minutes|minute|mins|min|s)\b",
     re.IGNORECASE,
@@ -126,6 +133,10 @@ BRIEF_KEYWORDS = (
 )
 
 
+class LLMDirectorRuntimeError(RuntimeError):
+    """Raised when the rule-based fallback director fails."""
+
+
 class LLMDirectorError(RuntimeError):
     """Raised when the LLM director cannot produce an edit."""
 
@@ -153,11 +164,13 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"about 90 seconds, calm start\"\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief-file brief.txt --json\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --dry-run\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --rounds 2 --out my_edit.json\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"about 90 seconds, calm start\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief-file brief.txt --json\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --dry-run\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --rounds 2 --out my_edit.json\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --interpret-feedback \"drop 0071/s2, tunnel longer\" --json\n"
+            "  python scripts/llm_director.py --workspace <workspace> --version v3 --interpret-feedback \"make the tunnel longer\"\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -211,6 +224,21 @@ def build_parser():
         ),
     )
     parser.add_argument(
+        "--version",
+        default=None,
+        metavar="vNNN",
+        help="read the previous edit context from versions/vNNN/edit.json (with --interpret-feedback)",
+    )
+    parser.add_argument(
+        "--interpret-feedback",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "say in the user's language how the director reads this feedback request, "
+            "with a cost and time estimate; one cheap model call, no edit written"
+        ),
+    )
+    parser.add_argument(
         "--speed-ramp",
         action="store_true",
         help=(
@@ -260,10 +288,6 @@ def clip_counter(name):
 
 def candidate_key(candidate):
     return f"{clip_counter(candidate['clip'])}/{candidate['segment'].get('id')}"
-
-
-def overlap_seconds(a_start, a_end, b_start, b_end):
-    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 def load_shotlog(workspace):
@@ -805,8 +829,8 @@ def read_prompt(name):
     return path.read_text(encoding="utf-8")
 
 
-def call_client(client, messages, state):
-    response = client.complete("director", messages)
+def call_client(client, messages, state, role="director"):
+    response = client.complete(role, messages)
     state.calls += 1
     state.cost_usd = round(state.cost_usd + float(response.cost_usd), 8)
     return response
@@ -840,22 +864,101 @@ def complete_plan(answer, brief_text, hints, content_type):
 
 def append_feedback_lines(workspace, feedback):
     """Append one JSON line per feedback text to WORKSPACE/feedback.jsonl (append-only)."""
-    path = Path(workspace) / "feedback.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        for text in feedback:
-            row = {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "action": "feedback",
-                "text": text,
-                "tool": TOOL,
-            }
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    for text in feedback:
+        append_feedback(workspace, "feedback", text=text, tool=TOOL)
 
 
-def previous_edit_context(workspace):
+def last_director_estimate(workspace):
+    """The last run's director time and cost from run.log and llm_spend.json, or (None, None)."""
+    workspace = Path(workspace)
+    start = runlog.last_run_start(workspace)
+    if start is None:
+        return None, None
+    estimate_s = None
+    for line in runlog.last_run_lines(workspace):
+        match = DIRECTOR_PROGRESS_RE.match(line)
+        if match:
+            estimate_s = float(match.group(1))
+            break
+    estimate_usd = runlog.spend_between(workspace, start, role="director")
+    return estimate_usd, estimate_s
+
+
+def build_interpret_user(text, workspace, edit_path=None):
+    """The user message for the interpret call: the feedback plus the previous edit context."""
+    return build_feedback_block([text], workspace, edit_path)
+
+
+def request_reply(client, prompt, user, state):
+    """One cheap model call returning the reply, retried once, then a runtime error."""
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": user},
+    ]
+    for _ in range(2):
+        response = call_client(client, messages, state, role="metadata")
+        answer = parse_json(response.text)
+        if isinstance(answer, dict):
+            reply = answer.get("reply")
+            if isinstance(reply, str) and reply.strip():
+                return reply.strip()
+    raise LLMDirectorRuntimeError("model produced no usable reply after one retry")
+
+
+def append_reply_line(workspace, text, reply, estimate_usd, estimate_s):
+    """Append one ``action: reply`` line to WORKSPACE/feedback.jsonl (append-only)."""
+    append_feedback(
+        workspace,
+        "reply",
+        text=text,
+        reply=reply,
+        estimate={"usd": estimate_usd, "s": estimate_s},
+        tool=TOOL,
+    )
+
+
+def interpret_feedback(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None):
+    """One cheap model call that says how the director reads a feedback request."""
+    started = time.monotonic()
+    workspace_path = Path(workspace).expanduser().resolve()
+    if not workspace_path.is_dir():
+        raise LLMDirectorError(f"workspace not found: {workspace_path}")
+    if not text or not text.strip():
+        raise LLMDirectorError("provide --interpret-feedback TEXT")
+    edit_path = None
+    if version is not None:
+        if not re.fullmatch(r"v\d+", version):
+            raise LLMDirectorError(f"--version must look like vNNN, got {version!r}")
+        edit_path = workspace_path / "versions" / version / "edit.json"
+    if client is None:
+        if config is None:
+            config = load_config()
+        effective = dict(config)
+        models = dict(effective.get("models") or {})
+        if model is not None:
+            models["metadata"] = model
+        effective["models"] = models
+        if budget_usd is not None:
+            effective["llm_budget_usd"] = budget_usd
+        client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
+    prompt = read_prompt("interpret_feedback.md")
+    state = LoopState()
+    reply = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
+    estimate_usd, estimate_s = last_director_estimate(workspace_path)
+    append_reply_line(workspace_path, text, reply, estimate_usd, estimate_s)
+    return {
+        "reply": reply,
+        "estimate_usd": estimate_usd,
+        "estimate_s": estimate_s,
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": round(state.cost_usd, 8),
+    }, EXIT_OK
+
+
+def previous_edit_context(workspace, edit_path=None):
     """The previous edit's used slots and rejected candidates, for the feedback block."""
-    data = load_json(Path(workspace) / "edit.json")
+    path = Path(edit_path) if edit_path is not None else Path(workspace) / "edit.json"
+    data = load_json(path)
     if not isinstance(data, dict):
         return None
     used = []
@@ -878,12 +981,12 @@ def previous_edit_context(workspace):
     return {"used": used, "rejected": rejected}
 
 
-def build_feedback_block(feedback, workspace):
+def build_feedback_block(feedback, workspace, edit_path=None):
     """The user-message block that carries the feedback and the short ids it may name."""
     lines = ["Feedback to apply (plain words, refers to the short ids below):"]
     lines.extend(f"- {text}" for text in feedback)
     lines.append("")
-    previous = previous_edit_context(workspace)
+    previous = previous_edit_context(workspace, edit_path)
     if previous is None:
         lines.append("Previous edit: none (no previous edit.json; the feedback refers to no existing ids)")
         return "\n".join(lines)
@@ -2324,13 +2427,53 @@ def attach_decisions(record, facts_by_key, shotlog_by_key, drop_reasons=None):
 DIRECTOR_NOTES_MAX = 20
 
 
-def director_info(by, approved, warnings):
+def objection_text(problem, change):
+    """The plain-word text of one reviewer fix: problem, change, or both joined."""
+    problem = problem.strip() if isinstance(problem, str) else ""
+    change = change.strip() if isinstance(change, str) else ""
+    if problem and change:
+        return f"{problem} — {change}"
+    return problem or change
+
+
+def review_object(verdict, record):
+    """``meta.director.review`` from the reviewer's last verdict, or None when it is not a dict."""
+    if not isinstance(verdict, dict):
+        return None
+    approved = bool(verdict.get("approved"))
+    objections = []
+    if not approved:
+        shot_positions = {
+            slot.get("id"): index + 1 for index, slot in enumerate(record.get("video") or [])
+        }
+        for fix in verdict.get("fixes") or []:
+            if not isinstance(fix, dict):
+                continue
+            text = objection_text(fix.get("problem"), fix.get("change"))
+            if not text:
+                continue
+            slot = fix.get("slot")
+            slot = slot if isinstance(slot, str) and slot else None
+            objections.append(
+                {"slot": slot, "shot": shot_positions.get(slot) if slot is not None else None, "text": text}
+            )
+        if not objections:
+            verdict_text = verdict.get("verdict")
+            if isinstance(verdict_text, str) and verdict_text.strip():
+                objections.append({"slot": None, "shot": None, "text": verdict_text})
+    return {"approved": approved, "objections": objections}
+
+
+def director_info(by, approved, warnings, review=None):
     """``meta.director``: who made the edit, whether the reviewer approved it, and the notes."""
-    return {
+    info = {
         "by": by,
         "approved": approved,
         "notes": [str(note)[:300] for note in warnings][:DIRECTOR_NOTES_MAX],
     }
+    if review is not None:
+        info["review"] = review
+    return info
 
 
 def write_edit(path, record, started, cost_usd, director=None):
@@ -2381,11 +2524,11 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, 
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
-            raise LLMDirectorError(f"rule-based director failed: {result.stderr.strip()}")
+            raise LLMDirectorRuntimeError(f"rule-based director failed: {result.stderr.strip()}")
         data = load_json(tmp)
         summary = parse_json(result.stdout) or {}
     if data is None:
-        raise LLMDirectorError("rule-based director wrote no edit")
+        raise LLMDirectorRuntimeError("rule-based director wrote no edit")
     atomic_write_json(out_path, data)
     return data, summary.get("beat_snap")
 
@@ -2408,10 +2551,10 @@ def run_baseline(workspace, brief_text, hints, beats_path=None, music=None, ambi
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
-            raise LLMDirectorError(f"rule-based director failed: {result.stderr.strip()}")
+            raise LLMDirectorRuntimeError(f"rule-based director failed: {result.stderr.strip()}")
         data = load_json(tmp)
     if data is None:
-        raise LLMDirectorError("rule-based director wrote no edit")
+        raise LLMDirectorRuntimeError("rule-based director wrote no edit")
     slots = data.get("video") or []
     total = sum(slot_duration(slot) for slot in slots)
     return {
@@ -2422,7 +2565,7 @@ def run_baseline(workspace, brief_text, hints, beats_path=None, music=None, ambi
 
 
 def input_paths(workspace, brief_path, plan_path, beats_path=None):
-    paths = [workspace / "shotlog.json"]
+    paths = [workspace / "shotlog.json", workspace / "brief_facts.json"]
     if brief_path is not None:
         paths.append(brief_path)
     if plan_path is not None:
@@ -2597,6 +2740,10 @@ def _run_loop(
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
     hints = parse_brief(brief_text)
+    facts_block_text = facts_block(load_brief_facts(workspace_path))
+    prompt_brief = brief_text
+    if facts_block_text:
+        prompt_brief = brief_text.rstrip() + "\n\n" + facts_block_text
     all_good = target_duration_s is not None and target_duration_s <= 0
     if all_good:
         estimate = estimate_all_good(load_json(workspace_path / "shotlog.json"))
@@ -2621,7 +2768,7 @@ def _run_loop(
         warnings.append("no shotlog.json in the workspace; using the rule-based director")
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
 
     drop_reasons = {}
     pacing = run_pacing(LONG_CUT_PACING_S if all_good else hints.get("target_duration_s"))
@@ -2634,7 +2781,7 @@ def _run_loop(
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
 
     sources = [
         {"file": clip["file"], "path": clip.get("path") or clip["file"], "duration_s": clip.get("duration_s")}
@@ -2661,7 +2808,7 @@ def _run_loop(
             effective["llm_budget_usd"] = budget_usd
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
 
-    content_type = detect_content_type(brief_text, workspace_path)
+    content_type = detect_content_type(prompt_brief, workspace_path)
     screenwriter_prompt = read_prompt("screenwriter.md")
     editor_prompt = read_prompt("editor.md")
     reviewer_prompt = read_prompt("reviewer.md")
@@ -2672,12 +2819,12 @@ def _run_loop(
     record = None
     plan = None
     try:
-        plan = screenwriter(client, screenwriter_prompt, brief_text, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block)
+        plan = screenwriter(client, screenwriter_prompt, prompt_brief, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block)
         if plan is None:
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
         if dry_run:
-            baseline = run_baseline(workspace_path, brief_text, hints, beats_path, music, ambient_under_music_db, speed_ramp)
+            baseline = run_baseline(workspace_path, prompt_brief, hints, beats_path, music, ambient_under_music_db, speed_ramp)
             summary = base_summary("written", None, plan_path, 0, None, None, 0, 0.0, 0, warnings, started, state.cost_usd, candidates)
             summary["baseline"] = baseline
             summary["dry_run"] = True
@@ -2690,15 +2837,17 @@ def _run_loop(
             )
 
         review = None
+        last_verdict = None
         for round_index in range(rounds):
             rounds_used = round_index + 1
             record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block)
             if record is None:
                 raise LoopFailure("editor produced no valid edit")
             violations = validate_edit(record, plan, facts, effective_important_max_s)
-            verdict = reviewer(client, reviewer_prompt, brief_text, plan, record, violations, state, feedback_block)
+            verdict = reviewer(client, reviewer_prompt, prompt_brief, plan, record, violations, state, feedback_block)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
+            last_verdict = verdict
             if verdict.get("approved") is True and not violations:
                 approved = True
                 break
@@ -2708,12 +2857,12 @@ def _run_loop(
         warnings.append(str(exc))
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 2, candidates)
+        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
 
     if approved:
         for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, []):
@@ -2727,12 +2876,12 @@ def _run_loop(
         beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
-            write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings))
+            write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings, review_object(last_verdict, record)))
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
                 return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
@@ -2762,12 +2911,12 @@ def _run_loop(
         beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
-            write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings))
+            write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings, review_object(last_verdict, record)))
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
                 return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap), 0
@@ -2779,7 +2928,7 @@ def _run_loop(
             warnings.append(note)
     if fallback_rules:
         return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-    return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+    return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
 
 
 def print_human(summary, record):
@@ -2805,40 +2954,63 @@ def print_human(summary, record):
         print(f"warning: {warning}")
 
 
+def print_interpret(summary):
+    print(summary["reply"])
+    estimate = []
+    if summary["estimate_usd"] is not None:
+        estimate.append(f"${summary['estimate_usd']:.4f}")
+    if summary["estimate_s"] is not None:
+        estimate.append(f"{summary['estimate_s']:.1f}s")
+    if estimate:
+        print("estimate: " + ", ".join(estimate))
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary, code = run(
-            args.workspace,
-            brief=args.brief,
-            brief_file=args.brief_file,
-            out=args.out,
-            plan_out=args.plan_out,
-            rounds=args.rounds,
-            dry_run=args.dry_run,
-            fallback_rules=args.fallback_rules,
-            model=args.model,
-            budget_usd=args.budget_usd,
-            force=args.force,
-            important_max_s=args.important_max_s,
-            target_duration_s=args.target_duration_s,
-            order=args.order,
-            pacing=args.pacing,
-            beats=args.beats,
-            music=args.music,
-            ambient_under_music_db=args.ambient_under_music_db,
-            feedback=args.feedback,
-            speed_ramp=args.speed_ramp,
-        )
-    except (LLMDirectorError, ConfigError, SchemaError, LLMError, OSError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        if args.interpret_feedback is not None:
+            summary, code = interpret_feedback(
+                args.workspace,
+                args.interpret_feedback,
+                version=args.version,
+                model=args.model,
+                budget_usd=args.budget_usd,
+            )
+        else:
+            summary, code = run(
+                args.workspace,
+                brief=args.brief,
+                brief_file=args.brief_file,
+                out=args.out,
+                plan_out=args.plan_out,
+                rounds=args.rounds,
+                dry_run=args.dry_run,
+                fallback_rules=args.fallback_rules,
+                model=args.model,
+                budget_usd=args.budget_usd,
+                force=args.force,
+                important_max_s=args.important_max_s,
+                target_duration_s=args.target_duration_s,
+                order=args.order,
+                pacing=args.pacing,
+                beats=args.beats,
+                music=args.music,
+                ambient_under_music_db=args.ambient_under_music_db,
+                feedback=args.feedback,
+                speed_ramp=args.speed_ramp,
+            )
+    except (LLMDirectorRuntimeError, LLMError, OSError) as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except (LLMDirectorError, ConfigError, SchemaError) as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
+    elif args.interpret_feedback is not None:
+        print_interpret(summary)
     else:
         record = load_json(summary["out"]) if summary.get("out") else None
         print_human(summary, record)
-    if code == 1:
+    if code != EXIT_OK:
         detail = summary["warnings"][-1] if summary["warnings"] else "run failed"
         print(f"[error] {detail}", file=sys.stderr)
     return code

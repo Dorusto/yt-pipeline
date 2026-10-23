@@ -10,6 +10,8 @@ from PIL import Image
 
 import similarity
 from common.schema import validate
+from common.exit_codes import EXIT_OK
+from fs_probe import safe_is_file
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "similarity.py"
@@ -118,7 +120,7 @@ def test_hist_identical_frames_produce_pair(tmp_path):
         [segment("s1", 0.0, 2.0), segment("s2", 2.0, 4.0)],
     )
     summary, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["segments"] == 2
     assert summary["pairs"] == 1
     data = read_similarity(tmp_path)
@@ -144,7 +146,7 @@ def test_hist_dark_vs_bright_stays_below_threshold(tmp_path):
         [segment("s1", 0.0, 4.0)],
     )
     summary, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["segments"] == 2
     assert summary["pairs"] == 0
     data = read_similarity(tmp_path)
@@ -188,7 +190,7 @@ def test_json_summary_has_wall_time_and_zero_cost(tmp_path):
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert "wall_time_s" in summary
     assert summary["llm_cost_usd"] == 0.0
@@ -205,13 +207,13 @@ def test_rerun_without_force_is_noop_and_force_recomputes(tmp_path):
         [segment("s1", 0.0, 2.0), segment("s2", 2.0, 4.0)],
     )
     first, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert first["skipped"] is False
     second, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert second["skipped"] is True
     forced, code = similarity.run(tmp_path, backend="hist", force=True)
-    assert code == 0
+    assert code == EXIT_OK
     assert forced["skipped"] is False
 
 
@@ -231,7 +233,7 @@ def test_clips_filter_selects_substrings(tmp_path):
         [segment("s1", 0.0, 4.0)],
     )
     summary, code = similarity.run(tmp_path, backend="hist", clips="0067")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["segments"] == 1
     data = read_similarity(tmp_path)
     assert [entry["key"] for entry in data["segments"]] == ["0067/s1"]
@@ -242,7 +244,7 @@ def test_missing_workspace_is_an_error(tmp_path):
         similarity.run(tmp_path, backend="hist")
 
 
-@pytest.mark.skipif(not MODEL_PATH.exists(), reason="mobilenet ONNX model not in the cache")
+@pytest.mark.skipif(not safe_is_file(MODEL_PATH), reason="mobilenet ONNX model not in the cache")
 def test_mobilenet_embeddings_are_finite_and_normalised(tmp_path):
     clip = write_solid_video(tmp_path / "clip.mp4", (40, 80, 160))
     write_quality(
@@ -252,7 +254,7 @@ def test_mobilenet_embeddings_are_finite_and_normalised(tmp_path):
         [segment("s1", 0.0, 2.0), segment("s2", 2.0, 4.0)],
     )
     summary, code = similarity.run(tmp_path, backend="mobilenet")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["model"] == "mobilenetv2-12.onnx"
     data = read_similarity(tmp_path)
     assert validate(data, "similarity") == []
@@ -268,7 +270,7 @@ def test_hist_identical_photos_produce_pair(tmp_path):
     second = write_photo(tmp_path / "dji_mimo_20261012_120103_0069_x_photo.jpg")
     write_ingest(tmp_path, [photo_record(first), photo_record(second)])
     summary, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["photos"] == 2
     data = read_similarity(tmp_path)
     assert len(data["pairs"]) == 1
@@ -283,7 +285,7 @@ def test_photo_row_has_photo_media_type(tmp_path):
     )
     write_ingest(tmp_path, [photo_record(photo)])
     summary, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["photos"] == 1
     data = read_similarity(tmp_path)
     assert validate(data, "similarity") == []
@@ -309,7 +311,7 @@ def test_photo_and_different_colour_clip_not_paired(tmp_path):
     )
     write_ingest(tmp_path, [photo_record(photo)])
     summary, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["segments"] == 2
     assert summary["photos"] == 1
     data = read_similarity(tmp_path)
@@ -325,7 +327,7 @@ def test_repeated_photo_counter_falls_back_to_stem(tmp_path):
     )
     write_ingest(tmp_path, [photo_record(first), photo_record(second)])
     summary, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     data = read_similarity(tmp_path)
     keys = [row["key"] for row in data["segments"]]
     assert "0068/p1" in keys
@@ -336,9 +338,9 @@ def test_rerun_skips_when_ingest_is_newer(tmp_path):
     photo = write_photo(tmp_path / "dji_mimo_20261012_120102_0068_x_photo.jpg")
     write_ingest(tmp_path, [photo_record(photo)])
     first, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert first["skipped"] is False
     second, code = similarity.run(tmp_path, backend="hist")
-    assert code == 0
+    assert code == EXIT_OK
     assert second["skipped"] is True
     assert second["photos"] == 1

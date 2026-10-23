@@ -19,8 +19,10 @@ import sys
 import time
 from pathlib import Path
 
-TICKS_PER_SECOND = 254016000000
-DEFAULT_FRAME_RATE = 25.0
+from common.constants import TICKS_PER_SECOND
+from common.filmcraft import parse_frame_rate
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.errors import report_error
 ROSE = "rose"
 SCHEMA_VERSION = "1"
 
@@ -98,13 +100,7 @@ def sequence_block(sequence_item):
 
 def frame_rate(sequence_item):
     """Return the sequence frame rate as a float, defaulting to 25 when unset."""
-    settings = sequence_block(sequence_item).get("settings") or {}
-    rate = settings.get("frame_rate") or {}
-    num = rate.get("num")
-    den = rate.get("den")
-    if not num or not den:
-        return DEFAULT_FRAME_RATE
-    return float(num) / float(den)
+    return parse_frame_rate(sequence_block(sequence_item).get("settings") or {})
 
 
 def format_timecode(seconds, fps):
@@ -218,8 +214,7 @@ def main(argv=None):
     try:
         summary = run(args.project, args.sequence, args.out, args.todo)
     except MarkersError as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return report_error(exc, EXIT_USAGE, args.json)
 
     if args.json:
         print(json.dumps(summary))
@@ -228,7 +223,7 @@ def main(argv=None):
         print(f"written: {summary['todo']}")
         if summary["clip_markers_ignored"]:
             print(f"warning: ignored {summary['clip_markers_ignored']} clip-level markers")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

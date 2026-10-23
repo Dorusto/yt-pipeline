@@ -11,8 +11,8 @@ The output adapter: turn an `edit.json` edit list into an MP4, either a preview-
 ## Step 1: render
 
 ```bash
-.venv/bin/python scripts/render.py --edit /path/to/workspace/edit.json \
-  --out /path/to/workspace/recap_720p.mp4
+.venv/bin/python scripts/render.py --edit <workspace>/edit.json \
+  --out <workspace>/recap_720p.mp4
 ```
 
 - `--edit` is validated against `schemas/edit.schema.json` before anything is encoded.
@@ -65,8 +65,8 @@ When ambience is disabled (`audio.ambience.enabled: false`) there is nothing to 
 ## Step 2: render the final from the originals
 
 ```bash
-.venv/bin/python scripts/render.py --edit /path/to/workspace/edit.json \
-  --out /path/to/workspace/recap_final.mp4 --originals-dir ~/media/yt-test/raw
+.venv/bin/python scripts/render.py --edit <workspace>/edit.json \
+  --out <workspace>/recap_final.mp4 --originals-dir <source-folder>
 ```
 
 - The originals folder holds the same file names as `sources[]`; each slot is cut from the original instead of the proxy.
@@ -76,8 +76,8 @@ When ambience is disabled (`audio.ambience.enabled: false`) there is nothing to 
 ## Step 3: read the result
 
 ```bash
-.venv/bin/python scripts/render.py --edit /path/to/workspace/edit.json \
-  --out /path/to/workspace/recap_720p.mp4 --json
+.venv/bin/python scripts/render.py --edit <workspace>/edit.json \
+  --out <workspace>/recap_720p.mp4 --json
 ```
 
 The `--json` output is a single object, e.g. `{"status": "written", "out": "/abs/recap_720p.mp4", "duration_s": 5.72, "slots": 2, "width": 1280, "height": 720, "warnings": [], "originals_dir": null, "source": "sources", "audio_clean": {"enabled": true, "denoiser": "afftdn", "filters": ["highpass", "afftdn", "loudnorm"]}, "music": {"path": "/abs/track.mp3", "gain_db": -12.0, "ducking": true, "looped": true}, "wall_time_s": 2.03, "llm_cost_usd": 0.0}`. `status` is `written` or `skipped`; `duration_s` and the resolution come from an `ffprobe` pass over the encoded file. `slots` counts video and photo slots. `originals_dir` is the folder or `null`, and `source` is `originals` when the run used `--originals-dir`, else `sources`. `music` is `null` without a track, else the resolved path, gain, whether the track was ducked under the ambience and whether it was looped. This tool never calls a model, so `llm_cost_usd` is always `0.0`.
@@ -90,7 +90,7 @@ The `--json` output is a single object, e.g. `{"status": "written", "out": "/abs
 
 ## Notes
 
-- Sources are read-only. Never point `--out` at `~/media/yt-test/proxy` or `~/media/yt-test/raw`; write into the project workspace.
+- Sources are read-only. Never point `--out` at the workspace proxies folder or `<source-folder>`; write into the project workspace.
 - The edit list is the single source of truth (`schemas/edit.schema.json`); this tool is one adapter that reads it.
 - For the analysis stages that feed the director see `docs/VISION.md` and the `yt-ingest`, `yt-motion`, `yt-quality` skills.
 

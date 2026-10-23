@@ -23,6 +23,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 - Without the second argument the output is `<input>_corectat.srt`.
 - Matching is a plain, case-sensitive text replace over the whole file, timestamps included. Do not add very short patterns.
 - It prints `Corecturi încărcate: N` and `Termeni înlocuiți: M`. M counts distinct wrong terms that were found, not occurrences. N = 0 means the list is empty; M = 0 with N > 0 means nothing matched.
+- `--json` prints one JSON summary (`ok`, `output`, `corrections`, `changes`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
 
 ## Step 2: human review (do not skip silently)
 
@@ -43,7 +44,8 @@ Needs `OPENROUTER_API_KEY` in the environment for real runs (a missing key print
 - Naming: with a `.mp4` second argument (any letter case) the file is written next to the video as `<input name>_EN.srt`, so `Clip_RO.srt` becomes `Clip_RO_EN.srt`, not `Clip_EN.srt`. The same suffix rule applies when the second argument is omitted. Pass an explicit output path when the exact name matters.
 - Batches of 20 blocks. The file is written only after all batches succeed, so an API error leaves no partial file.
 - A multi-line block becomes a single line in English. Blocks with no text are dropped.
-- The model id comes from the `translate` role in `config.yaml` (`models:`), and the deprecated `analyze_srt.py` from the `analyze` role; a missing role or a budget error prints `[error] ...` and exits 2.
+- The model id comes from the `translate` role in `config.yaml` (`models:`), and the deprecated `analyze_srt.py` from the `analyze` role; a missing role prints `[error] ...` and exits 2; a budget or model error exits 3.
+- `--json` prints one JSON summary (`ok`, `output`, `segments`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
 
 ## Step 4: verify the translation
 
@@ -60,12 +62,13 @@ Always ask the user first. Never run it on your own initiative. Say something li
 Run it only after an explicit yes. It needs `OPENROUTER_API_KEY`, uses API credit, and both paths must be absolute.
 
 ```bash
-.venv/bin/python scripts/analyze_srt.py /abs/path/Clip_RO.srt /abs/path/Clip.mp4 < /dev/null
+.venv/bin/python scripts/analyze_srt.py /abs/path/Clip_RO.srt /abs/path/Clip.mp4 --select none
 ```
 
 - Sends the first 80,000 characters of the transcript to the model; the rest is ignored. The output is in Romanian.
 - Writes next to the video: `<srt name>_video_metadata.txt` (title, description, chapters, tags) and `<srt name>_shorts_candidates.txt` (ranked candidates with timestamps).
-- After listing candidates it asks which ones to cut. Keep `< /dev/null` so it answers "none" automatically: the cut option produces square 1080x1080 clips (`shorts/short_NN_*.mp4`), not the 9:16 Shorts made by `scripts/shorts_generator.py`.
+- After listing candidates it asks which ones to cut. Pass `--select 1,3,5|all|none` — use `none` so nothing is cut: the cut option produces square 1080x1080 clips (`shorts/short_NN_*.mp4`), not the 9:16 Shorts made by `scripts/shorts_generator.py`. Without `--select` and without a TTY the run is a usage error (exit 2) naming `--select`; on a TTY it prompts.
+- `--json` prints one JSON summary (`ok`, `mode`, `video_metadata`, `shorts_candidates`, `candidates`, `selected`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
 - The video file must exist, but it is only used for the output folder and for cutting.
 
 Per-short metadata, once `scripts/shorts_config.yaml` has its segments: ask the user the same way, then

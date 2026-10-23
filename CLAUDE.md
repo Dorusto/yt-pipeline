@@ -84,22 +84,22 @@ Export/
 ## How to run
 
 ```bash
-cd ~/Proiecte-AI/YouTube/yt-pipeline
+cd <repo>
 
 # Generate shorts (reads scripts/shorts_config.yaml automatically)
-.venv/bin/python scripts/shorts_generator.py --video ~/Videos/[Clip]/Export/video/[Clip].mp4
+.venv/bin/python scripts/shorts_generator.py --video <clip-folder>/Export/video/<clip>.mp4
 
 # Re-render only (skip WhisperX, reuse existing words JSON)
 .venv/bin/python scripts/shorts_generator.py --video ... --skip-alignment
 
 # Main video metadata
-python scripts/analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
+python scripts/analyze_srt.py <clip-folder>/Export/subtitles/<clip>_RO.srt <clip-folder>/Export/video/<clip>.mp4
 
 # Per-short metadata (after generating shorts)
-python scripts/analyze_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4 --shorts-config scripts/shorts_config.yaml
+python scripts/analyze_srt.py <clip-folder>/Export/subtitles/<clip>_RO.srt <clip-folder>/Export/video/<clip>.mp4 --shorts-config scripts/shorts_config.yaml
 
 # Translate SRT (saves next to video)
-python scripts/translate_srt.py ~/Videos/[Clip]/Export/subtitles/[Clip]_RO.srt ~/Videos/[Clip]/Export/video/[Clip].mp4
+python scripts/translate_srt.py <clip-folder>/Export/subtitles/<clip>_RO.srt <clip-folder>/Export/video/<clip>.mp4
 
 # Rough-cut assembly from raw footage (pre-editing, see README.md)
 python3 scripts/kdenlive_from_fragments.py fragments.yaml

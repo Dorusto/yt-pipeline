@@ -21,11 +21,16 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.excluded import filter_excluded, load_excluded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.errors import report_error
 from common.photos import PHOTO_EXTENSIONS, PhotoError, is_photo, photo_metadata
 from common.schema import SchemaError, validate_or_raise
+from common.summary import summary_fields
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 GYRO_HANDLER_MARKERS = ("dji meta", "gyro", "gyroscope", "motion")
@@ -34,6 +39,10 @@ FILENAME_TIME_RE = re.compile(r"(\d{8})_?(\d{6})")
 
 class IngestError(RuntimeError):
     """Raised when a scan cannot be completed."""
+
+
+class IngestRuntimeError(RuntimeError):
+    """Raised when the scan fails after it started (ffprobe, disk)."""
 
 
 def build_parser():
@@ -48,8 +57,8 @@ def build_parser():
             "video extensions: .mp4, .mov, .m4v\n"
             "photo extensions: .jpg, .jpeg, .heic\n"
             "examples:\n"
-            "  python scripts/ingest.py ~/Videos/clip --workspace ~/Videos/workspace\n"
-            "  python scripts/ingest.py ~/Videos/clip --workspace ~/Videos/workspace --json\n"
+            "  python scripts/ingest.py <trip-folder> --workspace <workspace>\n"
+            "  python scripts/ingest.py <trip-folder> --workspace <workspace> --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -219,14 +228,14 @@ def run_ffprobe(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise IngestError(f"could not run ffprobe: {exc}") from exc
+        raise IngestRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise IngestError(f"ffprobe failed for {path.name}: {detail}")
+        raise IngestRuntimeError(f"ffprobe failed for {path.name}: {detail}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise IngestError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
+        raise IngestRuntimeError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
 
 
 def probe_clip(path):
@@ -316,6 +325,9 @@ def scan(source_dir, workspace):
             f"no video files ({', '.join(sorted(VIDEO_EXTENSIONS))}) or photos "
             f"({', '.join(sorted(PHOTO_EXTENSIONS))}) in {source}"
         )
+    excluded = load_excluded(workspace)
+    clips = filter_excluded(clips, excluded)
+    photos = filter_excluded(photos, excluded)
     data = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_dir": str(source),
@@ -334,12 +346,16 @@ def scan(source_dir, workspace):
 
 
 def main(argv=None):
+    started = time.monotonic()
     args = build_parser().parse_args(argv)
     try:
         data, output_path = scan(args.source_dir, args.workspace)
+    except IngestRuntimeError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     except (IngestError, SchemaError) as exc:
-        print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return report_error(exc, EXIT_USAGE, args.json)
+    except OSError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     clips = data["clips"]
     summary = {
         "clips": len(clips),
@@ -347,6 +363,7 @@ def main(argv=None):
         "output": str(output_path),
         "gyro_clips": sum(1 for clip in clips if clip["gyro"]["present"]),
         "total_duration_s": round(sum(clip["duration_s"] for clip in clips), 3),
+        **summary_fields(started),
     }
     if args.json:
         print(json.dumps(summary))
@@ -356,7 +373,7 @@ def main(argv=None):
             f"({summary['total_duration_s']} s total, {summary['gyro_clips']} with gyro)"
         )
         print(f"wrote {summary['output']}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

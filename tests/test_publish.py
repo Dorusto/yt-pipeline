@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 import publish
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 FIXTURES = Path(__file__).parent / "fixtures" / "publish"
 FCPROJ = FIXTURES / "fixture.fcproj"
@@ -157,6 +158,25 @@ def test_command_lines(tmp_path, monkeypatch, capsys):
     assert metadata[-1] == "--json"
 
 
+def test_chapters_flag_on_metadata_step(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    chapters = tmp_path / "chapters.json"
+    chapters.write_text("{}", encoding="utf-8")
+    assert run_publish(
+        project,
+        write_context(tmp_path),
+        extra=["--resume", "--chapters", str(chapters), "--json"],
+    ) == 0
+    metadata = dict(recorder.argvs)["metadata"]
+    assert "--chapters" in metadata
+    assert str(chapters) in metadata
+    summary = json.loads(capsys.readouterr().out)
+    assert isinstance(summary["wall_time_s"], (int, float))
+    assert "llm_cost_usd" in summary
+
+
 def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
     project = tmp_path / "proj"
     recorder = Recorder()
@@ -296,7 +316,7 @@ def test_failing_child_aborts(tmp_path, monkeypatch, capsys):
     project = tmp_path / "proj"
     recorder = Recorder(fail_at="correct")
     monkeypatch.setattr(publish, "execute", recorder)
-    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 2
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == EXIT_RUNTIME
     assert recorder.calls == ["subtitles", "correct"]
     summary = json.loads(capsys.readouterr().out)
     statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
@@ -309,7 +329,7 @@ def test_naming_normalization(tmp_path, monkeypatch, capsys):
     project = tmp_path / "proj"
     recorder = Recorder(fail_at="correct")
     monkeypatch.setattr(publish, "execute", recorder)
-    assert run_publish(project, write_context(tmp_path), extra=["--json"]) == 2
+    assert run_publish(project, write_context(tmp_path), extra=["--json"]) == EXIT_RUNTIME
     raw = project / f"{project.name}.srt"
     assert raw.is_file()
     assert raw.read_text(encoding="utf-8") == SRT_RAW
@@ -508,7 +528,10 @@ def write_mock_config(tmp_path):
                 }
             ),
         },
-        "channel": {"members": "Andrei, Mihai și Maria"},
+        "channel": {
+            "members": "Andrei, Mihai și Maria",
+            "github_url": "https://example.invalid/channel",
+        },
     }
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
@@ -806,7 +829,7 @@ def test_kit_loudness_uses_the_loudened_file(tmp_path, monkeypatch, capsys):
 def test_kit_loudness_failure_fails(tmp_path, monkeypatch, capsys):
     project, clip = build_kit_project(tmp_path)
     monkeypatch.setattr(publish, "run_loudness", lambda ctx, final: (None, "boom"))
-    assert run_kit(project, clip, extra=["--kit-loudness"]) == 2
+    assert run_kit(project, clip, extra=["--kit-loudness"]) == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "loudness failed" in err
     assert not (project / "publish-kit").exists()
@@ -838,6 +861,49 @@ def test_kit_end_to_end_with_mock_llm(tmp_path):
     assert "00:00 Intro" in studio
     assert "a, b" in studio
     assert summary["kit"]["title"] == "T1"
+
+
+def write_chapters_file(tmp_path, chapters, name="chapters.json"):
+    document = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-21T00:00:00+00:00",
+        "tool": "scripts/chapters.py",
+        "chapters": chapters,
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def test_kit_studio_md_uses_chapters_file(tmp_path):
+    project = tmp_path / "project"
+    config_path = write_mock_config(tmp_path)
+    context_path = write_context(tmp_path)
+    project.mkdir()
+    make_thumbnail(project / "thumbnail.jpg")
+    clip = tmp_path / "final.mp4"
+    make_clip(clip)
+    chapters = write_chapters_file(
+        tmp_path, [{"start_s": 0.0, "title": "FileChapter", "summary": "file"}]
+    )
+    run = run_publish_subprocess(
+        project,
+        config_path,
+        context_path,
+        extra=[
+            "--resume",
+            "--kit",
+            "--final-video",
+            str(clip),
+            "--chapters",
+            str(chapters),
+            "--json",
+        ],
+    )
+    assert run.returncode == 0, run.stderr
+    studio = (project / "publish-kit" / "studio.md").read_text(encoding="utf-8")
+    assert "00:00 FileChapter" in studio
+    assert "00:00 Intro" not in studio
 
 
 def test_kit_skipped_then_forced(tmp_path):

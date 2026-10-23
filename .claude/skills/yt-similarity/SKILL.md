@@ -17,11 +17,11 @@ Embed every quality segment and still photo of a workspace and list the visually
 - `--workspace` is required and must hold `quality/`, `ingest.json` with `photos[]`, or both. `DIR/similarity.json` is written there, created if missing. The source clips and photos are never written to.
 - **Still photos are picked up automatically** when `DIR/ingest.json` lists them under `photos[]` (the `ingest` stage writes this). Each photo is embedded from one frame as pseudo-segment `p1`, so photo/photo and photo/clip pairs are listed exactly like clip/clip pairs. A workspace with only photos and no `quality/` folder is valid.
 - `--backend` is `mobilenet` (default) or `hist`. `mobilenet` runs MobileNetV2 ONNX through `cv2.dnn` and gives the widest same-scene vs cross-scene separation; `hist` is the handcrafted HSV/gradient/luma fallback for an offline run with no model and no download.
-- `--model-path` (default `~/.cache/yt-pipeline/models/mobilenetv2-12.onnx`) is the ONNX file; `--model-url` is where it is downloaded from once when missing. A failed download exits 1 and names `--backend hist` as the offline path.
+- `--model-path` (default `~/.cache/yt-pipeline/models/mobilenetv2-12.onnx`) is the ONNX file; `--model-url` is where it is downloaded from once when missing. A failed download exits 3 and names `--backend hist` as the offline path.
 - `--threshold` (default 0.90) is the cosine similarity at or above which a pair is listed.
 - `--clips` limits the video run to comma-separated 4-digit counters or stem substrings (e.g. `--clips 0072,0081`). Photos are always included.
 - `--force` recomputes even when `similarity.json` is up to date. Without it, an output newer than every quality file and the `ingest.json` it was built from is skipped and counted as `skipped`.
-- On any error (missing workspace, unreadable quality file, missing clip or photo, missing model with no download, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing workspace, unreadable quality file, missing clip or photo) or `3` (runtime failure after work started: model load or download, disk write). It never asks questions.
 
 ## Step 2: read the result
 

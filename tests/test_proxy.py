@@ -3,6 +3,7 @@ import json
 import subprocess
 
 import proxy
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 
 def make_clip(path, duration=2.0, size="320x240", rate=10, audio=True):
@@ -54,7 +55,7 @@ def test_writes_proxy_with_audio(tmp_path, capsys):
     source = tmp_path / "clip.mp4"
     make_clip(source)
     out = tmp_path / "proxy"
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "written"
     target = out / "clip.mp4"
@@ -77,7 +78,7 @@ def test_proxy_keeps_the_clip_creation_time(tmp_path, capsys):
         capture_output=True,
     )
     out = tmp_path / "proxy"
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     tags = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time",
          "-of", "csv=p=0", str(out / "C0001.MP4")],
@@ -92,16 +93,16 @@ def test_skips_existing_and_force_rewrites(tmp_path, capsys):
     source = tmp_path / "clip.mp4"
     make_clip(source)
     out = tmp_path / "proxy"
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     capsys.readouterr()
     target = out / "clip.mp4"
     before = sha256(target)
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "skipped"
     assert summary["written"] == []
     assert sha256(target) == before
-    assert proxy.main([str(source), "--out", str(out), "--force", "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--force", "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "written"
 
@@ -111,7 +112,7 @@ def test_refuses_out_inside_source(tmp_path, capsys):
     source_dir.mkdir()
     make_clip(source_dir / "clip.mp4")
     out = source_dir / "proxy"
-    assert proxy.main([str(source_dir), "--out", str(out)]) == 1
+    assert proxy.main([str(source_dir), "--out", str(out)]) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "inside the source" in err
@@ -123,12 +124,12 @@ def test_refuses_out_that_would_overwrite_original(tmp_path, capsys):
     source = tmp_path / "clip.mp4"
     make_clip(source)
     before = sha256(source)
-    assert proxy.main([str(source), "--out", str(source.parent)]) == 1
+    assert proxy.main([str(source), "--out", str(source.parent)]) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "must not be inside the source" in err
     assert sha256(source) == before
-    assert proxy.main([str(source), "--out", str(source.parent), "--force"]) == 1
+    assert proxy.main([str(source), "--out", str(source.parent), "--force"]) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "must not be inside the source" in err
@@ -140,7 +141,7 @@ def test_originals_untouched(tmp_path, capsys):
     make_clip(source)
     before = sha256(source)
     out = tmp_path / "proxy"
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     capsys.readouterr()
     assert sha256(source) == before
 
@@ -149,7 +150,7 @@ def test_json_summary_fields(tmp_path, capsys):
     source = tmp_path / "clip.mp4"
     make_clip(source)
     out = tmp_path / "proxy"
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["tool"] == "scripts/proxy.py"
     assert isinstance(summary["wall_time_s"], (int, float))
@@ -163,7 +164,7 @@ def test_folder_input(tmp_path, capsys):
     make_clip(source_dir / "b.mp4")
     (source_dir / "notes.txt").write_text("ignore me", encoding="utf-8")
     out = tmp_path / "proxy"
-    assert proxy.main([str(source_dir), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source_dir), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["counts"]["written"] == 2
     assert (out / "a.mp4").exists()
@@ -175,7 +176,7 @@ def test_video_without_audio(tmp_path, capsys):
     source = tmp_path / "silent.mp4"
     make_clip(source, audio=False)
     out = tmp_path / "proxy"
-    assert proxy.main([str(source), "--out", str(out), "--json"]) == 0
+    assert proxy.main([str(source), "--out", str(out), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "written"
     assert (out / "silent.mp4").exists()
