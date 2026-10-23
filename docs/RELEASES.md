@@ -2,7 +2,7 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
-## v0.1.0 (candidate, not released)
+## v0.1.0 (2026-10-23)
 
 **Candidate until the owner confirms the real test.** Nothing here is tagged yet.
 
