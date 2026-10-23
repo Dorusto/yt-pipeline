@@ -67,3 +67,9 @@ llm_backend: openrouter
 # environment variable, or pass --projects. Docs and examples write <projects>.
 # projects:
 #   path: <projects>
+
+# Costs ledger for costs.py: a SQLite file outside the repository. There is no
+# personal default in code: set the file here, in the YT_PIPELINE_COSTS_DB
+# environment variable, or pass --ledger. Docs and examples write <costs.db>.
+# costs:
+#   path: <costs.db>

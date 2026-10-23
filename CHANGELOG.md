@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mode B finishing: `finish_pip.py` places the camera picture-in-picture over the screen spans with an eased entry and exit.
 - Music: the library path comes from a flag, an environment variable or the config, and `music_pick.py --list` reports each track's licence status.
 - Shorts: `shorts_rank.py` writes standalone candidates with titles and descriptions.
+- Costs: `costs.py` keeps a SQLite ledger of model jobs, build-agent spend, fixed monthly costs, investments and donations, with idempotent imports and a `totals` view.
 
 ### Changed
 

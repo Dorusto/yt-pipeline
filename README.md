@@ -81,6 +81,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
 | `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons and the Mode B Cuts-tab cut review |
+| `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 
 Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
 
@@ -386,6 +387,26 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 ```
 
 `--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500). There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
+
+---
+
+## Costs ledger (costs.py)
+
+`costs.py` keeps a small SQLite ledger of what the project costs and earns: model jobs, build-agent spend, fixed monthly costs, one-off investments and donations. It calls no model, so `llm_cost_usd` is always `0.0`. Skill: `yt-costs`.
+
+The ledger is a SQLite file **outside the repository**. Its path comes from `--ledger`, else the `YT_PIPELINE_COSTS_DB` environment variable, else `costs.path` in the config; with none set the tool stops with a usage error naming those three ways. Docs and examples write `<costs.db>`.
+
+```bash
+.venv/bin/python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+.venv/bin/python scripts/costs.py --ledger <costs.db> totals --month 2026-10 --json
+.venv/bin/python scripts/costs.py --ledger <costs.db> list --kind model_job
+```
+
+- Five kinds: `model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`.
+- `import-jobs` reads each workspace's `llm_spend.json`; `import-dev` reads the build agents' run-spend JSON. Both are idempotent by `source` (the project name for jobs, the date for dev spend), so re-running never duplicates a row.
+- `totals` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance (donations minus model + dev + investments + fixed monthly × months). `totals --json` is the object the web page will read.
 
 ---
 

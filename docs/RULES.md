@@ -69,6 +69,10 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - A tool reports `EXIT_USAGE` for the input and config problems it detects itself and `EXIT_RUNTIME` for failures of the work it started — including a called program that failed, whatever that program's own exit code was; a model answer that cannot be parsed is a model-call failure (`EXIT_RUNTIME`), and a missing `OPENROUTER_API_KEY` is a config error (`EXIT_USAGE`). — 2026-10-23 (AUDIT lot 3b1)
 - Every tool with `--json` reports a failure as one `{"ok": false, "error": "...", "exit_code": N}` object on stdout (the human `[error]` line stays on stderr), through `scripts/common/errors.py` `report_error(error, exit_code, json_out, **extra)`, which returns the exit code. — 2026-10-23 (AUDIT lot 3b2, F24)
 
+## Costs
+
+- The costs ledger is a SQLite file outside the repository; its path comes from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`, else a three-ways usage error. Five kinds (`model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`); imports are idempotent by `source`; `totals --json` is the source the web page reads. — 2026-10-23
+
 ## Safety rules
 
 - Originals are read-only; outputs go to the project workspace; tools refuse to write inside the originals folder. — 2026-10-13

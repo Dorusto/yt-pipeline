@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Keep a small SQLite ledger of what the project costs and earns.
+
+Usage:
+    python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
+    python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
+    python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+    python scripts/costs.py --ledger <costs.db> totals --json
+    python scripts/costs.py --ledger <costs.db> list --kind model_job
+
+The ledger is a SQLite file outside the repository. Its path comes from
+``--ledger``, else ``YT_PIPELINE_COSTS_DB``, else ``costs.path`` in the config,
+else a usage error naming those three ways. Five kinds are tracked:
+``model_job``, ``dev_spend``, ``fixed_monthly``, ``investment`` and
+``donation``. Imports are idempotent by ``source`` (the project name for model
+jobs, the date for build-agent spend), so re-running never duplicates a row.
+No model is called, so ``llm_cost_usd`` is always 0.0.
+"""
+
+import argparse
+import json
+import math
+import re
+import sqlite3
+import sys
+import time
+from datetime import date, datetime
+from pathlib import Path
+
+from common.config import ConfigError, costs_db, load_config, no_costs_message
+from common.errors import report_error
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from common.llm import LLMError, read_ledger
+from common.summary import summary_fields
+
+KINDS = ("model_job", "dev_spend", "fixed_monthly", "investment", "donation")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  amount_usd REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  source TEXT
+)
+"""
+
+
+class CostsError(RuntimeError):
+    """Base error for the costs ledger tool."""
+
+
+class CostsUsageError(CostsError):
+    """Raised for a bad flag, kind, date or month, or a missing ledger path."""
+
+
+class CostsRuntimeError(CostsError):
+    """Raised when SQLite or the filesystem fails after the run started."""
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="costs.py",
+        description=(
+            "Keep a SQLite ledger of model jobs, build-agent spend, fixed monthly "
+            "costs, investments and donations, with idempotent imports and a totals view."
+        ),
+        epilog=(
+            "examples:\n"
+            "  python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01\n"
+            "  python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>\n"
+            "  python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>\n"
+            "  python scripts/costs.py --ledger <costs.db> totals --json\n"
+            "  python scripts/costs.py --ledger <costs.db> list --kind model_job\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--ledger",
+        default=None,
+        help=(
+            "SQLite ledger file; pass it here, set the YT_PIPELINE_COSTS_DB "
+            "environment variable, or set costs.path in the config"
+        ),
+    )
+    parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    add = subparsers.add_parser("add", help="append one manual entry")
+    add.add_argument("--kind", required=True, help=f"one of: {', '.join(KINDS)}")
+    add.add_argument("--amount", type=float, required=True, help="amount in USD, greater than 0")
+    add.add_argument("--date", default=None, help="entry date YYYY-MM-DD (default: today)")
+    add.add_argument("--note", default="", help="free-text note")
+    add.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
+    jobs = subparsers.add_parser("import-jobs", help="import model-job spend from workspaces")
+    jobs.add_argument("--workspaces", required=True, help="folder holding one workspace per project")
+    jobs.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
+    dev = subparsers.add_parser("import-dev", help="import build-agent spend from a run-spend file")
+    dev.add_argument("--from", dest="from_file", required=True, help="run-spend JSON file")
+    dev.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
+    totals = subparsers.add_parser("totals", help="sum the ledger and compute the balance")
+    totals.add_argument("--month", default=None, help="limit the sums to one month YYYY-MM")
+    totals.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
+    listing = subparsers.add_parser("list", help="list ledger entries")
+    listing.add_argument("--kind", default=None, help=f"filter by kind: {', '.join(KINDS)}")
+    listing.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    return parser
+
+
+def connect(path):
+    """Open the ledger, creating the entries table on first use."""
+    connection = sqlite3.connect(str(path))
+    connection.execute(SCHEMA)
+    connection.commit()
+    return connection
+
+
+def insert_entry(connection, entry_date, kind, amount, note, source):
+    """Insert one entry and return its id."""
+    cursor = connection.execute(
+        "INSERT INTO entries (date, kind, amount_usd, note, source) VALUES (?, ?, ?, ?, ?)",
+        (entry_date, kind, float(amount), note, source),
+    )
+    connection.commit()
+    return cursor.lastrowid
+
+
+def upsert_by_source(connection, kind, source, entry_date, amount, note):
+    """Update the entry with this kind and source, or insert it; return (id, action)."""
+    row = connection.execute(
+        "SELECT id FROM entries WHERE kind=? AND source=?", (kind, source)
+    ).fetchone()
+    if row is None:
+        return insert_entry(connection, entry_date, kind, amount, note, source), "created"
+    connection.execute(
+        "UPDATE entries SET amount_usd=?, date=?, note=? WHERE id=?",
+        (float(amount), entry_date, note, row[0]),
+    )
+    connection.commit()
+    return row[0], "updated"
+
+
+def resolve_ledger(args):
+    """Resolve the ledger path or raise the three-ways usage error."""
+    try:
+        config = load_config()
+    except ConfigError:
+        config = {}
+    path = costs_db(args.ledger, config)
+    if path is None:
+        raise CostsUsageError(no_costs_message("--ledger"))
+    return path
+
+
+def command_add(connection, args, started):
+    if args.kind not in KINDS:
+        raise CostsUsageError(
+            f"unknown kind '{args.kind}'; valid kinds: {', '.join(KINDS)}"
+        )
+    amount = args.amount
+    if amount is None or not math.isfinite(amount) or amount <= 0:
+        raise CostsUsageError("--amount must be a finite number greater than 0")
+    entry_date = args.date if args.date is not None else date.today().isoformat()
+    if not DATE_RE.match(entry_date):
+        raise CostsUsageError(f"--date must match YYYY-MM-DD, got '{entry_date}'")
+    entry_id = insert_entry(connection, entry_date, args.kind, amount, args.note, None)
+    entry = {
+        "id": entry_id,
+        "date": entry_date,
+        "kind": args.kind,
+        "amount_usd": round(float(amount), 2),
+        "note": args.note,
+        "source": None,
+    }
+    return {"ok": True, "entry": entry, **summary_fields(started)}
+
+
+def command_import_jobs(connection, args, started):
+    workspaces = Path(args.workspaces).expanduser()
+    if not workspaces.is_dir():
+        raise CostsUsageError(f"workspaces folder not found: {workspaces}")
+    imported = []
+    for project in sorted(path for path in workspaces.iterdir() if path.is_dir()):
+        ledger_file = project / "llm_spend.json"
+        if not ledger_file.is_file():
+            continue
+        try:
+            total = read_ledger(ledger_file)["total_usd"]
+        except LLMError as exc:
+            print(f"[warn] skipping {project.name}: {exc}", file=sys.stderr)
+            continue
+        entry_date = datetime.fromtimestamp(ledger_file.stat().st_mtime).date().isoformat()
+        _, action = upsert_by_source(
+            connection,
+            "model_job",
+            project.name,
+            entry_date,
+            total,
+            "imported from llm_spend.json",
+        )
+        imported.append(
+            {"project": project.name, "total_usd": round(float(total), 2), "action": action}
+        )
+    return {
+        "ok": True,
+        "imported": imported,
+        "count": len(imported),
+        **summary_fields(started),
+    }
+
+
+def command_import_dev(connection, args, started):
+    source_file = Path(args.from_file).expanduser()
+    if not source_file.is_file():
+        raise CostsUsageError(f"run-spend file not found: {source_file}")
+    try:
+        data = json.loads(source_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CostsUsageError(f"could not read run-spend file {source_file}: {exc}") from exc
+    entries = data.get("entries") if isinstance(data, dict) else data
+    if not isinstance(entries, list):
+        raise CostsUsageError(
+            f"run-spend file {source_file} must be a list or an object with an entries list"
+        )
+    per_day = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        stamp = entry.get("ts")
+        cost = entry.get("cost_usd")
+        if not isinstance(stamp, str) or isinstance(cost, bool) or not isinstance(cost, (int, float)):
+            continue
+        try:
+            day = datetime.fromisoformat(stamp.replace("Z", "+00:00")).date().isoformat()
+        except ValueError:
+            continue
+        per_day[day] = per_day.get(day, 0.0) + float(cost)
+    imported = []
+    for day in sorted(per_day):
+        _, action = upsert_by_source(
+            connection, "dev_spend", day, day, per_day[day], "imported from run-spend"
+        )
+        imported.append(
+            {"date": day, "cost_usd": round(per_day[day], 2), "action": action}
+        )
+    return {
+        "ok": True,
+        "imported": imported,
+        "count": len(imported),
+        **summary_fields(started),
+    }
+
+
+def command_totals(connection, args, started):
+    month = args.month
+    if month is not None and not MONTH_RE.match(month):
+        raise CostsUsageError(f"--month must match YYYY-MM, got '{month}'")
+    rows = connection.execute("SELECT date, kind, amount_usd FROM entries").fetchall()
+    selected = rows if month is None else [row for row in rows if row[0].startswith(month + "-")]
+    by_kind = {kind: 0.0 for kind in KINDS}
+    for _, kind, amount in selected:
+        if kind in by_kind:
+            by_kind[kind] += float(amount)
+    fixed_dates = [row[0] for row in rows if row[1] == "fixed_monthly"]
+    monthly_running = sum(
+        (float(row[2]) for row in rows if row[1] == "fixed_monthly"), 0.0
+    )
+    if fixed_dates:
+        first = min(fixed_dates)
+        first_year, first_month = int(first[:4]), int(first[5:7])
+        if month is not None:
+            ref_year, ref_month = int(month[:4]), int(month[5:7])
+        else:
+            today = date.today()
+            ref_year, ref_month = today.year, today.month
+        fixed_months = (ref_year - first_year) * 12 + (ref_month - first_month) + 1
+    else:
+        fixed_months = 0
+    fixed_total = monthly_running * fixed_months
+    balance = by_kind["donation"] - (
+        by_kind["model_job"] + by_kind["dev_spend"] + by_kind["investment"] + fixed_total
+    )
+    return {
+        "ok": True,
+        "month": month,
+        "by_kind": {kind: round(value, 2) for kind, value in by_kind.items()},
+        "monthly_running_usd": round(float(monthly_running), 2),
+        "development_total_usd": round(by_kind["dev_spend"], 2),
+        "model_total_usd": round(by_kind["model_job"], 2),
+        "donations_usd": round(by_kind["donation"], 2),
+        "investments_usd": round(by_kind["investment"], 2),
+        "fixed_months": fixed_months,
+        "fixed_total_usd": round(float(fixed_total), 2),
+        "balance_usd": round(balance, 2),
+        **summary_fields(started),
+    }
+
+
+def command_list(connection, args, started):
+    if args.kind is not None and args.kind not in KINDS:
+        raise CostsUsageError(
+            f"unknown kind '{args.kind}'; valid kinds: {', '.join(KINDS)}"
+        )
+    columns = "id, date, kind, amount_usd, note, source"
+    if args.kind is None:
+        rows = connection.execute(f"SELECT {columns} FROM entries ORDER BY id").fetchall()
+    else:
+        rows = connection.execute(
+            f"SELECT {columns} FROM entries WHERE kind=? ORDER BY id", (args.kind,)
+        ).fetchall()
+    entries = [
+        {
+            "id": row[0],
+            "date": row[1],
+            "kind": row[2],
+            "amount_usd": round(float(row[3]), 2),
+            "note": row[4],
+            "source": row[5],
+        }
+        for row in rows
+    ]
+    return {"ok": True, "entries": entries, "count": len(entries), **summary_fields(started)}
+
+
+def emit(command, summary, json_mode):
+    if json_mode:
+        print(json.dumps(summary))
+        return
+    if command == "add":
+        entry = summary["entry"]
+        print(
+            f"added {entry['kind']} ${entry['amount_usd']:.2f} on {entry['date']} (id {entry['id']})"
+        )
+    elif command == "import-jobs":
+        for row in summary["imported"]:
+            print(f"{row['action']} {row['project']}: ${row['total_usd']:.2f}")
+        print(f"imported {summary['count']} project(s)")
+    elif command == "import-dev":
+        for row in summary["imported"]:
+            print(f"{row['action']} {row['date']}: ${row['cost_usd']:.2f}")
+        print(f"imported {summary['count']} day(s)")
+    elif command == "totals":
+        print(f"month: {summary['month'] or 'all'}")
+        for kind, value in summary["by_kind"].items():
+            print(f"  {kind}: ${value:.2f}")
+        print(
+            f"  fixed monthly: ${summary['monthly_running_usd']:.2f}"
+            f" x {summary['fixed_months']} = ${summary['fixed_total_usd']:.2f}"
+        )
+        print(f"  balance: ${summary['balance_usd']:.2f}")
+    elif command == "list":
+        for entry in summary["entries"]:
+            print(
+                f"{entry['id']:>4}  {entry['date']}  {entry['kind']:<14}"
+                f" ${entry['amount_usd']:.2f}  {entry['note']}"
+            )
+        print(f"{summary['count']} entries")
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    started = time.monotonic()
+    try:
+        ledger = resolve_ledger(args)
+    except CostsUsageError as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    try:
+        connection = connect(ledger)
+    except (sqlite3.Error, OSError) as exc:
+        return report_error(
+            CostsRuntimeError(f"could not open ledger {ledger}: {exc}"), EXIT_RUNTIME, args.json
+        )
+    try:
+        if args.command == "add":
+            summary = command_add(connection, args, started)
+        elif args.command == "import-jobs":
+            summary = command_import_jobs(connection, args, started)
+        elif args.command == "import-dev":
+            summary = command_import_dev(connection, args, started)
+        elif args.command == "totals":
+            summary = command_totals(connection, args, started)
+        else:
+            summary = command_list(connection, args, started)
+    except CostsUsageError as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
+    except (sqlite3.Error, OSError) as exc:
+        return report_error(
+            CostsRuntimeError(f"ledger {ledger} failed: {exc}"), EXIT_RUNTIME, args.json
+        )
+    finally:
+        connection.close()
+    emit(args.command, summary, args.json)
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

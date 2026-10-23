@@ -127,12 +127,21 @@ def _validate(data):
         if folder is not None and (not isinstance(folder, str) or not folder):
             raise ConfigError("projects.path must be a non-empty string")
 
+    costs = data.get("costs")
+    if costs is not None:
+        if not isinstance(costs, dict):
+            raise ConfigError("costs must be a mapping")
+        ledger = costs.get("path")
+        if ledger is not None and (not isinstance(ledger, str) or not ledger):
+            raise ConfigError("costs.path must be a non-empty string")
+
     return data
 
 
 MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
 INBOX_ENV = "YT_PIPELINE_INBOX"
 PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
+COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
 
 
 def no_music_library_message(flag_name):
@@ -156,6 +165,14 @@ def no_projects_message(flag_name):
     return (
         f"no projects folder configured: pass {flag_name} DIR, set the "
         f"{PROJECTS_ENV} environment variable, or set projects.path in the config"
+    )
+
+
+def no_costs_message(flag_name):
+    """The one usage error for an unconfigured costs ledger, naming the flag."""
+    return (
+        f"no costs ledger configured: pass {flag_name} PATH, set the "
+        f"{COSTS_DB_ENV} environment variable, or set costs.path in the config"
     )
 
 
@@ -212,6 +229,26 @@ def projects_path(cli_value=None, config=None):
         return Path(from_env).expanduser()
     data = config if config is not None else load_config()
     section = data.get("projects")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def costs_db(cli_value=None, config=None):
+    """The costs ledger file: CLI flag, else COSTS_DB_ENV, else costs.path.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(COSTS_DB_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("costs")
     if isinstance(section, dict):
         value = section.get("path")
         if value:

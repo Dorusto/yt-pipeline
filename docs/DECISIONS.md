@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Costs ledger: SQLite outside the repo, five kinds, idempotent imports
+
+**Context:** The project has no single place that answers what it costs and earns: model spend lives in per-workspace `llm_spend.json` files, build-agent spend in the watchdog's run-spend ledger, and fixed monthly costs, one-off investments and donations live nowhere. A later lot adds a Costs web page that needs one object to read.
+
+**Options:** (A) a JSON file in the repo; (B) a SQLite file outside the repository with a small CLI and a `totals` view; (C) a spreadsheet maintained by hand.
+
+**Decision:** B. The ledger is a SQLite file outside the repository (path from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`, else a three-ways usage error); five kinds (`model_job`, `dev_spend`, `fixed_monthly`, `investment`, `donation`); imports are idempotent by `source` (project name for jobs, date for dev spend); `totals` computes the balance as donations minus model + dev + investments + fixed monthly × months since the first fixed entry.
+
+**Why not:** A) a ledger of money in a public repo invites accidental commits and has no query language; C) no idempotent imports and no machine-readable totals.
+
+**Consequence:** the web page (a later lot) reads `totals --json`; the totals computation moves to `scripts/common/costs.py` when the page needs it.
+
+---
+
 ## [2026-10-22] Mode B finishing on the first talking-head clip: done by hand, to become tools
 
 **Context:** The first full talking-head clip was finished by hand — an assistant driving FilmCraft through `filmcraft-cli --bridge ... run steps.jsonl` — for every step the pipeline does not cover yet: camera picture-in-picture over screen spans (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes), intro layout (camera shifted right, brand background, fade, slide back), intro overlays synced to the speech (HyperFrames, left third), a hook cold open from the strongest sentence, SFX synced to animation events, background music under the intro and the outro at fixed levels (generated ducking overwrote the fades), the loudness recipe plus measurement of the final export, a supporters banner from one variable, the subtitle corrections list kept in `scripts/corrections.txt` plus lowercasing Whisper mid-sentence capitals except proper nouns, the thumbnail from the hook frame and the live-app batch path.

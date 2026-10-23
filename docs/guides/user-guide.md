@@ -233,6 +233,29 @@ path, duration, BPM and licence file status (a `<stem>.license`/`.licence`
 sidecar, else the library's own `LICENSE`/`LICENCE`/`COPYING` file, else
 `missing`).
 
+## Costs ledger
+
+`scripts/costs.py` keeps a small SQLite ledger of what the project costs and
+earns: model jobs, build-agent spend, fixed monthly costs, one-off investments
+and donations. It calls no model. The ledger file lives **outside the
+repository**: its path comes from `--ledger`, else the `YT_PIPELINE_COSTS_DB`
+environment variable, else `costs.path` in the config; with none set the tool
+stops with a usage error naming those three ways (docs write `<costs.db>`).
+
+```bash
+.venv/bin/python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+.venv/bin/python scripts/costs.py --ledger <costs.db> totals --json
+```
+
+`import-jobs` reads each workspace's `llm_spend.json` and `import-dev` the build
+agents' run-spend JSON; both are idempotent by `source`, so re-running never
+duplicates a row. `totals --json` is the object the web page will read: per-kind
+sums, the recurring monthly cost, the fixed total over the months since the
+first fixed entry and the balance (donations minus model + dev + investments +
+fixed monthly × months).
+
 ## How it learns
 
 The AI models do not change. What improves is data and rules on disk, all plain files you can read:
