@@ -3220,3 +3220,50 @@ def test_files_routes_refused_when_recap_off(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_pages_share_the_theme_tokens(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        for path in ("/", "/upload", "/costs", "/2026-10-14/"):
+            status, _, body = request(server, "GET", path)
+            assert status == 200, path
+            text = body.decode("utf-8")
+            for token in ("--water:", "--sea:", "--radius-l:", "--tap:44px",
+                          "--font-display:", "--sp-4:", "--bg:var(--water)"):
+                assert token in text, (path, token)
+            assert "prefers-color-scheme:light" in text, path
+            assert 'class="brand-slot"' in text, path
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_theme_has_a_light_palette():
+    assert "prefers-color-scheme:light" in serve.THEME_CSS
+    assert "--water:#eef3f5" in serve.THEME_CSS
+    assert "--stone:#14232c" in serve.THEME_CSS
+
+
+def test_key_classes_on_each_page(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        _, _, index_page = request(server, "GET", "/")
+        assert b'class="bar"' in index_page
+        assert b'class="mark"' in index_page
+        assert b'class="projects"' in index_page
+        _, _, upload = request(server, "GET", "/upload")
+        assert b'class="drop"' in upload
+        assert b'class="go"' in upload
+        assert b'class="brief-hints"' in upload
+        _, _, costs = request(server, "GET", "/costs")
+        assert b'class="projects"' in costs
+        _, _, project = request(server, "GET", "/2026-10-14/")
+        assert b'class="tabs"' in project
+        assert b'class="panel"' in project
+        assert b'class="player"' in project
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -1176,3 +1176,10 @@ def test_a_lone_photo_with_closed_eyes_is_not_eligible(tmp_path):
     shot = find(read_shotlog(tmp_path), "0068/p1")
     assert shot["eligible"] is False
     assert shot["defects"] == ["eyes_closed"]
+
+
+def test_shotlog_page_shares_the_theme_tokens():
+    page = index._html_document("w", "summary", "now", [])
+    for token in ("--water:#13202b", "--sea:#57b8c4", "--tap:44px",
+                  "--font-display:", "prefers-color-scheme: light"):
+        assert token in page

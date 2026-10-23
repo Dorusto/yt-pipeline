@@ -58,6 +58,16 @@ Each fragment becomes one `<entry in=".." out=".." producer="chainN">` — reusi
 
 Independent of the `.kdenlive` file — reads the same `fragments.yaml`, finds every raw-SRT line whose time range overlaps a used fragment, clips it to the fragment boundary, and remaps it to `cumulative_duration_of_prior_fragments + (line_start - fragment_in)`. Output is a plain `.srt`, imported into Kdenlive the normal way (`Project → Subtitles → Import Subtitle File`) — no attempt to hand-generate Kdenlive's native subtitle XML structure (see `DECISIONS.md`).
 
+## Web app design
+
+The web app (`serve.py`) and the two standalone pages it embeds (`explain.py`, `index.py`) share one token set, defined in `THEME_CSS` in `serve.py` and repeated as the `:root` block of the two standalone pages:
+
+- **Colour** — the nautical names `--water` (background), `--deck` (surface), `--rope` (line), `--stone` (text), `--haze` (muted), `--sea` (accent), `--keep` (ok), `--left` (danger), `--busy` (warn), plus the semantic aliases `--bg`, `--surface`, `--line`, `--text`, `--muted`, `--accent`, `--ok`, `--warn`, `--danger`. A `@media (prefers-color-scheme: light)` block overrides the same names for a light theme.
+- **Type** — `--font-display` (serif, headings and the mark), `--font-body` (system sans, body and controls), `--font-mono` (ids), the scale `--fs-xs`..`--fs-2xl` and the line heights `--lh-tight`/`--lh-body`. No external fonts.
+- **Space and shape** — `--sp-1`..`--sp-6`, `--radius-s`/`--radius-l`/`--radius-pill` and `--tap:44px` (the minimum height of a standalone control).
+
+The strip under the player is the app's signature element: proportional blocks, a hatch for photos and a marker for the block playing now.
+
 ## Design decisions
 
 → see `DECISIONS.md`
