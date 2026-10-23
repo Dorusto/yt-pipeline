@@ -121,3 +121,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Fonts load only from the brand paths (resolved relative to the brand file; `assets/fonts/` ships Montserrat Black + JetBrains Mono, SIL OFL): a missing font is a hard error naming the path and the brand key, never a silent fallback. — 2026-10-17
 - Thumbnail cut-out is `rembg` (`birefnet-portrait`, lazy import, `rembg[cpu]` in requirements) with a mask-hardening safety net; `--skip-cutout` uses the photo's alpha; no PhotoCraft/Photopea anywhere. The PSD is written with `psd-tools` (never `pytoshop`), one rasterized layer per element (background, portrait, title, keyword, kicker, tag), the glow baked inside the portrait layer. — 2026-10-17
 - Thumbnail tests and fixtures use synthetic drawn portraits only — a real photo of anyone never enters the repo (`check_public`); the rembg integration test runs in a subprocess and skips on a missing model or an OOM-kill (BiRefNet needs ~8 GB free RAM). — 2026-10-17
+
+## Releasing
+
+- Stable tools change only in a lot that names them, with the owner's approval; a fix to a released version is a new patch version; tags are never moved or deleted — see [`RELEASING.md`](RELEASING.md). — 2026-10-23

@@ -2492,3 +2492,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** `scripts/common/errors.py` gains `report_error(error, exit_code, json_out, **extra)`: it prints the human `[error] {error}` line to stderr and, when `json_out`, one `{"ok": false, "error": str(error), "exit_code": exit_code, **extra}` object on stdout, and returns `exit_code` so a caller writes `return report_error(exc, EXIT_USAGE, args.json)`. Every tool with `--json` uses it on its tool-level error paths (the `main()` handlers and the legacy `sys.exit` paths); `extra` carries the `summary_fields(...)` keys where the tool already reported them. `mode_b.py` drops its private `report_error` for the shared one (its own 0/1/2/3 codes are passed through). Per-item errors that let the tool continue (proxy's per-file failures, the chain tools' child-step lines) and `llm_director`'s post-run detail line stay as they are: they are not the tool's error path.
 
 **Consequence:** an agent reads the same error object from every `--json` tool, with the exit code inside it; `tests/test_explain.py` and `tests/test_eval_rough_cut.py` assert the new shape. The no-personal-setup guard gains `~/ws` and scans `config.yaml.example` and `docs/VISION.md`; `tests/test_inbox.py` imports the one banned list. No schema change.
+
+---
+
+## [2026-10-23] Release protocol: stable tools, tags and the real test
+
+**Context:** The project has no written release process: no version tags, no stable/experimental split, no rule that a released tool changes only when a lot names it. The owner asked for the protocol as documentation before the first release.
+
+**Options:** (A) keep the process in the owner's head and in chat; (B) write it as rules for the owner and every agent, with a stable list per version and a reviewer question that flags an unannounced change to a stable file.
+
+**Decision:** B. `docs/RELEASING.md` holds the protocol (before a version: everything merged, the full suite green, the owner's real test on real footage, a regression test per feature that passed, release notes, a tag and a GitHub Release; after a version: the stable list in `docs/RELEASES.md`, a stable tool changes only in a lot that names it with the owner's approval, a fix is a new patch version, the pilot host runs tags only and rolls back on a failed smoke test). `docs/RELEASES.md` starts with `v0.1.0 (candidate, not released)`: stable candidate is the holiday flow in the web app (upload with progress, the recap run, the run notice with step times and model cost, versions); everything else is experimental. `CHANGELOG.md` (Keep a Changelog) carries the changes on this branch under `Unreleased`. `docs/RULES.md` points to the protocol. The reviewer checklist gains one question: did the range change a file of a tool listed as stable in `docs/RELEASES.md` without a lot that names it?
+
+**Why not:** A) leaves the process unverifiable and lets a stable tool change silently.
+
+**Consequence:** a version is a tag on `master` plus a GitHub Release, never a moved or deleted tag; the stable list is the one place that says what may change only in a named lot; the reviewer flags an unannounced change to a stable file. `docs/REVIEW_CHECKLIST.md` is brought onto this branch from the unmerged `reviewer-agent` branch (commit `193d637`) because the protocol references it; the merge of `reviewer-agent` will need to keep the added question.
