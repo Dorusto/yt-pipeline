@@ -22,16 +22,14 @@ atomically and skipped when it is newer than ``edit.json``, unless ``--force``.
 
 import argparse
 import json
-import os
 import re
 import sys
-import tempfile
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config
 from common.brief_facts import FACT_LABELS, load_brief_facts
+from common.jsonio import load_json, now_iso, parse_model_json, write_json
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
 from common.summary import summary_fields
@@ -68,21 +66,10 @@ def get_client(config=None):
     return _client
 
 
-def now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _load_json(path):
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
 def load_edit(path):
     if not Path(path).is_file():
         raise RecapMetaError(f"no edit.json in workspace: {path}")
-    document = _load_json(path)
+    document = load_json(path)
     if document is None:
         raise RecapMetaError(f"unreadable edit.json: {path}")
     try:
@@ -130,7 +117,7 @@ def shot_descriptions(edit):
 
 def earliest_date(workspace_path):
     """The date part of the earliest clip creation_time in ingest.json, or None."""
-    data = _load_json(Path(workspace_path) / "ingest.json")
+    data = load_json(Path(workspace_path) / "ingest.json")
     if not isinstance(data, dict):
         return None
     values = []
@@ -192,19 +179,12 @@ def build_message(prompt_text, facts):
     )
 
 
-def parse_model_json(text):
-    raw = text.strip()
-    raw = re.sub(r"^```(?:json)?\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RecapMetaRuntimeError(f"model response is not valid JSON: {exc}")
-
-
 def normalize_answer(text):
     """Parse and normalize the model answer; raise on any invalid shape or range."""
-    data = parse_model_json(text)
+    try:
+        data = parse_model_json(text)
+    except ValueError as exc:
+        raise RecapMetaRuntimeError(f"model response is not valid JSON: {exc}")
     if not isinstance(data, dict):
         raise RecapMetaRuntimeError("model response is not a JSON object")
     title = data.get("title")
@@ -271,24 +251,6 @@ def request_meta(client, message):
     )
 
 
-def write_json(path, document):
-    """Write the document atomically, leaving no temporary file behind."""
-    path = Path(path).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump(document, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-        os.replace(tmp_name, path)
-    except BaseException:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
-        raise
-
-
 def output_is_up_to_date(out_path, edit_path):
     if not Path(out_path).is_file() or not Path(edit_path).is_file():
         return False
@@ -313,7 +275,7 @@ def _skipped_summary(out_path, missing, started):
         "out": str(out_path),
         "missing": missing,
     }
-    existing = _load_json(out_path)
+    existing = load_json(out_path)
     if isinstance(existing, dict):
         if isinstance(existing.get("title"), str):
             summary["title"] = existing["title"]

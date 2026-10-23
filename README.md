@@ -101,7 +101,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
 | `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the reviewer verdict per version and the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches, the upload consent checkbox, the Details tab group, the summary-first Why?/Shots pages, the poster cards and the shot-strip thumbnails |
-| `thumbs.py` | workspace with `edit.json` + recap | `thumbs/poster.jpg` + `thumbs/shot-N.jpg` (320 px) |
+| `thumbs.py` | workspace with `edit.json` + recap | `thumbs/poster.jpg` + `thumbs/shot-N.jpg` (320 px); skill `yt-thumbs` |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |

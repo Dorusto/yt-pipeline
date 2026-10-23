@@ -28,8 +28,8 @@ def build_repo(tmp_path, with_guard=True):
         shutil.copy2(GUARD, repo / "scripts" / "check_public.py")
         common = repo / "scripts" / "common"
         common.mkdir()
-        shutil.copy2(ROOT / "scripts" / "common" / "__init__.py", common / "__init__.py")
-        shutil.copy2(ROOT / "scripts" / "common" / "exit_codes.py", common / "exit_codes.py")
+        for name in ("__init__.py", "exit_codes.py", "errors.py", "git.py"):
+            shutil.copy2(ROOT / "scripts" / "common" / name, common / name)
     run_git(repo, "init")
     run_git(repo, "config", "user.email", "test@example.com")
     run_git(repo, "config", "user.name", "Test")

@@ -39,6 +39,7 @@ from pathlib import Path
 
 import yaml
 
+from common.ffmpeg_tools import probe_duration
 from common.schema import SchemaError, validate
 from common.summary import summary_fields
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -58,15 +59,6 @@ def load_config(config_path):
     if errors:
         raise SchemaError("fragments", errors)
     return cfg
-
-
-def probe_duration(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True,
-    )
-    return float(out.stdout.strip())
 
 
 def sec_to_tc(s):
@@ -101,6 +93,8 @@ def build(config_path, quiet=False):
         fname = frag["file"]
         if fname not in chain_id_by_file:
             dur = probe_duration(f"{source_dir}/{fname}")
+            if dur is None:
+                raise SchemaError("fragments", [f"could not read the duration of {fname}"])
             chain_id = f"chain{kid}"
             chain_id_by_file[fname] = chain_id
             out_tc = sec_to_tc(dur)

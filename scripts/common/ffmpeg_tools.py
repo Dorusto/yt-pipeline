@@ -23,6 +23,27 @@ def ffmpeg_path():
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
+def probe_duration(path):
+    """The duration of path in seconds, or None when ffprobe cannot read it."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def has_nvidia_gpu():
     exe = shutil.which("nvidia-smi")
     if not exe:

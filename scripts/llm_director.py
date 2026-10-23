@@ -33,9 +33,11 @@ from pathlib import Path
 from common.config import ConfigError, load_config
 from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
+from common.feedback import append_feedback
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
+from common import runlog
 from common.moves import (
     EXCEPTION_SHARE,
     SAME_TAKE_MIN_GAP_S,
@@ -90,10 +92,7 @@ CLIP_COUNTER = re.compile(r"_(\d{4})_")
 CONTENT_TYPES = ("vacation", "tutorial", "presentation", "talking-head")
 TRAVEL_LABELS = {"travel_forward", "travel_backward", "orbit", "orbit_candidate"}
 
-RUN_MARKER = "=== recap run started"
-RUN_STAMP_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 DIRECTOR_PROGRESS_RE = re.compile(r"^\[\s*\d+/\s*\d+\]\s+llm_director\s+\S+\s+(\d+(?:\.\d+)?)s\b")
-
 DURATION_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(seconds|second|secs|sec|minutes|minute|mins|min|s)\b",
     re.IGNORECASE,
@@ -865,82 +864,23 @@ def complete_plan(answer, brief_text, hints, content_type):
 
 def append_feedback_lines(workspace, feedback):
     """Append one JSON line per feedback text to WORKSPACE/feedback.jsonl (append-only)."""
-    path = Path(workspace) / "feedback.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        for text in feedback:
-            row = {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "action": "feedback",
-                "text": text,
-                "tool": TOOL,
-            }
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-def read_run_log(path):
-    """The lines of a run.log, or [] when it cannot be read."""
-    try:
-        return Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-
-
-def marker_start_time(line):
-    """The aware local time of a run start marker line, or None."""
-    match = RUN_STAMP_RE.search(line)
-    if not match:
-        return None
-    try:
-        naive = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None
-    return naive.astimezone()
-
-
-def director_spend_since(ledger_path, start):
-    """The director cost in a spend ledger at or after ``start``, or None when there is none."""
-    data = load_json(ledger_path)
-    if not isinstance(data, dict):
-        return None
-    entries = data.get("entries")
-    if not isinstance(entries, list):
-        return None
-    total = 0.0
-    found = False
-    for entry in entries:
-        if not isinstance(entry, dict) or entry.get("role") != "director":
-            continue
-        cost = entry.get("cost_usd")
-        if not isinstance(cost, (int, float)) or isinstance(cost, bool):
-            continue
-        moment = parse_time(entry.get("ts"))
-        if start is not None and moment is not None and moment < start:
-            continue
-        total += float(cost)
-        found = True
-    return round(total, 8) if found else None
+    for text in feedback:
+        append_feedback(workspace, "feedback", text=text, tool=TOOL)
 
 
 def last_director_estimate(workspace):
     """The last run's director time and cost from run.log and llm_spend.json, or (None, None)."""
     workspace = Path(workspace)
-    lines = read_run_log(workspace / "run.log")
-    marker_index = None
-    for index in range(len(lines) - 1, -1, -1):
-        if lines[index].startswith(RUN_MARKER):
-            marker_index = index
-            break
-    if marker_index is None:
+    start = runlog.last_run_start(workspace)
+    if start is None:
         return None, None
     estimate_s = None
-    for line in lines[marker_index + 1:]:
+    for line in runlog.last_run_lines(workspace):
         match = DIRECTOR_PROGRESS_RE.match(line)
         if match:
             estimate_s = float(match.group(1))
             break
-    start = marker_start_time(lines[marker_index])
-    estimate_usd = director_spend_since(workspace / "llm_spend.json", start) if start is not None else None
+    estimate_usd = runlog.spend_between(workspace, start, role="director")
     return estimate_usd, estimate_s
 
 
@@ -967,18 +907,14 @@ def request_reply(client, prompt, user, state):
 
 def append_reply_line(workspace, text, reply, estimate_usd, estimate_s):
     """Append one ``action: reply`` line to WORKSPACE/feedback.jsonl (append-only)."""
-    path = Path(workspace) / "feedback.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "action": "reply",
-        "text": text,
-        "reply": reply,
-        "estimate": {"usd": estimate_usd, "s": estimate_s},
-        "tool": TOOL,
-    }
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    append_feedback(
+        workspace,
+        "reply",
+        text=text,
+        reply=reply,
+        estimate={"usd": estimate_usd, "s": estimate_s},
+        tool=TOOL,
+    )
 
 
 def interpret_feedback(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None):

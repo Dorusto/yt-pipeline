@@ -68,10 +68,15 @@ from common.config import (
 )
 from common.costs import compute_totals, connect as connect_ledger
 from common.brief_facts import load_brief_facts, write_brief_facts
+from common.decisions import used_shot_keys
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
+from common.jsonio import load_json, write_json
 from common.media import clip_kind, video_files
+from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
+from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, spend_between
+from common.sizes import BYTES_PER_GB, format_gb
 from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
 from common.versions import list_versions
@@ -85,11 +90,9 @@ DEFAULT_PORT = 8091
 DEFAULT_MAX_UPLOAD_MB = 4096
 DEFAULT_MAX_TOTAL_MB = 20480
 UPLOAD_CHUNK = 65536
-BYTES_PER_GB = 1024 ** 3
 STORAGE_WARN_RATIO = 0.8
 CREDIT_CACHE_SECONDS = 600
 TOTALS_CACHE_SECONDS = 600
-KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BRIEF_MAX_CHARS = 4000
@@ -149,12 +152,10 @@ SHORTS_LAYOUTS = ("face", "split")
 SHORTS_CANDIDATES_FILE = "shorts_candidates.json"
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VERSION_RE = re.compile(r"^v\d{1,4}$")
-RUN_MARKER = "=== recap run started"
 PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
 STEP_SECONDS_RE = re.compile(r"(\d+(?:\.\d+)?)s\b")
 LENGTH_MIN_S = 5
 LENGTH_MAX_S = 3600
-LOG_TAIL_BYTES = 262144
 STATION_PLAIN_NAMES = {
     "proxy": "making proxies",
     "motion": "measuring camera motion",
@@ -217,19 +218,11 @@ background:var(--surface);color:var(--text);font:inherit;font-size:.8rem;cursor:
 .shot-actions button.on{background:var(--accent);color:var(--bg)}
 """
 
-SHOTS_OVERLAY_SCRIPT = """
-(function(){var d=window.EDIT_DECISIONS||{};var cards=[].slice.call(document.querySelectorAll('article.card'));
+SHOTS_REVIEW_SCRIPT = """
+(function(){var cards=[].slice.call(document.querySelectorAll('article.card'));
 if(!cards.length)return;
-var hasEdit=Object.keys(d).length>0;
 function info(c){var r=c.querySelector('.range');if(!r)return null;var p=r.textContent.split(' \u00b7 ');if(p.length<3)return null;
 return {clip:p[0].trim(),key:p[p.length-1].trim()};}
-function groupFor(section,clip){var g=section.querySelector('.clip-group[data-clip="'+clip.replace(/"/g,'\\\\"')+'"]');if(g)return g;
-var groups=section.querySelector('.groups');if(!groups)return null;g=document.createElement('section');g.className='clip-group';
-g.setAttribute('data-clip',clip);var h=document.createElement('h3');h.textContent=clip;g.appendChild(h);groups.appendChild(g);return g;}
-if(hasEdit){cards.forEach(function(c){var i=info(c);if(!i)return;var x=d[i.key];var b=c.querySelector('.badges');if(!x||!b)return;c.dataset.state=x.status;
-if(x.status==='used'){c.classList.add('in-edit');var s=document.createElement('span');s.className='badge used';s.textContent='in the edit as '+(x.slot||'');b.insertBefore(s,b.firstChild);
-var used=document.getElementById('used');if(used){var g=groupFor(used,i.clip);if(g)g.appendChild(c);}}
-else{var w=document.createElement('p');w.className='why-out';w.textContent='left out: '+(x.reason||'');b.parentNode.insertBefore(w,b.nextSibling);}});}
 cards.forEach(function(c){var i=info(c);if(!i)return;var k=i.key;var b=c.querySelector('.badges');if(!b)return;
 var wrap=document.createElement('div');wrap.className='shot-actions';
 [['must_include','must be in'],['wrong_label','wrong label']].forEach(function(o){
@@ -237,12 +230,7 @@ var btn=document.createElement('button');btn.type='button';btn.textContent=o[1];
 btn.addEventListener('click',function(){var body=new URLSearchParams();body.set('shot',k);body.set('kind',o[0]);
 fetch(window.location.pathname.split('/shotlog.html')[0]+'/expectations',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(function(res){if(res.ok)btn.classList.add('on');});});
 wrap.appendChild(btn);});
-b.parentNode.insertBefore(wrap,b.nextSibling);});
-if(hasEdit){[].forEach.call(document.querySelectorAll('.shots-section'),function(section){
-[].forEach.call(section.querySelectorAll('.clip-group'),function(g){if(!g.querySelector('article.card'))g.parentNode.removeChild(g);});
-var n=section.querySelectorAll('article.card').length;var miss=section.querySelector('.missing');
-if(miss&&n>0)miss.parentNode.removeChild(miss);
-var count=section.querySelector('.count');if(count)count.textContent=String(n);});}})();
+b.parentNode.insertBefore(wrap,b.nextSibling);});})();
 """
 
 CUTS_STYLE = """
@@ -313,24 +301,6 @@ REVIEW_STYLE = """
 .objections{margin:6px 0 0;padding-left:1.2em}
 .obj-shot{font-weight:700;margin-right:.3em}
 """
-
-
-def edit_decisions(directory):
-    """``{shot id: {status, slot, reason}}`` from the workspace's edit.json, or an empty dict."""
-    try:
-        document = json.loads((Path(directory) / "edit.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    rows = document.get("decisions") if isinstance(document, dict) else None
-    result = {}
-    for row in rows or []:
-        if isinstance(row, dict) and row.get("id"):
-            result[str(row["id"])] = {
-                "status": row.get("status"),
-                "slot": row.get("slot"),
-                "reason": row.get("reason"),
-            }
-    return result
 
 
 def is_mode_b(directory):
@@ -427,18 +397,52 @@ def set_candidate_layout(path, rank, layout):
     for row in rows:
         if isinstance(row, dict) and row.get("rank") == rank:
             row["layout"] = layout
-    write_text_atomic(path, json.dumps(document, indent=2) + "\n")
+    write_json(path, document)
     return document
 
 
-def shotlog_with_edit(path, decisions):
-    """The shotlog page with the review buttons and, when an edit exists, its used/left-out marks."""
-    text = Path(path).read_text(encoding="utf-8")
-    payload = json.dumps(decisions).replace("</", "<\\/")
-    addition = (
-        f"<style>{SHOTS_OVERLAY_STYLE}</style>"
-        f"<script>window.EDIT_DECISIONS={payload};{SHOTS_OVERLAY_SCRIPT}</script>"
-    )
+USED_KEYS_RE = re.compile(
+    r'<details class="shots-section"[^>]*data-verdict="used"[^>]*data-keys="([^"]*)"'
+)
+
+
+def _shotlog_used_keys(path):
+    """The used keys recorded in a shotlog.html's used section, or None when it has none."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = USED_KEYS_RE.search(text)
+    if match is None:
+        return None
+    return {key for key in match.group(1).split(",") if key}
+
+
+def _regenerate_shotlog(directory):
+    """Rebuild the workspace shotlog.html with index.py; best effort, never raises."""
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "index.py"),
+        "--workspace",
+        str(directory),
+        "--force",
+    ]
+    try:
+        subprocess.run(command, capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
+def shotlog_with_edit(path, directory):
+    """The shotlog page with the review buttons, regenerated when the edit changed."""
+    path = Path(path)
+    used = used_shot_keys(load_json(Path(directory) / "edit.json"))
+    recorded = _shotlog_used_keys(path)
+    stale = bool(used) if recorded is None else recorded != used
+    if stale:
+        _regenerate_shotlog(directory)
+    text = path.read_text(encoding="utf-8")
+    addition = f"<style>{SHOTS_OVERLAY_STYLE}</style><script>{SHOTS_REVIEW_SCRIPT}</script>"
     if "</body>" in text:
         return text.replace("</body>", addition + "</body>", 1)
     return text + addition
@@ -677,24 +681,6 @@ def pid_alive(pid):
         return False
 
 
-def last_run_lines(directory):
-    """The run.log lines of the latest run (after the last start marker)."""
-    path = Path(directory) / "run.log"
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            handle.seek(max(0, size - LOG_TAIL_BYTES))
-            text = handle.read().decode("utf-8", "replace")
-    except OSError:
-        return []
-    lines = text.splitlines()
-    for index in range(len(lines) - 1, -1, -1):
-        if lines[index].startswith(RUN_MARKER):
-            return lines[index + 1:]
-    return lines
-
-
 def run_report(directory):
     """What the latest run did: outcome, progress, the station running now and the error."""
     lines = last_run_lines(directory)
@@ -751,37 +737,6 @@ def run_report(directory):
     return report
 
 
-def _epoch(stamp):
-    """Epoch seconds of an ISO time with an offset, or None."""
-    from datetime import datetime
-
-    text = str(stamp or "")
-    for fmt in ("%Y-%m-%dT%H:%M:%S%z",):
-        try:
-            return datetime.strptime(text, fmt).timestamp()
-        except ValueError:
-            pass
-    try:
-        return datetime.fromisoformat(text).timestamp()
-    except ValueError:
-        return None
-
-
-def spend_between(directory, start, end=None):
-    """Model spend in USD recorded in llm_spend.json between two epoch times."""
-    try:
-        data = json.loads((Path(directory) / "llm_spend.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    total = 0.0
-    for entry in data.get("entries") or []:
-        when = _epoch(entry.get("ts"))
-        if when is None or (start is not None and when < start) or (end is not None and when > end):
-            continue
-        total += float(entry.get("cost_usd") or 0.0)
-    return total
-
-
 def format_cost(usd):
     """$0.047, or < $0.001 for a tiny spend."""
     if usd is None:
@@ -811,11 +766,6 @@ def storage_usage_bytes(root, inbox):
     return tree_size_bytes(root) + (tree_size_bytes(inbox) if inbox else 0)
 
 
-def format_gb(value):
-    """A byte count as a short GB string, e.g. '34 GB' or '0.3 GB'."""
-    return f"{round(value / BYTES_PER_GB, 1):g} GB"
-
-
 def storage_line(server):
     """The '34 GB of 100 GB used' line, or '' when no limit is set."""
     if server.storage_gb is None:
@@ -833,14 +783,7 @@ def storage_line(server):
 
 def fetch_model_credit(api_key, timeout=10, opener=None):
     """GET the OpenRouter key endpoint; return {"usage", "limit", "remaining"} or raise."""
-    opener = opener or urllib.request.urlopen
-    request = urllib.request.Request(
-        KEY_INFO_URL, headers={"Authorization": f"Bearer {api_key}"}
-    )
-    with opener(request, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8")).get("data", {})
-    if not isinstance(data, dict):
-        raise ValueError("key endpoint returned no data object")
+    data = key_info(api_key, timeout=timeout, opener=opener)
     usage = float(data.get("usage") or 0.0)
     limit = data.get("limit")
     limit = float(limit) if limit is not None else None
@@ -937,26 +880,6 @@ def totals_rows(totals):
         f'<span class="facts num" style="color:{colour}">{format_cost(balance)}</span></li>'
         '</ul>'
     )
-
-
-def last_run_start(directory):
-    """Epoch seconds of the latest run's start marker, or None."""
-    path = Path(directory) / "run.log"
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            handle.seek(max(0, handle.tell() - LOG_TAIL_BYTES))
-            text = handle.read().decode("utf-8", "replace")
-    except OSError:
-        return None
-    for line in reversed(text.splitlines()):
-        if line.startswith(RUN_MARKER):
-            stamp = line[len(RUN_MARKER):].strip(" =")
-            try:
-                return time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S"))
-            except ValueError:
-                return None
-    return None
 
 
 def run_log_age(directory):
@@ -1476,7 +1399,7 @@ def render_player(directory, prefix="", heading=None, meta_line=None, trust_edit
 def version_cost(version):
     """Model spend of the run that made this version: since the version before it."""
     path = Path(version["path"])
-    made = _epoch(version["meta"].get("created_at"))
+    made = epoch_of(version["meta"].get("created_at"))
     if made is None:
         return None
     before = None
@@ -1484,7 +1407,7 @@ def version_cost(version):
         if sibling.parent == path:
             continue
         try:
-            other = _epoch(json.loads(sibling.read_text(encoding="utf-8")).get("created_at"))
+            other = epoch_of(json.loads(sibling.read_text(encoding="utf-8")).get("created_at"))
         except (OSError, ValueError):
             continue
         if other is not None and other < made and (before is None or other > before):
@@ -1660,17 +1583,10 @@ def render_version_links(name, versions, shown, compare=None):
     return row
 
 
-def _load_json(path):
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
 def render_meta_box(directory, version_path=None, name=None, version=None, meta_cost=None):
     """The title/description/hashtags box for a workspace or one version, or "" when absent."""
     base = Path(version_path) if version_path else Path(directory)
-    data = _load_json(base / "recap_meta.json")
+    data = load_json(base / "recap_meta.json")
     if not isinstance(data, dict):
         return ""
     title = data.get("title")
@@ -1732,7 +1648,7 @@ def _meta_field(label, value):
 
 def render_review(edit_path):
     """The reviewer verdict of an edit, or "" when the edit carries no review."""
-    data = _load_json(edit_path)
+    data = load_json(edit_path)
     if not isinstance(data, dict):
         return ""
     meta = data.get("meta")
@@ -1918,7 +1834,7 @@ def render_shorts_panel(directory, name):
 
 def recorded_source(directory):
     """The inbox source folder recorded in .run.json, or None."""
-    data = _load_json(Path(directory) / ".run.json")
+    data = load_json(Path(directory) / ".run.json")
     if not isinstance(data, dict):
         return None
     source = data.get("source")
@@ -1927,7 +1843,7 @@ def recorded_source(directory):
 
 def edit_file_names(path):
     """The set of clip and photo file names used by an edit.json, or an empty set."""
-    data = _load_json(path)
+    data = load_json(path)
     if not isinstance(data, dict):
         return set()
     names = set()
@@ -1948,7 +1864,7 @@ def edit_file_names(path):
 
 def ingest_lengths(path):
     """Map each clip file name in ingest.json to its duration_s."""
-    data = _load_json(path)
+    data = load_json(path)
     if not isinstance(data, dict):
         return {}
     lengths = {}
@@ -3990,7 +3906,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 self.send_not_found()
                 return
             if artifact == "shotlog.html":
-                self.send_html(shotlog_with_edit(target, edit_decisions(directory)), send_body)
+                self.send_html(shotlog_with_edit(target, directory), send_body)
                 return
             self.send_file(target, send_body)
             return

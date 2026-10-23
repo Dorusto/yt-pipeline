@@ -1245,12 +1245,14 @@ def test_exact_seconds_live_inside_the_length_menu(tmp_path):
     assert "--target-duration-s" not in command
 
 
-def test_shots_tab_marks_what_is_in_the_edit(tmp_path):
+def test_shots_tab_marks_what_is_in_the_edit(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     (project / "shotlog.html").write_text(
-        "<html><body><main><article class=\"card\"><div class=\"range\">a.mp4 · 00:00.0–00:05.0 · 0001/s1</div>"
-        "<div class=\"badges\"></div></article></main></body></html>",
+        '<html><body><main>'
+        '<details class="shots-section" data-verdict="used" id="used" data-keys="0001/s1" data-keep>'
+        '<summary>Used in the edit (<span class="count">1</span>)</summary></details>'
+        '</main></body></html>',
         encoding="utf-8",
     )
     edit = {"video": [], "decisions": [
@@ -1258,15 +1260,16 @@ def test_shots_tab_marks_what_is_in_the_edit(tmp_path):
         {"id": "0001/s2", "status": "rejected", "reason": "did not fit the length </script>"},
     ]}
     (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    regenerated = []
+    monkeypatch.setattr(serve, "_regenerate_shotlog", lambda directory: regenerated.append(directory))
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/shotlog.html")
         page = body.decode()
         assert status == 200
-        assert "EDIT_DECISIONS" in page
-        assert '"slot": "v3"' in page
-        assert "</script>\"" not in page
-        assert page.index("EDIT_DECISIONS") < page.index("</body>")
+        assert "must be in" in page and "wrong label" in page
+        assert "EDIT_DECISIONS" not in page
+        assert regenerated == []
     finally:
         server.shutdown()
         server.server_close()
@@ -1484,7 +1487,7 @@ def test_shots_tab_has_the_review_buttons(tmp_path):
         server.server_close()
 
 
-def test_shots_tab_moves_used_cards_into_the_used_section(tmp_path):
+def test_shots_tab_moves_used_cards_into_the_used_section(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     (project / "shotlog.html").write_text(
@@ -1501,6 +1504,19 @@ def test_shots_tab_moves_used_cards_into_the_used_section(tmp_path):
         ),
         encoding="utf-8",
     )
+    regenerated = []
+
+    def fake_regenerate(directory):
+        regenerated.append(directory)
+        (project / "shotlog.html").write_text(
+            '<html><body><main>'
+            '<details class="shots-section" data-verdict="used" id="used" data-keys="0001/s1" data-keep>'
+            '<summary>Used in the edit (<span class="count">1</span>)</summary></details>'
+            '</main></body></html>',
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(serve, "_regenerate_shotlog", fake_regenerate)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/shotlog.html")
@@ -1508,11 +1524,100 @@ def test_shots_tab_moves_used_cards_into_the_used_section(tmp_path):
         assert status == 200
         assert "must be in" in page and "wrong label" in page
         assert "shots-section" in page
-        assert "getElementById('used')" in page
-        assert "EDIT_DECISIONS" in page
+        assert regenerated == [project]
+        assert "EDIT_DECISIONS" not in page
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_shotlog_regeneration_updates_the_used_grouping(tmp_path):
+    workspace = tmp_path / "ws"
+    quality_dir = workspace / "quality"
+    quality_dir.mkdir(parents=True)
+    stem = "dji_20261012_000000_0081_0000000000000_video"
+    (quality_dir / f"{stem}.json").write_text(
+        json.dumps(
+            {
+                "file": f"{stem}.mp4",
+                "duration_s": 10.0,
+                "segments": [
+                    {
+                        "id": "s1",
+                        "start_s": 0.0,
+                        "end_s": 10.0,
+                        "role": "hold",
+                        "confidence": 0.7,
+                        "motion_label": "static",
+                        "motion_label_confidence": 0.8,
+                        "uncertain": False,
+                        "uncertain_reasons": [],
+                        "defects": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    describe_dir = workspace / "describe"
+    describe_dir.mkdir()
+    (describe_dir / f"{stem}.json").write_text(
+        json.dumps(
+            {
+                "file": f"{stem}.mp4",
+                "duration_s": 10.0,
+                "model": "mock/vision",
+                "segments": [
+                    {
+                        "id": "s1",
+                        "start_s": 0.0,
+                        "end_s": 10.0,
+                        "status": "described",
+                        "role": "hold",
+                        "motion_label": "static",
+                        "uncertain": False,
+                        "uncertain_reasons": [],
+                        "description": "a wide shot of the valley",
+                        "summary": "a wide shot",
+                        "tags": [],
+                        "subject": "valley",
+                        "scenery": None,
+                        "semantic_motion": None,
+                        "interest": 60,
+                        "hero": False,
+                        "verdict": None,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "similarity.json").write_text(json.dumps({"pairs": []}), encoding="utf-8")
+    first = subprocess.run(
+        [
+            sys.executable,
+            str(serve.REPO_ROOT / "scripts" / "index.py"),
+            "--workspace",
+            str(workspace),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+    shotlog = workspace / "shotlog.html"
+    assert 'data-keys=""' in shotlog.read_text(encoding="utf-8")
+    (workspace / "edit.json").write_text(
+        json.dumps(
+            {
+                "video": [],
+                "decisions": [{"id": "0081/s1", "status": "used", "slot": "v1", "reason": "hero"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = serve.shotlog_with_edit(shotlog, workspace)
+    assert 'data-keys="0081/s1"' in page
+    assert "must be in" in page and "wrong label" in page
 
 
 def test_project_page_groups_why_and_shots_under_details(tmp_path):

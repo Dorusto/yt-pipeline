@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Shared helpers extracted from serve.py and the tools (V010 lot fix2a)
+
+**Context:** Lot fix2 found the same small helpers copied across `serve.py` and the tools: tolerant JSON reads and atomic writes, a `git` runner, the OpenRouter key endpoint, GB formatting, the run.log tail and the spend-between-times sum, the append-only feedback line, the `sessionStorage` open-state script, the used-shot-keys set, the reason groups, the ffprobe duration and the ffmpeg frame extraction. A helper and its call sites had to change in several places at once.
+
+**Options:** (A) leave the copies and fix each one when it breaks; (B) extract the shared helpers into `scripts/common/` and point the tools at them, moving each tool's own copy only when a lot touches that tool.
+
+**Decision:** B. New modules: `common/jsonio.py` (`load_json`, `write_json`, `now_iso`, `parse_model_json`), `common/git.py` (`GitError`, `git_lines`), `common/openrouter.py` (`KEY_INFO_URL`, `key_info`), `common/sizes.py` (`BYTES_PER_GB`, `format_gb`), `common/runlog.py` (`RUN_MARKER`, `LOG_TAIL_BYTES`, `last_run_lines`, `last_run_start`, `spend_between`), `common/feedback.py` (`append_feedback`) and `common/html.py` (`open_state_script`). Moved into `common/decisions.py`: `used_shot_keys` and `REASON_GROUPS`. Moved into `common/ffmpeg_tools.py`: `probe_duration`; into `common/frames.py`: `extract_frame`. `recap_meta.py` and `serve.py` use the shared json helpers; `check_public.py` and `check_stable.py` use `common.git` and report a `GitError` as a runtime error; `agent_watchdog.py` and `serve.py` read the key endpoint through `common.openrouter`; `doctor.py` formats disk space through `common.sizes`; `llm_director.py` reads the run log and the director spend through `common.runlog` and appends feedback through `common.feedback`; `explain.py` and `index.py` share the open-state script and the reason groups; `thumbs.py`, `render.py` and `kdenlive_from_fragments.py` share `probe_duration`, and `thumbs.py` shares `extract_frame`. The `serve.py` shotlog change: the JavaScript overlay that moved used cards and pruned empty groups is gone; the used section carries its shot keys in `data-keys`, and the web app regenerates `shotlog.html` with `index.py` when the edit changed, then injects only the review buttons.
+
+**Why not:** A) the same fix would have to be repeated in every copy and the copies would drift.
+
+**Consequence:** the other tools keep their own json helpers for now; moved tool by tool when a lot touches them. `scripts/thumbs.py` gains the `yt-thumbs` skill.
+
+---
+
 ## [2026-10-23] Files tab: see, add and leave out the files of a project (V010 lot files)
 
 **Context:** A project page shows the edit and the analyses but never the files themselves, so the user cannot see which clips and photos the project holds, add more into the same inbox source, or drop one from the edit without deleting it from disk. Every station lists clips by scanning the source or the proxy folder, so a file the user wants out would otherwise keep coming back.

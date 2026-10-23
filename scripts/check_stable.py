@@ -17,12 +17,12 @@ Exit code 1 when a stable file changed without the trailer; 2 on a usage error.
 import argparse
 import json
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
-from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
+from common.git import GitError, git_lines
 from common.summary import summary_fields
 
 SECTION_RE = re.compile(r"^##\s+")
@@ -31,11 +31,6 @@ VERSION_TOKEN_RE = re.compile(r"v\d+\.\d+\.\d+")
 FENCE_OPEN_RE = re.compile(r"^```stable-files\s*$")
 FENCE_CLOSE_RE = re.compile(r"^```\s*$")
 APPROVAL_RE = re.compile(r"^Stable-change:\s*approved\s*$", re.MULTILINE | re.IGNORECASE)
-
-
-def git_lines(*args):
-    result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
-    return [line for line in result.stdout.splitlines() if line.strip()]
 
 
 def _first_stable_block(lines):
@@ -108,20 +103,23 @@ def main(argv=None):
     if not releases_path.exists():
         return report_error(f"releases file not found: {releases_path}", EXIT_USAGE, args.json)
     version, enforced, stable_files = parse_stable_files(releases_path.read_text(encoding="utf-8"))
-    if args.changed_files:
-        changed = [
-            line.strip()
-            for line in Path(args.changed_files).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-    else:
-        if not args.base or not args.head:
-            return report_error("--base and --head are required without --changed-files", EXIT_USAGE, args.json)
-        changed = git_lines("diff", "--name-only", f"{args.base}..{args.head}")
-    if args.commit_messages:
-        messages = Path(args.commit_messages).read_text(encoding="utf-8")
-    else:
-        messages = "\n".join(git_lines("log", f"{args.base}..{args.head}", "--format=%B"))
+    try:
+        if args.changed_files:
+            changed = [
+                line.strip()
+                for line in Path(args.changed_files).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        else:
+            if not args.base or not args.head:
+                return report_error("--base and --head are required without --changed-files", EXIT_USAGE, args.json)
+            changed = git_lines("diff", "--name-only", f"{args.base}..{args.head}")
+        if args.commit_messages:
+            messages = Path(args.commit_messages).read_text(encoding="utf-8")
+        else:
+            messages = "\n".join(git_lines("log", f"{args.base}..{args.head}", "--format=%B"))
+    except GitError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     violations = find_violations(changed, stable_files)
     approved = has_approval(messages)
     ok = (not enforced) or (not violations) or approved

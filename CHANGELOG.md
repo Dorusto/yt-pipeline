@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs: the shaky review policy is the default (long shaky runs reach the director with their shake defect; `YT_PIPELINE_SHAKY=drop` restores the old upgrade), the `yt-edit-drop` skill, the `drop-shot` write route and the donation-links wording.
 - The Why? and Shots pages now open with a plain-language summary and collapsed, grouped sections, and the two tabs moved under a Details group.
 - Web app: the "editing room" redesign — a warm charcoal base with an amber accent for primary actions and teal only for clip blocks, one token set in `scripts/common/theme.py` shared by every page, and a footage-forward layout (poster cards, the player poster, shot thumbnails).
+- Shared helpers extracted into `scripts/common/` (`jsonio`, `git`, `openrouter`, `sizes`, `runlog`, `feedback`, `html`, plus `used_shot_keys`/`REASON_GROUPS`/`probe_duration`/`extract_frame`); the web app's shotlog grouping is regenerated from `index.py` instead of a JavaScript overlay; new `yt-thumbs` skill.
 
 ### Fixed
 

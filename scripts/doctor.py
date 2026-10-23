@@ -31,6 +31,7 @@ from pathlib import Path
 from common.config import ConfigError
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
+from common.sizes import BYTES_PER_GB, format_gb
 
 TOOL = "scripts/doctor.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -186,8 +187,8 @@ def check_disk_space(workspace):
         usage = shutil.disk_usage(nearest_existing(path))
     except OSError as exc:
         return result("disk_space", "fail", f"could not read disk usage at {path}: {exc}", fix)
-    free = usage.free / (1024 ** 3)
-    detail = f"{free:.1f} GB free at {path}"
+    free = usage.free / BYTES_PER_GB
+    detail = f"{format_gb(usage.free)} free at {path}"
     if free < DISK_FAIL_GB:
         return result("disk_space", "fail", detail, fix)
     if free < DISK_WARN_GB:

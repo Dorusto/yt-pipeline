@@ -25,9 +25,11 @@ import time
 from html import escape
 from pathlib import Path
 
+from common.decisions import REASON_GROUPS
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
+from common.html import open_state_script
 from common.moves import middle_speed_of
 from common.schema import SchemaError, validate
 from common.theme import THEME_CSS
@@ -342,12 +344,7 @@ def _page(workspace_name, summary, sections):
         "<main>\n"
         f"{sections}\n"
         "</main>\n"
-        "<script>\n"
-        "(function(){var ds=document.querySelectorAll('details[data-keep]');\n"
-        "for(var i=0;i<ds.length;i++){(function(d){var k='why:'+d.id;\n"
-        "try{if(sessionStorage.getItem(k)==='open')d.open=true;}catch(e){}\n"
-        "d.addEventListener('toggle',function(){try{sessionStorage.setItem(k,d.open?'open':'closed');}catch(e){}});})(ds[i]);}})();\n"
-        "</script>\n"
+        f"{open_state_script('why')}"
         "</body>\n"
         "</html>\n"
     )
@@ -493,20 +490,6 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
         f"</div>"
         f"</div>"
     )
-
-
-REASON_GROUPS = (
-    ("near-duplicate", "near duplicate"),
-    ("setup/teardown", "setup/teardown"),
-    ("accidental", "accidental"),
-    ("shake", "shaky"),
-    ("blur", "blurry"),
-    ("defect", "defect"),
-    ("overlapping", "overlapping window"),
-    ("low score", "low score"),
-    ("did not fit", "did not fit the length"),
-    ("not eligible", "not eligible"),
-)
 
 
 def _reason_group(reason):

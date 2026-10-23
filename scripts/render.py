@@ -38,7 +38,7 @@ from common.ambience import (
     build_filters,
     resolve_denoiser,
 )
-from common.ffmpeg_tools import ffmpeg_path
+from common.ffmpeg_tools import ffmpeg_path, probe_duration
 from common.moves import middle_speed_of, slot_screen_length
 from common.timeline_words import fade_for_join
 from common.photos import ensure_jpeg, open_photo
@@ -220,13 +220,6 @@ def probe_output(path):
     if video is None:
         raise RenderError(f"no video stream in {path}")
     return duration, int(video["width"]), int(video["height"])
-
-
-def probe_duration(path):
-    try:
-        return round(float(run_ffprobe(path)["format"]["duration"]), 3)
-    except (RenderError, KeyError, TypeError, ValueError):
-        return None
 
 
 def has_audio_stream(path):

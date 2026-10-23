@@ -750,11 +750,15 @@ def test_html_has_three_collapsed_verdict_sections(tmp_path):
     text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
     for verdict in ("used", "kept", "unusable"):
         assert (
-            f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}" data-keep>'
-            in text
+            f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}"' in text
         )
     for tag in re.findall(r'<details class="shots-section"[^>]*>', text):
         assert " open" not in tag
+    used_tag = next(tag for tag in re.findall(r'<details class="shots-section"[^>]*>', text) if 'id="used"' in tag)
+    assert 'data-keys=""' in used_tag
+    for tag in re.findall(r'<details class="shots-section"[^>]*>', text):
+        if 'id="used"' not in tag:
+            assert "data-keys" not in tag
 
 
 def test_used_shot_lands_in_the_used_section(tmp_path):
@@ -769,6 +773,7 @@ def test_used_shot_lands_in_the_used_section(tmp_path):
     used = text[text.index('id="used"'):text.index('id="kept"')]
     kept = text[text.index('id="kept"'):text.index('id="unusable"')]
     assert "0081/s1" in used
+    assert 'data-keys="0081/s1"' in used
     assert '<span class="count">1</span>' in used
     assert '<span class="count">0</span>' in kept
 

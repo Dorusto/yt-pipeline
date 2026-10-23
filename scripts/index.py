@@ -35,10 +35,12 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
+from common.decisions import used_shot_keys
 from common.excluded import is_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
+from common.html import open_state_script
 from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
@@ -923,7 +925,7 @@ def _write_html(html_path, record, clip_paths):
         ("unusable", "Not usable"),
     ):
         rows = [shot for shot in shots if _verdict_of(shot, used_keys) == verdict]
-        sections.append(_shots_section(verdict, title, rows, clip_paths))
+        sections.append(_shots_section(verdict, title, rows, clip_paths, used_keys=used_keys))
     document = _html_document(
         workspace_name,
         _summary_line(shots),
@@ -945,14 +947,7 @@ def _used_shot_keys(record):
     workspace = record.get("workspace")
     if not workspace:
         return set()
-    edit = _load_json(Path(workspace) / "edit.json")
-    if not isinstance(edit, dict) or not isinstance(edit.get("decisions"), list):
-        return set()
-    return {
-        str(row["id"])
-        for row in edit["decisions"]
-        if isinstance(row, dict) and row.get("status") == "used" and row.get("id")
-    }
+    return used_shot_keys(_load_json(Path(workspace) / "edit.json"))
 
 
 def _verdict_of(shot, used_keys):
@@ -990,10 +985,14 @@ def _top_values(shots, field):
     return [name for name, _ in ordered[:2]]
 
 
-def _shots_section(verdict, title, rows, clip_paths):
+def _shots_section(verdict, title, rows, clip_paths, used_keys=None):
     groups = _clip_groups(rows, clip_paths) if rows else '<p class="missing">None.</p>'
+    keys_attr = ""
+    if verdict == "used":
+        keys = ",".join(sorted(used_keys or ()))
+        keys_attr = f' data-keys="{escape(keys)}"'
     return (
-        f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}" data-keep>'
+        f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}"{keys_attr} data-keep>'
         f'<summary>{escape(title)} (<span class="count">{len(rows)}</span>)</summary>'
         f'<div class="groups">{groups}</div>'
         f"</details>"
@@ -1139,12 +1138,7 @@ def _html_document(workspace_name, summary_line, generated_at, sections):
         "<main>\n"
         f"{sections}\n"
         "</main>\n"
-        "<script>\n"
-        "(function(){var ds=document.querySelectorAll('details[data-keep]');\n"
-        "for(var i=0;i<ds.length;i++){(function(d){var k='shots:'+d.id;\n"
-        "try{if(sessionStorage.getItem(k)==='open')d.open=true;}catch(e){}\n"
-        "d.addEventListener('toggle',function(){try{sessionStorage.setItem(k,d.open?'open':'closed');}catch(e){}});})(ds[i]);}})();\n"
-        "</script>\n"
+        f"{open_state_script('shots')}"
         "</body>\n"
         "</html>\n"
     )

@@ -26,7 +26,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.git import GitError, git_lines
 
 BLOCKED_EXTENSIONS = {
     ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".lrf", ".insv",
@@ -47,11 +49,6 @@ SECRET_PATTERNS = {
 }
 BASE64_IMAGE = re.compile(r"data:image/[a-z]+;base64,[A-Za-z0-9+/]{200,}")
 IPV4_CANDIDATE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
-
-
-def git_lines(*args):
-    result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
-    return [line for line in result.stdout.splitlines() if line.strip()]
 
 
 def staged_files():
@@ -123,12 +120,15 @@ def build_parser():
 def main(argv=None):
     started = time.monotonic()
     args = build_parser().parse_args(argv)
-    if args.paths:
-        files = args.paths
-    elif args.all:
-        files = git_lines("ls-files")
-    else:
-        files = staged_files()
+    try:
+        if args.paths:
+            files = args.paths
+        elif args.all:
+            files = git_lines("ls-files")
+        else:
+            files = staged_files()
+    except GitError as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
     problems = [problem for path in files for problem in check_file(path)]
     if args.json:
         print(json.dumps({

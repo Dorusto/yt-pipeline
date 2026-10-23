@@ -15,8 +15,6 @@ recap are skipped unless ``--force`` is given. The recap is read-only.
 
 import argparse
 import json
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -24,12 +22,14 @@ from pathlib import Path
 from common.edit_timeline import edit_summary
 from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
-from common.ffmpeg_tools import ffmpeg_path
+from common.ffmpeg_tools import probe_duration
+from common.frames import FramesError, extract_frame
+from common.summary import summary_fields
+from common.versions import THUMBS_DIR
 
 TOOL = "thumbs.py"
 DEFAULT_WIDTH = 320
 POSTER_NAME = "poster.jpg"
-THUMBS_DIR = "thumbs"
 RECAP_NAMES = ("recap_720p.mp4", "recap_720p_9x16.mp4")
 POSTER_FRACTION = 0.30
 
@@ -61,42 +61,6 @@ def build_parser():
     parser.add_argument("--force", action="store_true", help="rewrite even when the thumbs are newer than the recap")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
-
-
-def probe_duration(path):
-    """Return the duration of ``path`` in seconds, through ffprobe."""
-    if shutil.which("ffprobe") is None:
-        raise ThumbsRuntimeError("ffprobe not found on PATH")
-    command = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", str(path),
-    ]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True)
-    except OSError as exc:
-        raise ThumbsRuntimeError(f"could not run ffprobe: {exc}") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or "").strip().splitlines()
-        raise ThumbsRuntimeError(f"ffprobe failed for {Path(path).name}: {detail[-1] if detail else 'unknown error'}")
-    try:
-        return float(result.stdout.strip())
-    except ValueError as exc:
-        raise ThumbsRuntimeError(f"ffprobe returned no duration for {Path(path).name}") from exc
-
-
-def extract_frame(recap, time_s, out, width):
-    """Write one JPEG frame of ``recap`` at ``time_s`` scaled to ``width`` px wide."""
-    command = [
-        ffmpeg_path(), "-y", "-ss", f"{time_s:.3f}", "-i", str(recap),
-        "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "3", str(out),
-    ]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True)
-    except OSError as exc:
-        raise ThumbsRuntimeError(f"could not run ffmpeg: {exc}") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or "").strip().splitlines()
-        raise ThumbsRuntimeError(f"ffmpeg failed for {Path(recap).name}: {detail[-1] if detail else 'unknown error'}")
 
 
 def resolve_recap(workspace, recap):
@@ -159,10 +123,11 @@ def build_thumbs(workspace, recap, width, force):
             "poster": str(thumbs_dir / POSTER_NAME),
             "shots": shots,
             "skipped": True,
-            "wall_time_s": round(time.monotonic() - started, 3),
-            "llm_cost_usd": 0.0,
+            **summary_fields(started),
         }
     duration = probe_duration(recap_path)
+    if duration is None:
+        raise ThumbsRuntimeError(f"ffprobe returned no duration for {recap_path.name}")
     thumbs_dir.mkdir(parents=True, exist_ok=True)
     extract_frame(recap_path, duration * POSTER_FRACTION, thumbs_dir / POSTER_NAME, width)
     for number, block in enumerate(summary["blocks"], start=1):
@@ -175,8 +140,7 @@ def build_thumbs(workspace, recap, width, force):
         "poster": str(thumbs_dir / POSTER_NAME),
         "shots": shots,
         "skipped": False,
-        "wall_time_s": round(time.monotonic() - started, 3),
-        "llm_cost_usd": 0.0,
+        **summary_fields(started),
     }
 
 
@@ -184,7 +148,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary = build_thumbs(args.workspace, args.recap, args.width, args.force)
-    except ThumbsRuntimeError as exc:
+    except (ThumbsRuntimeError, FramesError) as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except ThumbsError as exc:
         return report_error(exc, EXIT_USAGE, args.json)

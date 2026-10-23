@@ -40,15 +40,14 @@ import subprocess
 import sys
 import time
 import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 from common.notify import NotifyError, send
+from common.openrouter import key_info
 from common.spend import read_spend_ledger
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
-KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 DEFAULT_KEY_FILE = "~/.config/opencode/secrets/openrouter.key"
 DEFAULT_STATE_FILE = "~/.cache/yt-pipeline/watchdog-state.json"
 DEFAULT_LEDGER_FILE = "~/.cache/yt-pipeline/run-spend.json"
@@ -69,9 +68,7 @@ def read_api_key(key_file):
 
 def fetch_daily_usage(api_key, timeout=15):
     """Return today's USD usage for the key, as reported by OpenRouter."""
-    request = urllib.request.Request(KEY_INFO_URL, headers={"Authorization": f"Bearer {api_key}"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8")).get("data", {})
+    data = key_info(api_key, timeout=timeout)
     return float(data.get("usage_daily") or 0.0)
 
 

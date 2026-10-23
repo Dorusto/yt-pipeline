@@ -7,8 +7,12 @@ resize them and use ``thumbnail_data_uri`` for the HTML contact sheets.
 """
 
 import base64
+import subprocess
+from pathlib import Path
 
 import cv2
+
+from common.ffmpeg_tools import ffmpeg_path
 
 THUMBNAIL_WIDTH = 320
 THUMBNAIL_QUALITY = 70
@@ -16,6 +20,23 @@ THUMBNAIL_QUALITY = 70
 
 class FramesError(Exception):
     """A clip cannot be opened or a requested frame cannot be read."""
+
+
+def extract_frame(path, t_s, out, width):
+    """Write the frame at t_s from path as a JPEG scaled to width px wide (ffmpeg)."""
+    command = [
+        ffmpeg_path(), "-y", "-ss", f"{t_s:.3f}", "-i", str(path),
+        "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "3", str(out),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True)
+    except OSError as exc:
+        raise FramesError(f"could not run ffmpeg: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip().splitlines()
+        raise FramesError(
+            f"ffmpeg failed for {Path(path).name}: {detail[-1] if detail else 'unknown error'}"
+        )
 
 
 def read_frame_pairs(path, times, error=FramesError, near_seek=False, skip_missing=False):

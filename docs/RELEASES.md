@@ -36,6 +36,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - The Files tab (see, add and leave out the files of a project, `excluded.json`).
 - The web app's visual design (the "editing room" look: a warm charcoal base, an amber accent for primary actions, teal only for clip blocks, one token set in `scripts/common/theme.py` with a light and dark theme, the header logo slot).
 - The poster thumbnails: the `thumbs` station (`scripts/thumbs.py`) writes `thumbs/poster.jpg` and `thumbs/shot-N.jpg`, the Projects page is a grid of poster cards and the shot strip shows each shot's thumbnail.
+- The shared helpers extracted from `serve.py` and the tools (`scripts/common/jsonio.py`, `git.py`, `openrouter.py`, `sizes.py`, `runlog.py`, `feedback.py`, `html.py`, plus `used_shot_keys`/`REASON_GROUPS`/`probe_duration`/`extract_frame`), and the `yt-thumbs` skill for `scripts/thumbs.py`.
 - The app logo and favicon (three SVG marks in assets/brand/, GET /brand, brand.logo).
 - Continuous deployment to the pilot containers (`.github/workflows/deploy.yml`, the `PILOT_RUNNERS` repository variable).
 

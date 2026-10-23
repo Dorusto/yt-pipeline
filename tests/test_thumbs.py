@@ -86,3 +86,12 @@ def test_thumbs_json_fields(tmp_path, monkeypatch, capsys):
     assert summary["tool"] == "thumbs.py"
     assert isinstance(summary["wall_time_s"], (int, float))
     assert summary["llm_cost_usd"] == 0.0
+
+
+def test_thumbs_none_duration_is_a_runtime_error(tmp_path, monkeypatch, capsys):
+    workspace = make_workspace(tmp_path)
+    monkeypatch.setattr(thumbs, "probe_duration", lambda path: None)
+    assert thumbs.main(["--workspace", str(workspace), "--json"]) == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == 3
