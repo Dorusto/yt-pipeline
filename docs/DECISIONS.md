@@ -2773,3 +2773,17 @@ The README illustration is a vector SVG (`docs/images/web-app.svg`), not a PNG:
 and a real capture would carry the instance's own music library names. The SVG is
 own work drawn in the app's theme colours. `tests/test_readme_layout.py` keeps the
 README short and its links resolving.
+
+---
+
+## [2026-10-23] Watchdog: no per-lot configuration, two stop rules, lot cost in the notification (V020N lot n4)
+
+**Context:** Issue #65: the watchdog needed a manual edit (the `--lot` label and a per-run `--run-cap` in the cron line) every time a new lot started; a stale label and a cap that did not match the work were easy to leave behind. The per-run cap also produced two notifications (a `Budget` at 80 % and a `Blocked` at 100 %).
+
+**Options:** (A) keep `--lot` and `--run-cap` and document them better; (B) derive the label from the active task file, keep only the two hard stops (no commit for N hours, one hard daily spend ceiling) and report the lot cost in the stop notification.
+
+**Decision:** B. `resolve_label` reads the newest task brief in `<repo>/.opencode/tasks/` (review and audit notes skipped), else the tmux session running the agent, else no prefix; `--lot` is gone. `--run-cap` and the `Budget` alert are gone; the two stop rules are `--kill-no-commit-hours` and `--kill-over-usd`. The run-spend ledger stays and measures the current lot's spend, which the single `Blocked` stop notification reports in plain words.
+
+**Why not:** A) the per-lot flag is exactly the manual step the issue wants removed, and a per-run cap that stops the agent is a second spend rule the issue asks to drop.
+
+**Consequence:** the cron line no longer carries a lot label or a run cap; the stop notification names the reason and the lot's cost; RULES, the skill and `docs/AGENT_SETUP.md` describe the two stop rules.
