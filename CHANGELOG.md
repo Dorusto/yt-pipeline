@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-23
+
+The Costs page on a friend's instance now starts with how to help cover the costs, then shows what your own edits have cost in AI models and what is still open, in red until it is paid back. The project's own costs follow, smaller and voluntary, and the donations come last.
+
+### Changed
+
+- Web app: on an instance with `costs.project_totals_url` the Costs page leads with the donation buttons, then the instance's model cost to cover (the OpenRouter key usage, or the per-clip spend, minus the donations in the instance's own ledger, with the key's credit limit), then the owner instance's cost lines as voluntary project costs, the per-clip table and the donation list. The owner's page is unchanged.
+
 ## [0.1.0] - 2026-10-23
 
 yt-pipeline turns the clips from a trip into a short video. Upload your clips and photos from your phone or laptop, write a few words about the day, and the AI director makes the edit and explains its choices. You can leave a shot out, ask for another version, or ask the director what it would change before it starts. Every edit comes with a title, a description and hashtags ready to copy. The Costs page shows what the project costs and how to support it.
