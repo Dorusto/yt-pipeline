@@ -27,6 +27,7 @@ import http.server
 import json
 import os
 import re
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -41,6 +42,8 @@ import yaml
 
 from common.config import (
     ConfigError,
+    WEB_FEATURES,
+    consent_text,
     costs_db,
     donation_links,
     inbox_path,
@@ -51,6 +54,7 @@ from common.config import (
     no_music_library_message,
     no_requests_message,
     requests_path,
+    web_features,
 )
 from common.costs import compute_totals, connect as connect_ledger
 from common.media import clip_kind
@@ -99,6 +103,11 @@ SERVED_FILES = (
     "shotlog.html",
     "explain.html",
 )
+ARTIFACT_FEATURES = {
+    "explain.html": "why",
+    "shotlog.html": "shots",
+    "shorts_candidates.json": "shorts",
+}
 CONTENT_TYPES = {
     "recap_720p.mp4": "video/mp4",
     VERTICAL_PREVIEW: "video/mp4",
@@ -158,6 +167,23 @@ MODE_B_TOOL = "scripts/rough_cut.py"
 REQUESTS_MAX_CHARS = 2000
 CONTACT_MAX_CHARS = 200
 REQUEST_TYPES = ("Feedback", "Feature request")
+BRIEF_HINTS = (
+    ("Where and when", "Where and when: "),
+    ("Who is in it", "Who is in it: "),
+    ("The story or the best moment", "The best moment: "),
+    ("Mood", "Mood: "),
+    ("Length", "Length: "),
+    ("What to leave out", "Leave out: "),
+)
+BRIEF_PLACEHOLDER = (
+    "For example:\n"
+    "Where and when: a motorbike weekend in the Eifel, April 2026\n"
+    "Who is in it: me, and my friend on the second bike\n"
+    "The best moment: the ride down the tree-lined lane\n"
+    "Mood: calm start, energy at the end\n"
+    "Length: about 60 seconds\n"
+    "Leave out: the parking lot shots"
+)
 
 
 def brand_progress_color(brand_path):
@@ -412,6 +438,11 @@ class ServeError(RuntimeError):
     """Raised when the server cannot start or the request is unacceptable."""
 
 
+def feature_on(features, name):
+    """True when the part is enabled; a missing set means every part is on."""
+    return features is None or name in features
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="serve.py",
@@ -499,6 +530,20 @@ def build_parser():
             "optional donation link shown on the Costs page (or "
             "YT_PIPELINE_DONATION_URL, or costs.donation_links / costs.donation_url)"
         ),
+    )
+    parser.add_argument(
+        "--features",
+        default=None,
+        help="comma-separated web parts to enable (or YT_PIPELINE_FEATURES, or "
+             "web.features in the config; default: all of "
+             "upload, recap, why, shots, shorts, costs, requests)",
+    )
+    parser.add_argument(
+        "--consent-text",
+        default=None,
+        help="consent text shown with a required checkbox on the upload page "
+             "(or YT_PIPELINE_CONSENT_TEXT, or web.consent_text in the config; "
+             "no personal default)",
     )
     parser.add_argument(
         "--check",
@@ -872,6 +917,17 @@ padding:0 12px;border-radius:999px;background:var(--deck);color:var(--stone);tex
 .versions a.on{background:var(--stone);color:var(--water)}
 .versions a.failed{color:var(--left)}
 .versions a.on.failed{background:var(--left);color:var(--water)}
+.brief-hints{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.brief-hints .chip{min-height:32px;border:1px solid var(--rope);border-radius:999px;
+background:var(--deck);color:var(--haze);padding:0 12px;font:inherit;font-size:.85rem;cursor:pointer}
+.brief-hints .chip:hover{color:var(--stone)}
+.consent-text{color:var(--haze);font-size:.9rem;margin:0}
+.consent{display:flex;align-items:center;gap:8px;font-size:.95rem}
+.consent input{width:auto;min-height:0}
+.project-del{width:34px;height:34px;border:0;border-radius:50%;background:#e5484d;
+display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+vertical-align:middle;margin-left:10px}
+.project-del svg{width:16px;height:16px;fill:#fff}
 .player{margin-bottom:22px}
 .player h2{font-family:ui-serif,Georgia,serif;font-weight:500;font-size:1.15rem;margin:0 0 8px}
 .vmeta{color:var(--haze);font-size:.88rem;margin:6px 0 0;overflow-wrap:anywhere}
@@ -985,7 +1041,7 @@ setTimeout(function(){b.textContent=was;},1200);});});});})();
 """
 
 
-def render_page(title, body, active=None, script="", refresh=None):
+def render_page(title, body, active=None, script="", refresh=None, features=None):
     """Return one full HTML page with the top bar and the shared theme."""
     nav = []
     for key, href, label in (
@@ -993,6 +1049,8 @@ def render_page(title, body, active=None, script="", refresh=None):
         ("upload", "/upload", "New recap"),
         ("costs", "/costs", "Costs"),
     ):
+        if key != "projects" and not feature_on(features, key):
+            continue
         on = " on" if key == active else ""
         nav.append(f'<a class="nav{on}" href="{href}">{label}</a>')
     tail = f"<script>{script}</script>" if script else ""
@@ -1078,7 +1136,7 @@ def describe_summary(summary):
     return ", ".join(parts)
 
 
-def render_index(entries):
+def render_index(entries, features=None):
     """Return the Projects page: one row per project with its state and edit facts."""
     rows = []
     for entry in entries:
@@ -1100,6 +1158,7 @@ def render_index(entries):
         "Projects",
         f'<h1>Projects</h1><p class="lede">Every folder you sent, newest first.</p>{body}',
         active="projects",
+        features=features,
     )
 
 
@@ -1163,7 +1222,7 @@ def render_costs(server, thanks=False):
         if thanks
         else ""
     )
-    if server.requests is not None:
+    if server.requests is not None and feature_on(server.features, "requests"):
         type_options = "".join(
             f'<option value="{html_escape(value)}"'
             f'{" selected" if value == "Feedback" else ""}>{html_escape(value)}</option>'
@@ -1195,7 +1254,7 @@ def render_costs(server, thanks=False):
         f"{thanks_line}"
         f"{request_form}"
     )
-    return render_page("Costs", body, active="costs")
+    return render_page("Costs", body, active="costs", features=server.features)
 
 
 def append_request(path, line):
@@ -1656,43 +1715,47 @@ def render_shorts_panel(directory, name):
     return f'<style>{SHORTS_STYLE}</style><div class="shorts">{"".join(rows)}</div>'
 
 
-def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None):
+def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
     has_shorts = (directory / SHORTS_CANDIDATES_FILE).is_file()
-    if tab == "cuts" and not mode_b:
-        tab = "recap"
-    if tab == "shorts" and not has_shorts:
-        tab = "recap"
     status = project_status(directory)
     report = run_report(directory)
     tab_links = []
+    enabled = []
     for key, label in TABS:
         if key == "cuts" and not mode_b:
             continue
-        if key == "shorts" and not has_shorts:
+        if key == "shorts" and (not has_shorts or not feature_on(features, "shorts")):
             continue
+        if key in ("recap", "why", "shots") and not feature_on(features, key):
+            continue
+        enabled.append(key)
         active = ' class="active"' if key == tab else ""
         tab_links.append(
             f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(label)}</a>'
         )
-    panels = {
-        "recap": render_recap_panel(directory, name, wanted, compare_with, status, report),
-        "why": render_iframe_panel(
+    if tab not in enabled:
+        tab = enabled[0] if enabled else "recap"
+    panels = {}
+    if "recap" in enabled:
+        panels["recap"] = render_recap_panel(directory, name, wanted, compare_with, status, report)
+    if "why" in enabled:
+        panels["why"] = render_iframe_panel(
             directory,
             "explain.html",
             "No explanation for this edit yet. Run scripts/explain.py, or re-edit it once to create one.",
-        ),
-        "shots": render_iframe_panel(
+        )
+    if "shots" in enabled:
+        panels["shots"] = render_iframe_panel(
             directory,
             "shotlog.html",
             "No shot list yet. It appears when the analysis finishes.",
-        ),
-    }
-    if mode_b:
+        )
+    if "cuts" in enabled:
         panels["cuts"] = render_cuts_panel(directory, name)
-    if has_shorts:
+    if "shorts" in enabled:
         panels["shorts"] = render_shorts_panel(directory, name)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
@@ -1701,20 +1764,31 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             f' <span class="facts num">All good shots would make about '
             f'{format_length(estimate["seconds"])} ({estimate["shots"]} shots)</span>'
         )
+    reedit = (
+        render_reedit(name, music_tracks, features=features)
+        if feature_on(features, "recap")
+        else ""
+    )
     body = (
         f"<style>{RUN_NOTICE_STYLE}</style><h1>{html_escape(name)}</h1>"
         f'<p class="lede">{lede}</p>'
+        f"{render_delete_form(name)}"
         f'<nav class="tabs">{"".join(tab_links)}</nav>'
-        f'<section class="panel">{panels[tab]}</section>'
-        f"{render_reedit(name, music_tracks)}"
+        f'<section class="panel">{panels.get(tab, "")}</section>'
+        f"{reedit}"
     )
-    script = (STRIP_SCRIPT + TICK_SCRIPT + PICK_SCRIPT + COPY_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
+    script = (
+        (STRIP_SCRIPT + TICK_SCRIPT + PICK_SCRIPT + COPY_SCRIPT if tab == "recap" else "")
+        + LENGTH_SCRIPT
+        + DELETE_SCRIPT
+        + BRIEF_HINTS_SCRIPT
+    )
     if tab == "cuts":
         script += CUTS_SCRIPT
     if tab == "shorts":
         script += SHORTS_SCRIPT
     refresh = 20 if status == "running" else None
-    return render_page(name, body, active="projects", script=script, refresh=refresh)
+    return render_page(name, body, active="projects", script=script, refresh=refresh, features=features)
 
 
 def render_select(name, options, default=None):
@@ -1816,7 +1890,46 @@ def render_form_rows(fields):
 AUTO_HINT = '<p class="hint">Leave anything on Auto and the director decides from the brief and the footage.</p>'
 
 
-def render_upload(music_tracks):
+def brief_hints_html():
+    """The row of brief hint chips; tapping one appends its line to the brief."""
+    chips = "".join(
+        f'<button type="button" class="chip" data-line="{html_escape(line)}">'
+        f'{html_escape(label)}</button>'
+        for label, line in BRIEF_HINTS
+    )
+    return f'<div class="brief-hints">{chips}</div>'
+
+
+def render_delete_form(name):
+    """A small form that deletes the project and its inbox source."""
+    return f'<form class="delete-project" method="post" action="/{html_escape(name)}/delete"></form>'
+
+
+DELETE_SCRIPT = """
+(function(){var f=document.querySelector('form.delete-project');if(!f)return;
+var h=document.querySelector('h1');if(!h)return;
+var bin='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>';
+var b=document.createElement('button');b.type='button';b.className='project-del';
+b.setAttribute('aria-label','Delete this project');b.innerHTML=bin;h.appendChild(b);
+var ask=document.createElement('div');ask.className='shot-ask';ask.hidden=true;
+h.parentNode.insertBefore(ask,h.nextSibling);
+b.addEventListener('click',function(){ask.innerHTML='<span>Delete this project?</span>'+
+'<button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';ask.hidden=false;
+ask.querySelector('.no').onclick=function(){ask.hidden=true;};
+ask.querySelector('.yes').onclick=function(){ask.innerHTML='<span>Deleting, about 5 s...</span>';f.submit();};});})();
+"""
+
+BRIEF_HINTS_SCRIPT = """
+(function(){[].forEach.call(document.querySelectorAll('.brief-hints'),function(row){
+var box=row.parentNode.querySelector('textarea.brief-input');if(!box)return;
+[].forEach.call(row.querySelectorAll('button.chip'),function(chip){
+chip.addEventListener('click',function(){var line=chip.getAttribute('data-line')||'';
+var value=box.value;if(value&&value.slice(-1)!=='\\n')value+='\\n';
+box.value=value+line;box.focus();box.setSelectionRange(box.value.length,box.value.length);});});});})();
+"""
+
+
+def render_upload(music_tracks, features=None, consent_text=None):
     """Return the Upload page with the form wired to POST /upload."""
     fields = [
         ("Clips and photos", '<div class="drop" data-drop>'
@@ -1824,10 +1937,18 @@ def render_upload(music_tracks):
                              '<p class="drop-hint">Drag clips and photos here (several at once, '
                              'or in several drops), or tap to choose. <span class="drop-count"></span></p></div>'),
         ("Project name", '<input type="text" name="folder" placeholder="kotor-day-2" autocomplete="off">'),
-        ("Brief", '<textarea name="brief" rows="4" '
-                  'placeholder="About 60 seconds, chronological, calm start, energy at the end"></textarea>'),
+        ("Brief", f'<textarea class="brief-input" name="brief" rows="4" '
+                  f'placeholder="{html_escape(BRIEF_PLACEHOLDER)}"></textarea>'
+                  f'{brief_hints_html()}'),
     ]
     fields.extend(option_fields(music_tracks))
+    consent = ""
+    if consent_text:
+        consent = (
+            f'<p class="consent-text">{html_escape(consent_text)}</p>'
+            '<label class="consent"><input type="checkbox" name="consent" value="1" required>'
+            " I agree</label>"
+        )
     body = (
         "<h1>New recap</h1>"
         '<p class="lede">Pick the clips and photos of one day, say what you want, and start. '
@@ -1835,18 +1956,25 @@ def render_upload(music_tracks):
         '<form method="post" action="/upload" enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
+        f"{consent}"
         '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
         '<div class="upload-progress" hidden><progress max="100" value="0"></progress>'
         '<p class="upload-status" aria-live="polite"></p></div>'
         "</form>"
     )
     return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
-                       script=LENGTH_SCRIPT + DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT)
+                       script=LENGTH_SCRIPT + DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT + BRIEF_HINTS_SCRIPT,
+                       features=features)
 
 
-def render_reedit(name, music_tracks):
+def render_reedit(name, music_tracks, features=None):
     """Return the Re-edit form with the same options plus a feedback box."""
-    fields = list(option_fields(music_tracks))
+    fields = [
+        ("Brief", f'<textarea class="brief-input" name="brief" rows="4" '
+                  f'placeholder="{html_escape(BRIEF_PLACEHOLDER)}"></textarea>'
+                  f'{brief_hints_html()}'),
+    ]
+    fields.extend(option_fields(music_tracks))
     fields.append(("What should change?", '<textarea name="feedback" rows="3" '
                    'placeholder="drop 0071/s2, tunnel longer"></textarea>'))
     return (
@@ -2565,25 +2693,47 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         segments = parse_path(self.path)
+        features = self.server.features
         if segments == ["upload"]:
+            if not feature_on(features, "upload"):
+                self.send_not_found()
+                return
             self.handle_upload()
             return
         if len(segments) == 2 and segments[1] == "re-edit":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
             self.handle_reedit(segments[0])
             return
         if len(segments) == 2 and segments[1] == "expectations":
+            if not feature_on(features, "shots"):
+                self.send_not_found()
+                return
             self.handle_expectations(segments[0])
             return
         if len(segments) == 2 and segments[1] == "drop-shot":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
             self.handle_drop_shot(segments[0])
             return
         if len(segments) == 2 and segments[1] == "cut-review":
             self.handle_cut_review(segments[0])
             return
         if len(segments) == 2 and segments[1] == "shorts-candidates":
+            if not feature_on(features, "shorts"):
+                self.send_not_found()
+                return
             self.handle_shorts_candidates(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "delete":
+            self.handle_delete_project(segments[0])
+            return
         if segments == ["costs", "request"]:
+            if not feature_on(features, "requests"):
+                self.send_not_found()
+                return
             self.handle_request_submit()
             return
         self._method_not_allowed()
@@ -2643,6 +2793,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 and Path(music).suffix.lower() in MUSIC_EXTENSIONS
             ):
                 raise UploadError(400, "unknown music track")
+            if self.server.consent_text and not fields.get("consent"):
+                raise UploadError(400, "consent is required")
             source = self.server.inbox / folder
             if project_status(self.server.root / folder) == "running":
                 raise UploadError(409, "already running")
@@ -2712,6 +2864,34 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
             return
         self.send_redirect(f"/{project}/?tab=recap")
+
+    def handle_delete_project(self, project):
+        """Delete the workspace and its inbox source; refuse while a run is going."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        source = None
+        marker = workspace / ".run.json"
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            source = Path(data.get("source") or "")
+        except (OSError, ValueError):
+            source = None
+        try:
+            if source is not None and self.server.inbox is not None:
+                inbox = Path(self.server.inbox).resolve()
+                resolved = source.resolve()
+                if resolved != inbox and inbox in resolved.parents and resolved.is_dir():
+                    shutil.rmtree(resolved)
+            shutil.rmtree(workspace)
+        except OSError as exc:
+            self.send_error_text(500, f"could not delete the project: {exc}")
+            return
+        self.send_redirect("/")
 
     def handle_expectations(self, project):
         """Append one phone-review expectation to the workspace's expectations.yaml."""
@@ -2948,13 +3128,27 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if segments is None:
             self.send_not_found()
             return
+        features = self.server.features
         if not segments:
-            self.send_html(render_index(self.collect_entries()), send_body)
+            self.send_html(render_index(self.collect_entries(), features=features), send_body)
             return
         if segments == ["upload"]:
-            self.send_html(render_upload(list_music_tracks(self.server.music_dir)), send_body)
+            if not feature_on(features, "upload"):
+                self.send_not_found()
+                return
+            self.send_html(
+                render_upload(
+                    list_music_tracks(self.server.music_dir),
+                    features=features,
+                    consent_text=self.server.consent_text,
+                ),
+                send_body,
+            )
             return
         if segments == ["costs"]:
+            if not feature_on(features, "costs"):
+                self.send_not_found()
+                return
             self.send_html(
                 render_costs(self.server, thanks=parse_flag(self.path, "thanks")), send_body
             )
@@ -2972,6 +3166,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     list_music_tracks(self.server.music_dir),
                     wanted=parse_number(self.path, "v"),
                     compare_with=parse_number(self.path, "with"),
+                    features=features,
                 ),
                 send_body,
             )
@@ -2979,9 +3174,16 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "cut-audio":
             self.handle_cut_audio(segments[0], send_body)
             return
+        if len(segments) == 2 and segments[1] == "delete":
+            self._method_not_allowed()
+            return
         if len(segments) == 2:
             artifact = segments[1]
             if artifact not in SERVED_FILES:
+                self.send_not_found()
+                return
+            part = ARTIFACT_FEATURES.get(artifact)
+            if part is not None and not feature_on(features, part):
                 self.send_not_found()
                 return
             directory = root / segments[0]
@@ -2996,6 +3198,10 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if len(segments) == 4 and segments[1] == "versions" and VERSION_RE.match(segments[2]):
             artifact = segments[3]
+            part = ARTIFACT_FEATURES.get(artifact)
+            if part is not None and not feature_on(features, part):
+                self.send_not_found()
+                return
             directory = root / segments[0]
             target = directory / "versions" / segments[2] / artifact
             if artifact not in SERVED_FILES or not is_project(directory) or not target.is_file():
@@ -3080,7 +3286,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
-                 ledger=None, requests=None, donation_links=None):
+                 ledger=None, requests=None, donation_links=None, features=None, consent_text=None):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
@@ -3089,12 +3295,15 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         self.ledger = Path(ledger) if ledger is not None else None
         self.requests = Path(requests) if requests is not None else None
         self.donation_links = donation_links
+        self.features = set(features) if features is not None else set(WEB_FEATURES)
+        self.consent_text = consent_text
         super().__init__(address, WorkspaceHandler)
 
 
 def build_server(root, bind, port, music_dir=None, inbox=None,
                  max_file_bytes=None, max_total_bytes=None,
-                 ledger=None, requests=None, donation_links=None):
+                 ledger=None, requests=None, donation_links=None,
+                 features=None, consent_text=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -3106,11 +3315,14 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         ledger,
         requests,
         donation_links,
+        features,
+        consent_text,
     )
 
 
 def build_summary(root, bind, port, projects, status, started, music_dir=None,
-                  inbox=None, ledger=None, requests=None, donation_links=None):
+                  inbox=None, ledger=None, requests=None, donation_links=None,
+                  features=None, consent_text=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -3152,6 +3364,8 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "ledger": str(Path(ledger).expanduser()) if ledger else None,
         "requests": str(Path(requests).expanduser()) if requests else None,
         "donation_links": donation_links,
+        "features": list(features) if features is not None else list(WEB_FEATURES),
+        "consent": bool(consent_text),
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": 0.0,
     }
@@ -3221,6 +3435,8 @@ def main(argv=None):
         if requests is None:
             print(f"[warn] {no_requests_message('--requests')}", file=sys.stderr)
         donation = donation_links(args.donation_url)
+        features = web_features(args.features)
+        consent = consent_text(args.consent_text)
         try:
             server = build_server(
                 root,
@@ -3233,6 +3449,8 @@ def main(argv=None):
                 ledger,
                 requests,
                 donation,
+                features,
+                consent,
             )
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
@@ -3245,7 +3463,7 @@ def main(argv=None):
     projects = discover_projects(root)
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
-        music_dir, inbox, ledger, requests, donation,
+        music_dir, inbox, ledger, requests, donation, features, consent,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

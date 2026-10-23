@@ -161,6 +161,23 @@ def _validate(data):
         if path is not None and (not isinstance(path, str) or not path):
             raise ConfigError("requests.path must be a non-empty string")
 
+    web = data.get("web")
+    if web is not None:
+        if not isinstance(web, dict):
+            raise ConfigError("web must be a mapping")
+        consent = web.get("consent_text")
+        if consent is not None and (not isinstance(consent, str) or not consent):
+            raise ConfigError("web.consent_text must be a non-empty string")
+        features = web.get("features")
+        if features is not None:
+            if not isinstance(features, list):
+                raise ConfigError("web.features must be a list")
+            for name in features:
+                if name not in WEB_FEATURES:
+                    raise ConfigError(
+                        f"web.features entries must be one of: {', '.join(WEB_FEATURES)}"
+                    )
+
     return data
 
 
@@ -171,6 +188,9 @@ COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
 DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
 REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
 DEFAULT_DONATION_LABEL = "Support the project"
+WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
+CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
+FEATURES_ENV = "YT_PIPELINE_FEATURES"
 
 
 def no_music_library_message(flag_name):
@@ -335,3 +355,51 @@ def requests_path(cli_value=None, config=None):
         if value:
             return Path(value).expanduser()
     return None
+
+
+def consent_text(cli_value=None, config=None):
+    """The upload-page consent text: CLI flag, else CONSENT_TEXT_ENV, else web.consent_text.
+
+    Returns None when none of the three is set — it is optional, so the caller
+    shows no checkbox rather than failing. There is no personal default.
+    """
+    if cli_value:
+        return cli_value
+    from_env = os.environ.get(CONSENT_TEXT_ENV)
+    if from_env:
+        return from_env
+    data = config if config is not None else load_config()
+    section = data.get("web")
+    if isinstance(section, dict):
+        value = section.get("consent_text")
+        if value:
+            return value
+    return None
+
+
+def web_features(cli_value=None, config=None):
+    """The enabled web parts: CLI flag (comma-separated), else FEATURES_ENV, else web.features.
+
+    Returns a tuple in WEB_FEATURES order. Defaults to every part when none of
+    the three is set. An unknown name is a ConfigError.
+    """
+    names = None
+    if cli_value:
+        names = [part.strip() for part in cli_value.split(",") if part.strip()]
+    else:
+        from_env = os.environ.get(FEATURES_ENV)
+        if from_env:
+            names = [part.strip() for part in from_env.split(",") if part.strip()]
+    if names is None:
+        data = config if config is not None else load_config()
+        section = data.get("web")
+        if isinstance(section, dict) and section.get("features") is not None:
+            names = list(section["features"])
+    if names is None:
+        return WEB_FEATURES
+    for name in names:
+        if name not in WEB_FEATURES:
+            raise ConfigError(
+                f"web.features entries must be one of: {', '.join(WEB_FEATURES)}"
+            )
+    return tuple(name for name in WEB_FEATURES if name in names)

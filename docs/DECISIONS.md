@@ -2564,3 +2564,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) a model call behind a web route has no re-run safety, no versioned output and no `--json` summary; the station keeps the same contract as every other tool.
 
 **Consequence:** `recap_meta.json` is a new interface file (schema `recap_meta`); the Recap tab shows the text for the shown version; no RULES change (the station is covered by the existing recap skip rule and the `recap.py` → the stations tool-to-tool pair).
+
+---
+
+## [2026-10-23] Friend-ready web app: consent, delete, feature switches and brief help (V010 lot friend)
+
+**Context:** The web app was built for the owner's own tailnet. Handing it to a friend needs a consent checkbox on the upload page, a way to delete a project from its page, per-instance feature switches the server enforces (not just hidden links), and help writing the brief.
+
+**Decision:** `scripts/common/config.py` gains `WEB_FEATURES` (`upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`), a `web` validation block, `consent_text()` and `web_features()` (flag, else environment variable, else config, else every part; an unknown name is a `ConfigError`). `serve.py` gains `--features` / `--consent-text`, a required consent checkbox on the upload page (an upload without it is refused), a project-page bin icon that deletes the workspace and its inbox source (refused while a run is going), feature gating on the routes and nav/tabs (a part that is off is refused with a 404, not just hidden) and brief hint chips with a multi-line example placeholder that is never sent. The `web` section is documented in `config.yaml.example`.
+
+**Consequence:** the RULES route list names the delete route and the feature switches; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.

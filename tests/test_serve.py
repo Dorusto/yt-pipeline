@@ -43,7 +43,8 @@ def make_music_dir(tmp_path, names):
 
 
 def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total_mb=20480,
-                 ledger=None, requests=None, donation_links=None):
+                 ledger=None, requests=None, donation_links=None,
+                 features=None, consent_text=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -60,6 +61,8 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         ledger,
         requests,
         donation_links,
+        features,
+        consent_text,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -2358,3 +2361,224 @@ def test_check_warns_without_ledger_and_requests(tmp_path, capsys, monkeypatch):
     summary = json.loads(captured.out)
     assert summary["ledger"] is None
     assert summary["requests"] is None
+
+
+def test_upload_page_shows_the_consent_checkbox(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root, consent_text="I own this footage.")
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert b"I own this footage." in body
+        assert b'name="consent"' in body
+        assert b"required" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_without_consent_is_refused(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox, consent_text="I own this footage.")
+    try:
+        status, _, body = upload(
+            server,
+            [("folder", None, "kotor-day"), ("brief", None, "hello"), ("files", "a.mp4", b"x")],
+        )
+        assert status == 400
+        assert b"consent" in body
+        assert not (inbox / "kotor-day").exists()
+        status, headers, _ = upload(
+            server,
+            [
+                ("folder", None, "kotor-day"),
+                ("brief", None, "hello"),
+                ("consent", None, "1"),
+                ("files", "a.mp4", b"x"),
+            ],
+        )
+        assert status == 303
+        assert headers["Location"] == "/kotor-day/"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_project_removes_workspace_and_inbox_source(tmp_path):
+    root = tmp_path / "projects"
+    root.mkdir()
+    name = "kotor-day"
+    workspace = root / name
+    workspace.mkdir()
+    inbox = tmp_path / "inbox"
+    source = inbox / name
+    source.mkdir(parents=True)
+    (source / "clip.mp4").write_bytes(b"video")
+    (workspace / ".run.json").write_text(
+        json.dumps({"pid": 2**31 - 1, "source": str(source)}), encoding="utf-8"
+    )
+    server = start_server(root, inbox=inbox)
+    try:
+        status, headers, _ = request(server, "POST", f"/{name}/delete")
+        assert status == 303
+        assert headers["Location"] == "/"
+        assert not workspace.exists()
+        assert not source.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_project_refused_while_running(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setattr(serve, "project_status", lambda directory: "running")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "POST", "/2026-10-14/delete")
+        assert status == 409
+        assert b"already running" in body
+        assert (root / "2026-10-14").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_project_get_is_405(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, _ = request(server, "GET", "/2026-10-14/delete")
+        assert status == 405
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_features_off_refuse_the_routes(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root, features=("upload",))
+    try:
+        assert request(server, "GET", "/costs")[0] == 404
+        assert request(
+            server, "POST", "/costs/request", headers=form_headers(), body=b""
+        )[0] == 404
+        assert request(server, "GET", "/2026-10-14/explain.html")[0] == 404
+        assert request(server, "GET", "/2026-10-14/shotlog.html")[0] == 404
+        assert request(server, "GET", "/upload")[0] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_features_off_hide_the_links(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root, features=("upload",))
+    try:
+        status, _, body = request(server, "GET", "/")
+        assert status == 200
+        assert b'href="/costs"' not in body
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b"?tab=why" not in body
+        assert b"?tab=shots" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_features_default_to_all(tmp_path, monkeypatch):
+    monkeypatch.delenv("YT_PIPELINE_FEATURES", raising=False)
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {})
+    assert config.web_features() == config.WEB_FEATURES
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        assert request(server, "GET", "/costs")[0] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_unknown_feature_is_a_config_error(tmp_path):
+    with pytest.raises(config.ConfigError):
+        config.web_features(cli_value="bogus")
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "models:\n  coder: x\nllm_budget_usd: 1.0\nllm_backend: mock\n"
+        "web:\n  features: [bogus]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(config.ConfigError):
+        config.load_config(path)
+
+
+def test_consent_text_from_env_and_config(monkeypatch):
+    monkeypatch.setenv("YT_PIPELINE_CONSENT_TEXT", "x")
+    assert config.consent_text() == "x"
+    monkeypatch.delenv("YT_PIPELINE_CONSENT_TEXT")
+    assert config.consent_text(config={"web": {"consent_text": "y"}}) == "y"
+
+
+def test_upload_page_has_the_brief_hint_chips():
+    page = serve.render_upload([])
+    for label in (
+        "Where and when",
+        "Who is in it",
+        "The story or the best moment",
+        "Mood",
+        "Length",
+        "What to leave out",
+    ):
+        assert label in page
+    assert 'data-line="Where and when: "' in page
+
+
+def test_reedit_form_has_the_brief_hint_chips():
+    page = serve.render_reedit("2026-10-14", [])
+    assert 'data-line="Where and when: "' in page
+    assert 'name="brief"' in page
+    assert "brief-hints" in page
+
+
+def test_brief_placeholder_is_multiline_and_not_a_value():
+    page = serve.render_upload([])
+    assert 'placeholder="For example:' in page
+    for line in (
+        "Where and when: a motorbike weekend in the Eifel, April 2026",
+        "Who is in it: me, and my friend on the second bike",
+        "The best moment: the ride down the tree-lined lane",
+        "Mood: calm start, energy at the end",
+        "Length: about 60 seconds",
+        "Leave out: the parking lot shots",
+    ):
+        assert line in page
+    start = page.index('name="brief"')
+    tag = page[start:page.index(">", start)]
+    assert "value=" not in tag
+
+
+def test_upload_page_without_consent_has_no_checkbox(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        assert status == 200
+        assert b'name="consent"' not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_has_the_delete_bin(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b"delete-project" in body
+        assert b"project-del" in body
+    finally:
+        server.shutdown()
+        server.server_close()

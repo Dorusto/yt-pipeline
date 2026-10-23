@@ -80,7 +80,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the read-only Costs page and the feedback/requests form |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches and the upload consent checkbox |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
@@ -419,6 +419,12 @@ The web app has a read-only **Costs** page (`GET /costs`, linked in the top bar)
 The ledger path comes from `--ledger`, else `YT_PIPELINE_COSTS_DB`, else `costs.path`; the donation links from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_links` (a list of `{label, url}`; `costs.donation_url` with one link stays accepted) in the config. With no ledger configured the page says the ledger is not set up. The per-workspace `feedback.jsonl` (about an edit) and the per-instance requests file (feature requests to the owner) are two separate stores.
 
 The **Feedback and requests** form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file. Its path comes from `--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`; with none set the form is hidden and the page says requests are not set up. `--check` warns about a missing ledger or requests file without failing.
+
+---
+
+## Web app parts and consent
+
+`serve.py` can be handed to a friend with only some parts on. `--features` (comma-separated), else `YT_PIPELINE_FEATURES`, else `web.features` in the config lists the parts shown on this instance — `upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`; with none set every part is on. The server refuses the routes of a part that is off with a 404, not just hiding the links. `--consent-text`, else `YT_PIPELINE_CONSENT_TEXT`, else `web.consent_text` is optional: when set, the upload page shows it with a required "I agree" checkbox and an upload without it is refused. The upload and re-edit brief fields carry hint chips and a multi-line example placeholder that is never sent. A project page has a bin icon that deletes the workspace and its inbox source, refused while a run is going.
 
 ---
 

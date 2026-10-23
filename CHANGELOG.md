@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Costs: `costs.py` keeps a SQLite ledger of model jobs, build-agent spend, fixed monthly costs, investments and donations, with idempotent imports and a `totals` view.
 - Web app: a read-only Costs page (per-clip model cost, ledger totals, donation link) and a feedback/requests form that appends one JSON line to the requests file.
 - Recap metadata: `recap_meta.py` writes `recap_meta.json` (title, description, hashtags) from `edit.json`, the Recap tab shows it with a Copy button per field, and each version keeps its own text.
+- Web app: an optional upload consent checkbox, a per-project delete (bin icon, removes the workspace and its inbox source), per-instance feature switches (`--features` / `YT_PIPELINE_FEATURES` / `web.features`, enforced with a 404) and brief hint chips with a multi-line example placeholder.
 
 ### Changed
 

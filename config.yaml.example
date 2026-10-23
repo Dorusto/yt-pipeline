@@ -87,3 +87,14 @@ llm_backend: openrouter
 # examples write <requests.jsonl>.
 # requests:
 #   path: <requests.jsonl>
+
+# Web app parts and consent. web.features lists the parts shown on this
+# instance (upload, recap, why, shots, shorts, costs, requests); the server
+# refuses the routes of a part that is off. There is no personal default: set
+# it here, in the YT_PIPELINE_FEATURES environment variable (comma-separated),
+# or pass --features. web.consent_text is optional: when set, the upload page
+# shows it with a required "I agree" checkbox; set it here, in the
+# YT_PIPELINE_CONSENT_TEXT environment variable, or pass --consent-text.
+# web:
+#   features: [upload, recap, why, shots, shorts, costs, requests]
+#   consent_text: <consent text>

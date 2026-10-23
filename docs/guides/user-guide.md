@@ -230,6 +230,21 @@ finished recap, the explanation and the contact sheet.
   form on the same page appends one JSON line (`date`, `type`, `text`,
   `contact`, `backed`) to the requests file; with no requests file configured
   the form is hidden.
+- **Brief help.** The Brief field on the Upload and Re-edit forms has hint
+  chips (Where and when, Who is in it, The story or the best moment, Mood,
+  Length, What to leave out); tapping one appends its line. The grey example
+  text is a placeholder, never sent.
+- **Consent.** When the instance sets a consent text (`--consent-text`, else
+  `YT_PIPELINE_CONSENT_TEXT`, else `web.consent_text`), the Upload page shows
+  it with a required "I agree" checkbox and refuses an upload without it.
+- **Delete.** A project page has a bin icon next to the title; it asks once,
+  then deletes the workspace and its inbox source. It is refused while a run
+  is going.
+- **Feature switches.** `--features` (comma-separated), else
+  `YT_PIPELINE_FEATURES`, else `web.features` lists the parts this instance
+  shows (`upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`);
+  with none set every part is on. A part that is off is refused with a 404,
+  not just hidden.
 
 `--music auto` picks the track from the music library by the brief's pace and
 the shot tags, using the BPM and energy `beats.py` measures for every track
