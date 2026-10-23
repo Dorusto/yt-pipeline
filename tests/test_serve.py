@@ -2067,3 +2067,24 @@ def test_run_notice_shows_step_times_and_a_live_total(tmp_path):
     assert "data-since" in notice
     assert "previous version" not in notice
     assert "previous version" in serve.render_run_notice("running", report, has_previous=True)
+
+
+def test_run_cost_and_version_cost(tmp_path):
+    import json as _json
+
+    project = tmp_path / "trip"
+    (project / "versions" / "v001").mkdir(parents=True)
+    (project / "versions" / "v002").mkdir(parents=True)
+    (project / "llm_spend.json").write_text(_json.dumps({"entries": [
+        {"ts": "2026-10-15T10:00:00+00:00", "cost_usd": 0.04},
+        {"ts": "2026-10-15T12:00:00+00:00", "cost_usd": 0.02},
+    ]}), encoding="utf-8")
+    (project / "versions" / "v001" / "version.json").write_text(
+        _json.dumps({"created_at": "2026-10-15T11:00:00+0000"}), encoding="utf-8")
+    (project / "versions" / "v002" / "version.json").write_text(
+        _json.dumps({"created_at": "2026-10-15T13:00:00+0000"}), encoding="utf-8")
+    first = {"path": project / "versions" / "v001", "meta": {"created_at": "2026-10-15T11:00:00+0000"}}
+    second = {"path": project / "versions" / "v002", "meta": {"created_at": "2026-10-15T13:00:00+0000"}}
+    assert round(serve.version_cost(first), 3) == 0.04
+    assert round(serve.version_cost(second), 3) == 0.02
+    assert serve.format_cost(0.0473) == "$0.047"

@@ -595,11 +595,52 @@ def run_report(directory):
                 report["outcome"] = data.get("status")
     report["error"] = failure_text(lines)
     report["started_at"] = last_run_start(directory)
+    report["cost_usd"] = spend_between(directory, report["started_at"]) if report["started_at"] else None
     if report["current"] is not None:
         report["elapsed"] = run_log_age(directory)
         if report["elapsed"] is not None:
             report["step_started_at"] = time.time() - report["elapsed"]
     return report
+
+
+def _epoch(stamp):
+    """Epoch seconds of an ISO time with an offset, or None."""
+    from datetime import datetime
+
+    text = str(stamp or "")
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z",):
+        try:
+            return datetime.strptime(text, fmt).timestamp()
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def spend_between(directory, start, end=None):
+    """Model spend in USD recorded in llm_spend.json between two epoch times."""
+    try:
+        data = json.loads((Path(directory) / "llm_spend.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    total = 0.0
+    for entry in data.get("entries") or []:
+        when = _epoch(entry.get("ts"))
+        if when is None or (start is not None and when < start) or (end is not None and when > end):
+            continue
+        total += float(entry.get("cost_usd") or 0.0)
+    return total
+
+
+def format_cost(usd):
+    """$0.047, or < $0.001 for a tiny spend."""
+    if usd is None:
+        return "?"
+    if 0 < usd < 0.001:
+        return "< $0.001"
+    return f"${usd:.3f}"
 
 
 def last_run_start(directory):
@@ -847,6 +888,7 @@ RUN_NOTICE_STYLE = (
 TICK_SCRIPT = """
 (function(){function f(s){s=Math.max(0,Math.round(s));if(s<60)return s+' s';var m=Math.floor(s/60),r=s%60;
 if(m<60)return m+' min '+(r<10?'0':'')+r+' s';var h=Math.floor(m/60);m=m%60;return h+' h '+(m<10?'0':'')+m+' min';}
+var d=document.querySelector('details.run-steps');if(d){try{if(sessionStorage.getItem('runSteps')==='open')d.open=true;}catch(e){}d.addEventListener('toggle',function(){try{sessionStorage.setItem('runSteps',d.open?'open':'closed');}catch(e){}});}
 var t=[].slice.call(document.querySelectorAll('.tick[data-since]'));if(!t.length)return;
 function go(){var n=Date.now()/1000;t.forEach(function(e){e.textContent=f(n-parseFloat(e.dataset.since));});}go();setInterval(go,1000);})();
 """
@@ -1032,6 +1074,25 @@ def render_player(directory, prefix="", heading=None, meta_line=None, trust_edit
     return f'<div class="player">{"".join(parts)}</div>'
 
 
+def version_cost(version):
+    """Model spend of the run that made this version: since the version before it."""
+    path = Path(version["path"])
+    made = _epoch(version["meta"].get("created_at"))
+    if made is None:
+        return None
+    before = None
+    for sibling in path.parent.glob("*/version.json"):
+        if sibling.parent == path:
+            continue
+        try:
+            other = _epoch(json.loads(sibling.read_text(encoding="utf-8")).get("created_at"))
+        except (OSError, ValueError):
+            continue
+        if other is not None and other < made and (before is None or other > before):
+            before = other
+    return spend_between(path.parent.parent, before, made)
+
+
 def version_meta_line(version):
     """When a version was made, how long it is and the feedback that asked for it."""
     meta = version["meta"]
@@ -1042,6 +1103,9 @@ def version_meta_line(version):
     summary = edit_summary(version["path"])
     if summary:
         bits.append(html_escape(describe_summary(summary)))
+    cost = version_cost(version)
+    if cost is not None:
+        bits.append(f"model cost {format_cost(cost)}")
     if meta.get("status") == "failed":
         bits.append(f"failed at {html_escape(meta.get('failed_at') or '?')}")
     feedback = " / ".join(str(item) for item in meta.get("feedback") or [])
@@ -1137,6 +1201,8 @@ def render_run_notice(status, report, has_previous=False):
                 '<p class="run-total">Total so far: '
                 f'{live_time(report["started_at"], now - report["started_at"])}</p>'
             )
+        if report.get("cost_usd") is not None:
+            total_line += f'<p class="run-total">Model cost so far: {format_cost(report["cost_usd"])}</p>'
         hint = "This page refreshes by itself."
         if has_previous:
             hint = "The previous version stays below until the new one is ready. " + hint
