@@ -1029,7 +1029,7 @@ def test_run_notice_shows_the_current_station_and_progress(tmp_path, monkeypatch
     monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
     page = serve.render_project("2026-10-14", project, "recap")
     assert "Now: checking quality" in page
-    assert "(step 3 of 11" in page
+    assert "step 3 of 11</span>" in page
     assert '<progress max="11"' in page
     notice = serve.render_run_notice(
         "running",
@@ -1045,7 +1045,7 @@ def test_run_notice_shows_the_current_station_and_progress(tmp_path, monkeypatch
             "elapsed": None,
         },
     )
-    assert "Now: checking quality (step 3 of 11)" in notice
+    assert "step 3 of 11</span> Now: checking quality" in notice
     assert '<progress max="11" value="2">' in notice
     notice = serve.render_run_notice(
         "running",
@@ -1061,7 +1061,8 @@ def test_run_notice_shows_the_current_station_and_progress(tmp_path, monkeypatch
             "elapsed": 5.0,
         },
     )
-    assert "Now: render_final (step 12 of 13, 5s)" in notice
+    assert "step 12 of 13</span> Now: render_final" in notice
+    assert "5 s</span>" in notice
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="zombie state is checked on Linux")
@@ -2045,3 +2046,24 @@ def test_upload_page_shows_upload_progress():
     page = serve.render_upload([])
     assert 'class="upload-progress"' in page
     assert "upload.onprogress" in page
+
+
+def test_run_notice_shows_step_times_and_a_live_total(tmp_path):
+    project = tmp_path / "trip"
+    project.mkdir()
+    (project / "run.log").write_text(
+        f"{serve.RUN_MARKER} 2026-10-15 11:00:00 ===\n"
+        "[ 1/12] proxy           start\n"
+        "[ 1/12] proxy           done     321.9s  written\n"
+        "[ 2/12] ingest          start\n",
+        encoding="utf-8",
+    )
+    report = serve.run_report(project)
+    assert report["steps"] == [{"step": 1, "name": "proxy", "seconds": 321.9}]
+    assert report["started_at"] is not None
+    notice = serve.render_run_notice("running", report)
+    assert "5 min 22 s" in notice
+    assert "Total so far" in notice
+    assert "data-since" in notice
+    assert "previous version" not in notice
+    assert "previous version" in serve.render_run_notice("running", report, has_previous=True)

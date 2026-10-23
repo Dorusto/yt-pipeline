@@ -116,6 +116,7 @@ MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 VERSION_RE = re.compile(r"^v\d{1,4}$")
 RUN_MARKER = "=== recap run started"
 PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
+STEP_SECONDS_RE = re.compile(r"(\d+(?:\.\d+)?)s\b")
 LENGTH_MIN_S = 5
 LENGTH_MAX_S = 3600
 LOG_TAIL_BYTES = 262144
@@ -559,6 +560,9 @@ def run_report(directory):
         "current": None,
         "current_step": 0,
         "elapsed": None,
+        "steps": [],
+        "started_at": None,
+        "step_started_at": None,
     }
     for line in lines:
         match = PROGRESS_RE.match(line)
@@ -568,6 +572,12 @@ def run_report(directory):
                 report["current"] = match.group(3)
                 report["current_step"] = int(match.group(1))
                 continue
+            seconds = STEP_SECONDS_RE.search(line[match.end():])
+            report["steps"].append({
+                "step": int(match.group(1)),
+                "name": match.group(3),
+                "seconds": float(seconds.group(1)) if seconds else None,
+            })
             report["done"] = int(match.group(1))
             report["last"] = match.group(3)
             report["current"] = None
@@ -584,9 +594,32 @@ def run_report(directory):
             if isinstance(data, dict):
                 report["outcome"] = data.get("status")
     report["error"] = failure_text(lines)
+    report["started_at"] = last_run_start(directory)
     if report["current"] is not None:
         report["elapsed"] = run_log_age(directory)
+        if report["elapsed"] is not None:
+            report["step_started_at"] = time.time() - report["elapsed"]
     return report
+
+
+def last_run_start(directory):
+    """Epoch seconds of the latest run's start marker, or None."""
+    path = Path(directory) / "run.log"
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - LOG_TAIL_BYTES))
+            text = handle.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    for line in reversed(text.splitlines()):
+        if line.startswith(RUN_MARKER):
+            stamp = line[len(RUN_MARKER):].strip(" =")
+            try:
+                return time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                return None
+    return None
 
 
 def run_log_age(directory):
@@ -798,6 +831,24 @@ x.upload.onload=function(){bar.value=100;st.textContent='Upload complete, the se
 x.onload=function(){if(x.status>=200&&x.status<400){window.location=x.responseURL||'/';}else{btn.disabled=false;st.textContent='Upload failed ('+x.status+'): '+(x.responseText||'').replace(/<[^>]*>/g,' ').trim().slice(0,200);}};
 x.onerror=function(){btn.disabled=false;st.textContent='Upload interrupted: the connection to the server was lost. Pick the files again and retry.';};
 x.send(d);});})();
+"""
+
+RUN_NOTICE_STYLE = (
+    ".run-now{margin:.6em 0 .4em;font-size:1.05em}"
+    ".step-badge{display:inline-block;padding:.1em .6em;border-radius:999px;border:1px solid currentColor;"
+    "font-weight:600;margin-right:.4em}"
+    ".run-total{margin:.4em 0}"
+    ".run-steps ol{margin:.4em 0;padding-left:1.2em}"
+    ".run-steps li{display:flex;justify-content:space-between;gap:1em;max-width:28em}"
+    ".run-hint{opacity:.75;margin:.4em 0 0}"
+)
+
+# Durations in the run notice keep counting between the page refreshes.
+TICK_SCRIPT = """
+(function(){function f(s){s=Math.max(0,Math.round(s));if(s<60)return s+' s';var m=Math.floor(s/60),r=s%60;
+if(m<60)return m+' min '+(r<10?'0':'')+r+' s';var h=Math.floor(m/60);m=m%60;return h+' h '+(m<10?'0':'')+m+' min';}
+var t=[].slice.call(document.querySelectorAll('.tick[data-since]'));if(!t.length)return;
+function go(){var n=Date.now()/1000;t.forEach(function(e){e.textContent=f(n-parseFloat(e.dataset.since));});}go();setInterval(go,1000);})();
 """
 
 STRIP_SCRIPT = """
@@ -1022,10 +1073,7 @@ def running_step_text(report):
     if current:
         name = html_escape(STATION_PLAIN_NAMES.get(current, current))
         step = report.get("current_step") or 0
-        elapsed = report.get("elapsed")
-        if elapsed is None:
-            return f"Now: {name} (step {step} of {report['total']})"
-        return f"Now: {name} (step {step} of {report['total']}, {round(elapsed)}s)"
+        return f"Now: {name}"
     if report["total"]:
         return (
             f"{report['done']} of {report['total']} steps done"
@@ -1034,16 +1082,67 @@ def running_step_text(report):
     return "starting"
 
 
-def render_run_notice(status, report):
+def format_duration(seconds):
+    """12 s, 4 min 05 s or 1 h 02 min."""
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes, rest = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} min {rest:02d} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes:02d} min"
+
+
+def live_time(since, seconds):
+    """A duration that keeps counting in the browser (TICK_SCRIPT) from ``since``."""
+    attr = f' data-since="{since:.0f}"' if since is not None else ""
+    return f'<span class="tick"{attr}>{format_duration(seconds)}</span>'
+
+
+def render_step_list(report):
+    """The finished steps with how long each took."""
+    rows = []
+    for item in report.get("steps") or []:
+        label = html_escape(STATION_PLAIN_NAMES.get(item["name"], item["name"]))
+        took = format_duration(item["seconds"]) if item["seconds"] is not None else "?"
+        rows.append(f'<li><span>{item["step"]}. {label}</span><span class="num">{took}</span></li>')
+    if not rows:
+        return ""
+    return f'<details class="run-steps"><summary>Steps done</summary><ol>{"".join(rows)}</ol></details>'
+
+
+def render_run_notice(status, report, has_previous=False):
     """The banner about the run in progress or the run that failed; empty otherwise."""
     if status == "running":
         bar = ""
         if report["total"]:
             bar = f'<progress max="{report["total"]}" value="{report["done"]}"></progress>'
+        now = time.time()
+        step_line = ""
+        if report.get("current"):
+            badge = f'step {report.get("current_step") or 0} of {report["total"]}'
+            took = ""
+            if report.get("elapsed") is not None:
+                took = f' \u00b7 {live_time(report.get("step_started_at"), report["elapsed"])}'
+            step_line = (
+                f'<p class="run-now"><span class="step-badge">{badge}</span> '
+                f'{running_step_text(report)}{took}</p>'
+            )
+        else:
+            step_line = f'<p class="run-now">{running_step_text(report)}</p>'
+        total_line = ""
+        if report.get("started_at") is not None:
+            total_line = (
+                '<p class="run-total">Total so far: '
+                f'{live_time(report["started_at"], now - report["started_at"])}</p>'
+            )
+        hint = "This page refreshes by itself."
+        if has_previous:
+            hint = "The previous version stays below until the new one is ready. " + hint
         return (
-            f'<div class="notice"><strong>Making a new edit</strong> \u2014 {running_step_text(report)}. '
-            "The previous version stays below until the new one is ready; this page refreshes by itself."
-            f"{bar}</div>"
+            f'<div class="notice"><strong>Making a new edit</strong>{step_line}{bar}{total_line}'
+            f'{render_step_list(report)}<p class="run-hint">{hint}</p></div>'
         )
     if status == "failed":
         where = html_escape(report["failed_at"] or "an unknown step")
@@ -1090,8 +1189,11 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     directory = Path(directory)
     status = status or project_status(directory)
     report = report or run_report(directory)
-    parts = [render_run_notice(status, report)]
     versions = list_versions(directory)
+    has_previous = any(has_video(version) for version in versions) or (
+        (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
+    )
+    parts = [render_run_notice(status, report, has_previous=has_previous)]
     shown = pick_version(versions, wanted)
     if shown is None:
         has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
@@ -1274,13 +1376,13 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             f'{format_length(estimate["seconds"])} ({estimate["shots"]} shots)</span>'
         )
     body = (
-        f"<h1>{html_escape(name)}</h1>"
+        f"<style>{RUN_NOTICE_STYLE}</style><h1>{html_escape(name)}</h1>"
         f'<p class="lede">{lede}</p>'
         f'<nav class="tabs">{"".join(tab_links)}</nav>'
         f'<section class="panel">{panels[tab]}</section>'
         f"{render_reedit(name, music_tracks)}"
     )
-    script = (STRIP_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
+    script = (STRIP_SCRIPT + TICK_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
     if tab == "cuts":
         script += CUTS_SCRIPT
     if tab == "shorts":
