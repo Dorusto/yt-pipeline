@@ -2857,3 +2857,9 @@ README short and its links resolving.
 **Why not A:** the version/render/thumbnail path already exists in `edit_drop.py` and is named in the RULES tool-to-tool list (`serve.py → edit_drop.py`); a second tool would duplicate it and add a pair.
 
 **Consequence:** the RULES route list names `POST /<project>/trim-shot` and the trim semantics; the `yt-edit-drop` skill covers the trim; the new control is experimental in the v0.1.0 candidate; no schema change.
+
+## [2026-10-23] Beat snap: a structure-beat cut falls back to the nearest beat (V020N lot n12)
+
+**Context:** issue #95 — in the first holiday-flow pilot most cuts missed the beat; the director notes carried `cut k: not snapped to a beat (nearest X s away)` for 4 of the cuts. Reproduced on the `Monshau-test-1` workspace: the cuts that start a new `shot_plan` structure beat snap to the nearest **downbeat**, and the downbeat grid is sparse (every 4 beats ≈ 2.1 s), so the nearest downbeat is often farther than the half-beat snap window and the cut is left unsnapped even though a beat is ~0.2 s away.
+
+**Decision:** in `llm_director.snap_slots` a structure-beat cut prefers the nearest downbeat only when it lies inside the small window (`BEAT_SNAP_FRACTION × beat_period_s`); otherwise it lands on the nearest beat of the dense grid. Every cut is then on a beat. The rule-based `director.py` never passes downbeats, so it is unchanged. Measured on `Monshau-test-1`: 9/9 cuts snapped (was 7/9).

@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The LLM client retries once when a model answer is empty or not valid JSON, charging both attempts to the budget; `metadata.py` uses it.
+- Music: in the holiday flow a cut that starts a new structure beat now falls back to the nearest beat when the nearest downbeat is outside the snap window, so every cut lands on a beat.
 
 ## [0.1.1] - 2026-10-23
 

@@ -1641,6 +1641,11 @@ def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
         times = downbeat_s if downbeat_at[index] else beat_s
         target = nearest_beat(end, times)
         reach = tolerance
+        if target is None or abs(end - target) > reach:
+            beat_target = nearest_beat(end, beat_s)
+            if beat_target is not None and abs(end - beat_target) <= reach:
+                times = beat_s
+                target = beat_target
         cap = bounds[index].get("cap")
         if target is not None and cap is not None and target - start > float(cap) + 1e-9:
             within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
