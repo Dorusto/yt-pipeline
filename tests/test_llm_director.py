@@ -2,6 +2,7 @@ import json
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -2231,3 +2232,117 @@ def test_repair_drops_a_slot_whose_window_is_too_short_for_any_valid_cut():
     assert [slot["id"] for slot in record["video"]] == ["v1"]
     assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
     assert any("cannot give a valid cut" in note for note in notes)
+
+
+def test_edit_records_the_reviewer_review(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert edit["meta"]["director"]["review"] == {"approved": True, "objections": []}
+    assert validate(edit, "edit") == []
+
+
+def test_edit_records_the_objections(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            plan_answer(),
+            editor_answer(),
+            reviewer_not_approved(),
+            editor_answer(),
+            reviewer_not_approved(),
+        ]
+    )
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    review = edit["meta"]["director"]["review"]
+    assert review["approved"] is False
+    assert len(review["objections"]) == 1
+    objection = review["objections"][0]
+    assert objection["slot"] == "v2"
+    assert objection["shot"] == 2
+    assert "too long" in objection["text"]
+    assert "shorten to about 2.5 s" in objection["text"]
+    assert validate(edit, "edit") == []
+
+
+def test_old_edit_without_review_still_validates(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=client)
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    del edit["meta"]["director"]["review"]
+    assert validate(edit, "edit") == []
+
+
+def test_interpret_feedback_returns_a_reply(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([json.dumps({"reply": "I will drop 0071/s2 and make the tunnel longer."})])
+    summary, code = llm_director.interpret_feedback(
+        workspace, "drop 0071/s2, tunnel longer", client=client
+    )
+    assert code == 0
+    assert summary["reply"] == "I will drop 0071/s2 and make the tunnel longer."
+    assert summary["estimate_usd"] is None
+    assert summary["estimate_s"] is None
+    assert "wall_time_s" in summary
+    assert summary["llm_cost_usd"] == pytest.approx(0.001)
+    assert not (workspace / "edit.json").exists()
+    rows = feedback_jsonl_rows(workspace)
+    assert len(rows) == 1
+    assert rows[0]["action"] == "reply"
+    assert rows[0]["text"] == "drop 0071/s2, tunnel longer"
+    assert rows[0]["reply"] == "I will drop 0071/s2 and make the tunnel longer."
+    assert rows[0]["estimate"] == {"usd": None, "s": None}
+    assert rows[0]["tool"] == "scripts/llm_director.py"
+
+
+def test_interpret_feedback_retries_then_errors(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(["not json", "not json"])
+    with pytest.raises(llm_director.LLMDirectorRuntimeError):
+        llm_director.interpret_feedback(workspace, "x", client=client)
+    assert len(client.calls) == 2
+
+
+def test_last_director_estimate_reads_run_log_and_spend(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_utc = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    marker_local = marker_utc.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    (workspace / "run.log").write_text(
+        f"=== recap run started {marker_local} ===\n"
+        "[ 9/12] llm_director    done      12.3s  written\n",
+        encoding="utf-8",
+    )
+    write_json(
+        workspace / "llm_spend.json",
+        {
+            "total_usd": 0.5,
+            "entries": [
+                {"ts": "2026-01-01T09:00:00+00:00", "role": "director", "cost_usd": 0.4},
+                {"ts": "2026-01-01T10:00:01+00:00", "role": "director", "cost_usd": 0.1},
+                {"ts": "2026-01-01T10:00:02+00:00", "role": "metadata", "cost_usd": 0.2},
+            ],
+        },
+    )
+    estimate_usd, estimate_s = llm_director.last_director_estimate(workspace)
+    assert estimate_s == 12.3
+    assert estimate_usd == pytest.approx(0.1)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert llm_director.last_director_estimate(empty) == (None, None)
+
+
+def test_cli_interpret_feedback_json(tmp_path, monkeypatch, capsys):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([json.dumps({"reply": "ok"})])
+    monkeypatch.setattr(llm_director, "make_client", lambda **kwargs: client)
+    code = llm_director.main(["--workspace", str(workspace), "--interpret-feedback", "x", "--json"])
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    for key in ("reply", "estimate_usd", "estimate_s", "wall_time_s", "llm_cost_usd"):
+        assert key in out

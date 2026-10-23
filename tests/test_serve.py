@@ -2868,3 +2868,177 @@ def test_project_page_has_the_delete_bin(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_project_page_shows_the_reviewer_line(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    edit = {
+        "meta": {
+            "director": {
+                "review": {
+                    "approved": False,
+                    "objections": [
+                        {"slot": "v2", "shot": 2, "text": "too long — shorten to about 2.5 s"}
+                    ],
+                }
+            }
+        }
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        page = body.decode()
+        assert "Reviewer: not approved" in page
+        assert "Shot 2" in page
+        assert "too long — shorten to about 2.5 s" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_without_review_shows_nothing(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        assert b"Reviewer:" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_feedback_reply_page_shows_the_reply_and_estimate(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    calls = stub_recap(monkeypatch, tmp_path)
+    stdout = json.dumps(
+        {
+            "reply": "I will drop 0071/s2.",
+            "estimate_usd": 0.05,
+            "estimate_s": 12.3,
+            "wall_time_s": 1.0,
+            "llm_cost_usd": 0.0003,
+        }
+    )
+    monkeypatch.setattr(
+        serve.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
+    )
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 200, body
+        page = body.decode()
+        assert "I will drop 0071/s2." in page
+        assert "about $0.050 and 12 s" in page
+        assert "Make the new version" in page
+        assert "Change my request" in page
+        assert calls == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_feedback_reply_requires_text(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "   ")]),
+        )
+        assert status == 400
+        assert b"write what should change first" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_approve_starts_the_reedit_and_records_it(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    source = inbox / "kotor-day"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    (root / "2026-10-14" / ".run.json").write_text(
+        json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+    )
+    calls = stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, headers, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body(
+                [("feedback", None, "drop 0071/s2"), ("approved", None, "1")]
+            ),
+        )
+        assert status == 303, body
+        assert headers["Location"] == "/2026-10-14/"
+        command = calls[-1]
+        assert "--feedback" in command
+        assert "drop 0071/s2" in command
+        lines = [
+            json.loads(line)
+            for line in (root / "2026-10-14" / "feedback.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        assert [line["action"] for line in lines] == ["approved"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_without_approve_records_no_approved_line(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    source = inbox / "kotor-day"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    (root / "2026-10-14" / ".run.json").write_text(
+        json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+    )
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 303, body
+        assert not (root / "2026-10-14" / "feedback.jsonl").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_form_has_the_ask_button():
+    page = serve.render_reedit("2026-10-14", [])
+    assert "feedback-reply" in page
+    assert "Ask the director" in page
+
+
+def test_reedit_form_prefills_the_feedback():
+    page = serve.render_reedit("2026-10-14", [], feedback_prefill="drop 0071/s2")
+    assert "drop 0071/s2" in page

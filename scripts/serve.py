@@ -312,6 +312,13 @@ background:var(--deck);color:var(--stone);font:inherit;font-size:.8rem;cursor:po
 .meta-hint{color:var(--haze);font-size:.85rem;margin:6px 0 0}
 """
 
+REVIEW_STYLE = """
+.review{border:1px solid var(--rope);border-radius:10px;padding:10px 14px;margin:0 0 14px;background:var(--water)}
+.review-line{margin:0;font-weight:600}
+.objections{margin:6px 0 0;padding-left:1.2em}
+.obj-shot{font-weight:700;margin-right:.3em}
+"""
+
 
 def edit_decisions(directory):
     """``{shot id: {status, slot, reason}}`` from the workspace's edit.json, or an empty dict."""
@@ -1436,6 +1443,17 @@ def append_request(path, line):
         handle.write(json.dumps(line) + "\n")
 
 
+def append_feedback_action(workspace, action, **fields):
+    """Append one feedback action line to the workspace's feedback.jsonl."""
+    line = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "text": fields.get("feedback") or "",
+        "tool": TOOL,
+    }
+    append_request(Path(workspace) / "feedback.jsonl", line)
+
+
 def render_strip(summary):
     """The edit as a proportional strip under the player; tap a block to jump there."""
     if not summary:
@@ -1736,6 +1754,37 @@ def _meta_field(label, value):
     )
 
 
+def render_review(edit_path):
+    """The reviewer verdict of an edit, or "" when the edit carries no review."""
+    data = _load_json(edit_path)
+    if not isinstance(data, dict):
+        return ""
+    meta = data.get("meta")
+    director = meta.get("director") if isinstance(meta, dict) else None
+    review = director.get("review") if isinstance(director, dict) else None
+    if not isinstance(review, dict):
+        return ""
+    line = "Reviewer: approved" if review.get("approved") else "Reviewer: not approved"
+    items = []
+    objections = review.get("objections")
+    for objection in objections if isinstance(objections, list) else []:
+        if not isinstance(objection, dict):
+            continue
+        text = html_escape(str(objection.get("text") or ""))
+        shot = objection.get("shot")
+        if isinstance(shot, int) and not isinstance(shot, bool):
+            items.append(f'<li><span class="obj-shot">Shot {shot}</span> {text}</li>')
+        else:
+            items.append(f"<li>{text}</li>")
+    listing = f'<ul class="objections">{"".join(items)}</ul>' if items else ""
+    return (
+        '<div class="review">'
+        f'<p class="review-line">{line}</p>'
+        f"{listing}"
+        "</div>"
+    )
+
+
 def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
     directory = Path(directory)
@@ -1745,7 +1794,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     has_previous = any(has_video(version) for version in versions) or (
         (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
     )
-    parts = [render_run_notice(status, report, has_previous=has_previous)]
+    parts = [f"<style>{REVIEW_STYLE}</style>", render_run_notice(status, report, has_previous=has_previous)]
     shown = pick_version(versions, wanted)
     if shown is None:
         has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
@@ -1758,6 +1807,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
+        parts.append(render_review(directory / "edit.json"))
         parts.append(render_meta_box(directory))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
@@ -1776,6 +1826,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             trust_edit=True,
         )
     )
+    parts.append(render_review(Path(shown["path"]) / "edit.json"))
     parts.append(render_meta_box(directory, shown["path"]))
     if compare is not None:
         other = compare["name"].lstrip("v").lstrip("0") or "0"
@@ -1788,6 +1839,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                 trust_edit=True,
             )
         )
+        parts.append(render_review(Path(compare["path"]) / "edit.json"))
     return "\n".join(part for part in parts if part)
 
 
@@ -1886,7 +1938,8 @@ def render_shorts_panel(directory, name):
     return f'<style>{SHORTS_STYLE}</style><div class="shorts">{"".join(rows)}</div>'
 
 
-def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None):
+def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
+                   feedback_prefill=""):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
@@ -1936,7 +1989,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             f'{format_length(estimate["seconds"])} ({estimate["shots"]} shots)</span>'
         )
     reedit = (
-        render_reedit(name, music_tracks, features=features)
+        render_reedit(name, music_tracks, features=features, feedback_prefill=feedback_prefill)
         if feature_on(features, "recap")
         else ""
     )
@@ -2140,7 +2193,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
                        features=features)
 
 
-def render_reedit(name, music_tracks, features=None):
+def render_reedit(name, music_tracks, features=None, feedback_prefill=""):
     """Return the Re-edit form with the same options plus a feedback box."""
     fields = [
         ("Brief", f'<textarea class="brief-input" name="brief" rows="4" '
@@ -2149,7 +2202,7 @@ def render_reedit(name, music_tracks, features=None):
     ]
     fields.extend(option_fields(music_tracks))
     fields.append(("What should change?", '<textarea name="feedback" rows="3" '
-                   'placeholder="drop 0071/s2, tunnel longer"></textarea>'))
+                   f'placeholder="drop 0071/s2, tunnel longer">{html_escape(feedback_prefill)}</textarea>'))
     return (
         "<details class=\"reedit\"><summary>Re-edit</summary>"
         f'<form method="post" action="/{html_escape(name)}/re-edit" '
@@ -2157,7 +2210,49 @@ def render_reedit(name, music_tracks, features=None):
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
         '<button class="go" type="submit" name="submit" value="reedit">Re-edit</button>'
+        f'<button class="ask" type="submit" name="submit" value="ask" '
+        f'formaction="/{html_escape(name)}/feedback-reply">Ask the director</button>'
         "</form></details>"
+    )
+
+
+REEDIT_FIELDS = (
+    "brief", "length", "length_s", "order", "audio_clean", "format",
+    "speed_ramp", "shorts_layout", "music", "ambient_under_music_db",
+)
+
+
+def render_feedback_reply(name, fields, feedback, summary):
+    """The reply page: the director's reading, the estimate and the approve button."""
+    reply = summary["reply"]
+    estimate_usd = summary.get("estimate_usd")
+    estimate_s = summary.get("estimate_s")
+    if estimate_usd is not None and estimate_s is not None:
+        estimate = f"about {format_cost(estimate_usd)} and {format_duration(estimate_s)}"
+    elif estimate_usd is not None:
+        estimate = f"about {format_cost(estimate_usd)}"
+    elif estimate_s is not None:
+        estimate = f"about {format_duration(estimate_s)}"
+    else:
+        estimate = "the estimate is not available yet"
+    hidden = "".join(
+        f'<input type="hidden" name="{html_escape(field)}" '
+        f'value="{html_escape(fields.get(field) or "")}">'
+        for field in REEDIT_FIELDS
+    )
+    hint = feedback + "\n\nDirector's reading: " + reply
+    change_link = f'/{html_escape(name)}/?tab=recap&feedback={urllib.parse.quote(feedback)}'
+    return (
+        "<h1>Ask the director</h1>"
+        f'<p class="reply">{html_escape(reply)}</p>'
+        f'<p class="estimate">{html_escape(estimate)}</p>'
+        f'<form method="post" action="/{html_escape(name)}/re-edit" enctype="multipart/form-data">'
+        f"{hidden}"
+        '<input type="hidden" name="approved" value="1">'
+        f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
+        '<button class="go" type="submit" name="submit" value="reedit">Make the new version</button>'
+        "</form>"
+        f'<p><a href="{change_link}">Change my request</a></p>'
     )
 
 
@@ -2879,6 +2974,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_reedit(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "feedback-reply":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_feedback_reply(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "expectations":
             if not feature_on(features, "shots"):
                 self.send_not_found()
@@ -3018,7 +3119,53 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         except (OSError, ValueError):
             self.send_error_text(409, "unreadable .run.json")
             return
+        if fields.get("approved"):
+            try:
+                append_feedback_action(workspace, "approved", **fields)
+            except OSError:
+                pass
         self._start_for(fields, source, project, reedit=True)
+
+    def handle_feedback_reply(self, project):
+        """Ask the director how it reads a feedback request; start no run."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        try:
+            fields = parse_fields_only(self._reader())
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        feedback = (fields.get("feedback") or "").strip()
+        if not feedback:
+            self.send_error_text(400, "write what should change first")
+            return
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "llm_director.py"),
+            "--workspace", str(workspace),
+            "--interpret-feedback", feedback,
+            "--json",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        if result.returncode != 0:
+            message = (result.stderr or "").strip().splitlines()[-1:] or ["the director could not answer"]
+            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            return
+        try:
+            summary = json.loads((result.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            summary = None
+        reply = summary.get("reply") if isinstance(summary, dict) else None
+        if not isinstance(reply, str) or not reply.strip():
+            self.send_error_text(500, "the director gave no answer")
+            return
+        body = render_feedback_reply(project, fields, feedback, summary)
+        self.send_html(
+            render_page("Ask the director", body, active="projects", features=self.server.features),
+            True,
+        )
 
     def handle_drop_shot(self, project):
         """Remove shots from a version with edit_drop.py and show the new version."""
@@ -3378,6 +3525,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     wanted=parse_number(self.path, "v"),
                     compare_with=parse_number(self.path, "with"),
                     features=features,
+                    feedback_prefill=query_param(self.path, "feedback") or "",
                 ),
                 send_body,
             )

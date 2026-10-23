@@ -666,6 +666,50 @@
                 "type": "string"
               },
               "maxItems": 20
+            },
+            "review": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "the last reviewer verdict: approved plus plain-word objections, each naming the slot id and its 1-based position in the edit",
+              "required": [
+                "approved",
+                "objections"
+              ],
+              "properties": {
+                "approved": {
+                  "type": "boolean"
+                },
+                "objections": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "slot",
+                      "shot",
+                      "text"
+                    ],
+                    "properties": {
+                      "slot": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "shot": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": 1
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }

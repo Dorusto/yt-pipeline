@@ -99,7 +99,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches and the upload consent checkbox |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the reviewer verdict per version and the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches and the upload consent checkbox |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
@@ -275,6 +275,8 @@ Skill: `yt-director`.
 | Script | Input | Output |
 |:---|:---|:---|
 | `director.py` | `ws/ingest.json` + `ws/motion/*.json` + `ws/quality/*.json` | `ws/edit.json` — video slots (clip, in/out, score, reason) + audio/captions/graphics plan |
+
+The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate.
 
 ---
 

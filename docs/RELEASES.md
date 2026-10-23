@@ -30,6 +30,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - The brief hint chips and the multi-line example placeholder.
 - Pilot host install, update and rollback (`deploy/update.sh`, `deploy/yt-pipeline-web.service`, `docs/guides/pilot-host.md`).
 - Instance limits (storage cap, model-credit read) and the shared project-costs view (`GET /costs.json`).
+- The director's reviewer verdict on the project page and the "Ask the director" reply before a new version (llm_director.py --interpret-feedback, POST /<project>/feedback-reply).
 
 **Stable files** — the files behind the stable candidate above. A change to one
 needs the `Stable-change: approved` trailer on a commit in the range (see

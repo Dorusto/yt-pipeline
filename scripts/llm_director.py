@@ -89,6 +89,10 @@ CLIP_COUNTER = re.compile(r"_(\d{4})_")
 CONTENT_TYPES = ("vacation", "tutorial", "presentation", "talking-head")
 TRAVEL_LABELS = {"travel_forward", "travel_backward", "orbit", "orbit_candidate"}
 
+RUN_MARKER = "=== recap run started"
+RUN_STAMP_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+DIRECTOR_PROGRESS_RE = re.compile(r"^\[\s*\d+/\s*\d+\]\s+llm_director\s+\S+\s+(\d+(?:\.\d+)?)s\b")
+
 DURATION_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(seconds|second|secs|sec|minutes|minute|mins|min|s)\b",
     re.IGNORECASE,
@@ -165,6 +169,8 @@ def build_parser():
             "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --dry-run\n"
             "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --rounds 2 --out my_edit.json\n"
             "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --interpret-feedback \"drop 0071/s2, tunnel longer\" --json\n"
+            "  python scripts/llm_director.py --workspace <workspace> --version v3 --interpret-feedback \"make the tunnel longer\"\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -215,6 +221,21 @@ def build_parser():
         help=(
             "feedback in plain words against the current edit's short ids, "
             'e.g. "drop 0071/s2, tunnel longer"; repeatable'
+        ),
+    )
+    parser.add_argument(
+        "--version",
+        default=None,
+        metavar="vNNN",
+        help="read the previous edit context from versions/vNNN/edit.json (with --interpret-feedback)",
+    )
+    parser.add_argument(
+        "--interpret-feedback",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "say in the user's language how the director reads this feedback request, "
+            "with a cost and time estimate; one cheap model call, no edit written"
         ),
     )
     parser.add_argument(
@@ -808,8 +829,8 @@ def read_prompt(name):
     return path.read_text(encoding="utf-8")
 
 
-def call_client(client, messages, state):
-    response = client.complete("director", messages)
+def call_client(client, messages, state, role="director"):
+    response = client.complete(role, messages)
     state.calls += 1
     state.cost_usd = round(state.cost_usd + float(response.cost_usd), 8)
     return response
@@ -856,9 +877,151 @@ def append_feedback_lines(workspace, feedback):
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def previous_edit_context(workspace):
+def read_run_log(path):
+    """The lines of a run.log, or [] when it cannot be read."""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def marker_start_time(line):
+    """The aware local time of a run start marker line, or None."""
+    match = RUN_STAMP_RE.search(line)
+    if not match:
+        return None
+    try:
+        naive = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return naive.astimezone()
+
+
+def director_spend_since(ledger_path, start):
+    """The director cost in a spend ledger at or after ``start``, or None when there is none."""
+    data = load_json(ledger_path)
+    if not isinstance(data, dict):
+        return None
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return None
+    total = 0.0
+    found = False
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("role") != "director":
+            continue
+        cost = entry.get("cost_usd")
+        if not isinstance(cost, (int, float)) or isinstance(cost, bool):
+            continue
+        moment = parse_time(entry.get("ts"))
+        if start is not None and moment is not None and moment < start:
+            continue
+        total += float(cost)
+        found = True
+    return round(total, 8) if found else None
+
+
+def last_director_estimate(workspace):
+    """The last run's director time and cost from run.log and llm_spend.json, or (None, None)."""
+    workspace = Path(workspace)
+    lines = read_run_log(workspace / "run.log")
+    marker_index = None
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith(RUN_MARKER):
+            marker_index = index
+            break
+    if marker_index is None:
+        return None, None
+    estimate_s = None
+    for line in lines[marker_index + 1:]:
+        match = DIRECTOR_PROGRESS_RE.match(line)
+        if match:
+            estimate_s = float(match.group(1))
+            break
+    start = marker_start_time(lines[marker_index])
+    estimate_usd = director_spend_since(workspace / "llm_spend.json", start) if start is not None else None
+    return estimate_usd, estimate_s
+
+
+def build_interpret_user(text, workspace, edit_path=None):
+    """The user message for the interpret call: the feedback plus the previous edit context."""
+    return build_feedback_block([text], workspace, edit_path)
+
+
+def request_reply(client, prompt, user, state):
+    """One cheap model call returning the reply, retried once, then a runtime error."""
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": user},
+    ]
+    for _ in range(2):
+        response = call_client(client, messages, state, role="metadata")
+        answer = parse_json(response.text)
+        if isinstance(answer, dict):
+            reply = answer.get("reply")
+            if isinstance(reply, str) and reply.strip():
+                return reply.strip()
+    raise LLMDirectorRuntimeError("model produced no usable reply after one retry")
+
+
+def append_reply_line(workspace, text, reply, estimate_usd, estimate_s):
+    """Append one ``action: reply`` line to WORKSPACE/feedback.jsonl (append-only)."""
+    path = Path(workspace) / "feedback.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "action": "reply",
+        "text": text,
+        "reply": reply,
+        "estimate": {"usd": estimate_usd, "s": estimate_s},
+        "tool": TOOL,
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def interpret_feedback(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None):
+    """One cheap model call that says how the director reads a feedback request."""
+    started = time.monotonic()
+    workspace_path = Path(workspace).expanduser().resolve()
+    if not workspace_path.is_dir():
+        raise LLMDirectorError(f"workspace not found: {workspace_path}")
+    if not text or not text.strip():
+        raise LLMDirectorError("provide --interpret-feedback TEXT")
+    edit_path = None
+    if version is not None:
+        if not re.fullmatch(r"v\d+", version):
+            raise LLMDirectorError(f"--version must look like vNNN, got {version!r}")
+        edit_path = workspace_path / "versions" / version / "edit.json"
+    if client is None:
+        if config is None:
+            config = load_config()
+        effective = dict(config)
+        models = dict(effective.get("models") or {})
+        if model is not None:
+            models["metadata"] = model
+        effective["models"] = models
+        if budget_usd is not None:
+            effective["llm_budget_usd"] = budget_usd
+        client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
+    prompt = read_prompt("interpret_feedback.md")
+    state = LoopState()
+    reply = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
+    estimate_usd, estimate_s = last_director_estimate(workspace_path)
+    append_reply_line(workspace_path, text, reply, estimate_usd, estimate_s)
+    return {
+        "reply": reply,
+        "estimate_usd": estimate_usd,
+        "estimate_s": estimate_s,
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": round(state.cost_usd, 8),
+    }, EXIT_OK
+
+
+def previous_edit_context(workspace, edit_path=None):
     """The previous edit's used slots and rejected candidates, for the feedback block."""
-    data = load_json(Path(workspace) / "edit.json")
+    path = Path(edit_path) if edit_path is not None else Path(workspace) / "edit.json"
+    data = load_json(path)
     if not isinstance(data, dict):
         return None
     used = []
@@ -881,12 +1044,12 @@ def previous_edit_context(workspace):
     return {"used": used, "rejected": rejected}
 
 
-def build_feedback_block(feedback, workspace):
+def build_feedback_block(feedback, workspace, edit_path=None):
     """The user-message block that carries the feedback and the short ids it may name."""
     lines = ["Feedback to apply (plain words, refers to the short ids below):"]
     lines.extend(f"- {text}" for text in feedback)
     lines.append("")
-    previous = previous_edit_context(workspace)
+    previous = previous_edit_context(workspace, edit_path)
     if previous is None:
         lines.append("Previous edit: none (no previous edit.json; the feedback refers to no existing ids)")
         return "\n".join(lines)
@@ -2327,13 +2490,53 @@ def attach_decisions(record, facts_by_key, shotlog_by_key, drop_reasons=None):
 DIRECTOR_NOTES_MAX = 20
 
 
-def director_info(by, approved, warnings):
+def objection_text(problem, change):
+    """The plain-word text of one reviewer fix: problem, change, or both joined."""
+    problem = problem.strip() if isinstance(problem, str) else ""
+    change = change.strip() if isinstance(change, str) else ""
+    if problem and change:
+        return f"{problem} — {change}"
+    return problem or change
+
+
+def review_object(verdict, record):
+    """``meta.director.review`` from the reviewer's last verdict, or None when it is not a dict."""
+    if not isinstance(verdict, dict):
+        return None
+    approved = bool(verdict.get("approved"))
+    objections = []
+    if not approved:
+        shot_positions = {
+            slot.get("id"): index + 1 for index, slot in enumerate(record.get("video") or [])
+        }
+        for fix in verdict.get("fixes") or []:
+            if not isinstance(fix, dict):
+                continue
+            text = objection_text(fix.get("problem"), fix.get("change"))
+            if not text:
+                continue
+            slot = fix.get("slot")
+            slot = slot if isinstance(slot, str) and slot else None
+            objections.append(
+                {"slot": slot, "shot": shot_positions.get(slot) if slot is not None else None, "text": text}
+            )
+        if not objections:
+            verdict_text = verdict.get("verdict")
+            if isinstance(verdict_text, str) and verdict_text.strip():
+                objections.append({"slot": None, "shot": None, "text": verdict_text})
+    return {"approved": approved, "objections": objections}
+
+
+def director_info(by, approved, warnings, review=None):
     """``meta.director``: who made the edit, whether the reviewer approved it, and the notes."""
-    return {
+    info = {
         "by": by,
         "approved": approved,
         "notes": [str(note)[:300] for note in warnings][:DIRECTOR_NOTES_MAX],
     }
+    if review is not None:
+        info["review"] = review
+    return info
 
 
 def write_edit(path, record, started, cost_usd, director=None):
@@ -2693,6 +2896,7 @@ def _run_loop(
             )
 
         review = None
+        last_verdict = None
         for round_index in range(rounds):
             rounds_used = round_index + 1
             record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block)
@@ -2702,6 +2906,7 @@ def _run_loop(
             verdict = reviewer(client, reviewer_prompt, brief_text, plan, record, violations, state, feedback_block)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
+            last_verdict = verdict
             if verdict.get("approved") is True and not violations:
                 approved = True
                 break
@@ -2730,7 +2935,7 @@ def _run_loop(
         beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
-            write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings))
+            write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings, review_object(last_verdict, record)))
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
@@ -2765,7 +2970,7 @@ def _run_loop(
         beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
         attach_decisions(record, facts, shotlog, drop_reasons)
         try:
-            write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings))
+            write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings, review_object(last_verdict, record)))
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
@@ -2808,37 +3013,59 @@ def print_human(summary, record):
         print(f"warning: {warning}")
 
 
+def print_interpret(summary):
+    print(summary["reply"])
+    estimate = []
+    if summary["estimate_usd"] is not None:
+        estimate.append(f"${summary['estimate_usd']:.4f}")
+    if summary["estimate_s"] is not None:
+        estimate.append(f"{summary['estimate_s']:.1f}s")
+    if estimate:
+        print("estimate: " + ", ".join(estimate))
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        summary, code = run(
-            args.workspace,
-            brief=args.brief,
-            brief_file=args.brief_file,
-            out=args.out,
-            plan_out=args.plan_out,
-            rounds=args.rounds,
-            dry_run=args.dry_run,
-            fallback_rules=args.fallback_rules,
-            model=args.model,
-            budget_usd=args.budget_usd,
-            force=args.force,
-            important_max_s=args.important_max_s,
-            target_duration_s=args.target_duration_s,
-            order=args.order,
-            pacing=args.pacing,
-            beats=args.beats,
-            music=args.music,
-            ambient_under_music_db=args.ambient_under_music_db,
-            feedback=args.feedback,
-            speed_ramp=args.speed_ramp,
-        )
+        if args.interpret_feedback is not None:
+            summary, code = interpret_feedback(
+                args.workspace,
+                args.interpret_feedback,
+                version=args.version,
+                model=args.model,
+                budget_usd=args.budget_usd,
+            )
+        else:
+            summary, code = run(
+                args.workspace,
+                brief=args.brief,
+                brief_file=args.brief_file,
+                out=args.out,
+                plan_out=args.plan_out,
+                rounds=args.rounds,
+                dry_run=args.dry_run,
+                fallback_rules=args.fallback_rules,
+                model=args.model,
+                budget_usd=args.budget_usd,
+                force=args.force,
+                important_max_s=args.important_max_s,
+                target_duration_s=args.target_duration_s,
+                order=args.order,
+                pacing=args.pacing,
+                beats=args.beats,
+                music=args.music,
+                ambient_under_music_db=args.ambient_under_music_db,
+                feedback=args.feedback,
+                speed_ramp=args.speed_ramp,
+            )
     except (LLMDirectorRuntimeError, LLMError, OSError) as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except (LLMDirectorError, ConfigError, SchemaError) as exc:
         return report_error(exc, EXIT_USAGE, args.json)
     if args.json:
         print(json.dumps(summary))
+    elif args.interpret_feedback is not None:
+        print_interpret(summary)
     else:
         record = load_json(summary["out"]) if summary.get("out") else None
         print_human(summary, record)

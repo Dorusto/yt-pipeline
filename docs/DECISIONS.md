@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] The director's reviewer visible, and a reply before a new version (V010 lot dialog)
+
+**Context:** The LLM director's reviewer approves the edit or sends fixes back, but the user never sees the verdict, so a weak edit has no explanation on the project page. And a re-edit starts straight from the feedback box, so a request the director reads differently than the user meant costs a full director run and a new version.
+
+**Options:** (A) show the reviewer verdict only in explain.html; (B) write the last verdict into edit.json meta.director.review, show it per version on the project page, and add a cheap --interpret-feedback call behind an "Ask the director" button that shows the reading and the estimate before the user clicks "Make the new version"; (C) always run the full re-edit and let the user judge the result.
+
+**Decision:** B. llm_director.py writes meta.director.review = {"approved", "objections": [{"slot", "shot", "text"}]} (old edits stay valid, the rule-based fallback writes none); the project page shows "Reviewer: approved/not approved" and the objections per version; --interpret-feedback TEXT --workspace DIR [--version vNNN] --json makes one cheap metadata-role call, writes no edit, appends an action "reply" line to feedback.jsonl and returns the reply plus estimate_usd/estimate_s from the last director run (run.log + llm_spend.json); the web "Ask the director" button posts to POST /<project>/feedback-reply and shows the reply with the estimate and two buttons, and the re-edit starts only from "Make the new version" (which appends an action "approved" line).
+
+**Why not:** A) the verdict is the one thing that explains a weak edit, and explain.html is a later lot; C) a misread request costs a full director run and a new version.
+
+**Consequence:** edit.json gains meta.director.review (schema updated); feedback.jsonl gains "reply" and "approved" actions; the serve.py write routes gain POST /<project>/feedback-reply; the reply is a model call charged to the workspace ledger like any other.
+
+---
+
 ## [2026-10-23] Costs ledger: SQLite outside the repo, five kinds, idempotent imports
 
 **Context:** The project has no single place that answers what it costs and earns: model spend lives in per-workspace `llm_spend.json` files, build-agent spend in the watchdog's run-spend ledger, and fixed monthly costs, one-off investments and donations live nowhere. A later lot adds a Costs web page that needs one object to read.
