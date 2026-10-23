@@ -44,7 +44,7 @@ Needs `OPENROUTER_API_KEY` in the environment for real runs (a missing key print
 - Naming: with a `.mp4` second argument (any letter case) the file is written next to the video as `<input name>_EN.srt`, so `Clip_RO.srt` becomes `Clip_RO_EN.srt`, not `Clip_EN.srt`. The same suffix rule applies when the second argument is omitted. Pass an explicit output path when the exact name matters.
 - Batches of 20 blocks. The file is written only after all batches succeed, so an API error leaves no partial file.
 - A multi-line block becomes a single line in English. Blocks with no text are dropped.
-- The model id comes from the `translate` role in `config.yaml` (`models:`), and the deprecated `analyze_srt.py` from the `analyze` role; a missing role or a budget error prints `[error] ...` and exits 2.
+- The model id comes from the `translate` role in `config.yaml` (`models:`), and the deprecated `analyze_srt.py` from the `analyze` role; a missing role prints `[error] ...` and exits 2; a budget or model error exits 3.
 - `--json` prints one JSON summary (`ok`, `output`, `segments`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
 
 ## Step 4: verify the translation

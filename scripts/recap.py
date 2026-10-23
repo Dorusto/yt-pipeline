@@ -30,6 +30,7 @@ from pathlib import Path
 from common import notify, versions
 from common.config import ConfigError, music_library, no_music_library_message
 from common.media import video_files
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/recap.py"
@@ -1027,7 +1028,7 @@ def main(argv=None):
             raise RecapError(no_music_library_message("--music-dir"))
     except (RecapError, ConfigError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     ctx = Context(
         source=source,
         workspace=workspace,
@@ -1056,7 +1057,7 @@ def main(argv=None):
         print(json.dumps(summary))
     else:
         print_human(summary)
-    return 1 if summary["status"] == "failed" else 0
+    return EXIT_RUNTIME if summary["status"] == "failed" else EXIT_OK
 
 
 if __name__ == "__main__":

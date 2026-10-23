@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import quality
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,7 +151,7 @@ def assert_tiles(segments, duration):
 
 def test_help_lists_flags():
     result = run_cli("--help")
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     for flag in ("--workspace", "--motion-dir", "--force", "--json"):
         assert flag in result.stdout
 
@@ -575,7 +576,7 @@ def test_end_to_end_noisy_still_is_hold(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "still")
     assert validate(data, "quality") == []
     assert_tiles(data["segments"], data["duration_s"])
@@ -591,7 +592,7 @@ def test_end_to_end_black_clip_is_accidental_or_exposed(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "black")
     assert validate(data, "quality") == []
     assert_tiles(data["segments"], data["duration_s"])
@@ -637,7 +638,7 @@ def test_end_to_end_planted_motion_roles(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "planted")
     assert validate(data, "quality") == []
     assert data["motion_file"] == str((motion_dir / "planted.json").resolve())
@@ -652,7 +653,7 @@ def test_folder_skip_and_force(tmp_path):
     workspace = tmp_path / "workspace"
 
     first = run_cli(source, "--workspace", workspace, "--json")
-    assert first.returncode == 0, first.stderr
+    assert first.returncode == EXIT_OK, first.stderr
     first_summary = json.loads(first.stdout)
     assert first_summary["clips"] == 2
     assert first_summary["analyzed"] == 2
@@ -664,18 +665,18 @@ def test_folder_skip_and_force(tmp_path):
     assert (workspace / "quality" / "two.json").exists()
 
     second = run_cli(source, "--workspace", workspace, "--json")
-    assert second.returncode == 0, second.stderr
+    assert second.returncode == EXIT_OK, second.stderr
     assert json.loads(second.stdout)["skipped"] == 2
     assert json.loads(second.stdout)["analyzed"] == 0
 
     third = run_cli(source, "--workspace", workspace, "--force", "--json")
-    assert third.returncode == 0, third.stderr
+    assert third.returncode == EXIT_OK, third.stderr
     assert json.loads(third.stdout)["analyzed"] == 2
 
 
 def test_missing_input_errors(tmp_path):
     result = run_cli(tmp_path / "missing.mp4", "--workspace", tmp_path / "workspace")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
     assert not (tmp_path / "workspace" / "quality").exists()
 
@@ -690,7 +691,7 @@ def test_unreadable_motion_json_falls_back(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "broken")
     assert validate(data, "quality") == []
     assert data["motion_file"] is None
@@ -806,7 +807,7 @@ def test_end_to_end_junk_take_is_accidental(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "junk")
     assert validate(data, "quality") == []
     assert_tiles(data["segments"], data["duration_s"])
@@ -978,7 +979,7 @@ def test_old_motion_file_without_uncertainty_fields(tmp_path):
 
     result = run_cli(source, "--workspace", workspace, "--json")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "old")
     assert validate(data, "quality") == []
     for segment in data["segments"]:

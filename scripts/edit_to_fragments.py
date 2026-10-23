@@ -32,6 +32,7 @@ from pathlib import Path
 
 import yaml
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.moves import middle_speed_of
 from common.schema import SchemaError, validate_or_raise
 
@@ -209,14 +210,17 @@ def main(argv=None):
     started = time.monotonic()
     try:
         summary = run(args, started)
-    except (EditToFragmentsError, SchemaError, OSError) as exc:
+    except (EditToFragmentsError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

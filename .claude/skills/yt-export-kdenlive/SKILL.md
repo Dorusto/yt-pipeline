@@ -24,7 +24,7 @@ only reads it. No model is called and Kdenlive need not be installed.
 - `--kdenlive-out PATH` is the `output:` field of the YAML, the `.kdenlive` project the generator should write. Default: `--out` with the suffix replaced by `.kdenlive`.
 - `--force` rewrites even when the output is up to date.
 - Re-running is safe: when `--out` exists and is newer than `--edit`, nothing is written and the run reports `status: "skipped"`. The YAML is written atomically.
-- On any error (missing/invalid edit, schema violation, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing/invalid edit, schema violation) or `3` (runtime failure after work started: disk write). It never asks questions.
 
 Each fragment carries `file` (the slot's `clip`), `in`, `out`, and the extra fields `label` (slot id, score to two decimals and the first words of the reason), `score`, `reason` and `slot`. The generators ignore the extra fields.
 

@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 import audio_clean
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 
 def ffmpeg(args):
@@ -118,7 +119,7 @@ def make_silent_video(path):
 
 def analyse(capsys, media, report):
     code = audio_clean.main([str(media), "--report", str(report), "--analyse-only", "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     return json.loads(capsys.readouterr().out)
 
 
@@ -176,7 +177,7 @@ def test_cleanup_reduces_wind_and_normalises(tmp_path, capsys):
             "--json",
         ]
     )
-    assert code == 0
+    assert code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "written"
     assert out.exists()
@@ -193,7 +194,7 @@ def test_denoiser_none_applies_highpass_and_loudnorm(tmp_path, capsys):
     code = audio_clean.main(
         [str(wind), "--out", str(out), "--denoiser", "none", "--report", str(tmp_path / "r.json"), "--json"]
     )
-    assert code == 0
+    assert code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["applied"] == ["highpass", "loudnorm"]
     assert out.exists()
@@ -207,7 +208,7 @@ def test_afftdn_works_without_model(tmp_path, capsys, monkeypatch):
     code = audio_clean.main(
         [str(tone), "--out", str(out), "--denoiser", "afftdn", "--report", str(tmp_path / "r.json"), "--json"]
     )
-    assert code == 0
+    assert code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["denoiser"] == "afftdn"
     assert "afftdn" in summary["applied"]
@@ -223,7 +224,7 @@ def test_arnndn_default_falls_back_to_afftdn(tmp_path, capsys, monkeypatch):
     code = audio_clean.main(
         [str(tone), "--out", str(out), "--report", str(tmp_path / "r.json"), "--json"]
     )
-    assert code == 0
+    assert code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["denoiser"] == "afftdn"
     assert "afftdn" in summary["applied"]
@@ -236,7 +237,7 @@ def test_arnndn_explicit_without_model_errors(tmp_path, capsys, monkeypatch):
     make_tone(tone)
     out = tmp_path / "clean.wav"
     code = audio_clean.main([str(tone), "--out", str(out), "--denoiser", "arnndn"])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "--model" in captured.err
@@ -248,7 +249,7 @@ def test_analyse_only_writes_report_and_no_audio(tmp_path, capsys):
     make_tone(tone)
     report = tmp_path / "report.json"
     code = audio_clean.main([str(tone), "--analyse-only", "--report", str(report), "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "ok"
     assert summary["out"] is None
@@ -262,7 +263,7 @@ def test_no_audio_stream_reports_null(tmp_path, capsys):
     make_silent_video(video)
     report = tmp_path / "report.json"
     code = audio_clean.main([str(video), "--analyse-only", "--report", str(report), "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert summary["before"] is None
     assert summary["after"] is None
@@ -274,7 +275,7 @@ def test_no_audio_stream_with_out_errors(tmp_path, capsys):
     make_silent_video(video)
     out = tmp_path / "clean.wav"
     code = audio_clean.main([str(video), "--out", str(out)])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
     assert not out.exists()
 
@@ -286,14 +287,14 @@ def test_originals_untouched_and_rerun_is_skipped(tmp_path, capsys):
     out = tmp_path / "clean.wav"
     report = tmp_path / "report.json"
     assert (
-        audio_clean.main([str(tone), "--out", str(out), "--report", str(report), "--json"]) == 0
+        audio_clean.main([str(tone), "--out", str(out), "--report", str(report), "--json"]) == EXIT_OK
     )
     capsys.readouterr()
     out_before = (out.stat().st_size, out.stat().st_mtime_ns)
     assert (tone.stat().st_size, tone.stat().st_mtime_ns) == original_before
 
     assert (
-        audio_clean.main([str(tone), "--out", str(out), "--report", str(report), "--json"]) == 0
+        audio_clean.main([str(tone), "--out", str(out), "--report", str(report), "--json"]) == EXIT_OK
     )
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "skipped"
@@ -318,7 +319,7 @@ def test_json_summary_keys_and_zero_cost(tmp_path, capsys):
                 "--json",
             ]
         )
-        == 0
+        == EXIT_OK
     )
     summary = json.loads(capsys.readouterr().out)
     expected = {
@@ -342,7 +343,7 @@ def test_json_summary_keys_and_zero_cost(tmp_path, capsys):
 def test_help_lists_flags_with_examples(capsys):
     with pytest.raises(SystemExit) as excinfo:
         audio_clean.main(["--help"])
-    assert excinfo.value.code == 0
+    assert excinfo.value.code == EXIT_OK
     out = capsys.readouterr().out
     for flag in ("--out", "--report", "--analyse-only", "--denoiser", "--model", "--wind-hz", "--target-lufs", "--no-loudnorm", "--json", "--force"):
         assert flag in out

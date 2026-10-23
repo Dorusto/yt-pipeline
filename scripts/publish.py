@@ -28,6 +28,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/publish.py"
@@ -926,7 +927,7 @@ def execute_kit(ctx):
         if error is not None:
             return {
                 "status": "FAIL",
-                "returncode": 2,
+                "returncode": EXIT_RUNTIME,
                 "outputs": [],
                 "llm_cost_usd": 0.0,
                 "stderr": f"[error] loudness failed: {error}",
@@ -999,7 +1000,7 @@ def run(ctx):
         if result["status"] == "FAIL":
             record_step(state, name, "failed", command=step.get("argv"), outputs=[])
             write_state(ctx.project, state)
-            entries.append({"name": name, "status": "failed", "outputs": []})
+            entries.append({"name": name, "status": "failed", "outputs": [], "returncode": result["returncode"]})
             if name == "kit":
                 kit_result = result.get("kit")
                 for line in (result.get("stderr") or "").splitlines():
@@ -1077,14 +1078,16 @@ def main(argv=None):
         ctx = build_context(args)
     except PublishError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
     summary = run(ctx)
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary)
-    failed = any(entry["status"] == "failed" for entry in summary["steps"])
-    return 2 if failed else 0
+    failed = [entry for entry in summary["steps"] if entry["status"] == "failed"]
+    if not failed:
+        return EXIT_OK
+    return EXIT_USAGE if failed[0].get("returncode") == EXIT_USAGE else EXIT_RUNTIME
 
 
 if __name__ == "__main__":

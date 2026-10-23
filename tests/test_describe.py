@@ -10,6 +10,7 @@ from PIL import Image
 
 import describe
 from common.llm import BudgetExceeded
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME
 from common.schema import validate
 from common.vision import MockVisionModel, VisionResponse
 
@@ -317,7 +318,7 @@ def test_confident_skip_roles_make_no_call(tmp_path):
     )
     model = MockVisionModel()
     summary, code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert model.calls == []
     data = read_describe(tmp_path, "clip")
     assert [s["status"] for s in data["segments"]] == ["skipped", "skipped", "skipped"]
@@ -351,7 +352,7 @@ def test_uncertain_segment_is_described_with_verdict(tmp_path):
     )
     model = MockVisionModel()
     summary, code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert len(model.calls) == 1
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]
@@ -457,7 +458,7 @@ def test_unparseable_output_is_skipped_with_warning(tmp_path):
     )
     model = BrokenModel()
     summary, code = describe.run(tmp_path, model=model, model_id="broken", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert len(model.calls) == 2
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]
@@ -477,7 +478,7 @@ def test_unparseable_output_retries_once_then_describes(tmp_path):
     )
     model = FlakyParseModel(cost_per_call=0.003)
     summary, code = describe.run(tmp_path, model=model, model_id="flaky", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert len(model.calls) == 2
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]
@@ -502,7 +503,7 @@ def test_unparseable_skip_carries_call_cost(tmp_path):
     )
     model = MixedBrokenModel(cost_per_call=0.002)
     summary, code = describe.run(tmp_path, model=model, model_id="mixed", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     data = read_describe(tmp_path, "clip")
     assert data["segments"][0]["status"] == "described"
     assert data["segments"][1]["status"] == "skipped"
@@ -526,7 +527,7 @@ def test_none_text_is_skipped_with_warning(tmp_path):
     )
     model = NoneTextModel()
     summary, code = describe.run(tmp_path, model=model, model_id="none-text", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert len(model.calls) == 2
     data = read_describe(tmp_path, "clip")
     seg = data["segments"][0]
@@ -619,7 +620,7 @@ def test_max_calls_stops_run_and_marks_rest(tmp_path):
     summary, code = describe.run(
         tmp_path, model=model, model_id="mock/vision", config=CONFIG, max_calls=1
     )
-    assert code == 2
+    assert code == EXIT_RUNTIME
     assert len(model.calls) == 1
     data = read_describe(tmp_path, "clip")
     assert [s["status"] for s in data["segments"]] == ["described", "skipped", "skipped"]
@@ -641,7 +642,7 @@ def test_budget_exceeded_stops_run_and_marks_rest(tmp_path):
     )
     model = BudgetModel()
     summary, code = describe.run(tmp_path, model=model, model_id="budget", config=CONFIG)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     data = read_describe(tmp_path, "clip")
     assert [s["status"] for s in data["segments"]] == ["described", "skipped"]
     assert data["segments"][1]["skip_reason"] == "budget_exceeded"
@@ -660,7 +661,7 @@ def test_rerun_without_force_skips_clip(tmp_path):
     describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
     calls_after_first = len(model.calls)
     summary, code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["described"] == 0
     assert summary["skipped"] == 1
     assert len(model.calls) == calls_after_first
@@ -675,7 +676,7 @@ def test_clips_filter_selects_substrings(tmp_path):
     summary, code = describe.run(
         tmp_path, clips="0067", model=model, model_id="mock/vision", config=CONFIG
     )
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["clips"] == 1
     assert (tmp_path / "describe" / "dji_0067.json").exists()
     assert not (tmp_path / "describe" / "dji_0081.json").exists()
@@ -707,7 +708,7 @@ def test_json_summary_has_flat_keys(tmp_path):
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert "wall_time_s" in summary
     assert "llm_cost_usd" in summary
@@ -932,7 +933,7 @@ def test_json_summary_reports_frame_mode_and_counts(tmp_path):
     summary, code = describe.run(
         tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG
     )
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["frame_mode"] == "mosaic"
     assert summary["frames_sampled"] == 6
     assert summary["mosaics_sent"] == 1
@@ -1079,7 +1080,7 @@ def test_json_summary_counts_beats(tmp_path):
         ]
     )
     summary, exit_code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["beats"] == 2
 
 
@@ -1121,7 +1122,7 @@ def test_photo_described_with_pseudo_segment(tmp_path):
     summary, code = describe.run(
         tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True
     )
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["photos"] == 1
     assert len(model.calls) == 1
     assert len(model.calls[0].frames) == 1
@@ -1179,13 +1180,13 @@ def test_photo_rerun_skips_and_force_redescribes(tmp_path):
     summary, code = describe.run(
         tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True
     )
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["photos"] == 0
     assert len(model.calls) == calls_after_first
     summary, code = describe.run(
         tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True, force=True
     )
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["photos"] == 1
     assert len(model.calls) == calls_after_first + 1
 
@@ -1199,7 +1200,7 @@ def test_photos_only_skips_video_segments(tmp_path):
     summary, code = describe.run(
         tmp_path, model=model, model_id="mock/vision", config=CONFIG, photos_only=True
     )
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["clips"] == 0
     assert summary["photos"] == 1
     assert not (tmp_path / "describe" / "clip.json").exists()
@@ -1213,7 +1214,7 @@ def test_photos_described_automatically_with_video(tmp_path):
     write_ingest(tmp_path, [photo_record(photo)])
     model = MockVisionModel()
     summary, code = describe.run(tmp_path, model=model, model_id="mock/vision", config=CONFIG)
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["described"] == 1
     assert summary["photos"] == 1
     assert (tmp_path / "describe" / "clip.json").exists()
@@ -1374,5 +1375,5 @@ def test_photo_with_a_stale_path_is_read_from_the_workspace_proxy(tmp_path):
     record["path"] = "/gone/proxy/photo_01.jpg"
     write_ingest(tmp_path, [record])
     summary, code = describe.run(tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG, photos_only=True)
-    assert code == 0
+    assert code == EXIT_OK
     assert summary["photos"] == 1

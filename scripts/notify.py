@@ -17,6 +17,7 @@ import sys
 import time
 
 from common.notify import NotifyError, resolve_url, send
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.summary import summary_fields
 
 
@@ -49,7 +50,7 @@ def main(argv=None):
             print(json.dumps({"sent": False, "url": None, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
 
     if args.dry_run:
         summary = {"sent": False, "url": target, "message": message, **summary_fields(started)}
@@ -57,7 +58,7 @@ def main(argv=None):
             print(json.dumps(summary))
         else:
             print(f"dry-run: would post to {target}")
-        return 0
+        return EXIT_OK
 
     tags = args.tags.split(",") if args.tags else None
     try:
@@ -74,14 +75,14 @@ def main(argv=None):
             print(json.dumps({"sent": False, "url": target, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
 
     summary = {"sent": True, "url": target, "status": status, **summary_fields(started)}
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"sent to {target} (HTTP {status})")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

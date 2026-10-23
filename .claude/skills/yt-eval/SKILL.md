@@ -16,10 +16,10 @@ Turn "the labels look plausible" into a number. The ground-truth YAML holds the 
 ```
 
 - `--ground-truth PATH` (required) is the YAML below. `--workspace DIR` (required) holds `motion/*.json` and `quality/*.json`.
-- `--labels` (default `auto`) picks the label source: `auto` uses `WORKSPACE/shotlog.json` when it exists and geometry otherwise; `shotlog` always scores the shotlog's effective `role` / `motion_label` and exits 1 with an `[error]` line when `shotlog.json` is missing; `geometry` always scores the motion/quality labels and ignores any shotlog. Every clip's `notes` names the source that was scored (`labels: geometry` or `labels: shotlog (N of M segments by verdict)`).
+- `--labels` (default `auto`) picks the label source: `auto` uses `WORKSPACE/shotlog.json` when it exists and geometry otherwise; `shotlog` always scores the shotlog's effective `role` / `motion_label` and exits 2 with an `[error]` line when `shotlog.json` is missing; `geometry` always scores the motion/quality labels and ignores any shotlog. Every clip's `notes` names the source that was scored (`labels: geometry` or `labels: shotlog (N of M segments by verdict)`).
 - The workspace is read only; the source clips are never touched. A missing file for a clip is scored 0 with a note (`missing motion output` / `missing quality output`), it does not abort the run.
 - `--horizon-tol-deg` (default 5.0) is the `|horizon_deg|` at or below which a quality segment claims a level horizon. `--event-tol-s` (default 3.0) is how close a predicted event must be to count as matched; matching is one-to-one (a predicted event matches at most one ground-truth event and the other way round), closest pairs first.
-- Exit code 0 means the report was produced, even when every score is 0. Exit 1 means the ground-truth or workspace is missing/unreadable, the YAML does not parse, `--labels shotlog` was asked without a shotlog, or `--out` could not be written; one `[error] ...` line goes to stderr. It never asks questions.
+- Exit code 0 means the report was produced, even when every score is 0. Exit 2 means the ground-truth or workspace is missing/unreadable, the YAML does not parse, or `--labels shotlog` was asked without a shotlog; exit 3 means `--out` could not be written; one `[error] ...` line goes to stderr. It never asks questions.
 
 ## Step 2: read the result
 

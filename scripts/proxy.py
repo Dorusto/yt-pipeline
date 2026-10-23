@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder, video_encode_args
 from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo
 
@@ -36,6 +37,10 @@ INVALID_FRAME_RATES = {"", "0/0", "N/A"}
 
 class ProxyError(RuntimeError):
     """Raised when a proxy run cannot be completed."""
+
+
+class ProxyRuntimeError(ProxyError):
+    """Raised when ffmpeg or ffprobe fails after the run started."""
 
 
 def build_parser():
@@ -125,14 +130,14 @@ def run_ffprobe(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise ProxyError(f"could not run ffprobe: {exc}") from exc
+        raise ProxyRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise ProxyError(f"ffprobe failed for {path.name}: {detail}")
+        raise ProxyRuntimeError(f"ffprobe failed for {path.name}: {detail}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise ProxyError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
+        raise ProxyRuntimeError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
 
 
 def probe_frame_rate(path):
@@ -193,7 +198,7 @@ def run_ffmpeg(command):
     try:
         return subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise ProxyError(f"could not run ffmpeg: {exc}") from exc
+        raise ProxyRuntimeError(f"could not run ffmpeg: {exc}") from exc
 
 
 def last_stderr_line(result):
@@ -216,7 +221,7 @@ def encode_clip(source, out_path, height, crf, encoder):
             active = "libx264"
             result = run_ffmpeg(build_command(source, tmp_path, height, crf, active, frame_rate))
         if result.returncode != 0:
-            raise ProxyError(f"{source.name}: {last_stderr_line(result)}")
+            raise ProxyRuntimeError(f"{source.name}: {last_stderr_line(result)}")
         os.replace(tmp_path, out_path)
     finally:
         if tmp_path.exists():
@@ -255,9 +260,9 @@ def build_proxies(source, out, height, crf, force):
         raise ProxyError(f"--out must not be inside the source: {out}")
 
     if shutil.which("ffmpeg") is None:
-        raise ProxyError("ffmpeg not found on PATH")
+        raise ProxyRuntimeError("ffmpeg not found on PATH")
     if shutil.which("ffprobe") is None:
-        raise ProxyError("ffprobe not found on PATH")
+        raise ProxyRuntimeError("ffprobe not found on PATH")
     try:
         encoder = pick_video_encoder()
     except RuntimeError as exc:
@@ -339,9 +344,12 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary = build_proxies(args.source, args.out, args.height, args.crf, args.force)
+    except ProxyRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except ProxyError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:
@@ -351,7 +359,7 @@ def main(argv=None):
             f" skipped {counts['skipped']}, failed {counts['failed']}"
             f" -> {summary['out']}"
         )
-    return 1 if summary["status"] == "failed" else 0
+    return EXIT_RUNTIME if summary["status"] == "failed" else EXIT_OK
 
 
 if __name__ == "__main__":

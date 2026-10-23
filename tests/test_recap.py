@@ -9,6 +9,7 @@ import pytest
 
 import common.notify as notify
 import recap
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def make_clip(path, duration=1.0, size="160x120", rate=10, audio=True):
@@ -212,7 +213,7 @@ def test_failure_stops_the_chain(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / "workspace"
     recorder = Recorder(fail_at="quality")
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--json"]) == 1
+    assert run_recap(source, workspace, extra=["--json"]) == EXIT_RUNTIME
     assert recorder.calls == ["proxy", "ingest", "motion", "quality"]
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
@@ -343,7 +344,7 @@ def test_real_execute_parses_child_json(tmp_path):
 def test_refuses_workspace_inside_source(tmp_path, capsys):
     source = make_source(tmp_path, names=("clip.mp4",))
     workspace = source / "workspace"
-    assert run_recap(source, workspace) == 1
+    assert run_recap(source, workspace) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "inside the source" in err
@@ -585,7 +586,7 @@ def test_failed_run_does_not_notify(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(recap, "execute", recorder)
     sent = NotifyRecorder()
     monkeypatch.setattr(notify, "send", sent)
-    assert run_recap(source, workspace, extra=["--notify", "--json"]) == 1
+    assert run_recap(source, workspace, extra=["--notify", "--json"]) == EXIT_RUNTIME
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "failed"
     assert summary["notified"] is False
@@ -781,7 +782,7 @@ def test_a_failed_vertical_render_does_not_stop_the_other_renders(tmp_path, monk
     workspace = tmp_path / "workspace"
     recorder = Recorder(fail_at="render_vertical")
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--format", "both", "--final", "--json"]) == 1
+    assert run_recap(source, workspace, extra=["--format", "both", "--final", "--json"]) == EXIT_RUNTIME
     assert recorder.calls[-4:] == ["render_vertical", "render_final", "render_final_vertical", "export_kdenlive"]
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "failed"
@@ -816,7 +817,7 @@ def test_a_failed_render_keeps_the_new_edit_without_a_video(tmp_path, monkeypatc
     later = Recorder(fail_at="render")
     later.clock += 10000.0
     monkeypatch.setattr(recap, "execute", later)
-    assert run_recap(source, workspace, extra=["--feedback", "shorter", "--json"]) == 1
+    assert run_recap(source, workspace, extra=["--feedback", "shorter", "--json"]) == EXIT_RUNTIME
     summary = json.loads(capsys.readouterr().out)
     kept = workspace / "versions" / summary["version"]
     assert (kept / "edit.json").is_file()
@@ -867,7 +868,7 @@ def test_music_auto_omits_library_when_unset(tmp_path):
 def test_music_auto_without_library_is_a_usage_error(tmp_path, monkeypatch, capsys):
     write_isolated_config(tmp_path, monkeypatch)
     source = make_source(tmp_path, names=("clip_a.mp4",))
-    assert run_recap(source, tmp_path / "ws", extra=["--music", "auto", "--json"]) == 1
+    assert run_recap(source, tmp_path / "ws", extra=["--music", "auto", "--json"]) == EXIT_USAGE
     error = capsys.readouterr().err
     assert "no music library configured" in error
     for way in ("--music-dir", "YT_PIPELINE_MUSIC_LIBRARY", "music.library"):

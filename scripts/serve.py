@@ -51,6 +51,7 @@ from common.moves import slot_screen_length
 from common.timeline_words import fade_for_join
 from common.pacing import estimate_all_good
 from common.versions import list_versions
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/serve.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -375,6 +376,10 @@ def shotlog_with_edit(path, decisions):
     if "</body>" in text:
         return text.replace("</body>", addition + "</body>", 1)
     return text + addition
+
+
+class ServeRuntimeError(RuntimeError):
+    """Raised when the preview server cannot bind."""
 
 
 class ServeError(RuntimeError):
@@ -2645,10 +2650,13 @@ def main(argv=None):
                 args.max_total_mb * 1024 * 1024,
             )
         except OSError as exc:
-            raise ServeError(f"could not bind {bind}:{args.port}: {exc}") from exc
+            raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
+    except ServeRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except (ServeError, ConfigError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
 
     port = server.server_address[1]
     projects = discover_projects(root)
@@ -2664,7 +2672,7 @@ def main(argv=None):
 
     if args.check:
         server.server_close()
-        return 0
+        return EXIT_OK
 
     try:
         server.serve_forever()
@@ -2672,7 +2680,7 @@ def main(argv=None):
         pass
     finally:
         server.server_close()
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

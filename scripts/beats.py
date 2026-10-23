@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.ffmpeg_tools import ffmpeg_path
 
 ANALYSIS_RATE = 22050
@@ -49,6 +50,10 @@ DEFAULT_SLOT_SECONDS = 6.0
 
 class BeatsError(RuntimeError):
     """Raised when a music file cannot be read or analysed."""
+
+
+class BeatsRuntimeError(BeatsError):
+    """Raised when ffmpeg or ffprobe fails after the run started."""
 
 
 def build_parser():
@@ -128,14 +133,14 @@ def has_audio_stream(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise BeatsError(f"could not run ffprobe: {exc}") from exc
+        raise BeatsRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
-        raise BeatsError(f"ffprobe failed for {path}: {detail[-1] if detail else 'unknown error'}")
+        raise BeatsRuntimeError(f"ffprobe failed for {path}: {detail[-1] if detail else 'unknown error'}")
     try:
         streams = json.loads(result.stdout).get("streams") or []
     except json.JSONDecodeError as exc:
-        raise BeatsError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+        raise BeatsRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
     return bool(streams)
 
 
@@ -161,10 +166,10 @@ def decode_mono(path, directory):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise BeatsError(f"could not run ffmpeg: {exc}") from exc
+        raise BeatsRuntimeError(f"could not run ffmpeg: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
-        raise BeatsError(f"ffmpeg could not decode {path}: {detail[-1] if detail else 'unknown error'}")
+        raise BeatsRuntimeError(f"ffmpeg could not decode {path}: {detail[-1] if detail else 'unknown error'}")
     if not target.is_file() or target.stat().st_size == 0:
         raise BeatsError(f"no audio stream in {path}")
     data = np.fromfile(target, dtype="<i2")
@@ -529,9 +534,12 @@ def main(argv=None):
             max_beat_s=args.max_beat_s,
             force=args.force,
         )
+    except BeatsRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except BeatsError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:
@@ -547,7 +555,7 @@ def main(argv=None):
                 print(f"wrote {summary['out']}")
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

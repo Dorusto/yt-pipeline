@@ -26,7 +26,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from common.config import no_projects_message, projects_path
+from common.config import ConfigError, no_projects_message, projects_path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 DEFAULT_BRIEF = (
@@ -677,9 +678,9 @@ def main(argv=None):
     started = time.monotonic()
     try:
         inbox, projects, state_path = resolve_paths(args)
-    except InboxError as exc:
+    except (InboxError, ConfigError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     default_brief = args.default_brief if args.default_brief is not None else DEFAULT_BRIEF
     settings = Settings(
         quiet_minutes=args.quiet_minutes,
@@ -700,7 +701,7 @@ def main(argv=None):
             inbox, projects, records, total_cost, time.monotonic() - started
         )
         emit_summary(summary, args.json)
-        return 1 if summary["status"] == "failed" else 0
+        return EXIT_RUNTIME if summary["status"] == "failed" else EXIT_OK
 
     latest = {}
     total_cost = 0.0
@@ -733,7 +734,7 @@ def main(argv=None):
         time.monotonic() - started,
     )
     emit_summary(summary, args.json)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

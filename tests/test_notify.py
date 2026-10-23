@@ -5,6 +5,7 @@ import pytest
 
 import common.notify as notify
 import notify as notify_cli
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 class FakeResponse:
@@ -106,7 +107,7 @@ def test_cli_dry_run_json(monkeypatch, capsys):
 def test_cli_without_a_configured_url_returns_1(monkeypatch, capsys, tmp_path):
     monkeypatch.delenv("NTFY_URL", raising=False)
     monkeypatch.setenv("YT_CONFIG", str(tmp_path / "missing.yaml"))
-    assert notify_cli.main(["hi", "--json"]) == 1
+    assert notify_cli.main(["hi", "--json"]) == EXIT_USAGE
     payload = json.loads(capsys.readouterr().out)
     assert payload["sent"] is False
 
@@ -121,14 +122,14 @@ def test_cli_success_json(monkeypatch, capsys):
     assert payload["llm_cost_usd"] == 0.0
 
 
-def test_cli_failure_returns_1(monkeypatch, capsys):
+def test_cli_failure_returns_2(monkeypatch, capsys):
     monkeypatch.setenv("NTFY_URL", "http://example.test/topic")
 
     def boom(*a, **k):
         raise notify.NotifyError("nope")
 
     monkeypatch.setattr(notify_cli, "send", boom)
-    assert notify_cli.main(["hi", "--json"]) == 1
+    assert notify_cli.main(["hi", "--json"]) == EXIT_RUNTIME
     payload = json.loads(capsys.readouterr().out)
     assert payload["sent"] is False
     assert payload["wall_time_s"] >= 0.0

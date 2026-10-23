@@ -9,6 +9,7 @@ import subs_from_edit
 from common.llm import MockClient
 from common.schema import validate_or_raise
 from fs_probe import safe_is_dir
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 CONFIG = {
     "models": {"metadata": "mock-model"},
@@ -247,14 +248,14 @@ def test_retry_once_on_unparseable_output(tmp_path, monkeypatch):
     assert (tmp_path / "chapters.json").is_file()
 
 
-def test_two_unparseable_outputs_exit_2(tmp_path, monkeypatch, capsys):
+def test_two_unparseable_outputs_exit_3(tmp_path, monkeypatch, capsys):
     edit = two_window_edit(tmp_path)
     words = tmp_path / "words"
     write_words(words / "cam.json", [("unu", 0.5, 1.0), ("doi", 1.5, 2.0)])
     write_words(words / "cam2.json", [("trei", 0.5, 1.0)])
     client = FakeClient(["nope", "still nope"])
     code = run_main(tmp_path, monkeypatch, client, edit, words)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     assert client.calls == 2
     err = capsys.readouterr().err
     assert "retry" in err

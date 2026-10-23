@@ -29,7 +29,7 @@ editor.
 - `--todo` (default `<project dir>/todo.md`) is rewritten every run (re-run safe): one `- [ ] HH:MM:SS:FF (s s) — name: comment` line per Rose marker, or a one-line note when there are none.
 - Clip-level markers (`timeline clip .markers`) are out of scope: they are counted and reported as `clip_markers_ignored`, never mapped.
 - `--json` reports `output`, `todo`, `sequence`, `markers`, `rose`, `clip_markers_ignored`, `wall_time_s`, `llm_cost_usd`.
-- Exit codes: `0`, `2` user error (missing file, not a FilmCraft project, unknown `--sequence`, no sequence, bad marker shape), `1` unexpected.
+- Exit codes: `0`, `2` user error (missing file, not a FilmCraft project, unknown `--sequence`, no sequence, bad marker shape), `3` runtime failure (ffmpeg or `filmcraft-cli` failing, missing binary).
 
 ## Loudness (`loudness.py`)
 
@@ -62,10 +62,10 @@ medium (`clarity.enabled`, `clarity.dynamics.on`, `clarity.dynamics.amount: 5`).
 .venv/bin/python scripts/loudness.py --fcproj project.fcproj --in-place
 ```
 
-- The binary comes from `$FILMCRAFT_CLI` or `filmcraft-cli` on PATH; missing → exit 2 naming both (not on `--dry-run`, which prints without needing the binary).
+- The binary comes from `$FILMCRAFT_CLI` or `filmcraft-cli` on PATH; missing → exit 3 naming both (not on `--dry-run`, which prints without needing the binary).
 - The input project is never modified unless `--in-place` is given; without it the tool copies it to `--out` (default `<stem>_loudness.fcproj`) and runs against the copy. The copy path is re-run safe (it overwrites the derived copy only).
 - Voice clips are the `enabled` timeline clips of the audio track named `--track` (default `Audio 1`); their item ids are the `clips` parameter. No such clip → exit 2 naming the track.
-- Three commands run (`essentialSound.setType`, `essentialSound.autoMatch`, `essentialSound.set`), then `essentialSound.inspect` prints the measured and final loudness (`measured_lufs`, `target_lufs`, `match_gain`). A non-zero CLI exit or an `{"ok": false}` reply → exit 1 naming the command.
+- Three commands run (`essentialSound.setType`, `essentialSound.autoMatch`, `essentialSound.set`), then `essentialSound.inspect` prints the measured and final loudness (`measured_lufs`, `target_lufs`, `match_gain`). A non-zero CLI exit or an `{"ok": false}` reply → exit 3 naming the command.
 - `--dry-run` prints the exact command lines and skips the copy, without needing `filmcraft-cli` installed; `--json` then has `commands` and `dry_run: true`.
 - `--json` reports `output`, `backend: "filmcraft"`, `sequence`, `track`, `clips`, `measured` (or `null` on `--dry-run`), `target_lufs`, `commands`, `wall_time_s`, `llm_cost_usd`.
 

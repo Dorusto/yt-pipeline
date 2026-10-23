@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+from common.config import ConfigError
+
 import openai
 from filelock import FileLock
 
@@ -268,7 +270,7 @@ class OpenRouterClient(LLMClient):
             if api_key is None:
                 api_key = os.environ.get("OPENROUTER_API_KEY")
             if not api_key:
-                raise LLMError("OPENROUTER_API_KEY is not set")
+                raise ConfigError("OPENROUTER_API_KEY is not set")
             self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
     def _create(self, model, messages, **kwargs):

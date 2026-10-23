@@ -59,6 +59,7 @@ from common.timeline_words import (
     timeline_words_from_file,
     video_spans_from_fcproj,
 )
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/shorts_rank.py"
 SCHEMA_VERSION = "0.2"
@@ -81,6 +82,9 @@ _client = None
 class ShortsRankError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
 
+
+class ShortsRankRuntimeError(ShortsRankError):
+    """Raised when the model answer cannot be used after the call."""
 
 def get_client():
     global _client
@@ -340,17 +344,17 @@ def parse_model_json(text):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ShortsRankError(f"model response is not valid JSON: {exc}")
+        raise ShortsRankRuntimeError(f"model response is not valid JSON: {exc}")
 
 
 def parse_scores(text):
     """Parse the model output into the raw score rows; raise when the shape is wrong."""
     data = parse_model_json(text)
     if not isinstance(data, dict):
-        raise ShortsRankError("model response is not a JSON object")
+        raise ShortsRankRuntimeError("model response is not a JSON object")
     scores = data.get("scores")
     if not isinstance(scores, list):
-        raise ShortsRankError("model JSON key 'scores' must be a list")
+        raise ShortsRankRuntimeError("model JSON key 'scores' must be a list")
     return scores
 
 
@@ -365,7 +369,7 @@ def request_scores(client, message, candidate_ids):
             return validate_scores(parse_scores(response.text), candidate_ids)
         except ShortsRankError as exc:
             last_error = exc
-    raise ShortsRankError(f"model output is invalid after one retry: {last_error}")
+    raise ShortsRankRuntimeError(f"model output is invalid after one retry: {last_error}")
 
 
 def validate_scores(scores, candidate_ids):
@@ -378,10 +382,10 @@ def validate_scores(scores, candidate_ids):
     by_id = {}
     for row in scores:
         if not isinstance(row, dict):
-            raise ShortsRankError("model JSON 'scores' entries must be objects")
+            raise ShortsRankRuntimeError("model JSON 'scores' entries must be objects")
         candidate_id = row.get("id")
         if isinstance(candidate_id, bool) or not isinstance(candidate_id, int):
-            raise ShortsRankError("model JSON 'scores[].id' must be an integer")
+            raise ShortsRankRuntimeError("model JSON 'scores[].id' must be an integer")
         if candidate_id not in candidate_ids:
             continue
         hook = row.get("hook")
@@ -692,11 +696,16 @@ def main(argv=None):
             mapped, warnings, primary_input, args.chapters, args.out, args.prompt,
             publish_dir, args.layout, spans=spans, layout_policy=layout_policy,
         )
-    except (ShortsRankError, ConfigError, LLMError, TimelineWordsError) as exc:
+    except (ShortsRankRuntimeError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_RUNTIME
+    except (ShortsRankError, ConfigError, TimelineWordsError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))
@@ -713,7 +722,7 @@ def main(argv=None):
         )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

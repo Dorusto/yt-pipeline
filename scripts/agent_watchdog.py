@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common.notify import NotifyError, send
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
 DEFAULT_KEY_FILE = "~/.config/opencode/secrets/openrouter.key"
@@ -99,7 +100,7 @@ def stop_agent(timeout=10.0):
     try:
         import psutil
     except ImportError:
-        return 0
+        return EXIT_OK
     targets = []
     for process in psutil.process_iter(["name"]):
         try:
@@ -652,7 +653,7 @@ def main(argv=None, now=None):
             print(f"[warn] {error}", file=sys.stderr)
         if not alerts:
             print("ok")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

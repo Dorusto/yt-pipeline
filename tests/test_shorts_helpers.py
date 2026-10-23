@@ -6,6 +6,7 @@ import pysubs2
 import pytest
 
 import shorts_generator as sg
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample_RO.srt"
 
@@ -194,5 +195,5 @@ def test_incomplete_config_non_interactive_raises(monkeypatch, tmp_path):
 
 def test_main_returns_1_when_config_missing(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(sg, "CONFIG_PATH", tmp_path / "absent.yaml")
-    assert sg.main(["--yes", "--json"]) == 1
+    assert sg.main(["--yes", "--json"]) == EXIT_USAGE
     assert '"ok": false' in capsys.readouterr().out

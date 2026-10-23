@@ -9,6 +9,7 @@ from PIL import Image
 
 import index
 from common.schema import validate
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 FOURCC = cv2.VideoWriter_fourcc(*"mp4v")
@@ -256,7 +257,7 @@ def build(
     if similarity_pairs is not None:
         write_similarity(workspace, similarity_pairs)
     summary, exit_code = index.run(str(workspace))
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     return read_shotlog(workspace), summary
 
 
@@ -522,7 +523,7 @@ def test_similar_to_is_filled_most_similar_first(tmp_path):
         ],
     )
     summary, exit_code = index.run(str(tmp_path))
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     data = read_shotlog(tmp_path)
     assert find(data, "0081/s1")["similar_to"] == ["0072/s1", "0081/s2"]
     assert find(data, "0072/s1")["similar_to"] == ["0081/s1"]
@@ -560,7 +561,7 @@ def test_no_suppression_below_half_overlap(tmp_path):
 def test_json_summary_carries_wall_time_and_zero_cost(tmp_path, capsys):
     write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
     exit_code = index.main(["--workspace", str(tmp_path), "--force", "--json"])
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert "wall_time_s" in summary
     assert isinstance(summary["wall_time_s"], float)
@@ -583,7 +584,7 @@ def test_rerun_without_force_is_a_noop(tmp_path):
 
     summary, exit_code = index.run(str(tmp_path))
 
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["skipped"] is True
     assert summary["shots"] == 1
     assert output.read_text(encoding="utf-8") == first_text
@@ -593,7 +594,7 @@ def test_rerun_without_force_is_a_noop(tmp_path):
 def test_force_recomputes(tmp_path):
     build(tmp_path, segments=[quality_segment("s1", 0.0, 10.0)])
     summary, exit_code = index.run(str(tmp_path), force=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["skipped"] is False
 
 
@@ -606,7 +607,7 @@ def test_clips_filter_limits_the_run(tmp_path):
     write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 5.0)])
     write_quality(tmp_path, "0072", [quality_segment("s1", 0.0, 5.0)])
     summary, exit_code = index.run(str(tmp_path), clips="0072")
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["shots"] == 1
     data = read_shotlog(tmp_path)
     assert data["shots"][0]["key"] == "0072/s1"
@@ -614,7 +615,7 @@ def test_clips_filter_limits_the_run(tmp_path):
 
 def test_missing_quality_folder_exits_one(tmp_path, capsys):
     exit_code = index.main(["--workspace", str(tmp_path)])
-    assert exit_code == 1
+    assert exit_code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -728,7 +729,7 @@ def test_missing_clip_file_does_not_fail(tmp_path):
 def test_no_html_skips_the_contact_sheet(tmp_path):
     write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
     summary, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["html"] is None
     assert not (tmp_path / "shotlog.html").exists()
 
@@ -737,7 +738,7 @@ def test_html_inside_repo_is_refused(tmp_path, capsys):
     write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
     target = ROOT / "shotlog.html"
     exit_code = index.main(["--workspace", str(tmp_path), "--html", str(target), "--force"])
-    assert exit_code == 1
+    assert exit_code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
     assert not target.exists()
 
@@ -745,7 +746,7 @@ def test_html_inside_repo_is_refused(tmp_path, capsys):
 def test_json_summary_keeps_previous_keys_and_adds_html(tmp_path, capsys):
     write_quality(tmp_path, "0081", [quality_segment("s1", 0.0, 10.0)])
     exit_code = index.main(["--workspace", str(tmp_path), "--force", "--json"])
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
     assert set(summary) == {
         "shots",
@@ -861,7 +862,7 @@ def test_described_photo_becomes_one_shot(tmp_path):
     write_photo_ingest(tmp_path, [photo_record(photo, "2026-10-12T11:42:00+00:00")])
     write_photo_describe(tmp_path, photo, described_photo_segment(interest=57))
     summary, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["shots"] == 1
     data = read_shotlog(tmp_path)
     shot = data["shots"][0]
@@ -890,7 +891,7 @@ def test_photo_key_matches_similarity_counter_convention(tmp_path):
     write_photo_describe(tmp_path, first, described_photo_segment())
     write_photo_describe(tmp_path, second, described_photo_segment())
     _, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     keys = {shot["key"] for shot in read_shotlog(tmp_path)["shots"]}
     assert keys == {"0068/p1", f"{second.stem}/p1"}
 
@@ -909,7 +910,7 @@ def test_photo_burst_keeps_only_the_best_eligible(tmp_path):
     write_photo_describe(tmp_path, second, described_photo_segment(interest=40))
     write_similarity(tmp_path, [{"a": "0068/p1", "b": "0069/p1", "similarity": 0.95}])
     summary, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     data = read_shotlog(tmp_path)
     winner = find(data, "0068/p1")
     loser = find(data, "0069/p1")
@@ -935,7 +936,7 @@ def test_photos_120s_apart_are_not_a_burst(tmp_path):
     write_photo_describe(tmp_path, second, described_photo_segment(interest=40))
     write_similarity(tmp_path, [{"a": "0068/p1", "b": "0069/p1", "similarity": 0.95}])
     summary, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     data = read_shotlog(tmp_path)
     assert find(data, "0068/p1")["eligible"] is True
     assert find(data, "0069/p1")["eligible"] is True
@@ -967,7 +968,7 @@ def test_photo_burst_chain_resolves_to_global_best(tmp_path):
         ],
     )
     summary, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     data = read_shotlog(tmp_path)
     assert find(data, "0070/p1")["eligible"] is True
     assert find(data, "0070/p1")["suppressed_by"] is None
@@ -980,7 +981,7 @@ def test_skipped_photo_still_yields_a_shot(tmp_path):
     write_photo_ingest(tmp_path, [photo_record(photo)])
     write_photo_describe(tmp_path, photo, described_photo_segment(status="skipped"))
     summary, exit_code = index.run(str(tmp_path), no_html=True)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     data = read_shotlog(tmp_path)
     shot = data["shots"][0]
     assert shot["key"] == "0068/p1"
@@ -1002,7 +1003,7 @@ def test_html_contact_sheet_shows_photo_card(tmp_path):
         described_photo_segment(interest=57, summary="a lighthouse at dusk"),
     )
     summary, exit_code = index.run(str(tmp_path))
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
     assert 'class="badge media">photo</span>' in text
     assert "data:image/jpeg;base64," in text

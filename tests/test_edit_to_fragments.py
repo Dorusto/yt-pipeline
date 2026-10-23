@@ -11,6 +11,7 @@ yaml = pytest.importorskip("yaml")
 
 import edit_to_fragments as etf
 import kdenlive_from_fragments as kf
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate_or_raise
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -81,7 +82,7 @@ def test_timecodes_round_trip_to_consumer_frames(tmp_path, capsys):
     )
     out = tmp_path / "fragments.yaml"
     rc, _, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     fragment = load_fragments(out)["fragments"][0]
     frames = kf.tc_to_frames(fragment["out"]) - kf.tc_to_frames(fragment["in"]) + 1
     assert frames == round((4.0 - 1.5) * kf.FPS)
@@ -99,7 +100,7 @@ def test_yaml_validates_and_carries_one_fragment_per_slot(tmp_path, capsys):
     edit = make_edit(tmp_path, sources, video)
     out = tmp_path / "fragments.yaml"
     rc, _, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     config = load_fragments(out)
     validate_or_raise(config, "fragments")
     assert [fragment["file"] for fragment in config["fragments"]] == ["a.mp4", "b.mp4"]
@@ -132,7 +133,7 @@ def test_source_dir_and_kdenlive_out_land_in_yaml(tmp_path, capsys):
         str(kdenlive),
         "--json",
     )
-    assert rc == 0
+    assert rc == EXIT_OK
     config = load_fragments(out)
     assert config["source_dir"] == str(raw)
     assert config["output"] == str(kdenlive)
@@ -146,7 +147,7 @@ def test_default_source_dir_and_kdenlive_out(tmp_path, capsys):
     )
     out = tmp_path / "fragments.yaml"
     rc, _, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     config = load_fragments(out)
     assert Path(config["source_dir"]) == Path("/src/raw")
     assert config["output"] == str(out.with_suffix(".kdenlive"))
@@ -158,7 +159,7 @@ def test_invalid_edit_exits_1_and_writes_nothing(tmp_path, capsys):
     out = tmp_path / "fragments.yaml"
     rc = etf.main(["--edit", str(bad), "--out", str(out)])
     captured = capsys.readouterr()
-    assert rc == 1
+    assert rc == EXIT_USAGE
     assert captured.err.startswith("[error]")
     assert not out.exists()
 
@@ -171,17 +172,17 @@ def test_rerun_skips_then_force_writes(tmp_path, capsys):
     )
     out = tmp_path / "fragments.yaml"
     rc, first, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     assert first["status"] == "written"
 
     later = edit.stat().st_mtime + 10
     os.utime(out, (later, later))
     rc, second, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     assert second["status"] == "skipped"
 
     rc, forced, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--force", "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     assert forced["status"] == "written"
 
 
@@ -193,7 +194,7 @@ def test_json_summary_keys_and_no_llm_cost(tmp_path, capsys):
     )
     out = tmp_path / "fragments.yaml"
     rc, summary, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     for key in (
         "status",
         "out",
@@ -237,14 +238,14 @@ def test_end_to_end_with_kdenlive_consumer(tmp_path, capsys):
         ]
     )
     capsys.readouterr()
-    assert rc == 0
+    assert rc == EXIT_OK
 
     result = subprocess.run(
         [sys.executable, str(SCRIPTS / "kdenlive_from_fragments.py"), str(out)],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     assert (tmp_path / "fragments.kdenlive").exists()
 
 
@@ -254,7 +255,7 @@ def test_middle_speed_slot_stays_real_time_and_warns(tmp_path, capsys):
     edit = make_edit(tmp_path, [{"file": "a.mp4", "path": "/media/a.mp4"}], [ramped, slot("v2", "a.mp4", 8.0, 10.0)])
     out = tmp_path / "fragments.yaml"
     rc, payload, _ = run_json(capsys, "--edit", str(edit), "--out", str(out), "--json")
-    assert rc == 0
+    assert rc == EXIT_OK
     assert len(payload["warnings"]) == 1
     assert "v1" in payload["warnings"][0] and "middle" in payload["warnings"][0]
     fragments = load_fragments(out)["fragments"]

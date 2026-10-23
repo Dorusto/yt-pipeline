@@ -23,7 +23,7 @@ from the repository root.
 
 - `--library DIR`: the music library folder. There is no personal default — it
   comes from `--library`, else the `YT_PIPELINE_MUSIC_LIBRARY` environment
-  variable, else `music.library` in the config; with none set the tool exits 1
+  variable, else `music.library` in the config; with none set the tool exits 2
   with `[error] no music library configured` naming those three ways. Only the
   audio files directly in the folder (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`)
   are used. Never recursive. The folder is read only: no music is ever
@@ -42,9 +42,10 @@ from the repository root.
   (`licence_status` `sidecar`/`library`/`missing` plus `licence_file`), as text
   or `--json` for an agent. A track that cannot be measured keeps nulls and the
   list still succeeds.
-- Exit 1 with one `[error]` line when no library is configured, the library is
-  empty or nothing could be analysed; a missing or invalid config exits 2 with
-  one `[error]` line.
+- Exit 2 with one `[error]` line when no library is configured, the library is
+  empty or the brief flags are wrong; a missing or invalid config also exits 2
+  with one `[error]` line. Exit 3 when the work failed after it started
+  (`beats.py` failing on a track, no track analysable, a filesystem error).
 
 ## How it scores
 

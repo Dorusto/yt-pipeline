@@ -28,6 +28,7 @@ from common.brand import BrandError
 from common.brand import load_brand as load_brand_kit
 from common.brand import resolve_font as resolve_font_kit
 from common.schema import validate
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = REPO_ROOT / "assets" / "graphics"
@@ -539,13 +540,13 @@ def main(argv=None):
             )
     except GraphicsError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
     except GraphicsRuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
     except Exception as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
 
     if args.json:
         print(json.dumps(summary))
@@ -556,7 +557,7 @@ def main(argv=None):
             print(f"written: {item['output']} ({item['template']})")
     else:
         print(f"written: {summary['output']} ({summary['template']})")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

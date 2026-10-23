@@ -375,7 +375,7 @@ def test_missing_cost_is_not_written_to_ledger(tmp_path):
 
 def test_missing_api_key_raises_without_leaking(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(LLMError) as exc:
+    with pytest.raises(ConfigError) as exc:
         OpenRouterClient()
     message = str(exc.value)
     assert "OPENROUTER_API_KEY" in message

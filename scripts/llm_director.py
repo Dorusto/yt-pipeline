@@ -51,6 +51,7 @@ from common.moves import (
 from common.overlap import overlap_seconds
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/llm_director.py"
 SCHEMA_VERSION = "0.1"
@@ -125,6 +126,10 @@ BRIEF_KEYWORDS = (
         ("trip", "travel", "vacation", "holiday", "recap", "adventure", "hike", "boat", "weekend", "day out", "journey"),
     ),
 )
+
+
+class LLMDirectorRuntimeError(RuntimeError):
+    """Raised when the rule-based fallback director fails."""
 
 
 class LLMDirectorError(RuntimeError):
@@ -2378,11 +2383,11 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, 
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
-            raise LLMDirectorError(f"rule-based director failed: {result.stderr.strip()}")
+            raise LLMDirectorRuntimeError(f"rule-based director failed: {result.stderr.strip()}")
         data = load_json(tmp)
         summary = parse_json(result.stdout) or {}
     if data is None:
-        raise LLMDirectorError("rule-based director wrote no edit")
+        raise LLMDirectorRuntimeError("rule-based director wrote no edit")
     atomic_write_json(out_path, data)
     return data, summary.get("beat_snap")
 
@@ -2405,10 +2410,10 @@ def run_baseline(workspace, brief_text, hints, beats_path=None, music=None, ambi
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
-            raise LLMDirectorError(f"rule-based director failed: {result.stderr.strip()}")
+            raise LLMDirectorRuntimeError(f"rule-based director failed: {result.stderr.strip()}")
         data = load_json(tmp)
     if data is None:
-        raise LLMDirectorError("rule-based director wrote no edit")
+        raise LLMDirectorRuntimeError("rule-based director wrote no edit")
     slots = data.get("video") or []
     total = sum(slot_duration(slot) for slot in slots)
     return {
@@ -2618,7 +2623,7 @@ def _run_loop(
         warnings.append("no shotlog.json in the workspace; using the rule-based director")
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
 
     drop_reasons = {}
     pacing = run_pacing(LONG_CUT_PACING_S if all_good else hints.get("target_duration_s"))
@@ -2631,7 +2636,7 @@ def _run_loop(
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, 1)
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
 
     sources = [
         {"file": clip["file"], "path": clip.get("path") or clip["file"], "duration_s": clip.get("duration_s")}
@@ -2705,12 +2710,12 @@ def _run_loop(
         warnings.append(str(exc))
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 2, candidates)
+        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
 
     if approved:
         for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, []):
@@ -2729,7 +2734,7 @@ def _run_loop(
             warnings.append(str(exc))
             if fallback_rules:
                 return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
@@ -2764,7 +2769,7 @@ def _run_loop(
             warnings.append(str(exc))
             if fallback_rules:
                 return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap), 0
@@ -2776,7 +2781,7 @@ def _run_loop(
             warnings.append(note)
     if fallback_rules:
         return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-    return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, 1, candidates)
+    return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
 
 
 def print_human(summary, record):
@@ -2827,15 +2832,18 @@ def main(argv=None):
             feedback=args.feedback,
             speed_ramp=args.speed_ramp,
         )
-    except (LLMDirectorError, ConfigError, SchemaError, LLMError, OSError) as exc:
+    except (LLMDirectorRuntimeError, LLMError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (LLMDirectorError, ConfigError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:
         record = load_json(summary["out"]) if summary.get("out") else None
         print_human(summary, record)
-    if code == 1:
+    if code != EXIT_OK:
         detail = summary["warnings"][-1] if summary["warnings"] else "run failed"
         print(f"[error] {detail}", file=sys.stderr)
     return code

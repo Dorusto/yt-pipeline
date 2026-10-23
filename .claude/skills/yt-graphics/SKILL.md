@@ -44,7 +44,8 @@ files.
   `approved: false` on every entry and sets `origin` (`marker` when the entry
   matches a Mango candidate within 1 s, else `model`). The plan is validated
   against `schemas/graphics_plan.schema.json`; an invalid answer is retried once
-  with the validation errors appended, then exits 2 printing the problems.
+  with the validation errors appended, then exits 2 printing the problems. A
+  model-call failure exits 3.
 - `--json` prints one summary line: `output`, `entries`, `approved` (always 0
   here), `markers_used` (Mango candidates), `words_shape`, `model`, `wall_time_s`,
   `llm_cost_usd`. Without it, one human line plus a "review and flip approved"
@@ -122,7 +123,7 @@ the brand key, never a silent fallback.
 A ProRes 4444 `.mov` with alpha, video only, at the requested canvas. The
 composition leaves `html`/`body` unpainted so the MOV carries real alpha; the
 tool verifies the pixel format with ffprobe after every render and fails loudly
-(exit 1) when it is not `yuva444p10le` or `yuva444p12le` (ffmpeg >= 6.0 reports
+(exit 3) when it is not `yuva444p10le` or `yuva444p12le` (ffmpeg >= 6.0 reports
 ProRes 4444 as 12-bit). `--backend mock` is deterministic and offline: it writes
 the composed `index.html` next to the output plus a transparent MOV produced by
 ffmpeg, for tests and runs without Node.

@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import eval_edit
+from common.exit_codes import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "eval_edit.py"
 
@@ -54,7 +55,7 @@ def photo_slot(key=None, duration_s=3.0, **extra):
 
 def test_help_exits_0():
     result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     assert "--expect" in result.stdout
     assert "--json" in result.stdout
 
@@ -75,7 +76,7 @@ def test_pass_when_every_expectation_holds(tmp_path):
         "length_s:\n  target: 60\n  tolerance: 3\n",
     )
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["passed"] is True
     assert [check["passed"] for check in report["checks"]] == [True, True, True]
@@ -91,7 +92,7 @@ def test_fail_when_a_shot_is_missing(tmp_path):
         'must_include:\n  - any_of: ["0072/s5"]\n    note: "the tunnel approach"\n',
     )
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_ATTENTION
     report = json.loads(result.stdout)
     assert report["passed"] is False
     assert report["checks"][0]["passed"] is False
@@ -106,7 +107,7 @@ def test_any_of_passes_with_the_other_key(tmp_path):
         'must_include:\n  - any_of: ["0072/s7b1", "0072/s7b5"]\n    note: "one of the cave-exit heroes"\n',
     )
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["passed"] is True
     assert report["checks"][0]["found"] == ["0072/s7b5"]
@@ -120,7 +121,7 @@ def test_length_fail(tmp_path):
     workspace = tmp_path / "ws_short"
     write_edit(workspace, [video_slot(None, 0.0, 50.0)])
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_ATTENTION
     report = json.loads(result.stdout)
     assert report["checks"][0]["passed"] is False
     assert report["checks"][0]["got"] == 50.0
@@ -128,7 +129,7 @@ def test_length_fail(tmp_path):
     workspace_ok = tmp_path / "ws_ok"
     write_edit(workspace_ok, [video_slot(None, 0.0, 57.5)])
     result = run_eval(workspace_ok, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["checks"][0]["passed"] is True
     assert report["checks"][0]["got"] == 57.5
@@ -141,7 +142,7 @@ def test_middle_speed_length(tmp_path):
     write_edit(workspace, [slot])
     expect = write_expect(tmp_path / "expect.yaml", "length_s:\n  target: 6\n  tolerance: 0\n")
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["checks"][0]["got"] == 6.0
 
@@ -151,7 +152,7 @@ def test_photo_duration_counts(tmp_path):
     write_edit(workspace, [photo_slot(duration_s=3.0)])
     expect = write_expect(tmp_path / "expect.yaml", "length_s:\n  target: 3\n  tolerance: 0\n")
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["checks"][0]["got"] == 3.0
 
@@ -161,19 +162,19 @@ def test_plain_string_expectation(tmp_path):
     write_edit(workspace, [video_slot("0072/s5", 0.0, 60.0)])
     expect = write_expect(tmp_path / "expect.yaml", 'must_include:\n  - "0072/s5"\n')
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["checks"][0]["any_of"] == ["0072/s5"]
     assert report["checks"][0]["passed"] is True
     assert report["checks"][0]["note"] == ""
 
 
-def test_missing_edit_json_exits_1(tmp_path):
+def test_missing_edit_json_exits_2(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
     expect = write_expect(tmp_path / "expect.yaml", 'must_include:\n  - "0072/s5"\n')
     result = run_eval(workspace, expect)
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert result.stderr.startswith("[error] ")
 
 
@@ -182,7 +183,7 @@ def test_json_shape(tmp_path):
     write_edit(workspace, [video_slot("0072/s5", 0.0, 60.0)])
     expect = write_expect(tmp_path / "expect.yaml", "must_include: []\n")
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert report["checks"] == []
     assert report["passed"] is True
@@ -207,7 +208,7 @@ def test_photo_key_fallbacks(tmp_path):
         'must_include:\n  - "0072/p1"\n  - "photo_02"\n  - "river/p1"\n',
     )
     result = run_eval(workspace, expect, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     report = json.loads(result.stdout)
     assert all(check["passed"] for check in report["checks"])
 
@@ -222,7 +223,7 @@ def test_human_table_rows(tmp_path):
         "length_s:\n  target: 60\n  tolerance: 3\n",
     )
     result = run_eval(workspace, expect)
-    assert result.returncode == 1
+    assert result.returncode == EXIT_ATTENTION
     lines = result.stdout.splitlines()
     assert lines[0].startswith("expectation")
     assert "must_include 0072/s5" in lines[1] and "FAIL" in lines[1] and "the tunnel approach" in lines[1]
@@ -237,18 +238,18 @@ def test_out_writes_report_and_is_rerun_safe(tmp_path):
     expect = write_expect(tmp_path / "expect.yaml", 'must_include:\n  - "0072/s5"\n')
     out = tmp_path / "report.json"
     first = run_eval(workspace, expect, "--out", str(out))
-    assert first.returncode == 0, first.stderr
+    assert first.returncode == EXIT_OK, first.stderr
     assert json.loads(out.read_text(encoding="utf-8"))["passed"] is True
     assert not (tmp_path / "report.json.tmp").exists()
     second = run_eval(workspace, expect, "--out", str(out))
-    assert second.returncode == 0, second.stderr
+    assert second.returncode == EXIT_OK, second.stderr
     assert json.loads(out.read_text(encoding="utf-8"))["passed"] is True
 
 
-def test_unreadable_expectations_exits_1(tmp_path):
+def test_unreadable_expectations_exits_2(tmp_path):
     workspace = tmp_path / "ws"
     write_edit(workspace, [video_slot("0072/s5", 0.0, 60.0)])
     expect = write_expect(tmp_path / "expect.yaml", "must_include: [unclosed\n")
     result = run_eval(workspace, expect)
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert result.stderr.startswith("[error] ")

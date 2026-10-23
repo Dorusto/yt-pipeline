@@ -19,7 +19,7 @@ Join the per-clip analyses of a workspace into **one `WORKSPACE/shotlog.json`**:
 - `--clips` limits the run to comma-separated 4-digit counters or stem substrings (e.g. `--clips 0072,0081`). Without it every `quality/*.json` is processed.
 - `--force` recomputes even when `shotlog.json` is newer than every input it was built from. Without it an up-to-date output is skipped and counted as `skipped` (the contact sheet is not rewritten either).
 - `--html PATH` sets the contact sheet path (default `WORKSPACE/shotlog.html`); `--no-html` skips it and the JSON is still written. The contact sheet is written after `shotlog.json`, only when the shotlog was written or `--force` recomputed it.
-- On any error (missing `quality/`, unreadable quality file, write failure, schema mismatch, `--html` inside the repository) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing `quality/`, unreadable quality file, schema mismatch, `--html` inside the repository) or `3` (runtime failure after work started: disk write). It never asks questions.
 
 ## Step 2: read the result
 

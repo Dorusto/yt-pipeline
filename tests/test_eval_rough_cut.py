@@ -7,6 +7,7 @@ import yaml
 import eval_rough_cut as erc
 import export_filmcraft as ef
 import rough_cut as rc
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from fs_probe import safe_is_dir
 
 REFERENCE_DIR = Path("/root/media/eval/second-brain")
@@ -60,7 +61,7 @@ def build_reference(tmp_path, capsys, sources, slots, sequence="Main"):
     ref_edit.write_text(json.dumps(make_edit(sources, slots)), encoding="utf-8")
     fcproj = tmp_path / "reference.fcproj"
     code = ef.main([str(ref_edit), "--out", str(fcproj), "--sequence", sequence, "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     capsys.readouterr()
     return fcproj
 
@@ -123,7 +124,7 @@ def build_controlled_case(tmp_path, capsys):
 def test_precision_recall_exact(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["ours"] == {"kept": 6, "sessions": 2}
     assert report["doru"] == {"kept": 4, "sessions_used": 1, "sessions_total": 2}
     assert report["intersect"] == 2
@@ -134,7 +135,7 @@ def test_precision_recall_exact(tmp_path, capsys):
 def test_session_bucket_and_used_metrics(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["bucket"] == {"session_words": 3, "section_words": 0, "total": 3}
     assert report["precision_used"] == pytest.approx(2 / 4, abs=1e-4)
     assert report["recall_used"] == pytest.approx(2 / 4, abs=1e-4)
@@ -158,7 +159,7 @@ def test_section_bucket(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--section-min-s", "2.0"]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["bucket"] == {"session_words": 0, "section_words": 6, "total": 6}
     assert report["precision"] == pytest.approx(2 / 8, abs=1e-4)
     assert report["recall"] == pytest.approx(1.0, abs=1e-4)
@@ -184,14 +185,14 @@ def test_section_below_threshold_not_bucketed(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--section-min-s", "5.0"]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["bucket"]["section_words"] == 0
 
 
 def test_disagreement_grouping_and_ranking(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     runs = report["disagreements"]
     assert len(runs) == 3
     assert runs[0] == {
@@ -208,14 +209,14 @@ def test_disagreement_grouping_and_ranking(tmp_path, capsys):
 def test_cross_check_agrees(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["cross_check"] == {"subs_from_edit_words_kept": 4, "agrees": True}
 
 
 def test_json_ok_is_first_key(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert list(report.keys())[0] == "ok"
     assert report["ok"] is True
     assert report["llm_cost_usd"] == 0.0
@@ -228,7 +229,7 @@ def test_out_writes_report(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--out", str(out)]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert json.loads(out.read_text(encoding="utf-8")) == report
 
 
@@ -237,7 +238,7 @@ def test_missing_edit_is_exit_2(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, tmp_path / "nope.json", sessions_path, fcproj, "Main", words_dir
     )
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "nope.json" in err
     assert report == {"ok": False, "error": report["error"]}
 
@@ -247,16 +248,16 @@ def test_missing_sessions_is_exit_2(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, our_edit, tmp_path / "nope.yaml", fcproj, "Main", words_dir
     )
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "nope.yaml" in err
 
 
-def test_missing_words_is_exit_2(tmp_path, capsys):
+def test_missing_words_is_exit_3(tmp_path, capsys):
     our_edit, sessions_path, fcproj, _ = build_controlled_case(tmp_path, capsys)
     empty = tmp_path / "empty"
     empty.mkdir()
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", empty)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     assert "camA.json" in err
 
 
@@ -265,14 +266,14 @@ def test_missing_fcproj_is_exit_2(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, tmp_path / "nope.fcproj", "Main", words_dir
     )
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "nope.fcproj" in err
 
 
 def test_bad_sequence_is_exit_2(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Nope", words_dir)
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "Nope" in err and "Main" in err
 
 
@@ -286,7 +287,7 @@ def test_speed_not_one_is_exit_2(tmp_path, capsys):
     broken = tmp_path / "speed.fcproj"
     broken.write_text(json.dumps(data), encoding="utf-8")
     code, report, err = run_eval(capsys, our_edit, sessions_path, broken, "Main", words_dir)
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "speed" in err
 
 
@@ -300,7 +301,7 @@ def test_reverse_is_exit_2(tmp_path, capsys):
     broken = tmp_path / "reverse.fcproj"
     broken.write_text(json.dumps(data), encoding="utf-8")
     code, report, err = run_eval(capsys, our_edit, sessions_path, broken, "Main", words_dir)
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "reverse" in err
 
 
@@ -324,7 +325,7 @@ def test_disabled_clip_is_skipped(tmp_path, capsys):
     disabled = tmp_path / "disabled.fcproj"
     disabled.write_text(json.dumps(data), encoding="utf-8")
     code, report, err = run_eval(capsys, our_edit, sessions_path, disabled, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 0
     assert report["doru"]["sessions_used"] == 0
     assert report["bucket"]["session_words"] == 8
@@ -347,13 +348,13 @@ def test_until_s_trims_the_boundary_clip(tmp_path, capsys):
     )
 
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 8
 
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "3.0"]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 6
 
 
@@ -371,13 +372,13 @@ def test_until_s_excludes_words_outside_the_covered_span(tmp_path, capsys):
     fcproj = build_reference(tmp_path, capsys, [source("camA")], [slot("r001", "camA", 1.0, 3.0)])
 
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["ours"]["kept"] == 8
 
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "150"]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["ours"]["kept"] == 4
 
 
@@ -403,7 +404,7 @@ def test_until_s_buckets_stems_used_only_after_s(tmp_path, capsys):
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "1.0"]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 2
     assert report["bucket"]["session_words"] == 3
 
@@ -412,13 +413,13 @@ def test_until_s_reported(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
 
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["until_s"] is None
 
     code, report, err = run_eval(
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", "150"]
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["until_s"] == 150.0
 
 
@@ -428,7 +429,7 @@ def test_until_s_nonpositive_is_exit_2(tmp_path, capsys):
         code, report, err = run_eval(
             capsys, our_edit, sessions_path, fcproj, "Main", words_dir, extra=["--until-s", value]
         )
-        assert code == 2
+        assert code == EXIT_USAGE
         assert "--until-s" in err
         assert report == {"ok": False, "error": report["error"]}
 
@@ -442,7 +443,7 @@ def write_review(tmp_path, rows):
 def test_review_keep_moves_dropped_words_to_doru(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 4
     assert report["recall"] == pytest.approx(2 / 4, abs=1e-4)
     assert "review_rows" not in report
@@ -455,7 +456,7 @@ def test_review_keep_moves_dropped_words_to_doru(tmp_path, capsys):
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir,
         extra=["--review", str(review)],
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 6
     assert report["recall"] == pytest.approx(2 / 6, abs=1e-4)
     assert report["review_rows"] == 1
@@ -464,7 +465,7 @@ def test_review_keep_moves_dropped_words_to_doru(tmp_path, capsys):
 def test_review_cut_moves_kept_words_to_doru_dropped(tmp_path, capsys):
     our_edit, sessions_path, fcproj, words_dir = build_controlled_case(tmp_path, capsys)
     code, report, err = run_eval(capsys, our_edit, sessions_path, fcproj, "Main", words_dir)
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["precision"] == pytest.approx(2 / 6, abs=1e-4)
 
     review = write_review(tmp_path, [
@@ -475,7 +476,7 @@ def test_review_cut_moves_kept_words_to_doru_dropped(tmp_path, capsys):
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir,
         extra=["--review", str(review)],
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 3
     assert report["precision"] == pytest.approx(1 / 6, abs=1e-4)
     assert report["review_rows"] == 1
@@ -487,7 +488,7 @@ def test_review_missing_file_is_exit_2(tmp_path, capsys):
         capsys, our_edit, sessions_path, fcproj, "Main", words_dir,
         extra=["--review", str(tmp_path / "nope.yaml")],
     )
-    assert code == 2
+    assert code == EXIT_USAGE
     assert "nope.yaml" in err
 
 
@@ -503,13 +504,13 @@ def test_reference_cross_check(tmp_path, capsys):
     ])
     edit_path = tmp_path / "edit.json"
     code = rc.main([str(sessions_path), "--out", str(edit_path), "--json"])
-    assert code == 0
+    assert code == EXIT_OK
     capsys.readouterr()
 
     code, report, err = run_eval(
         capsys, edit_path, sessions_path, REFERENCE_FCPROJ, REFERENCE_SEQUENCE, json_dir
     )
-    assert code == 0, err
+    assert code == EXIT_OK, err
     assert report["doru"]["kept"] == 1955
     assert report["cross_check"]["subs_from_edit_words_kept"] == 1891
     assert report["cross_check"]["agrees"] is True

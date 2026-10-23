@@ -63,6 +63,11 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - No ComfyUI: music, SFX and clean-up are plain Python tools, one model loaded at a time. — 2026-10-13
 - No torch unless needed; the encoder is `h264_nvenc` with an NVIDIA GPU, `h264_videotoolbox` on macOS, else `libx264`, with a runtime retry to `libx264`. — 2026-10-12 / 2026-10-14
 
+## Tool exit codes
+
+- One table for every tool (AUDIT F08): `0` success; `1` finished, but found something a human must look at (check-type tools, suspect results); `2` usage, input or config error, nothing ran (bad flags, missing input file, missing or broken config); `3` runtime failure after work started (external program, model call, disk). The four constants live in `scripts/common/exit_codes.py` (`EXIT_OK`, `EXIT_ATTENTION`, `EXIT_USAGE`, `EXIT_RUNTIME`) and every `main()` returns them. `scripts/mode_b.py` is the one exception and keeps its documented 0/1/2/3 meanings (all clear / suspect / incomplete / error). — 2026-10-23 (AUDIT lot 3b1)
+- A tool reports `EXIT_USAGE` for the input and config problems it detects itself and `EXIT_RUNTIME` for failures of the work it started — including a called program that failed, whatever that program's own exit code was; a model answer that cannot be parsed is a model-call failure (`EXIT_RUNTIME`), and a missing `OPENROUTER_API_KEY` is a config error (`EXIT_USAGE`). — 2026-10-23 (AUDIT lot 3b1)
+
 ## Safety rules
 
 - Originals are read-only; outputs go to the project workspace; tools refuse to write inside the originals folder. — 2026-10-13

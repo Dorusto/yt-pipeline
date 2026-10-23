@@ -29,6 +29,7 @@ from common.corrections import (
     resolve_corrections_file,
 )
 from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def main():
@@ -41,7 +42,7 @@ def main():
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(EXIT_USAGE)
 
 
 def run(json_out=False, started=None):
@@ -50,7 +51,7 @@ def run(json_out=False, started=None):
     positionals = [a for a in sys.argv[1:] if not a.startswith("--")]
     if not positionals:
         print("Utilizare: python3 correct_srt.py input.srt [output.srt] [--json]", file=stream)
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     input_file = positionals[0]
     output_file = positionals[1] if len(positionals) > 1 else input_file.replace(".srt", "_corectat.srt")

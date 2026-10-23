@@ -41,6 +41,7 @@ import yaml
 
 from common.schema import SchemaError, validate
 from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 FPS = 25
 
@@ -317,7 +318,7 @@ def main(argv=None):
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
 
     if not args.skip_melt:
         result = subprocess.run(
@@ -335,13 +336,13 @@ def main(argv=None):
             else:
                 print("melt validation FAILED:")
                 print(result.stderr[-2000:])
-            return 1
+            return EXIT_RUNTIME
         if not args.json:
             print("melt validation OK")
 
     if args.json:
         print(json.dumps({"ok": True, "output": out_path, **summary_fields(started)}))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

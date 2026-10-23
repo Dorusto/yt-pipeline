@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 from common.config import ConfigError
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/doctor.py"
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -354,13 +355,13 @@ def main(argv=None):
         checks = run_checks(source, workspace)
     except Exception as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
     summary = build_summary(checks, source, workspace, started)
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(checks)
-    return 0 if summary["ok"] else 1
+    return EXIT_OK if summary["ok"] else EXIT_ATTENTION
 
 
 if __name__ == "__main__":

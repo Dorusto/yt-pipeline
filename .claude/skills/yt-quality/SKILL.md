@@ -19,7 +19,7 @@ Measure the quality of a clip and label every segment with a role before any edi
 - `--motion-dir` (default `DIR/motion`) is where the matching `motion/<stem>.json` is looked up. When it is present it drives segmentation and carries the camera label and shake; when it is absent the tool still works on its own coarse still/moving segmentation and adds the warning `no motion file; segments are coarse`.
 - `--sample-fps` (default 2) sets how many frames per second are decoded for the measurements; the rest are skipped. `--width` (default 320) scales frames down before measuring.
 - `--force` re-analyses a clip whose output already exists. Without it, a clip whose JSON exists and validates against the `quality` schema is skipped and counted as `skipped`.
-- On any error (missing input, unreadable video, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing input, unreadable video) or `3` (runtime failure after work started: disk write failed). It never asks questions.
 
 ## Step 2: read the result
 

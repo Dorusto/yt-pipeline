@@ -37,6 +37,7 @@ from common.ambience import (
     build_filters,
     resolve_denoiser,
 )
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.ffmpeg_tools import ffmpeg_path
 
 ANALYSIS_RATE = 48000
@@ -58,6 +59,10 @@ CODECS = {
 
 class AudioCleanError(RuntimeError):
     """Raised when a clip's audio cannot be measured or cleaned."""
+
+
+class AudioCleanRuntimeError(AudioCleanError):
+    """Raised when ffmpeg or ffprobe fails after the run started."""
 
 
 def build_parser():
@@ -137,14 +142,14 @@ def probe_audio_info(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise AudioCleanError(f"could not run ffprobe: {exc}") from exc
+        raise AudioCleanRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
-        raise AudioCleanError(f"ffprobe failed for {path}: {detail[-1] if detail else 'unknown error'}")
+        raise AudioCleanRuntimeError(f"ffprobe failed for {path}: {detail[-1] if detail else 'unknown error'}")
     try:
         streams = json.loads(result.stdout).get("streams") or []
     except json.JSONDecodeError as exc:
-        raise AudioCleanError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+        raise AudioCleanRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
     if not streams:
         return None
     stream = streams[0]
@@ -176,10 +181,10 @@ def decode_mono(path, directory):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise AudioCleanError(f"could not run ffmpeg: {exc}") from exc
+        raise AudioCleanRuntimeError(f"could not run ffmpeg: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
-        raise AudioCleanError(f"ffmpeg could not decode {path}: {detail[-1] if detail else 'unknown error'}")
+        raise AudioCleanRuntimeError(f"ffmpeg could not decode {path}: {detail[-1] if detail else 'unknown error'}")
     data = np.fromfile(target, dtype="<i2")
     return data.astype(np.float64) / 32768.0
 
@@ -287,7 +292,7 @@ def encode_clean(input_path, out_path, info, filters):
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             detail = (result.stderr or "").strip().splitlines()
-            raise AudioCleanError(f"ffmpeg failed: {detail[-1] if detail else 'unknown error'}")
+            raise AudioCleanRuntimeError(f"ffmpeg failed: {detail[-1] if detail else 'unknown error'}")
         os.replace(temporary, out_path)
     finally:
         if temporary.exists():
@@ -442,9 +447,12 @@ def main(argv=None):
             no_loudnorm=args.no_loudnorm,
             force=args.force,
         )
+    except AudioCleanRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except AudioCleanError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:
@@ -459,7 +467,7 @@ def main(argv=None):
                 print(f"wrote {summary['report']}")
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

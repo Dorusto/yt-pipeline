@@ -28,6 +28,7 @@ from common.timeline_words import (
     map_words,
     plan_from_fcproj,
 )
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 SENTENCE_END = (".", "!", "?", "\u2026")
 MAX_LINES = 2
@@ -241,7 +242,7 @@ def main(argv=None):
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))
@@ -250,7 +251,7 @@ def main(argv=None):
             f"written: {summary['outputs']['srt']} and {summary['outputs']['words_json']} "
             f"({summary['words_kept']} words, {summary['cues']} cues)"
         )
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

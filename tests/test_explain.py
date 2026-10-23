@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import explain
+from common.exit_codes import EXIT_OK, EXIT_USAGE
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -253,7 +254,7 @@ def test_fixtures_are_schema_valid(tmp_path):
 def test_explain_writes_html_with_brief_plan_timeline_and_candidates(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     result = run_tool(workspace, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert summary["status"] == "written"
     assert summary["out"] == str(workspace / "explain.html")
@@ -315,18 +316,18 @@ def test_stale_output_is_rewritten_without_force(tmp_path):
     assert json.loads(second.stdout)["status"] == "written"
 
 
-def test_missing_edit_json_exits_1(tmp_path):
+def test_missing_edit_json_exits_2(tmp_path):
     workspace = tmp_path / "empty"
     workspace.mkdir()
     result = run_tool(workspace, "--json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
     assert result.stdout.strip() == ""
 
 
-def test_missing_workspace_exits_1(tmp_path):
+def test_missing_workspace_exits_2(tmp_path):
     result = run_tool(tmp_path / "nope", "--json")
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 
@@ -334,7 +335,7 @@ def test_without_shot_plan_says_so_in_one_line(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     (workspace / "shot_plan.json").unlink()
     result = run_tool(workspace, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert "No shot plan (shot_plan.json) in this workspace" in html
     assert LOGLINE not in html
@@ -344,7 +345,7 @@ def test_unreadable_video_source_shows_placeholder_and_photo_still_renders(tmp_p
     workspace = build_workspace(tmp_path / "ws")
     (workspace / "media" / "clip_0071.mp4").unlink()
     result = run_tool(workspace, "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert 'class="thumb placeholder"' in html
     assert "clip_0071.mp4" in html
@@ -355,15 +356,15 @@ def test_out_path_override_and_refusals(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     out = tmp_path / "elsewhere" / "custom.html"
     result = run_tool(workspace, "--out", str(out), "--json")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     summary = json.loads(result.stdout)
     assert summary["out"] == str(out)
     assert out.exists()
     inside_sources = run_tool(workspace, "--out", str(workspace / "media" / "explain.html"), "--json")
-    assert inside_sources.returncode == 1
+    assert inside_sources.returncode == EXIT_USAGE
     assert "sources folder" in inside_sources.stderr
     onto_source = run_tool(workspace, "--out", str(workspace / "media" / "photo_01.jpg"), "--json")
-    assert onto_source.returncode == 1
+    assert onto_source.returncode == EXIT_USAGE
     assert "[error]" in onto_source.stderr
     assert (workspace / "media" / "photo_01.jpg").is_file()
 
@@ -371,17 +372,17 @@ def test_out_path_override_and_refusals(tmp_path):
 def test_human_output_mentions_written_and_up_to_date(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     first = run_tool(workspace)
-    assert first.returncode == 0, first.stderr
+    assert first.returncode == EXIT_OK, first.stderr
     assert "wrote" in first.stdout
     assert first.stdout.strip().startswith("{") is False
     second = run_tool(workspace)
-    assert second.returncode == 0, second.stderr
+    assert second.returncode == EXIT_OK, second.stderr
     assert "up to date" in second.stdout
 
 
 def test_help_prints_examples():
     result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
-    assert result.returncode == 0
+    assert result.returncode == EXIT_OK
     assert "examples:" in result.stdout
     assert "--workspace" in result.stdout
     assert "--force" in result.stdout
@@ -391,7 +392,7 @@ def test_run_returns_skipped_summary_counts(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     run_tool(workspace)
     summary, exit_code = explain.run(workspace)
-    assert exit_code == 0
+    assert exit_code == EXIT_OK
     assert summary["status"] == "skipped"
     assert summary["slots"] == 3
     assert summary["candidates"] == 5
@@ -405,7 +406,7 @@ def test_explain_shows_the_middle_speed_ramp_on_the_slot(tmp_path):
     edit["video"][0]["middle_speed"] = 1.2
     write_json(workspace / "edit.json", edit)
     result = run_tool(workspace, "--force")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert "middle at 1.20x" in html
 
@@ -417,7 +418,7 @@ def test_explain_says_where_a_centred_cut_is_centred_and_from_what(tmp_path):
     first.update({"peak_s": 12.4, "peak_source": "vision", "centred": True})
     write_json(workspace / "edit.json", edit)
     result = run_tool(workspace, "--force")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert "centred on the best moment at 12.4 s (from vision)" in html
 
@@ -428,7 +429,7 @@ def test_explain_stays_quiet_when_the_cut_was_not_trimmed_around_a_peak(tmp_path
     edit["video"][0].update({"peak_s": 12.4, "peak_source": "motion", "centred": False})
     write_json(workspace / "edit.json", edit)
     result = run_tool(workspace, "--force")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == EXIT_OK, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
     assert "centred on the best moment" not in html
 

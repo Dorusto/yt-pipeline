@@ -10,6 +10,7 @@ import pysubs2
 import pytest
 
 import shorts_generator as sg
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 CANDIDATES = {
     "schema_version": "0.1",
@@ -142,7 +143,7 @@ def test_main_with_candidates_uses_file_segments(monkeypatch, tmp_path, capsys):
     assert renders == [(1.5, 25.0, "Short1-short1.mp4"), (30.0, 55.0, "Short2-short2.mp4")]
 
 
-def test_main_bad_candidates_exit_1(monkeypatch, tmp_path, capsys):
+def test_main_bad_candidates_exit_2(monkeypatch, tmp_path, capsys):
     cfg = write_config(tmp_path, 'video: "Clip.mp4"\nsrt: "Clip_RO.srt"\n')
     monkeypatch.setattr(sg, "CONFIG_PATH", cfg)
     video = tmp_path / "Clip.mp4"
@@ -155,7 +156,7 @@ def test_main_bad_candidates_exit_1(monkeypatch, tmp_path, capsys):
         "--video", str(video), "--srt", str(srt), "--candidates", str(bad),
         "--yes", "--encoder", "libx264",
     ])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "candidates" in captured.err
@@ -578,7 +579,7 @@ def test_main_split_ignores_x_offset(monkeypatch, tmp_path, capsys):
     assert "x_offset ignored in split layout" in capsys.readouterr().out
 
 
-def test_main_bad_layout_exit_1(monkeypatch, tmp_path, capsys):
+def test_main_bad_layout_exit_2(monkeypatch, tmp_path, capsys):
     cfg = write_config(
         tmp_path,
         'video: "Clip.mp4"\nsrt: "Clip_RO.srt"\nlayout: bogus\n'
@@ -590,7 +591,7 @@ def test_main_bad_layout_exit_1(monkeypatch, tmp_path, capsys):
     srt = write_srt(tmp_path)
 
     code = sg.main(["--video", str(video), "--srt", str(srt), "--yes", "--encoder", "libx264"])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "bogus" in capsys.readouterr().err
 
 

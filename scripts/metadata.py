@@ -27,6 +27,7 @@ from pathlib import Path
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "metadata.md"
 MEMBERS_SENTENCE = (
@@ -42,6 +43,9 @@ _client = None
 class MetadataError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
 
+
+class MetadataRuntimeError(MetadataError):
+    """Raised when the model answer cannot be used after the call."""
 
 def get_client():
     global _client
@@ -117,21 +121,21 @@ def parse_model_json(text):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise MetadataError(f"model response is not valid JSON: {exc}")
+        raise MetadataRuntimeError(f"model response is not valid JSON: {exc}")
 
 
 def require_key(data, key):
     if key not in data:
-        raise MetadataError(f"model JSON is missing key '{key}'")
+        raise MetadataRuntimeError(f"model JSON is missing key '{key}'")
     return data[key]
 
 
 def require_localized(value, key):
     if not isinstance(value, dict):
-        raise MetadataError(f"model JSON key '{key}' must be an object with 'ro' and 'en'")
+        raise MetadataRuntimeError(f"model JSON key '{key}' must be an object with 'ro' and 'en'")
     for lang in ("ro", "en"):
         if not isinstance(value.get(lang), str):
-            raise MetadataError(f"model JSON key '{key}.{lang}' must be a string")
+            raise MetadataRuntimeError(f"model JSON key '{key}.{lang}' must be a string")
     return value
 
 
@@ -148,11 +152,11 @@ def validate_model_json(data, require_chapters=True):
     value is ignored (the caller supplies the chapters from a file).
     """
     if not isinstance(data, dict):
-        raise MetadataError("model response is not a JSON object")
+        raise MetadataRuntimeError("model response is not a JSON object")
 
     titles = require_key(data, "titles")
     if not isinstance(titles, list) or len(titles) != 3 or not all(isinstance(t, str) for t in titles):
-        raise MetadataError("model JSON key 'titles' must be a list of exactly 3 strings")
+        raise MetadataRuntimeError("model JSON key 'titles' must be a list of exactly 3 strings")
 
     intro = require_localized(require_key(data, "intro"), "intro")
     github_line = optional_localized(require_key(data, "github_line"), "github_line")
@@ -161,38 +165,38 @@ def validate_model_json(data, require_chapters=True):
 
     promo_lines = require_key(data, "promo_lines")
     if not isinstance(promo_lines, list):
-        raise MetadataError("model JSON key 'promo_lines' must be a list")
+        raise MetadataRuntimeError("model JSON key 'promo_lines' must be a list")
     for index, promo in enumerate(promo_lines):
         if not isinstance(promo, dict):
-            raise MetadataError(f"model JSON key 'promo_lines[{index}]' must be an object")
+            raise MetadataRuntimeError(f"model JSON key 'promo_lines[{index}]' must be an object")
         for field in ("ro", "en", "label"):
             if not isinstance(promo.get(field), str):
-                raise MetadataError(f"model JSON key 'promo_lines[{index}].{field}' must be a string")
+                raise MetadataRuntimeError(f"model JSON key 'promo_lines[{index}].{field}' must be a string")
 
     chapters = None
     if require_chapters:
         chapters = require_key(data, "chapters")
         if not isinstance(chapters, list):
-            raise MetadataError("model JSON key 'chapters' must be a list")
+            raise MetadataRuntimeError("model JSON key 'chapters' must be a list")
         for index, chapter in enumerate(chapters):
             if not isinstance(chapter, dict):
-                raise MetadataError(f"model JSON key 'chapters[{index}]' must be an object")
+                raise MetadataRuntimeError(f"model JSON key 'chapters[{index}]' must be an object")
             if not isinstance(chapter.get("timestamp"), str):
-                raise MetadataError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
+                raise MetadataRuntimeError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
             if not isinstance(chapter.get("title"), str):
-                raise MetadataError(f"model JSON key 'chapters[{index}].title' must be a string")
+                raise MetadataRuntimeError(f"model JSON key 'chapters[{index}].title' must be a string")
 
     tags = require_key(data, "tags")
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
-        raise MetadataError("model JSON key 'tags' must be a list of strings")
+        raise MetadataRuntimeError("model JSON key 'tags' must be a list of strings")
 
     pinned_comment = require_key(data, "pinned_comment")
     if not isinstance(pinned_comment, str):
-        raise MetadataError("model JSON key 'pinned_comment' must be a string")
+        raise MetadataRuntimeError("model JSON key 'pinned_comment' must be a string")
 
     thumbnail_concepts = require_key(data, "thumbnail_concepts")
     if not isinstance(thumbnail_concepts, list) or not 2 <= len(thumbnail_concepts) <= 3:
-        raise MetadataError("model JSON key 'thumbnail_concepts' must be a list of 2 or 3 concepts")
+        raise MetadataRuntimeError("model JSON key 'thumbnail_concepts' must be a list of 2 or 3 concepts")
     for index, concept in enumerate(thumbnail_concepts):
         validate_thumbnail_concept(concept, index)
 
@@ -545,9 +549,12 @@ def main(argv=None):
             prompt_path=args.prompt,
             chapters_path=args.chapters,
         )
-    except (MetadataError, ConfigError, LLMError) as exc:
+    except (MetadataRuntimeError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_RUNTIME
+    except (MetadataError, ConfigError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps(summary))
@@ -556,7 +563,7 @@ def main(argv=None):
             f"written: {summary['output']} "
             f"({summary['titles']} titles, {summary['chapters']} chapters, {summary['tags']} tags)"
         )
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

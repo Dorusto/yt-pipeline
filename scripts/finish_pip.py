@@ -34,6 +34,7 @@ from common.constants import TICKS_PER_SECOND
 from common.filmcraft import cli_path, parse_frame_rate
 from common.media import clip_kind, is_matte_export, is_video_name
 from common.overlap import overlap_bounds
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
@@ -1010,12 +1011,12 @@ def main(argv=None):
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_USAGE
     except Exception as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 1
+        return EXIT_RUNTIME
 
     if args.json:
         print(json.dumps(summary))
@@ -1027,7 +1028,7 @@ def main(argv=None):
         print(f"written: {', '.join(summary['steps_files']) or 'nothing'} ({summary['placements']} placements)")
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

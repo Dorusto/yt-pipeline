@@ -27,6 +27,7 @@ from pathlib import Path
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 BATCH_CHARS = 80000
 DATE_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{6})")
@@ -105,12 +106,12 @@ def main():
     positionals = [a for a in sys.argv[1:] if not a.startswith("--")]
     if not positionals:
         print("Utilizare: python3 daily_summary_srt.py transcripts_raw/ [output.md] [--json]", file=stream)
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     srt_dir = Path(positionals[0]).expanduser().resolve()
     if not srt_dir.is_dir():
         print(f"[eroare] Folder negăsit: {srt_dir}", file=stream)
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     output_path = Path(positionals[1]).expanduser().resolve() if len(positionals) > 1 \
         else srt_dir.resolve().parent / "rezumat_pe_zile.md"
@@ -123,7 +124,7 @@ def main():
 
     if not days:
         print("[eroare] Niciun fișier .srt cu dată recognoscibilă în nume.", file=stream)
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     print(f"{len(days)} zile găsite: {', '.join(days.keys())}", file=stream)
 
@@ -144,12 +145,18 @@ def main():
             f.write("\n".join(sections))
 
         print(f"\nSalvat: {output_path}", file=stream)
-    except (ConfigError, LLMError) as exc:
+    except ConfigError as exc:
         if json_out:
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(EXIT_USAGE)
+    except LLMError as exc:
+        if json_out:
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(EXIT_RUNTIME)
 
     if json_out:
         print(json.dumps({

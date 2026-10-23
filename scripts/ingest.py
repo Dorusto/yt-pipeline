@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.photos import PHOTO_EXTENSIONS, PhotoError, is_photo, photo_metadata
 from common.schema import SchemaError, validate_or_raise
 from common.summary import summary_fields
@@ -36,6 +37,10 @@ FILENAME_TIME_RE = re.compile(r"(\d{8})_?(\d{6})")
 
 class IngestError(RuntimeError):
     """Raised when a scan cannot be completed."""
+
+
+class IngestRuntimeError(RuntimeError):
+    """Raised when the scan fails after it started (ffprobe, disk)."""
 
 
 def build_parser():
@@ -221,14 +226,14 @@ def run_ffprobe(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise IngestError(f"could not run ffprobe: {exc}") from exc
+        raise IngestRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise IngestError(f"ffprobe failed for {path.name}: {detail}")
+        raise IngestRuntimeError(f"ffprobe failed for {path.name}: {detail}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise IngestError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
+        raise IngestRuntimeError(f"ffprobe returned invalid JSON for {path.name}: {exc}") from exc
 
 
 def probe_clip(path):
@@ -340,9 +345,15 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         data, output_path = scan(args.source_dir, args.workspace)
+    except IngestRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except (IngestError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     clips = data["clips"]
     summary = {
         "clips": len(clips),
@@ -360,7 +371,7 @@ def main(argv=None):
             f"({summary['total_duration_s']} s total, {summary['gyro_clips']} with gyro)"
         )
         print(f"wrote {summary['output']}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

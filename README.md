@@ -84,6 +84,8 @@ All scripts live in `scripts/` (see paths above for exact commands).
 
 Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
 
+**Exit codes** (every tool, constants in `scripts/common/exit_codes.py`): `0` success, `1` finished but something needs a human look (check-type tools, suspect results), `2` usage/input/config error and nothing ran, `3` runtime failure after work started (external program, model call, disk). `scripts/mode_b.py` is the one exception and keeps its own documented `0`/`1`/`2`/`3` meanings (all clear / suspect / incomplete / error).
+
 ---
 
 ## Foundation (AI Director, phase D0)

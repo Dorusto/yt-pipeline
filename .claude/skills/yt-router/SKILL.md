@@ -16,7 +16,7 @@ The front door of the AI Director pipeline. It reads a brief in plain language p
 .venv/bin/python scripts/router.py --workspace /path/to/workspace --content-type tutorial --out route.json
 ```
 
-- Give exactly one of `--brief` (inline text) or `--brief-file` (path). Neither exits 1 with one `[error] ...` line on stderr.
+- Give exactly one of `--brief` (inline text) or `--brief-file` (path). Neither exits 2 with one `[error] ...` line on stderr.
 - `--workspace DIR` is optional. When given it is used for content-type detection and the output defaults to `DIR/route.json`; without it the output is `./route.json`.
 - `--content-type {vacation,tutorial,presentation,talking-head}` forces the type and reports `content_type_source: "flag"`.
 - `--out PATH` overrides the output path. `--force` rewrites even when the output is up to date.

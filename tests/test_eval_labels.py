@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import eval_labels
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.schema import validate
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
@@ -293,7 +294,7 @@ def test_fixture_run_json_validates_and_scores(capsys):
             "--json",
         ]
     )
-    assert code == 0
+    assert code == EXIT_OK
     report = json.loads(capsys.readouterr().out)
     assert validate(report, "eval") == []
     assert report["meta"]["llm_cost_usd"] == 0.0
@@ -319,7 +320,7 @@ def test_table_output_layout(capsys):
             str(FIXTURES / "workspace"),
         ]
     )
-    assert code == 0
+    assert code == EXIT_OK
     lines = capsys.readouterr().out.strip().splitlines()
     assert lines[0] == "clip    move  role  horizon  events  overall"
     assert lines[1].startswith("0100")
@@ -338,9 +339,9 @@ def test_out_written_and_overwritten(tmp_path):
         "--out",
         str(out),
     ]
-    assert eval_labels.main(args) == 0
+    assert eval_labels.main(args) == EXIT_OK
     first = json.loads(out.read_text(encoding="utf-8"))
-    assert eval_labels.main(args) == 0
+    assert eval_labels.main(args) == EXIT_OK
     second = json.loads(out.read_text(encoding="utf-8"))
     for report in (first, second):
         report.pop("generated_at")
@@ -361,7 +362,7 @@ def test_out_write_failure_exits_one(tmp_path, capsys):
             str(tmp_path / "missing" / "report.json"),
         ]
     )
-    assert code == 1
+    assert code == EXIT_RUNTIME
     assert "[error]" in capsys.readouterr().err
 
 
@@ -369,7 +370,7 @@ def test_exit_one_missing_ground_truth(tmp_path, capsys):
     (tmp_path / "motion").mkdir()
     (tmp_path / "quality").mkdir()
     code = eval_labels.main(["--ground-truth", str(tmp_path / "nope.yaml"), "--workspace", str(tmp_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -379,7 +380,7 @@ def test_exit_one_missing_workspace(tmp_path, capsys):
     code = eval_labels.main(
         ["--ground-truth", str(ground_truth), "--workspace", str(tmp_path / "nope")]
     )
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -389,7 +390,7 @@ def test_exit_one_unparseable_ground_truth(tmp_path, capsys):
     workspace = tmp_path / "ws"
     workspace.mkdir()
     code = eval_labels.main(["--ground-truth", str(ground_truth), "--workspace", str(workspace)])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -503,7 +504,7 @@ def test_labels_shotlog_without_shotlog_exits_one(tmp_path, capsys):
     code = eval_labels.main(
         ["--ground-truth", str(ground_truth), "--workspace", str(tmp_path), "--labels", "shotlog"]
     )
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -588,7 +589,7 @@ def test_shotlog_report_validates_and_json_keys(tmp_path, capsys):
             "--json",
         ]
     )
-    assert code == 0
+    assert code == EXIT_OK
     report = json.loads(capsys.readouterr().out)
     assert validate(report, "eval") == []
     assert report["meta"]["llm_cost_usd"] == 0.0
@@ -599,7 +600,7 @@ def test_shotlog_report_validates_and_json_keys(tmp_path, capsys):
 def test_help_lists_labels(capsys):
     with pytest.raises(SystemExit) as excinfo:
         eval_labels.main(["--help"])
-    assert excinfo.value.code == 0
+    assert excinfo.value.code == EXIT_OK
     out = capsys.readouterr().out
     assert "--labels" in out
     assert "auto" in out

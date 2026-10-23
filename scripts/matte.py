@@ -26,6 +26,7 @@ from pathlib import Path
 import cv2
 
 from common.ffmpeg_tools import ffmpeg_path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 RATIO_4K = 0.125
 RATIO_1080P = 0.25
@@ -131,7 +132,7 @@ def probe_video(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise MatteError(f"could not run ffprobe: {exc}")
+        raise MatteRuntimeError(f"could not run ffprobe: {exc}")
     if result.returncode != 0:
         lines = (result.stderr or "").strip().splitlines()
         detail = lines[-1] if lines else "unknown error"
@@ -139,7 +140,7 @@ def probe_video(path):
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise MatteError(f"ffprobe returned invalid JSON for {path}: {exc}")
+        raise MatteRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}")
     streams = data.get("streams") or []
     if not streams:
         raise MatteError(f"no video stream in {path}")
@@ -165,7 +166,7 @@ def load_model(torch, device):
     try:
         model = torch.hub.load(HUB_REPO, HUB_MODEL, trust_repo=True)
     except Exception as exc:
-        raise MatteError(f"could not load RVM via torch.hub: {exc}")
+        raise MatteRuntimeError(f"could not load RVM via torch.hub: {exc}")
     return model.eval().to(device)
 
 
@@ -259,7 +260,7 @@ def encode_prores(fgr_dir, pha_dir, fps_str, output):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise MatteError(f"could not run ffmpeg: {exc}")
+        raise MatteRuntimeError(f"could not run ffmpeg: {exc}")
     try:
         if result.returncode != 0:
             lines = (result.stderr or "").strip().splitlines()
@@ -291,9 +292,9 @@ def run(video, start=None, end=None, ratio=None, out=None):
         raise MatteError(f"--start {start} must be before --end {end}")
 
     if shutil.which("ffmpeg") is None:
-        raise MatteError("ffmpeg not found on PATH")
+        raise MatteRuntimeError("ffmpeg not found on PATH")
     if shutil.which("ffprobe") is None:
-        raise MatteError("ffprobe not found on PATH")
+        raise MatteRuntimeError("ffprobe not found on PATH")
 
     info = probe_video(video)
     duration = info["duration"]
@@ -310,7 +311,7 @@ def run(video, start=None, end=None, ratio=None, out=None):
     try:
         import torch
     except ImportError:
-        raise MatteError(MISSING_TORCH)
+        raise MatteRuntimeError(MISSING_TORCH)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = load_model(torch, device)
@@ -325,7 +326,7 @@ def run(video, start=None, end=None, ratio=None, out=None):
             torch, model, device, video, start_s, end_s, effective_ratio, fgr_dir, pha_dir
         )
         if frames == 0:
-            raise MatteError(f"no frames read from {video} in range {start_s}-{end_s}s")
+            raise MatteRuntimeError(f"no frames read from {video} in range {start_s}-{end_s}s")
         encode_prores(fgr_dir, pha_dir, info["fps_str"], output)
 
     return {
@@ -355,16 +356,16 @@ def main(argv=None):
         )
     except MatteError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
     except Exception as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
 
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"written: {summary['output']} ({summary['frames']} frames)")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

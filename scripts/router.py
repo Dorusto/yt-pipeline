@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.schema import SchemaError, validate, validate_or_raise
 
 TOOL = "scripts/router.py"
@@ -573,14 +574,17 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary = run(args)
-    except (RouterError, SchemaError, OSError) as exc:
+    except (RouterError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

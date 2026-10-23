@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 import inbox
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def make_clip(path, content=b"clip"):
@@ -371,7 +372,7 @@ def test_projects_inside_inbox_refused(tmp_path, capsys):
     inbox_dir = tmp_path / "inbox"
     make_clip(inbox_dir / "2026-10-14" / "dji_20261014_120000.mp4")
     projects = inbox_dir / "projects"
-    assert run_inbox(inbox_dir, projects) == 1
+    assert run_inbox(inbox_dir, projects) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "inside the inbox" in err
@@ -426,7 +427,7 @@ def test_failing_child_marks_group_and_others_run(tmp_path, monkeypatch, capsys)
     make_clip(inbox_dir / "2026-10-15" / "dji_20261015_120000.mp4")
     recorder = Recorder(fail_for=("2026-10-15",))
     monkeypatch.setattr(inbox, "run_recap", recorder)
-    assert run_inbox(inbox_dir, tmp_path / "projects", extra=["--json"]) == 1
+    assert run_inbox(inbox_dir, tmp_path / "projects", extra=["--json"]) == EXIT_RUNTIME
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
     assert summary["status"] == "failed"
@@ -443,9 +444,9 @@ def test_failed_group_retries_next_run(tmp_path, monkeypatch):
     recorder = Recorder(fail_for=("2026-10-14",))
     monkeypatch.setattr(inbox, "run_recap", recorder)
     projects = tmp_path / "projects"
-    assert run_inbox(inbox_dir, projects) == 1
+    assert run_inbox(inbox_dir, projects) == EXIT_RUNTIME
     assert len(recorder.calls) == 1
-    assert run_inbox(inbox_dir, projects) == 1
+    assert run_inbox(inbox_dir, projects) == EXIT_RUNTIME
     assert len(recorder.calls) == 2
 
 
@@ -683,7 +684,7 @@ def test_missing_projects_exits_1_with_three_ways(tmp_path, monkeypatch, capsys)
     monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, VALID_CONFIG)))
     inbox_dir = tmp_path / "inbox"
     make_clip(inbox_dir / "2026-10-14" / "dji_20261014_120000.mp4")
-    assert run_inbox_without_projects(inbox_dir) == 1
+    assert run_inbox_without_projects(inbox_dir) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "[error]" in err
     assert "no projects folder configured" in err

@@ -25,6 +25,7 @@ from pathlib import Path
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 BATCH_SIZE = 20
 WORKERS = 4
@@ -105,7 +106,7 @@ def main():
     positionals = [a for a in sys.argv[1:] if not a.startswith("--")]
     if not positionals:
         print("Utilizare: python3 translate_srt.py input.srt [video.mp4 | output_EN.srt] [--json]", file=stream)
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     input_file = Path(positionals[0])
     if len(positionals) > 1 and positionals[1].lower().endswith(".mp4"):
@@ -138,12 +139,18 @@ def main():
                 f.write(f"{seg['num']}\n{seg['time']}\n{translation}\n\n")
 
         print(f"Salvat: {output_file}", file=stream)
-    except (ConfigError, LLMError) as exc:
+    except ConfigError as exc:
         if json_out:
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(EXIT_USAGE)
+    except LLMError as exc:
+        if json_out:
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        sys.exit(EXIT_RUNTIME)
 
     if json_out:
         print(json.dumps({

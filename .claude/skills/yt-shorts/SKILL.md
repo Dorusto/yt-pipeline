@@ -56,11 +56,11 @@ segments:
 - `start` and `end` are `HH:MM:SS` (seconds may have decimals). End is not checked against start.
 - `name` becomes part of file names (`Short<N>-<name>.mp4`, `auto/<name>_karaoke.ass`). Use no spaces or slashes.
 - `x_offset` is optional: pixels from the left edge of the 1920-wide frame to the left edge of the crop, from 0 to 1312. Values outside that range make ffmpeg fail. A manual offset pins a fixed crop for that segment and skips subject tracking. It is ignored (with a warning) when the segment's layout is `split`.
-- `karaoke:` is optional. `safe_zone_frac` (default 0.33) sets the caption box bottom as a fraction of the frame height above the bottom, so the caption sits above the Shorts UI; `scale_active_word` (default false) adds a gentle 106% ASS scale to the active word. A non-mapping `karaoke:` value is a user error (exit 1).
-- `layout:` is optional: `face` (default) is the `reframe.py` face crop; `split` stacks the face region over the screen region of the same 16:9 frame (for a face-over-screen recording). It can be set per segment, per candidate (`shorts_candidates.json`), or top-level as the default; the first match wins. A value outside `face`/`split` is a user error (exit 1, naming the value).
+- `karaoke:` is optional. `safe_zone_frac` (default 0.33) sets the caption box bottom as a fraction of the frame height above the bottom, so the caption sits above the Shorts UI; `scale_active_word` (default false) adds a gentle 106% ASS scale to the active word. A non-mapping `karaoke:` value is a user error (exit 2).
+- `layout:` is optional: `face` (default) is the `reframe.py` face crop; `split` stacks the face region over the screen region of the same 16:9 frame (for a face-over-screen recording). It can be set per segment, per candidate (`shorts_candidates.json`), or top-level as the default; the first match wins. A value outside `face`/`split` is a user error (exit 2, naming the value).
 - `split:` is optional and only used by `layout: split`. `face_h_frac`/`screen_h_frac` are the source window heights as fractions of the source height, `face_cell_frac` is the face cell's share of the 9:16 output height, and `screen_x_frac`/`screen_y_frac` are the screen window centre as fractions of the source frame. A non-mapping `split:` value is a user error.
 - `video:` and `srt:` must be filled in or the script refuses to run, but the `video:` value is not used for anything. Do not add an `audio:` key; audio is not needed, and a missing audio file triggers an interactive prompt.
-- If `scripts/shorts_config.yaml` does not exist, the first run creates a template and exits with code 0 without rendering anything. In interactive mode config validation errors also exit with code 0, so read the output instead of trusting the exit code. Run with `--yes` in an agent context: then a missing or incomplete config, or a missing input file, exits with code 1 instead of prompting.
+- If `scripts/shorts_config.yaml` does not exist, the first run creates a template and exits with code 0 without rendering anything. In interactive mode config validation errors also exit with code 0, so read the output instead of trusting the exit code. Run with `--yes` in an agent context: then a missing or incomplete config, or a missing input file, exits with code 2 instead of prompting.
 
 ## Ranked candidates (`shorts_rank.py`)
 
@@ -92,7 +92,7 @@ Then cut the ranked candidates with `--candidates`:
 
 - With `--candidates`, the segments come from the file instead of `shorts_config.yaml`'s `segments:` (the tool's own pick): each candidate becomes `short<rank>` with its start/end and its optional `layout` (`face` or `split`). `video:`/`srt:` in the config are still required; `segments:` is not.
 - **Caveat:** the candidate times are the timeline seconds of the edit they were ranked on. Run the generator against a video with that same timeline (e.g. the rendered rough cut or the FilmCraft export that kept its timing), otherwise the cuts land on the wrong moments.
-- A bad candidates file is exit 1 with `[error] …`.
+- A bad candidates file is exit 2 with `[error] …`.
 
 ## Step 2: run
 
@@ -100,7 +100,7 @@ Then cut the ranked candidates with `--candidates`:
 .venv/bin/python scripts/shorts_generator.py --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt --yes
 ```
 
-- Always pass both `--video` and `--srt`. Without `--video` the script asks for the path with `input()`; without `--srt` (or `--audio` when the config names one) it looks in the video folder, `../subtitles/`/`../audio/` and `..`, and asks interactively if it finds nothing. A prompt needs a TTY: without one the run is a usage error (exit 2) naming the flag that replaces the prompt (`--video`, `--audio`, `--srt`) instead of blocking. `--yes` never prompts; a missing or incomplete config, or a missing input file, then exits with code 1.
+- Always pass both `--video` and `--srt`. Without `--video` the script asks for the path with `input()`; without `--srt` (or `--audio` when the config names one) it looks in the video folder, `../subtitles/`/`../audio/` and `..`, and asks interactively if it finds nothing. A prompt needs a TTY: without one the run is a usage error (exit 2) naming the flag that replaces the prompt (`--video`, `--audio`, `--srt`) instead of blocking. `--yes` never prompts; a missing or incomplete config, or a missing input file, then exits with code 2.
 - `--words FILE` burns the real word times of a timeline `_words.json` (the `subs_from_edit.py` output) instead of interpolating inside the `.srt` lines. For each segment it keeps the words whose midpoint lies in `[start, end)`, shifts them to segment time, merges hyphenated fragments and applies the corrections to the text (times unchanged). Without `--words` the SRT interpolation is used.
 - `--corrections FILE` is the `wrong|correct` list applied to the `--words` text (default `scripts/corrections.txt`; a missing file falls back to `corrections_example.txt` with a warning). It has no effect on the SRT fallback, which already reads the corrected `.srt`.
 - `--brand FILE` is the brand kit (default `brand.json` at the repo root). The caption font and colours come from it; a missing file or font is a hard error.

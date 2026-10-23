@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 import render
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def make_clip(path, duration=2.0, color="blue", freq=440, size="320x180"):
@@ -154,7 +155,7 @@ def test_invalid_edit_exits_1_without_output(tmp_path, capsys):
     edit = tmp_path / "edit.json"
     edit.write_text(json.dumps({"schema_version": "0.1"}), encoding="utf-8")
     out = tmp_path / "out.mp4"
-    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_USAGE
     assert not out.exists()
     assert "[error]" in capsys.readouterr().err
 
@@ -166,7 +167,7 @@ def test_unresolvable_clip_exits_1_without_output(tmp_path, capsys):
     data["video"][0]["clip"] = "missing.mp4"
     edit.write_text(json.dumps(data), encoding="utf-8")
     out = tmp_path / "out.mp4"
-    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_USAGE
     assert not out.exists()
     assert "[error]" in capsys.readouterr().err
 
@@ -354,7 +355,7 @@ def test_out_inside_originals_is_refused(tmp_path, capsys):
     out = originals / "final.mp4"
     assert (
         render.main(["--edit", str(edit), "--out", str(out), "--originals-dir", str(originals)])
-        == 1
+        == EXIT_USAGE
     )
     assert not out.exists()
     assert "[error]" in capsys.readouterr().err
@@ -476,7 +477,7 @@ def test_arnndn_without_model_is_an_error(tmp_path, capsys):
     code = render.main(
         ["--edit", str(edit), "--out", str(out), "--denoiser", "arnndn", "--model", str(tmp_path / "missing.rnnn"), "--json"]
     )
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "arnndn" in capsys.readouterr().err
     assert not out.exists()
 
@@ -674,7 +675,7 @@ def test_unresolvable_photo_exits_1_without_output(tmp_path, capsys):
         [photo_source(photo)],
     )
     out = tmp_path / "out.mp4"
-    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_USAGE
     assert not out.exists()
     assert "[error]" in capsys.readouterr().err
 
@@ -878,12 +879,12 @@ def test_music_newer_than_output_rerenders(tmp_path, capsys):
 def test_missing_music_file_exits_1_without_output(tmp_path, capsys):
     edit = make_music_edit(tmp_path, tmp_path / "missing.wav")
     out = tmp_path / "out.mp4"
-    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_USAGE
     assert not out.exists()
     assert "[error]" in capsys.readouterr().err
 
 
-def test_music_without_audio_stream_exits_1(tmp_path, capsys):
+def test_music_without_audio_stream_exits_2(tmp_path, capsys):
     silent = tmp_path / "silent.mp4"
     subprocess.run(
         [
@@ -909,7 +910,7 @@ def test_music_without_audio_stream_exits_1(tmp_path, capsys):
     )
     edit = make_music_edit(tmp_path, silent)
     out = tmp_path / "out.mp4"
-    assert render.main(["--edit", str(edit), "--out", str(out)]) == 1
+    assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_USAGE
     assert not out.exists()
     assert "[error]" in capsys.readouterr().err
 

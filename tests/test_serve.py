@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 import serve
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def make_root(tmp_path):
@@ -706,13 +707,13 @@ def test_invalid_range_returns_416(tmp_path):
 def test_wildcard_bind_refused(tmp_path, capsys):
     root = make_root(tmp_path)
     for value in ("0.0.0.0", "::", ""):
-        assert serve.main(["--workspaces", str(root), "--bind", value, "--check"]) == 1
+        assert serve.main(["--workspaces", str(root), "--bind", value, "--check"]) == EXIT_USAGE
     err = capsys.readouterr().err
     assert "tailnet-only: refusing to bind the wildcard address" in err
 
 
 def test_missing_root_fails(tmp_path, capsys):
-    assert serve.main(["--workspaces", str(tmp_path / "nope"), "--check"]) == 1
+    assert serve.main(["--workspaces", str(tmp_path / "nope"), "--check"]) == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 
@@ -1969,7 +1970,7 @@ def test_missing_inbox_names_the_three_ways(tmp_path, monkeypatch, capsys):
     isolate_music_env(tmp_path, monkeypatch)
     monkeypatch.delenv("YT_PIPELINE_INBOX", raising=False)
     root = make_root(tmp_path)
-    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1"]) == 1
+    assert serve.main(["--workspaces", str(root), "--bind", "127.0.0.1"]) == EXIT_USAGE
     error = capsys.readouterr().err
     assert "no inbox configured" in error
     for way in ("--inbox", "YT_PIPELINE_INBOX", "inbox.path"):

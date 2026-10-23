@@ -37,6 +37,7 @@ from pathlib import Path
 import yaml
 
 from common.constants import TICKS_PER_SECOND
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import media_item_path, word_in_window
 
@@ -50,6 +51,10 @@ SUBS_FROM_EDIT = Path(__file__).resolve().parent / "subs_from_edit.py"
 
 class EvalError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
+
+
+class EvalRuntimeError(Exception):
+    """A failure after the work started, such as the subs_from_edit.py cross-check."""
 
 
 def is_number(value):
@@ -393,11 +398,11 @@ def cross_check(fcproj, sequence, words_dir, doru_kept_merged):
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-            raise EvalError(f"subs_from_edit.py failed: {detail}")
+            raise EvalRuntimeError(f"subs_from_edit.py failed: {detail}")
         try:
             summary = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
-            raise EvalError(f"subs_from_edit.py printed no JSON summary ({exc})")
+            raise EvalRuntimeError(f"subs_from_edit.py printed no JSON summary ({exc})")
         kept = int(summary["words_kept"])
     return {"subs_from_edit_words_kept": kept, "agrees": kept == doru_kept_merged}
 
@@ -599,11 +604,16 @@ def main(argv=None):
         report = evaluate(edit, sessions, args.fcproj, args.sequence, DEFAULT_TRACK, words_dir,
                           args.section_min_s, args.until_s, review_rows)
         report["wall_time_s"] = round(time.monotonic() - started, 3)
+    except EvalRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        return EXIT_RUNTIME
     except (EvalError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_USAGE
 
     if args.out:
         try:
@@ -612,13 +622,13 @@ def main(argv=None):
             print(f"[error] cannot write {args.out}: {exc}", file=sys.stderr)
             if args.json:
                 print(json.dumps({"ok": False, "error": str(exc)}))
-            return 2
+            return EXIT_RUNTIME
 
     if args.json:
         print(json.dumps(report))
     else:
         print(format_table(report))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

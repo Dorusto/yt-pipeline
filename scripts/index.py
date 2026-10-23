@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.frames import thumbnail_data_uri
 from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
@@ -70,6 +71,10 @@ HTML_NAME = "shotlog.html"
 
 class ShotlogError(RuntimeError):
     """Raised when a workspace cannot be turned into a shotlog."""
+
+
+class ShotlogRuntimeError(RuntimeError):
+    """Raised when the run fails after it started (disk write)."""
 
 
 def build_parser():
@@ -146,7 +151,7 @@ def run(
     output_path = workspace_path / "shotlog.json"
     inputs = _input_files(workspace_path, selected, photo_describes)
     if not force and _output_is_up_to_date(output_path, inputs):
-        return _skipped_summary(output_path, started, html_path), 0
+        return _skipped_summary(output_path, started, html_path), EXIT_OK
     clip_paths = _clip_path_map(workspace_path, selected)
     similarity_map = _similarity_map(_load_json(workspace_path / "similarity.json"))
     shots = []
@@ -224,11 +229,14 @@ def run(
         "warnings": [],
     }
     validate_or_raise(record, "shotlog")
-    _atomic_write_json(output_path, record)
-    if html_path is not None:
-        _write_html(html_path, record, clip_paths)
+    try:
+        _atomic_write_json(output_path, record)
+        if html_path is not None:
+            _write_html(html_path, record, clip_paths)
+    except OSError as exc:
+        raise ShotlogRuntimeError(str(exc)) from exc
     summary = _summary(shots, weights, wall_time_s, output_path, html_path)
-    return summary, 0
+    return summary, EXIT_OK
 
 
 def main(argv=None):
@@ -243,9 +251,15 @@ def main(argv=None):
             html=args.html,
             no_html=args.no_html,
         )
-    except (ShotlogError, SchemaError, OSError) as exc:
+    except ShotlogRuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (ShotlogError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     if args.json:
         print(json.dumps(summary))
     else:

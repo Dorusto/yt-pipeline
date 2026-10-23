@@ -41,6 +41,7 @@ import numpy as np
 from PIL import Image
 
 from common.config import ConfigError, load_config
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.frames import read_frame_pairs
 from common.llm import BudgetExceeded, LLMError
 from common.peak import valid_vision_peak
@@ -113,6 +114,10 @@ MOTION_LABELS = {
 
 class DescribeError(RuntimeError):
     """Raised when a clip cannot be described."""
+
+
+class DescribeRuntimeError(RuntimeError):
+    """Raised when the run fails after it started (frame encoding, disk)."""
 
 
 class RunState:
@@ -336,7 +341,7 @@ def build_mosaic(pairs):
         canvas[row * tile_h : (row + 1) * tile_h, col * MOSAIC_TILE_W : (col + 1) * MOSAIC_TILE_W] = tile
     ok, buffer = cv2.imencode(".jpg", canvas, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
     if not ok:
-        raise DescribeError("could not encode a mosaic as JPEG")
+        raise DescribeRuntimeError("could not encode a mosaic as JPEG")
     return buffer.tobytes()
 
 
@@ -852,7 +857,7 @@ def run(
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(state.cost_usd, 8),
     }
-    return summary, (2 if state.stop_reason is not None else 0)
+    return summary, (EXIT_RUNTIME if state.stop_reason is not None else EXIT_OK)
 
 
 def main(argv=None):
@@ -873,9 +878,18 @@ def main(argv=None):
             photos_only=args.photos_only,
             frame_mode=args.frame_mode,
         )
-    except (DescribeError, ConfigError, SchemaError, LLMError) as exc:
+    except DescribeRuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (DescribeError, ConfigError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except LLMError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     if args.json:
         print(json.dumps(summary))
     else:
@@ -1084,7 +1098,7 @@ def _encode_jpeg(frame, width):
         frame = cv2.resize(frame, (width, scaled_height), interpolation=cv2.INTER_AREA)
     ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
     if not ok:
-        raise DescribeError("could not encode a frame as JPEG")
+        raise DescribeRuntimeError("could not encode a frame as JPEG")
     return buffer.tobytes()
 
 

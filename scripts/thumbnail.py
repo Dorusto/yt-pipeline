@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from common.brand import BrandError, parse_hex_color
 from common.brand import load_brand as load_brand_kit
 from common.brand import resolve_font as resolve_font_kit
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/thumbnail.py"
 FONT_KEYS = ("title", "kicker", "tag")
@@ -41,6 +42,10 @@ KEYWORD_STEP_PX = 4
 KICKER_FLOOR_PX = 16
 KICKER_STEP_PX = 2
 JPEG_QUALITY = 92
+
+
+class ThumbnailRuntimeError(RuntimeError):
+    """Raised when the cut-out model is missing or fails."""
 
 
 class ThumbnailError(RuntimeError):
@@ -331,7 +336,7 @@ def cutout_portrait(photo_image, model_name):
     try:
         from rembg import new_session, remove
     except ImportError as exc:
-        raise ThumbnailError(
+        raise ThumbnailRuntimeError(
             "rembg is not installed: pip install rembg (or re-run with --skip-cutout)"
         ) from exc
     session = new_session(model_name)
@@ -660,14 +665,17 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary = render(args, started)
+    except ThumbnailRuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except (ThumbnailError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
         print(human_summary(summary))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

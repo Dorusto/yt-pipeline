@@ -44,6 +44,7 @@ from common.timeline_words import fade_for_join
 from common.photos import ensure_jpeg, open_photo
 from common import vertical
 from common.schema import SchemaError, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 FPS = 25
 SAMPLE_RATE = 48000
@@ -55,6 +56,10 @@ MUSIC_DUCK_THRESHOLD = 0.1
 MUSIC_DUCK_RATIO = 3.0
 MUSIC_DUCK_ATTACK_MS = 20
 MUSIC_DUCK_RELEASE_MS = 400
+
+
+class RenderRuntimeError(RuntimeError):
+    """Raised when a render fails after it started (ffprobe, ffmpeg)."""
 
 
 class RenderError(RuntimeError):
@@ -196,14 +201,14 @@ def run_ffprobe(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise RenderError(f"could not run ffprobe: {exc}") from exc
+        raise RenderRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise RenderError(f"ffprobe failed for {path}: {detail}")
+        raise RenderRuntimeError(f"ffprobe failed for {path}: {detail}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise RenderError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+        raise RenderRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
 
 
 def probe_output(path):
@@ -239,14 +244,14 @@ def has_audio_stream(path):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise RenderError(f"could not run ffprobe: {exc}") from exc
+        raise RenderRuntimeError(f"could not run ffprobe: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or "unknown error"
-        raise RenderError(f"ffprobe failed for {path}: {detail}")
+        raise RenderRuntimeError(f"ffprobe failed for {path}: {detail}")
     try:
         return bool(json.loads(result.stdout).get("streams"))
     except json.JSONDecodeError as exc:
-        raise RenderError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
+        raise RenderRuntimeError(f"ffprobe returned invalid JSON for {path}: {exc}") from exc
 
 
 def resolve_clip(clip, sources, media_dir, originals_dir):
@@ -961,10 +966,10 @@ def render(
         if result.returncode != 0:
             lines = (result.stderr or "").strip().splitlines()
             detail = lines[-1] if lines else "unknown error"
-            raise RenderError(f"ffmpeg failed: {detail}")
+            raise RenderRuntimeError(f"ffmpeg failed: {detail}")
         duration, out_width, out_height = probe_output(tmp_path)
         if (out_width, out_height) != (width, height):
-            raise RenderError(f"unexpected output resolution: {out_width}x{out_height}")
+            raise RenderRuntimeError(f"unexpected output resolution: {out_width}x{out_height}")
         os.replace(tmp_path, out_path)
     finally:
         if tmp_path.exists():
@@ -1022,9 +1027,12 @@ def main(argv=None):
         summary = dict(summaries[0])
         if len(summaries) > 1:
             summary["vertical"] = summaries[1]
-    except (RenderError, SchemaError, AmbienceError) as exc:
+    except (RenderRuntimeError, AmbienceError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (RenderError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:
@@ -1051,7 +1059,7 @@ def main(argv=None):
             print(f"vertical: {extra['out']} {extra['width']}x{extra['height']} {extra['duration_s']}s")
             for warning in extra["warnings"]:
                 print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

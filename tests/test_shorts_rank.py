@@ -9,6 +9,7 @@ import shorts_rank
 import subs_from_edit
 from common.schema import validate_or_raise
 from fs_probe import safe_is_dir
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 CONFIG = {
     "models": {"director": "mock-model"},
@@ -724,7 +725,7 @@ def test_description_sentence_rule_is_a_warning_printed(tmp_path, monkeypatch, c
     assert (tmp_path / "shorts_candidates.json").is_file()
 
 
-def test_title_too_long_exit_2(tmp_path, monkeypatch, capsys):
+def test_title_too_long_exit_3(tmp_path, monkeypatch, capsys):
     edit, words = short_fixture(tmp_path)
     long_title = "x" * 61
     rows = [
@@ -734,7 +735,7 @@ def test_title_too_long_exit_2(tmp_path, monkeypatch, capsys):
     ]
     client = SequenceClient([json.dumps({"scores": rows})])
     code = run_main(tmp_path, monkeypatch, client, edit, words)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     assert client.calls == 2
     err = capsys.readouterr().err
     assert "1" in err
@@ -789,32 +790,32 @@ def test_retry_once_on_unparseable_output(tmp_path, monkeypatch):
     assert (tmp_path / "shorts_candidates.json").is_file()
 
 
-def test_two_unparseable_outputs_exit_2(tmp_path, monkeypatch, capsys):
+def test_two_unparseable_outputs_exit_3(tmp_path, monkeypatch, capsys):
     edit, words = short_fixture(tmp_path)
     client = SequenceClient(["nope", "still nope"])
     code = run_main(tmp_path, monkeypatch, client, edit, words)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     assert client.calls == 2
     err = capsys.readouterr().err
     assert "retry" in err
     assert "Traceback" not in err
 
 
-def test_missing_score_row_exit_2(tmp_path, monkeypatch, capsys):
+def test_missing_score_row_exit_3(tmp_path, monkeypatch, capsys):
     edit, words = short_fixture(tmp_path)
     client = AutoScoreClient(omit={3})
     code = run_main(tmp_path, monkeypatch, client, edit, words)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "3" in err
     assert "Traceback" not in err
 
 
-def test_out_of_range_hook_exit_2(tmp_path, monkeypatch, capsys):
+def test_out_of_range_hook_exit_3(tmp_path, monkeypatch, capsys):
     edit, words = short_fixture(tmp_path)
     client = AutoScoreClient(scores={1: (150, 70), 2: (60, 50), 3: (40, 30)})
     code = run_main(tmp_path, monkeypatch, client, edit, words)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "1" in err
     assert "Traceback" not in err

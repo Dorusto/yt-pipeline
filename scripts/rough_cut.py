@@ -37,6 +37,7 @@ from common.llm import LLMError, make_client
 from common.media import parse_stamp
 from common.timeline_words import word_in_window
 from common.schema import SchemaError, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/rough_cut.py"
 SCHEMA_VERSION = "0.1"
@@ -916,11 +917,16 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary = run(args.sessions, args.out, args.config, args.llm, args.review)
-    except (RoughCutError, SchemaError, ConfigError, LLMError) as exc:
+    except LLMError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_RUNTIME
+    except (RoughCutError, SchemaError, ConfigError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))
@@ -931,7 +937,7 @@ def main(argv=None):
         )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

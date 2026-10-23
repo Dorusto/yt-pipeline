@@ -9,6 +9,7 @@ import analyze_srt
 import daily_summary_srt
 import translate_srt
 from common.llm import MockClient
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 SAMPLE_SRT = "1\n00:00:00,000 --> 00:00:02,000\nBună\n\n2\n00:00:02,000 --> 00:00:04,000\nLume\n\n"
 ANALYZE_JSON = (
@@ -86,7 +87,7 @@ def test_budget_exceeded_exits_2_with_clean_message(tmp_path, monkeypatch, capsy
     with pytest.raises(SystemExit) as excinfo:
         translate_srt.main()
 
-    assert excinfo.value.code == 2
+    assert excinfo.value.code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "budget" in err.lower()
     assert "Traceback" not in err

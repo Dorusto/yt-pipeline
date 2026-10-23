@@ -34,6 +34,11 @@ from common.timeline_words import (
     timeline_words_from_file,
     word_in_window,
 )
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+
+
+class ShortsRuntimeError(RuntimeError):
+    """Raised when a child step or its output fails after work started."""
 
 
 class UsageError(RuntimeError):
@@ -88,7 +93,7 @@ def load_and_validate_config(interactive: bool = True, require_segments: bool = 
         CONFIG_PATH.write_text(YAML_TEMPLATE)
         print(f"Created {CONFIG_PATH.name} from template.")
         print("Fill in your video/audio/srt filenames and segments, then run again.")
-        sys.exit(0)
+        sys.exit(EXIT_OK)
 
     config = yaml.safe_load(CONFIG_PATH.read_text())
     errors = []
@@ -106,7 +111,7 @@ def load_and_validate_config(interactive: bool = True, require_segments: bool = 
             raise RuntimeError(message)
         print(message)
         print("Fill it in and run again.")
-        sys.exit(0)
+        sys.exit(EXIT_OK)
 
     return config
 
@@ -120,7 +125,7 @@ def ask_video_path() -> Path:
     path = Path(raw).expanduser().resolve()
     if not path.exists():
         print(f"File not found: {path}")
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
     return path
 
 
@@ -146,7 +151,7 @@ def find_file(base_path: Path, filename: str, subfolder: str, flag: str, interac
     path = Path(raw).expanduser().resolve()
     if not path.exists():
         print(f"File not found: {path}")
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
     return path
 
 
@@ -237,11 +242,11 @@ def crop_filter_from_path(record) -> str:
     """Build the ffmpeg crop filter for a reframe crop path record."""
     points = simplify_points(record.get("points") or [])
     if not points:
-        raise RuntimeError("crop path has no points")
+        raise ShortsRuntimeError("crop path has no points")
     crop_w = int(record["crop_w"])
     crop_h = int(record["crop_h"])
     if crop_w != CROP_W or crop_h != CROP_H:
-        raise RuntimeError(f"crop path is {crop_w}x{crop_h}, expected {CROP_W}x{CROP_H}")
+        raise ShortsRuntimeError(f"crop path is {crop_w}x{crop_h}, expected {CROP_W}x{CROP_H}")
     xs = {int(point["x"]) for point in points}
     ys = {int(point["y"]) for point in points}
     x_expr = str(points[0]["x"]) if len(xs) == 1 else f"'{piecewise_expression(points, 'x')}'"
@@ -270,7 +275,7 @@ def split_filter_from_path(record, split) -> str:
     """Build the face-over-screen vstack filtergraph for a reframe crop path record."""
     points = simplify_points(record.get("points") or [])
     if not points:
-        raise RuntimeError("crop path has no points")
+        raise ShortsRuntimeError("crop path has no points")
     face_cell_h = round(CROP_H * split["face_cell_frac"])
     screen_cell_h = CROP_H - face_cell_h
     face_h = round(SRC_H * split["face_h_frac"])
@@ -321,7 +326,7 @@ def reframe_crop_path(video_path: str, start: float, end: float, out_path) -> di
     ]
     result = subprocess.run(command, check=False, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"reframe failed: {result.stderr.strip() or 'unknown error'}")
+        raise ShortsRuntimeError(f"reframe failed: {result.stderr.strip() or 'unknown error'}")
     return json.loads(Path(out_path).read_text(encoding="utf-8"))
 
 
@@ -791,13 +796,19 @@ def main(argv=None) -> int:
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
+    except ShortsRuntimeError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
+        else:
+            print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     except (RuntimeError, TimelineWordsError, CorrectionsError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
 
     out_dir = video_path.parent
     shorts_dir = out_dir / "shorts"
@@ -908,7 +919,7 @@ def main(argv=None) -> int:
             "output_dir": str(shorts_dir),
             **summary_fields(started),
         }))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

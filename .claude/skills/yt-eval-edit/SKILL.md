@@ -1,6 +1,6 @@
 ---
 name: yt-eval-edit
-description: Check a workspace edit.json against a YAML of human expectations — every must_include item (at least one of its shot keys must appear on a slot) and the total on-screen length (length_s target ± tolerance, middle-speed ramps and photo durations counted) printed as a PASS/FAIL table, exit 1 on any fail. Use when the user asks to verify an edit against Doru's feedback turned into a test, to check that the heroes made it into the edit, or to re-check an edit after a director or llm_director run. Trigger phrases - "verifică edit.json", "sunt cadrele hero în montaj", "check the edit against expectations", "eval the edit", "did the edit pass the expectations", "rulează așteptările pe edit". Not for scoring motion/quality labels against ground truth (that is yt-eval) and not for building or fixing the edit (that is director / llm_director).
+description: Check a workspace edit.json against a YAML of human expectations — every must_include item (at least one of its shot keys must appear on a slot) and the total on-screen length (length_s target ± tolerance, middle-speed ramps and photo durations counted) printed as a PASS/FAIL table, exit 1 on any fail, exit 2 on a bad input. Use when the user asks to verify an edit against Doru's feedback turned into a test, to check that the heroes made it into the edit, or to re-check an edit after a director or llm_director run. Trigger phrases - "verifică edit.json", "sunt cadrele hero în montaj", "check the edit against expectations", "eval the edit", "did the edit pass the expectations", "rulează așteptările pe edit". Not for scoring motion/quality labels against ground truth (that is yt-eval) and not for building or fixing the edit (that is director / llm_director).
 compatibility: Run from the repository root. Needs the repo .venv with pyyaml; CPU only, no GPU, no network, no model calls. Reads the workspace and the YAML read-only; the only file written is --out. Fast (well under a second).
 ---
 
@@ -18,7 +18,7 @@ Turn "the edit looks right" into a pass/fail list. The expectations YAML holds w
 
 - `--workspace DIR` (required) holds `edit.json` (written by `scripts/llm_director.py` or `scripts/director.py`). `--expect PATH` (required) is the YAML below.
 - The default prints a fixed-width table, one row per expectation, then `N passed, M failed`. `--json` prints the report object instead; `--out FILE` additionally writes that object atomically (`.tmp` then `os.replace`), re-run safe and overwriting.
-- Exit code 0 only when every expectation passes; exit 1 when any expectation fails or an input is missing/unreadable (one `[error] ...` line on stderr). It never asks questions.
+- Exit code 0 only when every expectation passes; exit 1 when any expectation fails (a human must look at it); exit 2 when an input is missing/unreadable or the YAML does not parse; exit 3 when `--out` cannot be written (one `[error] ...` line on stderr). It never asks questions.
 - The workspace and the YAML are read-only; the tool calls no model (`llm_cost_usd` is always 0.0).
 
 ## Expectations YAML format

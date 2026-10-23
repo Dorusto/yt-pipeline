@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config, model_for
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.llm import LLMError, make_client
 from common.overlap import overlap_fraction, overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
@@ -455,16 +456,19 @@ def main(argv=None):
             out_path=args.out,
             max_entries=args.max_entries,
         )
-    except (GraphicsPlanError, ConfigError, SchemaError, LLMError) as exc:
+    except (GraphicsPlanError, ConfigError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
+    except LLMError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
 
     if args.json:
         print(json.dumps(summary))
     else:
         print(f"written: {summary['output']} ({summary['entries']} entries)")
         print("review the plan and flip approved to true on the entries you want, then run graphics.py --plan")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

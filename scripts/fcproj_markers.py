@@ -21,6 +21,7 @@ from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
 from common.filmcraft import parse_frame_rate
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 ROSE = "rose"
 SCHEMA_VERSION = "1"
 
@@ -213,7 +214,7 @@ def main(argv=None):
         summary = run(args.project, args.sequence, args.out, args.todo)
     except MarkersError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps(summary))
@@ -222,7 +223,7 @@ def main(argv=None):
         print(f"written: {summary['todo']}")
         if summary["clip_markers_ignored"]:
             print(f"warning: ignored {summary['clip_markers_ignored']} clip-level markers")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

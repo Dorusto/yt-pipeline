@@ -28,6 +28,7 @@ import yaml
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 BATCH_CHARS = 80000
 
@@ -367,7 +368,7 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
                 "mode": "shorts-config",
                 "output_dir": str(shorts_dir),
                 **summary_fields(started, spent_usd()),
-            }, 0
+            }, EXIT_OK
 
         basename = srt_file.stem
 
@@ -427,7 +428,7 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
                 "ok": False,
                 "error": error,
                 **summary_fields(started, spent_usd()),
-            }, 2
+            }, EXIT_USAGE
 
         # --- Confirmare tăiere ---
         try:
@@ -443,7 +444,7 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
                 "candidates": len(shorts_sorted),
                 "selected": 0,
                 **summary_fields(started, spent_usd()),
-            }, 0
+            }, EXIT_OK
         if not selected:
             print("Nicio tăiere. Gata.")
             print(f"LLM cost: ${get_client().spent_usd:.4f}")
@@ -455,7 +456,7 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
                 "candidates": len(shorts_sorted),
                 "selected": 0,
                 **summary_fields(started, spent_usd()),
-            }, 0
+            }, EXIT_OK
 
         print(f"\n{'=' * 50}")
         print(f"TĂIERE {len(selected)} SHORTS")
@@ -472,10 +473,13 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
             "selected": len(selected),
             "output_dir": str(shorts_dir),
             **summary_fields(started, spent_usd()),
-        }, 0
-    except (ConfigError, LLMError) as exc:
+        }, EXIT_OK
+    except ConfigError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return {"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}, 2
+        return {"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}, EXIT_USAGE
+    except LLMError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return {"ok": False, "error": str(exc), **summary_fields(started, spent_usd())}, EXIT_RUNTIME
 
 
 def main():
@@ -486,7 +490,7 @@ def main():
             "Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] "
             "[--shorts-config config.yaml] [--select 1,3,5|all|none] [--json]"
         )
-        sys.exit(1)
+        sys.exit(EXIT_USAGE)
 
     srt_file = Path(positionals[0]).expanduser().resolve()
     video_file = Path(positionals[1]).expanduser().resolve()
@@ -496,7 +500,7 @@ def main():
         if not path.exists():
             print(f"[eroare] {label} negăsit: {path}")
             print("Folosește căi absolute (ex: <clip-folder>/Export/subtitles/<clip>_RO.srt)")
-            sys.exit(1)
+            sys.exit(EXIT_USAGE)
 
     if json_out:
         with contextlib.redirect_stdout(sys.stderr):

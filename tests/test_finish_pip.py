@@ -8,6 +8,7 @@ import pytest
 
 import finish_pip as fp
 from common.filmcraft import cli_path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 T = fp.TICKS_PER_SECOND
 SMALL_OVER = re.compile(fp.DEFAULT_SMALL_OVER)
@@ -679,7 +680,7 @@ def test_animate_failure_deletes_steps_file(tmp_path, capsys, monkeypatch):
         extra=["--json", "--bridge", "127.0.0.1:7714", "--matte-dir", str(matte_dir)],
         monkeypatch=monkeypatch, fake=fake,
     )
-    assert rc == 1
+    assert rc == EXIT_RUNTIME
     assert not (tmp_path / fp.ANIMATE_FILE).exists()
     assert not (tmp_path / fp.APPLIED_FILE).exists()
 

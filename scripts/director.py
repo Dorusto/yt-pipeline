@@ -41,6 +41,7 @@ from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/director.py"
 SCHEMA_VERSION = "0.1"
@@ -1791,14 +1792,17 @@ def main(argv=None):
     started = time.monotonic()
     try:
         summary, record = run(args, started)
-    except (DirectorError, SchemaError, OSError) as exc:
+    except OSError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (DirectorError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:
         print_human(summary, record)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

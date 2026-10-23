@@ -33,6 +33,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.photos import PhotoError, read_bgr
 from common.frames import read_frame_pairs
 from common.schema import SchemaError, validate, validate_or_raise
@@ -59,6 +60,10 @@ CLIP_COUNTER = re.compile(r"_(\d{4})_")
 
 class SimilarityError(RuntimeError):
     """Raised when the workspace cannot be embedded."""
+
+
+class SimilarityRuntimeError(RuntimeError):
+    """Raised when the run fails after it started (model load, download, disk)."""
 
 
 def build_parser():
@@ -171,7 +176,7 @@ def load_mobilenet(model_path, model_url):
     try:
         return cv2.dnn.readNetFromONNX(str(path))
     except cv2.error as exc:
-        raise SimilarityError(f"cannot load ONNX model {path}: {exc}") from exc
+        raise SimilarityRuntimeError(f"cannot load ONNX model {path}: {exc}") from exc
 
 
 def run(
@@ -199,7 +204,7 @@ def run(
     ingest_path = workspace_path / "ingest.json"
     output_path = workspace_path / "similarity.json"
     if not force and _output_is_up_to_date(output_path, _input_paths(selected, ingest_path, photos)):
-        return _skipped_summary(output_path, started), 0
+        return _skipped_summary(output_path, started), EXIT_OK
     net = load_mobilenet(model_path, model_url) if backend == "mobilenet" else None
     model_name = Path(model_path).name if backend == "mobilenet" else "none"
     segments = []
@@ -266,7 +271,7 @@ def run(
         "output": str(output_path),
         "skipped": False,
     }
-    return summary, 0
+    return summary, EXIT_OK
 
 
 def main(argv=None):
@@ -281,9 +286,15 @@ def main(argv=None):
             clips=args.clips,
             force=args.force,
         )
-    except (SimilarityError, SchemaError, OSError) as exc:
+    except SimilarityRuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (SimilarityError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     if args.json:
         print(json.dumps(summary))
     else:
@@ -398,7 +409,7 @@ def _download_model(path, url):
     except Exception as exc:
         if temporary.exists():
             temporary.unlink()
-        raise SimilarityError(
+        raise SimilarityRuntimeError(
             f"cannot download model from {url}: {exc}; use --backend hist for an offline run"
         ) from exc
     print(f"[info] fetched {url} -> {path} ({path.stat().st_size} bytes)", file=sys.stderr)

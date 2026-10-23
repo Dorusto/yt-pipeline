@@ -29,6 +29,8 @@ from pathlib import Path
 
 import yaml
 
+from common.exit_codes import EXIT_ATTENTION, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+
 
 class EvalError(RuntimeError):
     """Raised when the inputs cannot be read or parsed."""
@@ -247,18 +249,18 @@ def main(argv=None):
         report["wall_time_s"] = round(time.monotonic() - started, 2)
     except EvalError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
     if args.out:
         try:
             atomic_write_json(Path(args.out).expanduser(), report)
         except OSError as exc:
             print(f"[error] cannot write {args.out}: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_RUNTIME
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print(format_table(report))
-    return 0 if report["passed"] else 1
+    return EXIT_OK if report["passed"] else EXIT_ATTENTION
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import pytest
 import kdenlive_from_fragments as kf
 import srt_from_fragments as sf
 from common.schema import SchemaError
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -45,10 +46,10 @@ def test_kdenlive_load_config_rejects_missing_timecode(tmp_path):
         kf.load_config(cfg)
 
 
-def test_kdenlive_main_invalid_returns_1(tmp_path, capsys):
+def test_kdenlive_main_invalid_returns_2(tmp_path, capsys):
     cfg = tmp_path / "f.yaml"
     cfg.write_text("fragments: []\n", encoding="utf-8")
-    assert kf.main([str(cfg), "--json"]) == 1
+    assert kf.main([str(cfg), "--json"]) == EXIT_USAGE
     assert json.loads(capsys.readouterr().out)["ok"] is False
 
 
@@ -89,11 +90,11 @@ def test_srt_build_retimes_fragments(tmp_path):
     assert "00:00:05,000 --> 00:00:07,000" in later_block
 
 
-def test_srt_main_invalid_fragments_returns_1(tmp_path, capsys):
+def test_srt_main_invalid_fragments_returns_2(tmp_path, capsys):
     fragments = tmp_path / "f.yaml"
     fragments.write_text("fragments: []\n", encoding="utf-8")
     rc = sf.main([str(fragments), str(tmp_path), str(tmp_path / "o.srt"), "--json"])
-    assert rc == 1
+    assert rc == EXIT_USAGE
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["wall_time_s"] >= 0.0

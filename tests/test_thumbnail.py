@@ -20,6 +20,7 @@ except ImportError as exc:
         f"psd-tools is a hard requirement of thumbnail.py --psd; install it with pip install psd-tools ({exc})"
     ) from exc
 from psd_tools import PSDImage
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 
 def _rembg_model_present():
@@ -102,7 +103,7 @@ def test_creator_without_background_fails(tmp_path, capsys):
         "--photo", str(photo), "--title", "AI-UL MEU", "--keyword", "RULEAZĂ ACASĂ",
         "--theme", "creator", "--out", str(out), "--skip-cutout",
     ])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "--background" in captured.err
@@ -198,7 +199,7 @@ def test_missing_font_fails_naming_path_and_key(tmp_path, capsys):
     brand_path.write_text(json.dumps(brand), encoding="utf-8")
     photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
     code = thumbnail.main(base_args(photo, tmp_path / "out") + ["--skip-cutout", "--brand", str(brand_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "DoesNotExist.ttf" in captured.err
@@ -212,7 +213,7 @@ def test_invalid_brand_canvas_fails_via_schema(tmp_path, capsys):
     brand_path.write_text(json.dumps(brand), encoding="utf-8")
     photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
     code = thumbnail.main(base_args(photo, tmp_path / "out") + ["--skip-cutout", "--brand", str(brand_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     captured = capsys.readouterr()
     assert "[error]" in captured.err
     assert "brand" in captured.err
@@ -225,7 +226,7 @@ def test_invalid_brand_color_fails_via_schema(tmp_path, capsys):
     brand_path.write_text(json.dumps(brand), encoding="utf-8")
     photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
     code = thumbnail.main(base_args(photo, tmp_path / "out") + ["--skip-cutout", "--brand", str(brand_path)])
-    assert code == 1
+    assert code == EXIT_USAGE
     assert "[error]" in capsys.readouterr().err
 
 

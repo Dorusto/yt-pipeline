@@ -21,6 +21,7 @@ import yaml
 from common.overlap import overlap_bounds
 from common.schema import SchemaError, validate
 from common.summary import summary_fields
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})")
 TC = re.compile(r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})")
@@ -134,11 +135,11 @@ def main(argv=None):
             print(json.dumps({"ok": False, "error": str(exc), **summary_fields(started)}))
         else:
             print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps({"ok": True, **summary, **summary_fields(started)}))
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

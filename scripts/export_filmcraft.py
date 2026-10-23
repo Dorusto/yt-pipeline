@@ -33,6 +33,7 @@ from common.constants import TICKS_PER_SECOND
 from common.filmcraft import DEFAULT_FRAME_RATE, frame_rate_fraction
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import slot_length
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 SCHEMA_VERSION = 15
 GENERATOR = "yt-pipeline export_filmcraft.py"
 DEFAULT_SEQUENCE = "Main"
@@ -644,7 +645,7 @@ def main(argv=None):
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))
@@ -657,7 +658,7 @@ def main(argv=None):
         )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

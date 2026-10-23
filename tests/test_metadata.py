@@ -4,6 +4,7 @@ import pytest
 
 import metadata
 from common.llm import MockClient
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 SRT = (
     "1\n00:00:00,000 --> 00:00:02,000\nBună ziua\n\n"
@@ -199,11 +200,11 @@ def test_channel_url_sent_to_model(tmp_path, monkeypatch):
     assert f"channel_url: {CHANNEL_URL}" in message
 
 
-def test_missing_json_key_exits_2(tmp_path, monkeypatch, capsys):
+def test_missing_json_key_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     del data["subscribe_line"]
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "subscribe_line" in err
     assert "Traceback" not in err
@@ -243,10 +244,10 @@ BAD_CONCEPT_COUNTS = [
 
 
 @pytest.mark.parametrize("name,picks", BAD_CONCEPT_COUNTS, ids=[case[0] for case in BAD_CONCEPT_COUNTS])
-def test_bad_thumbnail_concept_count_exits_2(tmp_path, monkeypatch, capsys, name, picks):
+def test_bad_thumbnail_concept_count_exits_3(tmp_path, monkeypatch, capsys, name, picks):
     data = dict(FULL, thumbnail_concepts=[FULL["thumbnail_concepts"][i] for i in picks])
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "thumbnail_concepts" in err
     assert "Traceback" not in err
@@ -436,11 +437,11 @@ def test_without_flag_model_chapters_used(tmp_path, monkeypatch):
     ]
 
 
-def test_without_flag_missing_chapters_key_exits_2(tmp_path, monkeypatch, capsys):
+def test_without_flag_missing_chapters_key_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     del data["chapters"]
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "chapters" in err
     assert "Traceback" not in err

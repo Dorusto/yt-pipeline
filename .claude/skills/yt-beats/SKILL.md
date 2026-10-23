@@ -63,7 +63,7 @@ The tool is **pure numpy** on audio decoded by ffmpeg; `librosa` is deliberately
 
 - When `--out` already exists and is newer than the input and `--force` is not given, nothing is written and the run reports `status: "skipped"`.
 - The music is read-only and `--out` is written to `<out>.tmp` then moved into place with `os.replace`.
-- On any error (missing input, no audio stream, unreadable file, ffmpeg failure, a bad `--min-beat-s`/`--max-beat-s`, a non-positive target or slot count) it prints one `[error] ...` line to stderr and exits `1`.
+- On a usage error (missing input, no audio stream, unreadable file, a bad `--min-beat-s`/`--max-beat-s`, a non-positive target or slot count) it prints one `[error] ...` line to stderr and exits `2`; on a runtime failure (ffmpeg or ffprobe failing after the run started) it exits `3`.
 
 ## Notes
 

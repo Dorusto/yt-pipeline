@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.ffmpeg_tools import ffmpeg_path
 from common.filmcraft import cli_path
 
@@ -46,11 +47,18 @@ CLI_COMMAND_LABELS = ("essentialSound.setType", "essentialSound.autoMatch", "ess
 
 
 class LoudnessError(Exception):
-    """A user-facing error; ``code`` is the process exit code (2 for user errors, 1 for failures)."""
+    """A user-facing error; ``code`` is the process exit code (EXIT_USAGE for user errors)."""
 
-    def __init__(self, message, code=2):
+    def __init__(self, message, code=EXIT_USAGE):
         super().__init__(message)
         self.code = code
+
+
+class LoudnessRuntimeError(LoudnessError):
+    """A failure after the work started; exits with EXIT_RUNTIME."""
+
+    def __init__(self, message):
+        super().__init__(message, code=EXIT_RUNTIME)
 
 
 def build_parser():
@@ -106,11 +114,11 @@ def parse_loudnorm_json(text):
     """Extract the loudnorm measurement object ffmpeg prints to stderr."""
     match = LOUDNORM_JSON.search(text or "")
     if not match:
-        raise LoudnessError("ffmpeg did not print loudnorm measurements")
+        raise LoudnessRuntimeError("ffmpeg did not print loudnorm measurements")
     try:
         return json.loads(match.group(0))
     except json.JSONDecodeError as exc:
-        raise LoudnessError(f"could not parse loudnorm measurements: {exc}")
+        raise LoudnessRuntimeError(f"could not parse loudnorm measurements: {exc}")
 
 
 def video_output_path(video, out):
@@ -128,10 +136,10 @@ def measure_video(video, target_i, target_tp, target_lra):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise LoudnessError(f"could not run ffmpeg: {exc}")
+        raise LoudnessRuntimeError(f"could not run ffmpeg: {exc}")
     if result.returncode != 0:
         tail = (result.stderr or "").strip().splitlines()
-        raise LoudnessError(f"ffmpeg loudnorm pass 1 failed: {tail[-1] if tail else 'unknown error'}")
+        raise LoudnessRuntimeError(f"ffmpeg loudnorm pass 1 failed: {tail[-1] if tail else 'unknown error'}")
     return parse_loudnorm_json(result.stderr)
 
 
@@ -162,10 +170,10 @@ def encode_video(video, out_path, measured, target_i, target_tp, target_lra):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise LoudnessError(f"could not run ffmpeg: {exc}")
+        raise LoudnessRuntimeError(f"could not run ffmpeg: {exc}")
     if result.returncode != 0:
         tail = (result.stderr or "").strip().splitlines()
-        raise LoudnessError(f"ffmpeg loudnorm pass 2 failed: {tail[-1] if tail else 'unknown error'}")
+        raise LoudnessRuntimeError(f"ffmpeg loudnorm pass 2 failed: {tail[-1] if tail else 'unknown error'}")
 
 
 def run_video(video_path, out_path, target_i, target_tp, target_lra):
@@ -206,7 +214,7 @@ def resolve_cli(required=True):
         return found
     if not required:
         return "filmcraft-cli"
-    raise LoudnessError("filmcraft-cli not found: set FILMCRAFT_CLI or put filmcraft-cli on PATH")
+    raise LoudnessRuntimeError("filmcraft-cli not found: set FILMCRAFT_CLI or put filmcraft-cli on PATH")
 
 
 def find_sequences(items):
@@ -296,11 +304,11 @@ def run_command(command, label):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
     except OSError as exc:
-        raise LoudnessError(f"could not run {command[0]}: {exc}")
+        raise LoudnessRuntimeError(f"could not run {command[0]}: {exc}")
     if result.returncode != 0:
         output = ((result.stdout or "") + (result.stderr or "")).strip()
         tail = "\n".join(output.splitlines()[-5:])
-        raise LoudnessError(f"{label} failed (exit {result.returncode}):\n{tail}", code=1)
+        raise LoudnessRuntimeError(f"{label} failed (exit {result.returncode}):\n{tail}")
     return result.stdout or ""
 
 
@@ -314,13 +322,13 @@ def parse_reply(text, label):
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
-            raise LoudnessError(f"{label} returned no JSON: {raw[-200:]}", code=1)
+            raise LoudnessRuntimeError(f"{label} returned no JSON: {raw[-200:]}")
         try:
             data = json.loads(match.group(0))
         except json.JSONDecodeError as exc:
-            raise LoudnessError(f"{label} returned invalid JSON: {exc}", code=1)
+            raise LoudnessRuntimeError(f"{label} returned invalid JSON: {exc}")
     if isinstance(data, dict) and data.get("ok") is False:
-        raise LoudnessError(f"{label} returned ok=false: {raw[-200:]}", code=1)
+        raise LoudnessRuntimeError(f"{label} returned ok=false: {raw[-200:]}")
     return data
 
 
@@ -450,7 +458,7 @@ def main(argv=None):
         print(json.dumps(summary))
     else:
         print_summary(summary)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

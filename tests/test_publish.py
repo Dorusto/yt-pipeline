@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 import publish
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 FIXTURES = Path(__file__).parent / "fixtures" / "publish"
 FCPROJ = FIXTURES / "fixture.fcproj"
@@ -315,7 +316,7 @@ def test_failing_child_aborts(tmp_path, monkeypatch, capsys):
     project = tmp_path / "proj"
     recorder = Recorder(fail_at="correct")
     monkeypatch.setattr(publish, "execute", recorder)
-    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 2
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == EXIT_RUNTIME
     assert recorder.calls == ["subtitles", "correct"]
     summary = json.loads(capsys.readouterr().out)
     statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
@@ -328,7 +329,7 @@ def test_naming_normalization(tmp_path, monkeypatch, capsys):
     project = tmp_path / "proj"
     recorder = Recorder(fail_at="correct")
     monkeypatch.setattr(publish, "execute", recorder)
-    assert run_publish(project, write_context(tmp_path), extra=["--json"]) == 2
+    assert run_publish(project, write_context(tmp_path), extra=["--json"]) == EXIT_RUNTIME
     raw = project / f"{project.name}.srt"
     assert raw.is_file()
     assert raw.read_text(encoding="utf-8") == SRT_RAW
@@ -828,7 +829,7 @@ def test_kit_loudness_uses_the_loudened_file(tmp_path, monkeypatch, capsys):
 def test_kit_loudness_failure_fails(tmp_path, monkeypatch, capsys):
     project, clip = build_kit_project(tmp_path)
     monkeypatch.setattr(publish, "run_loudness", lambda ctx, final: (None, "boom"))
-    assert run_kit(project, clip, extra=["--kit-loudness"]) == 2
+    assert run_kit(project, clip, extra=["--kit-loudness"]) == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "loudness failed" in err
     assert not (project / "publish-kit").exists()

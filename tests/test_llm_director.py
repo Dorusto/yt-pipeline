@@ -12,6 +12,7 @@ from common.llm import BudgetExceeded
 from common.moves import slot_screen_length
 from common.photos import ken_burns_for
 from common.schema import validate
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "llm_director.py"
@@ -826,11 +827,11 @@ def test_budget_exceeded_falls_back(tmp_path):
     assert any("budget" in warning for warning in summary["warnings"])
 
 
-def test_budget_exceeded_no_fallback_exits_2(tmp_path):
+def test_budget_exceeded_no_fallback_exits_3(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
     summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
-    assert code == 2
+    assert code == EXIT_RUNTIME
     assert summary["status"] == "error"
     assert not (workspace / "edit.json").exists()
 
@@ -926,7 +927,7 @@ def test_missing_shotlog_no_fallback_errors(tmp_path):
     (workspace / "shotlog.json").unlink()
     client = StubClient([])
     summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
-    assert code == 1
+    assert code == EXIT_USAGE
     assert summary["status"] == "error"
 
 
@@ -1043,14 +1044,14 @@ def test_print_human_with_baseline(capsys):
     assert "warning: a warning" in out
 
 
-def test_cli_missing_brief_exits_1(tmp_path):
+def test_cli_missing_brief_exits_2(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--workspace", str(workspace)],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 1
+    assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
 
 
@@ -1865,7 +1866,7 @@ def test_schema_failure_without_fallback_errors(tmp_path, monkeypatch):
     pollute_first_video_slot(monkeypatch)
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
     summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
-    assert code == 1
+    assert code == EXIT_RUNTIME
     assert summary["status"] == "error"
     assert any("duration_s" in warning for warning in summary["warnings"])
     assert not (workspace / "edit.json").exists()

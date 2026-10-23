@@ -26,6 +26,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 BLOCKED_EXTENSIONS = {
     ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".lrf", ".insv",
@@ -145,7 +146,7 @@ def main(argv=None):
                   file=sys.stderr)
         else:
             print(f"ok ({len(files)} files)")
-    return 1 if problems else 0
+    return EXIT_ATTENTION if problems else EXIT_OK
 
 
 if __name__ == "__main__":

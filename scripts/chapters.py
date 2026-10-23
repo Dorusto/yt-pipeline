@@ -44,6 +44,7 @@ from common.timeline_words import (
     publish_folder_for,
     timeline_words_from_file,
 )
+from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 TOOL = "scripts/chapters.py"
 SCHEMA_VERSION = "0.1"
@@ -57,6 +58,9 @@ _client = None
 class ChaptersError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
 
+
+class ChaptersRuntimeError(ChaptersError):
+    """Raised when the model answer cannot be used after the call."""
 
 def get_client():
     global _client
@@ -133,27 +137,27 @@ def parse_model_json(text):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ChaptersError(f"model response is not valid JSON: {exc}")
+        raise ChaptersRuntimeError(f"model response is not valid JSON: {exc}")
 
 
 def parse_chapters(text):
     """Parse the model output into a list of chapter objects of the expected shape."""
     data = parse_model_json(text)
     if not isinstance(data, dict):
-        raise ChaptersError("model response is not a JSON object")
+        raise ChaptersRuntimeError("model response is not a JSON object")
     chapters = data.get("chapters")
     if not isinstance(chapters, list) or not chapters:
-        raise ChaptersError("model JSON key 'chapters' must be a non-empty list")
+        raise ChaptersRuntimeError("model JSON key 'chapters' must be a non-empty list")
     for index, chapter in enumerate(chapters):
         if not isinstance(chapter, dict):
-            raise ChaptersError(f"model JSON key 'chapters[{index}]' must be an object")
+            raise ChaptersRuntimeError(f"model JSON key 'chapters[{index}]' must be an object")
         start = chapter.get("start_s")
         if isinstance(start, bool) or not isinstance(start, (int, float)):
-            raise ChaptersError(f"model JSON key 'chapters[{index}].start_s' must be a number")
+            raise ChaptersRuntimeError(f"model JSON key 'chapters[{index}].start_s' must be a number")
         if not isinstance(chapter.get("title"), str):
-            raise ChaptersError(f"model JSON key 'chapters[{index}].title' must be a string")
+            raise ChaptersRuntimeError(f"model JSON key 'chapters[{index}].title' must be a string")
         if not isinstance(chapter.get("summary"), str):
-            raise ChaptersError(f"model JSON key 'chapters[{index}].summary' must be a string")
+            raise ChaptersRuntimeError(f"model JSON key 'chapters[{index}].summary' must be a string")
     return chapters
 
 
@@ -168,7 +172,7 @@ def request_chapters(client, message):
             return parse_chapters(response.text)
         except ChaptersError as exc:
             last_error = exc
-    raise ChaptersError(f"model output is not parseable after one retry: {last_error}")
+    raise ChaptersRuntimeError(f"model output is not parseable after one retry: {last_error}")
 
 
 def validate_chapters(chapters, transcript_end):
@@ -323,11 +327,16 @@ def main(argv=None):
             else None
         )
         summary = run(mapped, warnings, primary_input, args.out, args.prompt, publish_dir)
-    except (ChaptersError, ConfigError, LLMError, TimelineWordsError) as exc:
+    except (ChaptersRuntimeError, LLMError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+        return EXIT_RUNTIME
+    except (ChaptersError, ConfigError, TimelineWordsError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+        return EXIT_USAGE
 
     if args.json:
         print(json.dumps({"ok": True, **summary}))
@@ -338,7 +347,7 @@ def main(argv=None):
         )
         for warning in summary["warnings"]:
             print(f"warning: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

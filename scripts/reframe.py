@@ -36,6 +36,7 @@ from common.faces import (
     ensure_model,
     make_detector,
 )
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.schema import SchemaError, validate_or_raise
 from common.summary import summary_fields
 
@@ -52,6 +53,10 @@ SOURCES = ("face", "track", "saliency", "hold")
 
 class ReframeError(RuntimeError):
     """Raised when a crop path cannot be produced."""
+
+
+class ReframeRuntimeError(ReframeError):
+    """Raised when a frame cannot be decoded after the video opened."""
 
 
 def build_parser():
@@ -359,7 +364,7 @@ def analyse(video_path, start_s, end_s, aspect, sample_fps, model_path, smooth_s
         for t_s in times:
             frame = read_frame_near(capture, t_s, fps)
             if frame is None:
-                raise ReframeError(f"cannot read frame at {t_s:.2f}s from {video_path}")
+                raise ReframeRuntimeError(f"cannot read frame at {t_s:.2f}s from {video_path}")
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             boxes = detect_faces(detector, frame)
             subject = pick_subject(boxes, current_centre, width)
@@ -483,7 +488,7 @@ def run(args):
                 "warnings": list(data.get("warnings") or []),
                 **summary_fields(started),
             },
-            0,
+            EXIT_OK,
         )
     model_path = ensure_model(Path(args.model).expanduser() if args.model else DEFAULT_MODEL_PATH)
     record = analyse(
@@ -509,7 +514,7 @@ def run(args):
             "warnings": record["warnings"],
             **summary_fields(started),
         },
-        0,
+        EXIT_OK,
     )
 
 
@@ -517,9 +522,15 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary, exit_code = run(args)
-    except (ReframeError, FacesError, SchemaError) as exc:
+    except ReframeRuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except (FacesError, OSError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    except (ReframeError, SchemaError) as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     else:

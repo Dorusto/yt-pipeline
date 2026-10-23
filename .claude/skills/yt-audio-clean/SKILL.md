@@ -47,7 +47,7 @@ One ffmpeg audio pass is built in this order:
 
 - `--denoiser {arnndn,afftdn,none}`. Left at its default, the tool uses `arnndn` when a model exists, else falls back to `afftdn` with a warning.
 - `--model PATH` is the RNNoise `.rnnn`/`.rnnu` model. The default is `~/.cache/yt-pipeline/models/arnndn.rnnn` when it exists.
-- Asking for `--denoiser arnndn` with no model is an error: one `[error] ...` line naming `--model`, exit 1. No crash.
+- Asking for `--denoiser arnndn` with no model is an error: one `[error] ...` line naming `--model`, exit 2. No crash.
 - `--denoiser none` applies only the high-pass and loudnorm.
 - The tool never downloads a model. The default model cache is `~/.cache/yt-pipeline/models/arnndn.rnnn`; D2-2 fetched `marathon-prescription` from `GregorR/rnnoise-models` (rnnoise-nu format, models not subject to copyright per that repo's README) there. Without a model the tool still works, using `afftdn`. The same cleanup chain is shared with `render.py` (`scripts/common/ambience.py`), which runs it on the render's ambient bus.
 
@@ -65,8 +65,8 @@ One ffmpeg audio pass is built in this order:
 ## Re-run safety and errors
 
 - When the requested outputs already exist and are newer than the input, and `--force` is not given, nothing is written and the run reports `status: "skipped"`.
-- A file with no audio stream is not an error: `before` and `after` are `null` and a warning is added, exit 0. If `--out` was requested it cannot be produced, so that is an error (exit 1).
-- On any error (missing input, `--out` missing without `--analyse-only`, unreadable file, unsupported container, ffmpeg failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- A file with no audio stream is not an error: `before` and `after` are `null` and a warning is added, exit 0. If `--out` was requested it cannot be produced, so that is an error (exit 2).
+- On a usage error (missing input, `--out` missing without `--analyse-only`, unreadable file, unsupported container) it prints one `[error] ...` line to stderr and exits 2; on a runtime failure (ffmpeg or ffprobe failing after the run started) it exits 3. It never asks questions.
 
 ## Notes
 

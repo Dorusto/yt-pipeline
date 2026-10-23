@@ -18,7 +18,7 @@ Explain an edit: turn `WORKSPACE/edit.json` — the single source of truth — i
 - `--out PATH` sets the output path (default `WORKSPACE/explain.html`).
 - `--force` rewrites even when the output is up to date. Without it, an `explain.html` newer than `edit.json`, `shot_plan.json` and `shotlog.json` is skipped and counted as `skipped`.
 - `--json` prints exactly one JSON object on stdout (human output goes to stderr in that mode).
-- On any error (missing workspace, missing/unreadable or schema-invalid `edit.json`, unreadable optional file, refusal, write failure) it prints one `[error] ...` line to stderr and exits 1. It never asks questions.
+- On any error it prints one `[error] ...` line to stderr: exit 2 for a missing workspace, a missing/unreadable or schema-invalid `edit.json`, an unreadable optional file or a refused output path; exit 3 when the HTML cannot be written. It never asks questions.
 
 ## Step 2: read the result
 

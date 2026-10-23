@@ -25,6 +25,7 @@ import time
 from html import escape
 from pathlib import Path
 
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.frames import thumbnail_data_uri
 from common.moves import middle_speed_of
 from common.schema import SchemaError, validate
@@ -79,22 +80,25 @@ def run(workspace, out=None, force=False):
     out_path = _out_path(workspace_path, out)
     inputs = _input_files(workspace_path, edit_path)
     if not force and _output_is_up_to_date(out_path, inputs):
-        return _summary("skipped", edit, out_path, started), 0
+        return _summary("skipped", edit, out_path, started), EXIT_OK
     _check_out_location(out_path, workspace_path, edit.get("sources") or [])
     plan = _load_optional(workspace_path / "shot_plan.json", "shot_plan")
     shotlog = _load_optional(workspace_path / "shotlog.json", "shotlog")
     document = _html_document(workspace_path, edit, plan, shotlog)
     _write_html(out_path, document)
-    return _summary("written", edit, out_path, started), 0
+    return _summary("written", edit, out_path, started), EXIT_OK
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         summary, exit_code = run(args.workspace, out=args.out, force=args.force)
-    except (ExplainError, SchemaError, OSError) as exc:
+    except (ExplainError, SchemaError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
     line = (
         f"{summary['status']}: {summary['out']} "
         f"({summary['slots']} slots, {summary['candidates']} candidates)"

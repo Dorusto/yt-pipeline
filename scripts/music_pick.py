@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 from common.config import ConfigError, music_library, no_music_library_message
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 
 TOOL = "scripts/music_pick.py"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
@@ -51,6 +52,10 @@ WEIGHTS = {"bpm": 0.35, "energy": 0.25, "tag": 0.25, "duration": 0.15}
 
 class MusicPickError(RuntimeError):
     """Raised when no track can be chosen."""
+
+
+class MusicPickRuntimeError(MusicPickError):
+    """Raised when beats.py or the filesystem fails after the run started."""
 
 
 def build_parser():
@@ -317,7 +322,7 @@ def write_beats(chosen_path, workspace):
         text=True,
     )
     if result.returncode != 0:
-        raise MusicPickError(f"beats.py failed on {chosen_path}: {result.stderr.strip()}")
+        raise MusicPickRuntimeError(f"beats.py failed on {chosen_path}: {result.stderr.strip()}")
     return out
 
 
@@ -371,7 +376,7 @@ def run(library, brief=None, brief_file=None, workspace=None, target_duration_s=
         row["path"] = str(track)
         rows.append(row)
     if not rows:
-        raise MusicPickError(f"no track in {root} could be analysed")
+        raise MusicPickRuntimeError(f"no track in {root} could be analysed")
     rows.sort(key=lambda row: (-row["total"], row["file"]))
     winner = rows[0]
     chosen_path = Path(winner["path"])
@@ -428,12 +433,15 @@ def main(argv=None):
                 out=args.out,
                 force=args.force,
             )
-    except (MusicPickError, OSError) as exc:
+    except (MusicPickRuntimeError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
+    except MusicPickError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return EXIT_USAGE
     except ConfigError as exc:
         print(f"[error] {exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
     if args.json:
         print(json.dumps(summary))
     elif args.list:
@@ -449,7 +457,7 @@ def main(argv=None):
     else:
         print(f"chose {summary['chosen']} ({summary['path']})")
         print(f"why: {summary['why']}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

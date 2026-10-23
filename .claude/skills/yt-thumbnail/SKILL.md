@@ -45,5 +45,5 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
 
 ## Notes
 
-- Exit 0 on success; exit 1 on any error (missing/unreadable input, invalid brand, missing font, `creator` without `--background`, missing rembg when a cut-out is needed) with one `[error] ...` line on stderr; argparse errors exit 2.
+- Exit 0 on success; exit 2 on a usage error (missing/unreadable input, invalid brand, missing font, `creator` without `--background`) and exit 3 when the cut-out model is missing or fails, each with one `[error] ...` line on stderr; argparse errors exit 2.
 - The photo and background frame are read-only; only `--out` is written.
