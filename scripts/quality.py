@@ -791,6 +791,25 @@ def _is_stable_content(segment, steadiness, move):
     return move is not None and move.get("steadiness") in STABLE_STEADINESS
 
 
+def shaky_policy():
+    """``drop`` (default) turns long shaky runs into ``accidental``; ``review`` keeps them.
+
+    With ``review`` the segment keeps its move or hold role, so the vision model and
+    the director see it with its shake defect and decide. Junk frames (obstruction,
+    near-uniform, static low-detail) stay ``accidental`` either way. Test switch for
+    the holiday pilot: ``YT_PIPELINE_SHAKY=review``.
+    """
+    value = os.environ.get("YT_PIPELINE_SHAKY", "drop").strip().lower()
+    return value if value in ("drop", "review") else "drop"
+
+
+def _keep_for_review(segment, evidence):
+    """Leave a shaky segment's role alone and record why it was not dropped."""
+    segment["role_evidence"] = list(segment.get("role_evidence") or []) + [
+        f"{evidence}; kept for review (shaky policy)"
+    ]
+
+
 def _upgrade_to_accidental(segment, fact, confidence, evidence):
     """Set the accidental role, keeping uncertainty and flagging a contradicted move."""
     if segment["role"] == "move" and fact["move"] is not None:
@@ -838,16 +857,23 @@ def apply_accidental_runs(segments, facts, duration_s):
     if not qualifying:
         return
     covered_s = sum(run_s for _, _, run_s in qualifying)
+    review = shaky_policy() == "review"
     if covered_s >= ACCIDENTAL_RUN_FRACTION * duration_s:
         evidence = f"junk take: {covered_s:.1f}s of {duration_s:.1f}s has no stable move or hold"
         for segment, fact in zip(segments, facts):
-            _upgrade_to_accidental(segment, fact, ACCIDENTAL_TAKE_CONFIDENCE, evidence)
+            if review:
+                _keep_for_review(segment, evidence)
+            else:
+                _upgrade_to_accidental(segment, fact, ACCIDENTAL_TAKE_CONFIDENCE, evidence)
         return
     for start, end, run_s in qualifying:
         mean_shake = _mean([segments[i]["metrics"].get("shake", 0.0) for i in range(start, end)])
         evidence = f"chaotic run of {run_s:.1f}s with no stable move or hold (shake {mean_shake:.2f})"
         for i in range(start, end):
-            _upgrade_to_accidental(segments[i], facts[i], ACCIDENTAL_RUN_CONFIDENCE, evidence)
+            if review:
+                _keep_for_review(segments[i], evidence)
+            else:
+                _upgrade_to_accidental(segments[i], facts[i], ACCIDENTAL_RUN_CONFIDENCE, evidence)
 
 
 def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, duration_s):

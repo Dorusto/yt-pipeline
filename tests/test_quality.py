@@ -985,3 +985,23 @@ def test_old_motion_file_without_uncertainty_fields(tmp_path):
     for segment in data["segments"]:
         assert segment["uncertain"] is False
         assert segment["motion_label_confidence"] is None
+
+
+
+def test_shaky_review_policy_keeps_long_shaky_runs(monkeypatch):
+    import quality
+
+    def run_once():
+        segments = [
+            {"start_s": 0.0, "end_s": 10.0, "role": "move", "metrics": {"shake": 0.5}, "confidence": 0.6},
+        ]
+        facts = [{"steadiness": "very_unsteady", "move": None}]
+        quality.apply_accidental_runs(segments, facts, 10.0)
+        return segments[0]
+
+    monkeypatch.delenv("YT_PIPELINE_SHAKY", raising=False)
+    assert run_once()["role"] == "accidental"
+    monkeypatch.setenv("YT_PIPELINE_SHAKY", "review")
+    kept = run_once()
+    assert kept["role"] == "move"
+    assert "kept for review" in kept["role_evidence"][-1]
