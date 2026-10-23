@@ -2,6 +2,17 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
+## v0.1.2 (2026-10-23)
+
+A patch for the Costs page: no "Paid" before any spend, and the credit line in the page currency. Stable and experimental lists as in v0.1.0.
+
+```stable-files
+scripts/serve.py
+scripts/recap.py
+scripts/common/versions.py
+scripts/quality.py
+```
+
 ## v0.1.1 (2026-10-23)
 
 A patch for friends' instances: the Costs page shows their own model cost first and the project's costs as voluntary. Stable and experimental lists as in v0.1.0.
