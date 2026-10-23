@@ -674,7 +674,6 @@ def test_upload_page_form(tmp_path):
             b'name="music"',
             b'name="ambient_under_music_db"',
             b">Auto<",
-            b"inbox",
         ):
             assert fragment in body, fragment
     finally:
@@ -2326,7 +2325,7 @@ def test_run_cost_and_version_cost(tmp_path):
     second = {"path": project / "versions" / "v002", "meta": {"created_at": "2026-10-15T13:00:00+0000"}}
     assert round(serve.version_cost(first), 3) == 0.04
     assert round(serve.version_cost(second), 3) == 0.02
-    assert serve.format_cost(0.0473) == "$0.047"
+    assert serve.format_cost(0.0473) == "$0,05"
 
 
 def test_drop_form_names_the_shown_version():
@@ -2362,11 +2361,11 @@ def test_costs_page_with_a_ledger(tmp_path):
         page = body.decode()
         assert status == 200
         assert "2026-10-14" in page
-        assert "$0.050" in page
+        assert "$0,05" in page
         assert "2 versions" in page
-        assert "Monthly running" in page and "$3.000" in page
-        assert "Development total" in page and "$2.000" in page
-        assert "Donations" in page and "$10.000" in page
+        assert "Monthly running" in page and "$3,00" in page
+        assert "Development total" in page and "$2,00" in page
+        assert "Donations" in page and "$10,00" in page
         assert "Balance" in page
         assert "Feedback and requests" in page
     finally:
@@ -2735,9 +2734,9 @@ def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
         status, _, body = request(server, "GET", "/costs")
         page = body.decode()
         assert status == 200
-        assert "Project costs (everyone)" in page
-        assert "$7.500" in page
-        assert "$10.000" in page
+        assert "Model cost of your clips" in page
+        assert "$7,50" in page
+        assert "$10,00" in page
     finally:
         server.shutdown()
         server.server_close()
@@ -3120,7 +3119,7 @@ def test_feedback_reply_page_shows_the_reply_and_estimate(tmp_path, monkeypatch)
         assert status == 200, body
         page = body.decode()
         assert "I will drop 0071/s2." in page
-        assert "about $0.050 and 12 s" in page
+        assert "about $0,05 and 12 s" in page
         assert "Make the new version" in page
         assert "Change my request" in page
         assert calls == []
@@ -3517,8 +3516,8 @@ def test_check_json_reports_brand_logo(tmp_path, capsys):
 
 def test_theme_has_a_light_palette():
     assert "prefers-color-scheme:light" in serve.THEME_CSS
-    assert "--water:#f6f1e8" in serve.THEME_CSS
-    assert "--stone:#241f19" in serve.THEME_CSS
+    assert "--water:#f4f4f2" in serve.THEME_CSS
+    assert "--stone:#1b1c1f" in serve.THEME_CSS
 
 
 def test_key_classes_on_each_page(tmp_path):
@@ -3531,10 +3530,10 @@ def test_key_classes_on_each_page(tmp_path):
         assert b'class="projects"' in index_page
         _, _, upload = request(server, "GET", "/upload")
         assert b'class="drop"' in upload
-        assert b'class="go"' in upload
+        assert b'class="go start"' in upload
         assert b'class="brief-hints"' in upload
         _, _, costs = request(server, "GET", "/costs")
-        assert b'class="projects"' in costs
+        assert b"class=\"clip-costs\"" in costs
         _, _, project = request(server, "GET", "/2026-10-14/")
         assert b'class="tabs"' in project
         assert b'class="panel"' in project
