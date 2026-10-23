@@ -33,6 +33,7 @@ from common.costs import KINDS, compute_totals, connect, insert_entry, list_entr
 from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.llm import LLMError, read_ledger
+from common.spend import read_spend_ledger
 from common.summary import summary_fields
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -106,10 +107,7 @@ def build_parser():
 
 def resolve_ledger(args):
     """Resolve the ledger path or raise the three-ways usage error."""
-    try:
-        config = load_config()
-    except ConfigError:
-        config = {}
+    config = load_config()
     path = costs_db(args.ledger, config)
     if path is None:
         raise CostsUsageError(no_costs_message("--ledger"))
@@ -178,18 +176,11 @@ def command_import_dev(connection, args, started):
     if not source_file.is_file():
         raise CostsUsageError(f"run-spend file not found: {source_file}")
     try:
-        data = json.loads(source_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        entries = read_spend_ledger(source_file)
+    except ValueError as exc:
         raise CostsUsageError(f"could not read run-spend file {source_file}: {exc}") from exc
-    entries = data.get("entries") if isinstance(data, dict) else data
-    if not isinstance(entries, list):
-        raise CostsUsageError(
-            f"run-spend file {source_file} must be a list or an object with an entries list"
-        )
     per_day = {}
     for entry in entries:
-        if not isinstance(entry, dict):
-            continue
         stamp = entry.get("ts")
         cost = entry.get("cost_usd")
         if not isinstance(stamp, str) or isinstance(cost, bool) or not isinstance(cost, (int, float)):
@@ -272,7 +263,7 @@ def main(argv=None):
     started = time.monotonic()
     try:
         ledger = resolve_ledger(args)
-    except CostsUsageError as exc:
+    except (CostsUsageError, ConfigError) as exc:
         return report_error(exc, EXIT_USAGE, args.json)
     try:
         connection = connect(ledger)

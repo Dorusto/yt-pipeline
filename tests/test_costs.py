@@ -163,6 +163,21 @@ def test_missing_ledger_usage_error(tmp_path, monkeypatch, capsys):
     assert payload["exit_code"] == EXIT_USAGE
 
 
+def test_broken_config_reports_the_config_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv(config.COSTS_DB_ENV, raising=False)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("models: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+    monkeypatch.setattr(config, "EXAMPLE_PATH", tmp_path / "missing.example")
+    code = costs.main(["totals", "--json"])
+    assert code == EXIT_USAGE
+    captured = capsys.readouterr()
+    assert "models must not be empty" in captured.err
+    assert "no costs ledger configured" not in captured.err
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False and payload["exit_code"] == EXIT_USAGE
+
+
 def test_json_summary_fields_on_every_subcommand(tmp_path, capsys):
     ledger = tmp_path / "costs.db"
     workspaces = tmp_path / "workspaces"

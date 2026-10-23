@@ -43,3 +43,39 @@ def test_drop_keeps_the_other_shots_in_order():
     new_edit, removed = edit_drop.drop_shots(edit, [2])
     assert [shot["id"] for shot in new_edit["video"]] == ["a", "c"]
     assert removed == [{"id": "b"}]
+
+
+class FakeRender:
+    def __init__(self, returncode, stderr=""):
+        self.returncode = returncode
+        self.stdout = "{}"
+        self.stderr = stderr
+
+
+def test_render_failure_leaves_the_workspace_unchanged(tmp_path, monkeypatch, capsys):
+    ws = make_project(tmp_path)
+    monkeypatch.setattr(edit_drop.subprocess, "run", lambda *a, **k: FakeRender(3, "boom"))
+    code = edit_drop.main(["--workspace", str(ws), "--drop", "2", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 3 and out["ok"] is False and "render failed" in out["error"]
+    assert not (ws / "edit.json").exists()
+    assert not (ws / "edit.json.tmp").exists()
+
+
+def test_render_success_replaces_the_edit(tmp_path, monkeypatch, capsys):
+    ws = make_project(tmp_path)
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        return FakeRender(0)
+
+    monkeypatch.setattr(edit_drop.subprocess, "run", fake_run)
+    code = edit_drop.main(["--workspace", str(ws), "--drop", "2", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0 and out["version"] == "v002"
+    edit = json.loads((ws / "edit.json").read_text(encoding="utf-8"))
+    assert [shot["id"] for shot in edit["video"]] == ["v1", "v3"]
+    assert not (ws / "edit.json.tmp").exists()
+    edit_arg = seen["command"][seen["command"].index("--edit") + 1]
+    assert edit_arg.endswith("edit.json.tmp")

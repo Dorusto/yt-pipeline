@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import versions  # noqa: E402
 from common.errors import report_error  # noqa: E402
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE  # noqa: E402
+from common.summary import summary_fields  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 PREVIEW_NAME = "recap_720p.mp4"
@@ -87,15 +88,9 @@ def describe(numbers, removed):
     return "removed shot " + ", ".join(bits)
 
 
-def atomic_write(path, text):
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
-
-
 def main(argv=None):
     args = parse_args(argv)
-    started = time.time()
+    started = time.monotonic()
     workspace = Path(args.workspace).expanduser()
     try:
         if not workspace.is_dir():
@@ -117,28 +112,29 @@ def main(argv=None):
         "shots_left": len(new_edit["video"]),
         "version": None,
         "dry_run": args.dry_run,
-        "llm_cost_usd": 0.0,
+        **summary_fields(started),
     }
     if args.dry_run:
-        summary["wall_time_s"] = round(time.time() - started, 3)
         print(json.dumps(summary) if args.json else f"would make a new version: {note}")
         return EXIT_OK
-    atomic_write(workspace / versions.EDIT_NAME, json.dumps(new_edit, indent=2) + "\n")
+    temporary = workspace / (versions.EDIT_NAME + ".tmp")
+    temporary.write_text(json.dumps(new_edit, indent=2) + "\n", encoding="utf-8")
     render = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render.py"), "--edit", str(workspace / versions.EDIT_NAME),
+        [sys.executable, str(SCRIPTS / "render.py"), "--edit", str(temporary),
          "--out", str(workspace / PREVIEW_NAME), "--force", "--json"],
         capture_output=True, text=True,
     )
     if render.returncode != 0:
+        temporary.unlink(missing_ok=True)
         tail = (render.stderr or render.stdout or "").strip().splitlines()[-1:] or ["no output"]
         return report_error(f"render failed: {tail[0]}", EXIT_RUNTIME, args.json, base=base["name"])
+    os.replace(temporary, workspace / versions.EDIT_NAME)
     meta = dict(base["meta"])
     for key in ("created_at", "files"):
         meta.pop(key, None)
     meta.update({"feedback": [], "note": note, "status": "done", "failed_at": None})
     directory = versions.snapshot(workspace, meta)
     summary["version"] = directory.name if directory else None
-    summary["wall_time_s"] = round(time.time() - started, 3)
     print(json.dumps(summary) if args.json else f"new version {summary['version']}: {note}")
     return EXIT_OK
 

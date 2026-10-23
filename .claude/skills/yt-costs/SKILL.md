@@ -1,7 +1,7 @@
 ---
 name: yt-costs
 description: Keep a small SQLite ledger of what the project costs and earns — model jobs, build-agent spend, fixed monthly costs, one-off investments and donations — with idempotent imports and a totals view. Use when the user asks what the project costs or earns, wants to add a cost or a donation, import the model or build-agent spend, or see the balance. Trigger phrases - "cât costă proiectul", "cât am cheltuit", "adaugă o donație", "importă cheltuielile", "cât e balanța", "costs ledger", "add a cost", "import the spend", "what is the balance", "totals". Not for the per-run LLM budget cap (that is `scripts/common/llm.py` and the watchdog), not for the read-only Costs page in the web app (that is `scripts/serve.py`, `GET /costs`) and not for any donation payment handling.
-compatibility: Run from the repository root. Needs the repo .venv (stdlib only — sqlite3, json). The ledger is a SQLite file outside the repository; no model is called, so llm_cost_usd is always 0.0. Reads llm_spend.json files and a run-spend JSON read-only.
+compatibility: Run from the repository root. Needs the repo .venv (stdlib only — sqlite3, json). The ledger is a SQLite file outside the repository; no model is called, so llm_cost_usd is always 0.0. Reads llm_spend.json files and a run-spend JSON read-only through `scripts/common/spend.py`.
 ---
 
 # yt-costs
@@ -30,7 +30,7 @@ With none set the tool stops with a usage error naming those three ways. Docs an
 
 - `add --kind K --amount USD [--date D] [--note TEXT]` appends one manual entry. `--kind` is one of the five kinds, `--amount` is a finite number `> 0`, `--date` defaults to today and must match `YYYY-MM-DD`. `source` is `null`.
 - `import-jobs --workspaces DIR` reads every immediate subdirectory's `llm_spend.json` (through `common.llm.read_ledger`) and writes one `model_job` entry per project; `source` is the project directory name, `date` the file's modification date. An unreadable ledger is skipped with a warning on stderr and does not fail the run.
-- `import-dev --from FILE` reads the build agents' run-spend JSON (a list, or an object with an `entries` list) and sums `cost_usd` per calendar day; one `dev_spend` entry per day, `source` the date.
+- `import-dev --from FILE` reads the build agents' run-spend JSON through the shared `scripts/common/spend.py` `read_spend_ledger` (a list, or an object with an `entries` list) and sums `cost_usd` per calendar day; one `dev_spend` entry per day, `source` the date.
 - `totals [--month YYYY-MM]` sums per kind, computes the recurring monthly cost, the fixed total over the months since the first fixed entry and the balance.
 - `list [--kind K]` lists entries, optionally filtered by kind.
 

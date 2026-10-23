@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common.notify import NotifyError, send
+from common.spend import read_spend_ledger
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 
 KEY_INFO_URL = "https://openrouter.ai/api/v1/key"
@@ -323,22 +324,6 @@ def save_state(path, state):
     target = Path(path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
-
-def read_spend_ledger(path):
-    """Return the spend ledger entries (list of dicts with ``cost_usd``), [] when absent."""
-    target = Path(path).expanduser()
-    if not target.exists():
-        return []
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ValueError(f"spend ledger {target} is unreadable: {exc}") from exc
-    if isinstance(data, dict):
-        data = data.get("entries", [])
-    if not isinstance(data, list):
-        raise ValueError(f"spend ledger {target} must hold an entries list")
-    return [entry for entry in data if isinstance(entry, dict) and isinstance(entry.get("cost_usd"), (int, float))]
 
 
 def write_spend_ledger(path, entries):
