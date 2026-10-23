@@ -26,23 +26,13 @@ Return EXACTLY one JSON object and nothing else:
   "promo_lines": [{"ro": "…", "en": "…", "label": "affiliate"}],
   "chapters": [{"timestamp": "00:00:00", "title": "…"}],
   "tags": ["tag1", "tag2"],
-  "pinned_comment": "…",
-  "thumbnail_concepts": [
-    {
-      "name": "…",
-      "pose": "…",
-      "emotion": "…",
-      "text": {"title": "…", "keyword": "…", "kicker": "…"},
-      "theme": "tech",
-      "source": {"kind": "clip_frame", "timecode": "00:03:12"}
-    }
-  ]
+  "pinned_comment": "…"
 }
 ```
 
 Field rules:
 
-- `titles` — exactly 3 titles in Romanian, at most 70 characters each, the main keyword near the start. All three say the same thing as the thumbnail text will (title and thumbnail must say the same thing).
+- `titles` — exactly 3 titles in Romanian, at most 70 characters each, the main keyword near the start.
 - `intro` — 2-4 sentences: the hook and what the viewer leaves with, in the clip's own voice (`ro`) and in English (`en`).
 - `github_line` — a line pointing at the code shown in the clip. It links the channel URL given in the Inputs (`channel_url`) and, when `repo_url` is given, the clip's own repo too. Use `null` only when the context shows a narrative clip with no code.
 - `previous_line` — a line linking `previous_url` when it is given ("dacă ți-a plăcut asta, vezi și …"), `null` when it is not.
@@ -51,14 +41,6 @@ Field rules:
 - `chapters` — chapter list from the timeline: `timestamp` in `HH:MM:SS`, non-decreasing, inside the transcript, first one `00:00:00`; `title` at most 40 characters. Mark real topic changes, not every pause.
 - `tags` — 8-12 tags in Romanian, the main keyword first.
 - `pinned_comment` — one concrete, actionable question for the audience (what to answer and how), never a vague "ce părere aveți?".
-- `thumbnail_concepts` — 2-3 distinct thumbnail concepts. Channel formula: the creator's own face, a real emotion (never neutral) and short text — never a generic illustration. Each concept:
-  - `name` — short label for the concept.
-  - `pose` — what the face and body do in the shot.
-  - `emotion` — a real, readable emotion (bucurie, surpriză, entuziasm, uimire, concentrare…), never "neutral" and never a flat stare.
-  - `text` — the thumbnail text of 3-4 words that says the same thing as the titles (the title and the thumbnail must say the same thing): row 1 `title`, row 2 `keyword`, and the small `kicker` line above them (`kicker` may be `""`). The concepts are alternatives to choose from, so their texts differ: each concept phrases the promise its own way (no two share both `title` and `keyword`), and at least one concept has a non-empty `kicker`.
-  - `theme` — `tech` or `creator`.
-  - `source` — either `{"kind": "clip_frame", "timecode": "HH:MM:SS"}`: a moment inside the transcript where that emotion shows (name the timecode where it fits), or `{"kind": "new_photo"}` when a new photo has to be shot for it.
-  - The chosen concept maps directly to the `thumbnail.py` flags: `--photo` (the frame or the new photo), `--title`, `--keyword`, `--kicker`, `--theme`.
 
 ## CTA rules (the tool enforces the fixed parts)
 

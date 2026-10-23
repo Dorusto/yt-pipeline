@@ -65,6 +65,79 @@ def base_args(photo, out):
     ]
 
 
+def write_concepts(path):
+    document = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-23T00:00:00+00:00",
+        "tool": "scripts/thumbnail_concepts.py",
+        "title": "AI-UL MEU",
+        "concepts": [
+            {
+                "name": "Bucurie",
+                "pose": "mâinile ridicate, cadru strâns",
+                "emotion": "bucurie reală",
+                "text": {"title": "AI-UL MEU", "keyword": "RULEAZĂ ACASĂ", "kicker": "// homelab"},
+                "theme": "tech",
+                "source": {"kind": "clip_frame", "timecode": "00:00:02"},
+            },
+            {
+                "name": "Surpriză",
+                "pose": "privire în cameră, zâmbet larg",
+                "emotion": "surpriză",
+                "text": {"title": "MERGE SINGUR", "keyword": "ACASĂ", "kicker": "// vlog"},
+                "theme": "creator",
+                "source": {"kind": "new_photo"},
+            },
+        ],
+    }
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def test_concepts_pick_fills_text(tmp_path, capsys):
+    photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
+    frame = synthetic_frame(tmp_path / "gradient_frame.jpg")
+    concepts = write_concepts(tmp_path / "thumbnail_concepts.json")
+    out = tmp_path / "out"
+    code = thumbnail.main([
+        "--photo", str(photo), "--concepts", str(concepts), "--pick", "2",
+        "--background", str(frame), "--out", str(out), "--skip-cutout", "--json",
+    ])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["title"] == "MERGE SINGUR"
+    assert summary["keyword"] == "ACASĂ"
+    assert summary["kicker"] == "// vlog"
+    assert summary["theme"] == "creator"
+    assert summary["concepts_file"] == str(concepts)
+    assert summary["concept"] == 2
+    assert (out / "thumbnail.jpg").is_file()
+
+
+def test_concepts_with_title_is_argparse_error(tmp_path):
+    photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
+    concepts = write_concepts(tmp_path / "thumbnail_concepts.json")
+    with pytest.raises(SystemExit) as exc:
+        thumbnail.main([
+            "--photo", str(photo), "--concepts", str(concepts),
+            "--title", "AI-UL MEU", "--out", str(tmp_path / "out"),
+        ])
+    assert exc.value.code == 2
+
+
+def test_pick_out_of_range_exits_2(tmp_path, capsys):
+    photo = synthetic_portrait(tmp_path / "cartoon_portrait.png")
+    concepts = write_concepts(tmp_path / "thumbnail_concepts.json")
+    code = thumbnail.main([
+        "--photo", str(photo), "--concepts", str(concepts), "--pick", "9",
+        "--out", str(tmp_path / "out"), "--skip-cutout",
+    ])
+    assert code == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "1..2" in err
+    assert "Traceback" not in err
+
+
 def test_brand_json_validates_against_schema():
     brand = json.loads((ROOT / "brand.json").read_text(encoding="utf-8"))
     assert validate(brand, "brand") == []

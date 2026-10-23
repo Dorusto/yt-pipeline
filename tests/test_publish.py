@@ -507,24 +507,6 @@ def write_mock_config(tmp_path):
                     "chapters": [{"timestamp": "00:00:00", "title": "Intro"}],
                     "tags": ["a", "b"],
                     "pinned_comment": "Q?",
-                    "thumbnail_concepts": [
-                        {
-                            "name": "Concept one",
-                            "pose": "facing camera",
-                            "emotion": "joy",
-                            "text": {"title": "T1", "keyword": "K1", "kicker": ""},
-                            "theme": "tech",
-                            "source": {"kind": "new_photo"},
-                        },
-                        {
-                            "name": "Concept two",
-                            "pose": "hands up",
-                            "emotion": "surprise",
-                            "text": {"title": "T2", "keyword": "K2", "kicker": "kick"},
-                            "theme": "creator",
-                            "source": {"kind": "new_photo"},
-                        },
-                    ],
                 }
             ),
         },
@@ -613,7 +595,6 @@ KIT_METADATA = {
     "chapters": [{"timestamp": "00:00:00", "title": "Intro"}],
     "tags": ["a", "b"],
     "pinned_comment": "Q?",
-    "thumbnail_concepts": [],
 }
 
 

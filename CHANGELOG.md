@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Publish: `thumbnail_concepts.py` writes `thumbnail_concepts.json` and a Romanian `thumbnail_concepts.md` from the confirmed title, the context note and the corrected `.srt` (2-3 concepts, model role `metadata`), and `thumbnail.py --concepts`/`--pick` reads them directly.
 - Publish: `publish.py` gains a `verify` step between corrections and the human-review stop — it compares the corrected SRT's end time and file date with the final video and stops with a clear message (exit 2) before translation, metadata and the kit when they no longer match.
 - Subtitles: a corrections line `*wrong|correct` also fixes the capitalised variant (first letter only), and `correct_srt.py --capitalised` turns the variant on for every line; a pattern that already starts with a capital letter gets no variant.
 - Costs: `costs.py import-opencode` imports build-agent spend per day from opencode's session database, only for this project's folders (`--db`, repeatable `--match`), idempotent by date.
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Publish: `metadata.py` and `prompts/metadata.md` no longer carry the thumbnail section — the concepts live in their own tool and file, and `metadata.md` keeps only what is pasted into Studio.
 - Watchdog: no per-lot flag — the alert label comes from the newest task brief in `.opencode/tasks/`, the two stop rules are no commit for N hours and one hard daily spend ceiling, and the stop notification reports the lot's cost.
 - Cleanup lot (V020N lot n1): a failed ffprobe is `EXIT_RUNTIME` in `kdenlive_from_fragments.py` and `render.py`; `serve.py` and `recap_meta.py` share `earliest_creation_date`, `serve.py` writes feedback through `common.feedback`, `costs.py totals` and the Costs page share one `compute_totals` call, `upkeep_percent()`/`usd_to_eur()` raise a clear `ConfigError`, `common.openrouter` no longer pulls `openai`/`filelock`, `pytest-timeout` (120 s per test) is in the test requirements and CI, and `release.yml` starts `deploy.yml` after it creates the release.
 - Docs: the README is now a one-screen front door (what it is, who it is for, a quickstart, where to go next); the tool-by-tool reference moved to `docs/guides/tools.md`, and the pilot host and costs sections link to their guides.

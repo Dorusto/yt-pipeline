@@ -195,6 +195,7 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 ```
 
 - `--theme tech` generates the dark background; `--theme creator` requires `--background FRAME.jpg` (cover-scaled, darkened). The look (colors, fonts, layout, glow) comes from `brand.json` (validated against `schemas/brand.schema.json`); fonts ship in `assets/fonts/` (SIL OFL).
+- `--concepts FILE` takes the title, keyword, kicker and theme from a `thumbnail_concepts.json` (validated against `schemas/thumbnail_concepts.schema.json`) instead of the flags; `--pick N` (1-based, default 1) chooses the concept. With `--concepts`, `--title`, `--keyword`, `--kicker` and `--theme` must not be given; a `--pick` outside `1..len(concepts)` is a usage error.
 - `--psd` also writes `thumbnail.psd` with the layers `background`, `portrait` (glow baked in), `title`, `keyword`, `kicker`, `tag` for manual retouching.
 - The cut-out uses rembg (`birefnet-portrait`, downloaded to `~/.rembg/models/` on first run); `--skip-cutout` uses the photo's own alpha instead.
 
@@ -371,6 +372,30 @@ The `verify` step compares the corrected `<name>_RO.srt` with the final video al
 ```
 
 `--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500). There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
+
+### Metadata draft (metadata.py)
+
+`metadata.py` turns a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags and a pinned-comment proposal. It writes `metadata.json` next to the draft with the validated fields. Skill: `yt-publish`.
+
+```bash
+.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--chapters chapters.json] \
+  [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+```
+
+- `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's.
+- The channel-members sentence and the closing are fixed and never taken from the model.
+
+### Thumbnail concepts (thumbnail_concepts.py)
+
+`thumbnail_concepts.py` writes 2-3 Romanian thumbnail concepts from the confirmed title, the context note and the corrected `.srt`: `thumbnail_concepts.json` (validated against `schemas/thumbnail_concepts.schema.json`) and a Romanian `thumbnail_concepts.md`. The chosen concept feeds `thumbnail.py --concepts`/`--pick`. Skill: `yt-publish`.
+
+```bash
+.venv/bin/python scripts/thumbnail_concepts.py SRT --context CONTEXT.md --title "AI-UL MEU" \
+  [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+```
+
+- The model role is `metadata` (same as `metadata.py`); the concepts start from the confirmed title and each phrases the promise its own way.
+- A `clip_frame` timecode is normalized to `HH:MM:SS` and must be inside the transcript.
 
 ---
 

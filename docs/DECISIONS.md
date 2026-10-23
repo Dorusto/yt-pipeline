@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Thumbnail concepts move out of the metadata draft (V020N lot n10)
+
+**Context:** Issue #74: `metadata.md` mixed the publish metadata with a `## Thumbnail` section whose labels were English (Pose, Emotion, Theme, Source) while the channel works in Romanian, and thumbnail concepts are not metadata. The 2026-10-20 addendum had put a structured `thumbnail_concepts` model key into `metadata.py` and rendered it with the exact `thumbnail.py --photo --title --keyword --kicker --theme` command line per concept.
+
+**Options:** (A) keep the concepts in `metadata.py` and only translate the labels; (B) move them to their own tool and file, written in Romanian, starting from the confirmed title, and feed `thumbnail.py` directly; (C) drop the concepts entirely.
+
+**Decision:** B. `scripts/thumbnail_concepts.py` takes the corrected `.srt`, a context note and the confirmed title, asks the `metadata` model role (no config change) and writes `thumbnail_concepts.json` (validated against `schemas/thumbnail_concepts.schema.json`) plus a Romanian `thumbnail_concepts.md` with the labels `Nume`, `Poză`, `Emoție`, `Text`, `Temă`, `Sursă` and the command line `thumbnail.py --concepts thumbnail_concepts.json --pick N --photo <source> --out <dir>`. `thumbnail.py` gains `--concepts FILE` and `--pick N` (1-based, default 1): with `--concepts` the `--title`/`--keyword`/`--kicker`/`--theme` flags must not be given, and the picked concept fills them. `metadata.py` and `prompts/metadata.md` drop the `thumbnail_concepts` key and the `## Thumbnail` section; the validation rules carry over unchanged (2-3 concepts, non-empty `name`/`pose`/`emotion`, non-empty `text.title`/`text.keyword`, `theme` in `tech`/`creator`, `source.kind` in `clip_frame`/`new_photo`, a clip-frame timecode normalized and inside the transcript).
+
+**Why not A:** translating the labels leaves the concepts in the metadata draft, which is what the issue says is wrong; the concepts are a separate step with their own output. **Why not C:** the concepts are the input `thumbnail.py` needs; they just belong in their own file.
+
+**Consequence:** `metadata.md` keeps only what is pasted into Studio (titles, descriptions, chapters, tags, pinned comment). The concepts are a standalone step (not wired into `publish.py`'s chain) and `thumbnail.py` reads them with `--concepts`/`--pick`; the flag-only path is unchanged. This supersedes the 2026-10-20 addendum.
+
+---
+
 ## [2026-10-23] Publish subtitle/video match check and capitalised corrections (V020N lot n8)
 
 **Context:** Two issues in the publish/subtitle path. #78: after a cut is removed or added in the final edit, the corrected SRT can silently no longer match the video, and the chain still translates, writes metadata and builds the kit from stale subtitles. #79: a correction like `pasnicii|paznicii` misses the sentence-initial `Pasnicii`, so the same word needs a second line.
@@ -2231,6 +2245,8 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 ---
 
 ## [2026-10-20] Metadata draft carries structured thumbnail photo concepts (S51 lot 1 addendum)
+
+**Superseded 2026-10-23** — the concepts moved to their own tool and file (`thumbnail_concepts.py` + `thumbnail.py --concepts`/`--pick`); see the V020N lot n10 entry above.
 
 **Context:** The lot 1 addendum to issue #51 (Doru, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
 

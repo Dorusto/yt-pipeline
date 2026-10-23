@@ -14,6 +14,8 @@ screen-blended onto the background before the portrait is composited. With
 Usage:
     python scripts/thumbnail.py --photo IN.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
         --kicker "// homelab · automatizări" --theme tech --out DIR [--psd] [--json]
+    python scripts/thumbnail.py --photo IN.jpg --concepts thumbnail_concepts.json --pick 1 \
+        --out DIR [--psd] [--json]
 """
 
 import argparse
@@ -31,6 +33,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from common.brand import BrandError, parse_hex_color
 from common.brand import load_brand as load_brand_kit
 from common.brand import resolve_font as resolve_font_kit
+from common.schema import SchemaError, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -73,10 +76,12 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--photo", required=True, help="input portrait photo (jpg/png), read-only")
-    parser.add_argument("--title", required=True, help="title line (e.g. AI-UL MEU)")
-    parser.add_argument("--keyword", required=True, help="big accented words (e.g. RULEAZĂ ACASĂ), may wrap to 2 lines")
-    parser.add_argument("--kicker", default="", help="small line above the title (e.g. // homelab · automatizări)")
-    parser.add_argument("--theme", required=True, choices=("tech", "creator"), help="brand theme")
+    parser.add_argument("--title", default=None, help="title line (e.g. AI-UL MEU)")
+    parser.add_argument("--keyword", default=None, help="big accented words (e.g. RULEAZĂ ACASĂ), may wrap to 2 lines")
+    parser.add_argument("--kicker", default=None, help="small line above the title (e.g. // homelab · automatizări)")
+    parser.add_argument("--theme", default=None, choices=("tech", "creator"), help="brand theme")
+    parser.add_argument("--concepts", default=None, help="a thumbnail_concepts.json to take title/keyword/kicker/theme from")
+    parser.add_argument("--pick", type=int, default=1, help="1-based concept to use from --concepts (default 1)")
     parser.add_argument("--background", default=None, help="frame for the background (required for creator, optional for tech)")
     parser.add_argument("--out", required=True, help="output directory (created if missing)")
     parser.add_argument("--psd", action="store_true", help="also write thumbnail.psd with one separate layer per element")
@@ -571,7 +576,32 @@ def human_summary(summary):
     )
 
 
-def render(args, started):
+def load_concepts(path, pick):
+    """Read a ``thumbnail_concepts.json``, validate it and return the picked concept."""
+    concepts_path = Path(path).expanduser()
+    try:
+        text = concepts_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ThumbnailError(f"concepts file not found: {concepts_path}")
+    except OSError as exc:
+        raise ThumbnailError(f"cannot read concepts file '{concepts_path}': {exc}")
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ThumbnailError(f"concepts file '{concepts_path}' is not valid JSON: {exc}")
+    try:
+        validate_or_raise(document, "thumbnail_concepts")
+    except SchemaError as exc:
+        raise ThumbnailError(
+            f"concepts file '{concepts_path}' is not valid thumbnail_concepts.json: {exc}"
+        )
+    concepts = document["concepts"]
+    if not 1 <= pick <= len(concepts):
+        raise ThumbnailError(f"--pick {pick} is outside 1..{len(concepts)}")
+    return concepts[pick - 1]
+
+
+def render(args, started, concepts_file=None, concept_index=None):
     brand, brand_path = load_brand(args.brand)
     width = brand["canvas"]["width"]
     height = brand["canvas"]["height"]
@@ -639,6 +669,8 @@ def render(args, started):
         "keyword": args.keyword,
         "kicker": args.kicker or "",
         "theme": args.theme,
+        "concepts_file": concepts_file,
+        "concept": concept_index,
         "brand": str(brand_path),
         "out_dir": str(out_dir),
         "thumbnail": str(thumbnail_path),
@@ -663,9 +695,40 @@ def render(args, started):
 
 def main(argv=None):
     started = time.monotonic()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    concepts_file = None
+    concept_index = None
+    if args.concepts:
+        if (
+            args.title is not None
+            or args.keyword is not None
+            or args.kicker is not None
+            or args.theme is not None
+        ):
+            parser.error(
+                "--concepts cannot be combined with --title, --keyword, --kicker or --theme"
+            )
+        concepts_file = str(Path(args.concepts).expanduser())
+        concept_index = args.pick
+        try:
+            concept = load_concepts(args.concepts, args.pick)
+        except ThumbnailError as exc:
+            return report_error(exc, EXIT_USAGE, args.json)
+        args.title = concept["text"]["title"]
+        args.keyword = concept["text"]["keyword"]
+        args.kicker = concept["text"]["kicker"]
+        args.theme = concept["theme"]
+    else:
+        missing = [
+            name
+            for name, value in (("--title", args.title), ("--keyword", args.keyword), ("--theme", args.theme))
+            if value is None
+        ]
+        if missing:
+            parser.error("the following arguments are required: " + ", ".join(missing))
     try:
-        summary = render(args, started)
+        summary = render(args, started, concepts_file, concept_index)
     except ThumbnailRuntimeError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except (ThumbnailError, OSError) as exc:
