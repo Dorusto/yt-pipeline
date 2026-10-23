@@ -307,6 +307,16 @@ The AI models do not change. What improves is data and rules on disk, all plain 
 
 Sizes stay small: a correction is ~200 bytes, so 10 000 corrections are about 2 MB. No footage or frames are stored, only clip names and timecodes. See `docs/DECISIONS.md`, 2026-10-14, *Feedback storage and the rules digest*, for limits and compaction.
 
+## Pilot host
+
+A pilot host runs one small container per person, all on the same released tag;
+each person reaches only their own container through a Tailscale node share and
+the inbox and workspaces live on a NAS share mounted into the container. The
+owner sets up the Tailscale share, the NAS share, the mount and the env file;
+`deploy/update.sh <tag>` updates the container to a released tag with a smoke
+test and a rollback. The storage quota, the per-instance OpenRouter key and the
+project costs URL are in [pilot-host.md](pilot-host.md).
+
 ## Where to look
 
 - What it can and cannot do yet: `docs/ROADMAP.md`

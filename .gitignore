@@ -11,6 +11,7 @@ corrections.txt
 *.json
 *.ass
 .opencode/tasks/
+.deployed-tag
 !opencode.json
 !brand.json
 !schemas/*.json

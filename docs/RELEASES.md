@@ -28,3 +28,15 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - Per-project delete from the project page.
 - Per-instance feature switches (`--features` / `YT_PIPELINE_FEATURES` / `web.features`).
 - The brief hint chips and the multi-line example placeholder.
+- Pilot host install, update and rollback (`deploy/update.sh`, `deploy/yt-pipeline-web.service`, `docs/guides/pilot-host.md`).
+
+**Stable files** — the files behind the stable candidate above. A change to one
+needs the `Stable-change: approved` trailer on a commit in the range (see
+[`RELEASING.md`](RELEASING.md)); the check is `scripts/check_stable.py`:
+
+```stable-files
+scripts/serve.py
+scripts/recap.py
+scripts/common/versions.py
+scripts/quality.py
+```
