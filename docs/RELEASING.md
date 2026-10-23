@@ -29,3 +29,4 @@ Rules for the owner and for every agent. A version is a tag on `master` plus a G
 - CI on every push (tests and public check).
 - Branch protection on `master` (merge only with green CI, set by the owner on GitHub).
 - The stable-files check (`scripts/check_stable.py`, CI on pull requests): a diff that touches a file in the `stable-files` block of `docs/RELEASES.md` fails unless a commit in the range carries the trailer `Stable-change: approved`. Before the first tag (the latest version is a candidate) nothing is enforced.
+- Dependabot (`.github/dependabot.yml`) opens one grouped weekly pull request per ecosystem (Python requirements and GitHub Actions) inside the owner's working hours; CI checks it like any pull request.

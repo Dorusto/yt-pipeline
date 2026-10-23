@@ -2787,3 +2787,17 @@ README short and its links resolving.
 **Why not:** A) the per-lot flag is exactly the manual step the issue wants removed, and a per-run cap that stops the agent is a second spend rule the issue asks to drop.
 
 **Consequence:** the cron line no longer carries a lot label or a run cap; the stop notification names the reason and the lot's cost; RULES, the skill and `docs/AGENT_SETUP.md` describe the two stop rules.
+
+---
+
+## [2026-10-23] Repo automations: grouped weekly Dependabot and one shared AGENTS.md (V020N lot n5)
+
+**Context:** Issue #100: the repo had no dependency-update automation, and the project rules for coding agents lived only in `CLAUDE.md`, which opencode reads only when no `AGENTS.md` exists; a second agent file would have copied the rules.
+
+**Options:** (A) keep `CLAUDE.md` as the only agent file and add a Dependabot config; (B) one shared `AGENTS.md` next to `CLAUDE.md`, the topic rules split into small files under `docs/agents/` and one pointer to them, plus a grouped weekly Dependabot config.
+
+**Decision:** B. `.github/dependabot.yml` opens one grouped pull request per week per ecosystem (`pip` and `github-actions`), Monday 09:00 `Europe/Bucharest` (the owner's working hours), `patterns: ["*"]` per group; CI (`tests.yml`, `public-check.yml`, `stable-check.yml`) already runs on `pull_request`, so it checks a Dependabot PR like any other. `AGENTS.md` is the shared instruction file for every coding agent (opencode, DeepSeek, Claude): it points to `docs/RULES.md` (the rules in force), `.claude/skills/` and the topic files `docs/agents/code-style.md`, `docs/agents/testing.md` and `docs/agents/conventions.md`, and copies no rule. `CLAUDE.md` becomes a short pointer to `AGENTS.md`.
+
+**Why not A:** the issue asks for one shared file for every agent and no copies; keeping the rules in `CLAUDE.md` alone leaves opencode without them once `AGENTS.md` exists.
+
+**Consequence:** `AGENTS.md` and `docs/agents/` are the agent entry point; `docs/AGENT_SETUP.md` and `docs/RELEASING.md` name them; `tests/test_agents_md.py` and `tests/test_dependabot.py` keep the shape; `tests/test_no_personal_setup.py` scans the new files; RULES gains two lines.

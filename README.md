@@ -41,6 +41,7 @@ commands from PowerShell with `.venv\Scripts\python.exe` and
 - Phone-only flow (Syncthing → inbox → serve → ntfy): [docs/guides/phone-flow.md](docs/guides/phone-flow.md)
 - Run a pilot host for friends: [docs/guides/pilot-host.md](docs/guides/pilot-host.md)
 - Use it from an AI agent (Claude Code or opencode): [docs/AGENT_SETUP.md](docs/AGENT_SETUP.md)
+- Work on the code with an AI agent: [AGENTS.md](AGENTS.md) (shared by Claude Code, opencode and DeepSeek).
 - What it can and cannot do yet: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 Licensed under [AGPL-3.0-or-later](LICENSE); external contributions need a signed

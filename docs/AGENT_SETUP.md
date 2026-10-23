@@ -45,7 +45,7 @@ Put it in your shell profile. Never commit it.
 Skills are discovered from the folder you start the agent in, upward to the repository root. Start it inside the repo.
 
 - **Claude Code:** run `claude` in the repo root. To use it from another folder, start with `claude --add-dir /path/to/yt-pipeline`.
-- **opencode:** run `opencode` in the repo root. It reads `.claude/skills/` and, when no `AGENTS.md` exists, `CLAUDE.md` as project instructions.
+- **opencode:** run `opencode` in the repo root. It reads `.claude/skills/` and `AGENTS.md` as project instructions; `CLAUDE.md` points to `AGENTS.md` for Claude Code.
 
 Ask the agent to list its skills. You should see `yt-transcript`, `yt-shorts` and `yt-rough-cut`.
 
