@@ -105,7 +105,9 @@ def test_dry_run_message_has_the_sections(tmp_path, monkeypatch, capsys):
     assert "a calm recap" in message
     assert "## Facts" in message
     assert "Place: (unknown)" in message
-    assert "Date: (unknown)" in message
+    assert "When: (unknown)" in message
+    assert "Who is in it: (unknown)" in message
+    assert "Occasion: (unknown)" in message
     assert "## Shots" in message
     assert "- a wide shot of the valley" in message
 
@@ -128,7 +130,7 @@ def test_valid_answer_writes_and_validates(tmp_path, monkeypatch, capsys):
     assert document["hashtags"] == VALID["hashtags"]
     assert document["model"] == "mock-model"
     assert document["llm_cost_usd"] == 0.002
-    assert document["missing"] == ["place name", "date"]
+    assert document["missing"] == ["place", "when", "who", "occasion"]
 
 
 def test_two_invalid_answers_exit_3(tmp_path, monkeypatch, capsys):
@@ -160,7 +162,7 @@ def test_missing_place_name_when_brief_has_no_place_line(tmp_path, monkeypatch, 
     patch(monkeypatch, client)
     assert recap_meta.main(["--workspace", str(tmp_path), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
-    assert "place name" in summary["missing"]
+    assert "place" in summary["missing"]
 
 
 def test_place_line_removes_the_missing_hint(tmp_path, monkeypatch, capsys):
@@ -172,7 +174,30 @@ def test_place_line_removes_the_missing_hint(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     assert recap_meta.main(["--workspace", str(tmp_path), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
-    assert "place name" not in summary["missing"]
+    assert "place" not in summary["missing"]
+
+
+def test_brief_facts_win_over_the_brief_line(tmp_path, monkeypatch, capsys):
+    write_edit(
+        tmp_path / "edit.json",
+        brief_text="a calm recap\nWhere and when: somewhere else",
+    )
+    (tmp_path / "brief_facts.json").write_text(
+        json.dumps(
+            {"place": "Retezat", "when": "July 2026", "who": "me", "occasion": "hike"}
+        ),
+        encoding="utf-8",
+    )
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+    assert recap_meta.main(["--workspace", str(tmp_path), "--dry-run", "--json"]) == EXIT_OK
+    summary = json.loads(capsys.readouterr().out)
+    message = summary["message"]
+    assert "Place: Retezat" in message
+    assert "When: July 2026" in message
+    assert "Who is in it: me" in message
+    assert "Occasion: hike" in message
+    assert summary["missing"] == []
 
 
 def test_date_comes_from_ingest(tmp_path, monkeypatch, capsys):
@@ -208,9 +233,9 @@ def test_date_comes_from_ingest(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     assert recap_meta.main(["--workspace", str(tmp_path), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
-    assert "date" not in summary["missing"]
+    assert "when" not in summary["missing"]
     document = json.loads((tmp_path / "recap_meta.json").read_text(encoding="utf-8"))
-    assert document["missing"] == ["place name"]
+    assert document["missing"] == ["place", "who", "occasion"]
 
 
 def test_second_run_is_skipped_and_force_rewrites(tmp_path, monkeypatch, capsys):

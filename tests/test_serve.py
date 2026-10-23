@@ -983,13 +983,70 @@ def write_meta(directory, title="O zi pe munte", missing=None):
 def test_recap_panel_shows_the_meta_box(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
-    write_meta(project, missing=["place name"])
+    write_meta(project, missing=["place"])
     page = serve.render_recap_panel(project)
     assert "O zi pe munte" in page
     assert "Prima propoziție. A doua propoziție." in page
     assert "#munte #recap #vara #drone #drumetie" in page
     assert page.count('class="copy"') == 3
-    assert "add the place name to the brief for a better title" in page
+    assert "Rewrite" in page
+    assert "rewrite-meta" in page
+
+
+def test_meta_box_marks_a_missing_fact(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "brief_facts.json").write_text(
+        json.dumps({"when": "April 2026"}), encoding="utf-8"
+    )
+    write_meta(project, missing=["place"])
+    page = serve.render_recap_panel(project)
+    assert 'name="fact_place"' in page
+    assert "Add this for a better title" in page
+    assert page.index("Add this for a better title") > page.index('name="fact_place"')
+
+
+def test_post_rewrite_meta_saves_facts_and_reruns_recap_meta(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    calls = []
+    popen_calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command[0],
+            0,
+            json.dumps({"ok": True, "status": "written", "llm_cost_usd": 0.0123}),
+            "",
+        )
+
+    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+    monkeypatch.setattr(serve.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+    server = start_server(root)
+    try:
+        status, headers, body = request(
+            server,
+            "POST",
+            "/2026-10-14/rewrite-meta",
+            headers=multipart_headers(),
+            body=multipart_body([("fact_place", None, "Retezat"), ("version", None, "v001")]),
+        )
+        assert status == 303, body
+        assert "meta_cost=0.0123" in headers["Location"]
+        assert "v=1" in headers["Location"]
+        assert calls and calls[0][1].endswith("recap_meta.py")
+        assert popen_calls == []
+        workspace_facts = json.loads((project / "brief_facts.json").read_text(encoding="utf-8"))
+        version_facts = json.loads(
+            (project / "versions" / "v001" / "brief_facts.json").read_text(encoding="utf-8")
+        )
+        assert workspace_facts["place"] == "Retezat"
+        assert version_facts["place"] == "Retezat"
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_recap_panel_without_meta_box(tmp_path):
@@ -2816,20 +2873,21 @@ def test_consent_text_from_env_and_config(monkeypatch):
 def test_upload_page_has_the_brief_hint_chips():
     page = serve.render_upload([])
     for label in (
-        "Where and when",
-        "Who is in it",
         "The story or the best moment",
         "Mood",
         "Length",
         "What to leave out",
     ):
         assert label in page
-    assert 'data-line="Where and when: "' in page
+    assert "Where and when" not in page
+    assert 'data-line="Who is in it: "' not in page
+    assert 'data-line="The best moment: "' in page
 
 
 def test_reedit_form_has_the_brief_hint_chips():
     page = serve.render_reedit("2026-10-14", [])
-    assert 'data-line="Where and when: "' in page
+    assert 'data-line="The best moment: "' in page
+    assert 'data-line="Who is in it: "' not in page
     assert 'name="brief"' in page
     assert "brief-hints" in page
 
@@ -2838,17 +2896,28 @@ def test_brief_placeholder_is_multiline_and_not_a_value():
     page = serve.render_upload([])
     assert 'placeholder="For example:' in page
     for line in (
-        "Where and when: a motorbike weekend in the Eifel, April 2026",
-        "Who is in it: me, and my friend on the second bike",
         "The best moment: the ride down the tree-lined lane",
         "Mood: calm start, energy at the end",
         "Length: about 60 seconds",
         "Leave out: the parking lot shots",
     ):
         assert line in page
+    assert "Where and when: a motorbike weekend in the Eifel, April 2026" not in page
+    assert "Who is in it: me, and my friend on the second bike" not in page
     start = page.index('name="brief"')
     tag = page[start:page.index(">", start)]
     assert "value=" not in tag
+
+
+def test_upload_page_has_the_fact_fields():
+    page = serve.render_upload([])
+    for name in ("fact_place", "fact_when", "fact_who", "fact_occasion"):
+        assert f'name="{name}"' in page
+
+
+def test_reedit_form_shows_the_saved_facts():
+    page = serve.render_reedit("2026-10-14", [], facts={"place": "Retezat"})
+    assert 'value="Retezat"' in page
 
 
 def test_upload_page_without_consent_has_no_checkbox(tmp_path):

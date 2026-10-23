@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config
+from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
@@ -2628,7 +2629,7 @@ def run_baseline(workspace, brief_text, hints, beats_path=None, music=None, ambi
 
 
 def input_paths(workspace, brief_path, plan_path, beats_path=None):
-    paths = [workspace / "shotlog.json"]
+    paths = [workspace / "shotlog.json", workspace / "brief_facts.json"]
     if brief_path is not None:
         paths.append(brief_path)
     if plan_path is not None:
@@ -2803,6 +2804,9 @@ def _run_loop(
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
     hints = parse_brief(brief_text)
+    facts_block_text = facts_block(load_brief_facts(workspace_path))
+    if facts_block_text:
+        brief_text = brief_text.rstrip() + "\n\n" + facts_block_text
     all_good = target_duration_s is not None and target_duration_s <= 0
     if all_good:
         estimate = estimate_all_good(load_json(workspace_path / "shotlog.json"))

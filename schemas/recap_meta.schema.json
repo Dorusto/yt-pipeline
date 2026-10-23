@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/recap_meta.schema.json",
   "title": "recap_meta",
-  "description": "YouTube title, description and hashtags for a recap, written by scripts/recap_meta.py from the workspace edit.json and the deterministic facts the tool builds (brief text, place, date, shot descriptions). The web app's Recap tab shows the fields with a Copy button each and hints at the facts missing from the brief.",
+  "description": "YouTube title, description and hashtags for a recap, written by scripts/recap_meta.py from the workspace edit.json and the deterministic facts the tool builds (brief text, the four facts place/when/who/occasion from brief_facts.json winning over the brief syntax and the ingest date, shot descriptions). The web app's Recap tab shows the fields with a Copy button each and marks the fact fields missing from the brief and brief_facts.json.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -50,7 +50,7 @@
     },
     "missing": {
       "type": "array",
-      "description": "facts the brief did not carry (e.g. 'place name', 'date'); the web app hints at them",
+      "description": "the fact fields the brief and brief_facts.json did not carry (place, when, who, occasion); the web app marks them",
       "items": {
         "type": "string"
       }

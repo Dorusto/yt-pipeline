@@ -70,6 +70,7 @@ from common.config import (
     web_features,
 )
 from common.costs import compute_totals, connect as connect_ledger, list_entries
+from common.brief_facts import load_brief_facts, write_brief_facts
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
 from common.media import clip_kind, video_files
 from common.photos import is_photo
@@ -189,8 +190,6 @@ REQUESTS_MAX_CHARS = 2000
 CONTACT_MAX_CHARS = 200
 REQUEST_TYPES = ("Feedback", "Feature request")
 BRIEF_HINTS = (
-    ("Where and when", "Where and when: "),
-    ("Who is in it", "Who is in it: "),
     ("The story or the best moment", "The best moment: "),
     ("Mood", "Mood: "),
     ("Length", "Length: "),
@@ -198,12 +197,16 @@ BRIEF_HINTS = (
 )
 BRIEF_PLACEHOLDER = (
     "For example:\n"
-    "Where and when: a motorbike weekend in the Eifel, April 2026\n"
-    "Who is in it: me, and my friend on the second bike\n"
     "The best moment: the ride down the tree-lined lane\n"
     "Mood: calm start, energy at the end\n"
     "Length: about 60 seconds\n"
     "Leave out: the parking lot shots"
+)
+FACT_FIELD_SPECS = (
+    ("place", "Place", "Monschau, Germany"),
+    ("when", "When", "April 2026"),
+    ("who", "Who is in it", "me and a friend"),
+    ("occasion", "Occasion", "motorbike weekend"),
 )
 
 
@@ -300,7 +303,11 @@ META_STYLE = """
 .meta-value{color:var(--text);flex:1 1 200px;overflow-wrap:anywhere;white-space:pre-wrap}
 .meta-field button.copy{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid var(--line);
 background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:pointer}
-.meta-hint{color:var(--muted);font-size:.85rem;margin:6px 0 0}
+.meta-rewrite{margin:8px 0 0;border-top:1px solid var(--line);padding-top:8px}
+.meta-rewrite summary{cursor:pointer;font-weight:600}
+.meta-rewrite form{display:grid;gap:8px;margin:8px 0 0}
+.meta-cost{color:var(--muted);font-size:.85rem;margin:8px 0 0}
+.fact-hint{color:var(--muted);font-size:.8rem}
 """
 
 REVIEW_STYLE = """
@@ -1120,6 +1127,12 @@ DROP_STYLE = (
     ".brief-card{padding:var(--sp-4);border:1px solid var(--line);border-radius:var(--radius-l);"
     "background:var(--surface);max-width:520px}"
     ".brief-card label{display:grid;gap:6px;font-size:.95rem}"
+    ".facts-card{padding:var(--sp-4);border:1px solid var(--line);border-radius:var(--radius-l);"
+    "background:var(--surface);max-width:520px;display:grid;gap:8px;margin:0 0 var(--sp-3)}"
+    ".facts-card label{display:grid;gap:4px;font-size:.95rem}"
+    ".facts-card input{min-height:44px;padding:0 10px;border-radius:var(--radius-s);"
+    "border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}"
+    ".fact-hint{color:var(--muted);font-size:.8rem}"
 )
 
 # Drag and drop for the upload form: every drop (or pick) adds to the selection
@@ -1749,7 +1762,7 @@ def _load_json(path):
         return None
 
 
-def render_meta_box(directory, version_path=None):
+def render_meta_box(directory, version_path=None, name=None, version=None, meta_cost=None):
     """The title/description/hashtags box for a workspace or one version, or "" when absent."""
     base = Path(version_path) if version_path else Path(directory)
     data = _load_json(base / "recap_meta.json")
@@ -1766,21 +1779,38 @@ def render_meta_box(directory, version_path=None):
         _meta_field("Description", description),
         _meta_field("Hashtags", hashtag_text),
     ]
-    hints = []
-    for item in data.get("missing") or []:
-        if item == "place name":
-            hints.append("add the place name to the brief for a better title")
-        elif item == "date":
-            hints.append("add the date to the brief for a better title")
-        else:
-            hints.append(f"add {item} to the brief for a better title")
-    hint_html = "".join(
-        f'<p class="meta-hint">{html_escape(hint)}</p>' for hint in hints
+    facts = load_brief_facts(directory)
+    missing = data.get("missing") or []
+    project_name = name or Path(directory).name
+    version_field = (
+        f'<input type="hidden" name="version" value="{html_escape(version)}">'
+        if version is not None
+        else ""
     )
+    rewrite = (
+        '<details class="meta-rewrite"><summary>Rewrite</summary>'
+        f'<form method="post" action="/{html_escape(project_name)}/rewrite-meta" '
+        'enctype="multipart/form-data">'
+        f"{brief_facts_fields_html(facts, missing)}"
+        f"{version_field}"
+        '<button class="go" type="submit">Rewrite title and description</button>'
+        "</form></details>"
+    )
+    cost_html = ""
+    if meta_cost is not None and str(meta_cost).strip():
+        try:
+            cost_text = format_cost(float(meta_cost))
+        except (TypeError, ValueError):
+            cost_text = None
+        if cost_text is not None:
+            cost_html = (
+                f'<p class="meta-cost">Title and description rewritten '
+                f"(cost {cost_text}).</p>"
+            )
     return (
         f"<style>{META_STYLE}</style>"
         '<section class="meta-box"><h2>Title, description and hashtags</h2>'
-        f'{"".join(rows)}{hint_html}</section>'
+        f'{"".join(rows)}{rewrite}{cost_html}</section>'
     )
 
 
@@ -1826,7 +1856,8 @@ def render_review(edit_path):
     )
 
 
-def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None):
+def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None,
+                       meta_cost=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
     directory = Path(directory)
     status = status or project_status(directory)
@@ -1849,7 +1880,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
         parts.append(render_review(directory / "edit.json"))
-        parts.append(render_meta_box(directory))
+        parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
     if compare is not None and compare["number"] == shown["number"]:
@@ -1868,7 +1899,8 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
         )
     )
     parts.append(render_review(Path(shown["path"]) / "edit.json"))
-    parts.append(render_meta_box(directory, shown["path"]))
+    parts.append(render_meta_box(directory, shown["path"], name=name, version=shown["name"],
+                                 meta_cost=meta_cost))
     if compare is not None:
         other = compare["name"].lstrip("v").lstrip("0") or "0"
         parts.append(
@@ -2193,7 +2225,7 @@ def _render_tabs(name, enabled, tab):
 
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
                    feedback_prefill="", reedit_open=False, consent_text=None,
-                   brand_logo=DEFAULT_BRAND_LOGO):
+                   brand_logo=DEFAULT_BRAND_LOGO, meta_cost=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
@@ -2216,7 +2248,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     nav = _render_tabs(name, enabled, tab)
     panels = {}
     if "recap" in enabled:
-        panels["recap"] = render_recap_panel(directory, name, wanted, compare_with, status, report)
+        panels["recap"] = render_recap_panel(directory, name, wanted, compare_with, status, report,
+                                             meta_cost=meta_cost)
     if "why" in enabled:
         panels["why"] = render_iframe_panel(
             directory,
@@ -2258,6 +2291,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             feedback_prefill=feedback_prefill,
             files_line=files_line,
             open_=reedit_open,
+            facts=load_brief_facts(directory),
         )
         if feature_on(features, "recap")
         else ""
@@ -2396,6 +2430,39 @@ def brief_hints_html():
     return f'<div class="brief-hints">{chips}</div>'
 
 
+def facts_from_fields(fields):
+    """The four facts from a form's fields (keys fact_place, fact_when, fact_who, fact_occasion)."""
+    return {
+        name: (fields.get(f"fact_{name}") or "").strip()
+        for name, _, _ in FACT_FIELD_SPECS
+    }
+
+
+def brief_facts_fields_html(facts=None, missing=None):
+    """A card with the four optional fact inputs, above the brief.
+
+    Input names are ``fact_place``, ``fact_when``, ``fact_who``, ``fact_occasion``;
+    values come from ``facts`` (a dict, default empty). A field whose name is in
+    ``missing`` gets a ``<span class="fact-hint">Add this for a better title</span>``.
+    """
+    facts = facts or {}
+    missing = set(missing or [])
+    rows = []
+    for name, label, placeholder in FACT_FIELD_SPECS:
+        value = facts.get(name) or ""
+        hint = (
+            '<span class="fact-hint">Add this for a better title</span>'
+            if name in missing
+            else ""
+        )
+        rows.append(
+            f"<label>{html_escape(label)}"
+            f'<input type="text" name="fact_{name}" value="{html_escape(value)}" '
+            f'placeholder="{html_escape(placeholder)}">{hint}</label>'
+        )
+    return f'<div class="card facts-card">{"".join(rows)}</div>'
+
+
 def render_delete_form(name):
     """A small form that deletes the project and its inbox source."""
     return f'<form class="delete-project" method="post" action="/{html_escape(name)}/delete"></form>'
@@ -2474,6 +2541,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         f"{credit_html}"
         '<form method="post" action="/upload" enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
+        f"{brief_facts_fields_html()}"
         f"{brief_card}"
         f"{render_form_rows(option_fields(music_tracks))}"
         f"{AUTO_HINT}"
@@ -2488,7 +2556,8 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
                        features=features, brand_logo=brand_logo)
 
 
-def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_line="", open_=False):
+def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_line="", open_=False,
+                  facts=None):
     """Return the Re-edit form with the same options plus a feedback box."""
     brief_card = (
         '<div class="card brief-card"><label>Brief'
@@ -2505,6 +2574,7 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_
         f"{files_line}"
         f'<form method="post" action="/{html_escape(name)}/re-edit" '
         'enctype="multipart/form-data">'
+        f"{brief_facts_fields_html(facts)}"
         f"{brief_card}"
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
@@ -2518,6 +2588,7 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_
 REEDIT_FIELDS = (
     "brief", "length", "length_s", "order", "audio_clean", "format",
     "speed_ramp", "shorts_layout", "music", "ambient_under_music_db",
+    "fact_place", "fact_when", "fact_who", "fact_occasion",
 )
 
 
@@ -3286,6 +3357,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_feedback_reply(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "rewrite-meta":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_rewrite_meta(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "expectations":
             if not feature_on(features, "shots"):
                 self.send_not_found()
@@ -3485,6 +3562,49 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                         brand_logo=self.server.brand_logo),
             True,
         )
+
+    def handle_rewrite_meta(self, project):
+        """Save the four facts and rewrite the shown version's title and description."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        try:
+            fields = parse_fields_only(self._reader())
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        version = (fields.get("version") or "").strip()
+        target = workspace / "versions" / version
+        if not (VERSION_RE.match(version) and target.is_dir()):
+            target = workspace
+            version = ""
+        facts = facts_from_fields(fields)
+        write_brief_facts(target, facts)
+        write_brief_facts(workspace, facts)
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "recap_meta.py"),
+            "--workspace", str(target),
+            "--force",
+            "--json",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        if result.returncode != 0:
+            message = (result.stderr or "").strip().splitlines()[-1:] or ["the title could not be rewritten"]
+            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            return
+        try:
+            summary = json.loads((result.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            summary = None
+        cost = summary.get("llm_cost_usd") if isinstance(summary, dict) else None
+        if cost is None:
+            cost = 0.0
+        location = f"/{project}/?tab=recap&meta_cost={cost}"
+        if version:
+            location += f"&v={int(version[1:])}"
+        self.send_redirect(location)
 
     def handle_drop_shot(self, project):
         """Remove shots from a version with edit_drop.py and show the new version."""
@@ -3777,6 +3897,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not brief:
             self.send_error_text(400, "brief is required")
             return
+        facts = facts_from_fields(fields)
+        write_brief_facts(source, facts)
+        write_brief_facts(self.server.root / folder, facts)
         command = build_recap_command(
             sys.executable, source, workspace, brief, fields, self.server.music_dir
         )
@@ -3941,6 +4064,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     reedit_open=parse_flag(self.path, "reedit"),
                     consent_text=self.server.consent_text,
                     brand_logo=self.server.brand_logo,
+                    meta_cost=query_param(self.path, "meta_cost"),
                 ),
                 send_body,
             )

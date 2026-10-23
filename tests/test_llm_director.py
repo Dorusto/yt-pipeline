@@ -765,6 +765,19 @@ def test_screenwriter_menu_is_cuttable_pool(tmp_path):
     assert summary["candidates"] == len(facts)
 
 
+def test_brief_facts_reach_the_screenwriter(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    (workspace / "brief_facts.json").write_text(
+        json.dumps({"place": "Retezat", "when": "July 2026"}), encoding="utf-8"
+    )
+    client = StubClient([plan_answer()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, dry_run=True)
+    assert code == 0
+    user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
+    assert "Place: Retezat" in user
+    assert "When: July 2026" in user
+
+
 def test_missing_editor_slot_is_violation(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(

@@ -10,13 +10,14 @@ Usage:
 
 Reads ``edit.json`` (required, validated against ``schemas/edit.schema.json``)
 and ``ingest.json`` (optional, for the date), builds the deterministic facts
-(the brief text, the place line, the date and the shot descriptions), asks the
-``metadata`` model role for one title, a 2-3 sentence description and 5-10
-hashtags, and writes ``recap_meta.json`` validated against
-``schemas/recap_meta.schema.json``. The facts the brief did not carry are
-listed in ``missing`` so the web app can hint at them. Sources are read-only;
-the output is written atomically and skipped when it is newer than ``edit.json``,
-unless ``--force``.
+(the brief text, the four facts from ``brief_facts.json`` — place, when, who,
+occasion — winning over the brief syntax and the ingest date, and the shot
+descriptions), asks the ``metadata`` model role for one title, a 2-3 sentence
+description and 5-10 hashtags, and writes ``recap_meta.json`` validated against
+``schemas/recap_meta.schema.json``. The fact fields the brief and
+``brief_facts.json`` did not carry are listed by field name in ``missing`` so
+the web app can hint at them. Sources are read-only; the output is written
+atomically and skipped when it is newer than ``edit.json``, unless ``--force``.
 """
 
 import argparse
@@ -30,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config
+from common.brief_facts import FACT_LABELS, load_brief_facts
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
 from common.summary import summary_fields
@@ -146,18 +148,23 @@ def earliest_date(workspace_path):
 
 def build_facts(edit, workspace_path):
     """The deterministic facts the message carries and the missing list."""
+    facts = load_brief_facts(workspace_path)
     brief_text = (edit.get("brief") or {}).get("text") or ""
-    place = find_place(brief_text)
-    date = earliest_date(workspace_path)
-    missing = []
-    if place is None:
-        missing.append("place name")
-    if date is None:
-        missing.append("date")
+    place = facts["place"] or find_place(brief_text)
+    when = facts["when"] or earliest_date(workspace_path)
+    who = facts["who"]
+    occasion = facts["occasion"]
+    missing = [
+        name
+        for name, value in (("place", place), ("when", when), ("who", who), ("occasion", occasion))
+        if not value
+    ]
     return {
         "brief_text": brief_text,
         "place": place,
-        "date": date,
+        "when": when,
+        "who": who,
+        "occasion": occasion,
         "descriptions": shot_descriptions(edit),
         "missing": missing,
     }
@@ -165,8 +172,10 @@ def build_facts(edit, workspace_path):
 
 def build_message(prompt_text, facts):
     facts_block = (
-        f"Place: {facts['place'] or '(unknown)'}\n"
-        f"Date: {facts['date'] or '(unknown)'}\n"
+        f"{FACT_LABELS['place']}: {facts['place'] or '(unknown)'}\n"
+        f"{FACT_LABELS['when']}: {facts['when'] or '(unknown)'}\n"
+        f"{FACT_LABELS['who']}: {facts['who'] or '(unknown)'}\n"
+        f"{FACT_LABELS['occasion']}: {facts['occasion'] or '(unknown)'}\n"
     )
     if facts["descriptions"]:
         shots = "\n".join(f"- {text}" for text in facts["descriptions"])

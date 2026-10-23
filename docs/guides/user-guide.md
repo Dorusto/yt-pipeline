@@ -223,10 +223,12 @@ finished recap, the explanation and the contact sheet.
   refreshes by itself; a failed run says where it failed and why.
 - **Title, description and hashtags.** The Recap tab shows a box with the
   YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
-  version, each with a **Copy** button. When the brief did not carry the place
-  or the date, the box hints at it ("add the place name to the brief for a
-  better title"). The text comes from `recap_meta.py`, which reads `edit.json`
-  and writes `recap_meta.json` (kept in each version):
+  version, each with a **Copy** button. A **Rewrite** button opens the four
+  fact fields (Place, When, Who is in it, Occasion) and re-runs
+  `recap_meta.py --force` for the shown version, showing the cost; a field the
+  brief and `brief_facts.json` did not carry is marked "Add this for a better
+  title". The text comes from `recap_meta.py`, which reads `edit.json` and
+  `brief_facts.json` and writes `recap_meta.json` (kept in each version):
   `.venv/bin/python scripts/recap_meta.py --workspace <workspace>`.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 - **Costs** (top bar) is a read-only page: per project the model cost and the
@@ -244,10 +246,11 @@ finished recap, the explanation and the contact sheet.
   pages show the model credit ("Model credit: $3.20 left of $5.00") read from
   the OpenRouter key endpoint, and warn under `limits.credit_warn_usd` (default
   1.0).
-- **Brief help.** The Brief field on the Upload and Re-edit forms has hint
-  chips (Where and when, Who is in it, The story or the best moment, Mood,
-  Length, What to leave out); tapping one appends its line. The grey example
-  text is a placeholder, never sent.
+- **Brief help.** The four fact fields (Place, When, Who is in it, Occasion)
+  sit above the Brief field on the Upload and Re-edit forms. The Brief field
+  has hint chips (The story or the best moment, Mood, Length, What to leave
+  out); tapping one appends its line. The grey example text is a placeholder,
+  never sent.
 - **Consent.** When the instance sets a consent text (`--consent-text`, else
   `YT_PIPELINE_CONSENT_TEXT`, else `web.consent_text`), the Upload page shows
   it with a required "I agree" checkbox and refuses an upload without it.
