@@ -93,9 +93,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/quality.py clip.mp4 --workspace ~/Videos/workspace\n"
-            "  python scripts/quality.py ~/Videos/clip --workspace ~/Videos/workspace --json\n"
-            "  python scripts/quality.py clip.mp4 --workspace ~/Videos/workspace --force\n"
+            "  python scripts/quality.py clip.mp4 --workspace <workspace>\n"
+            "  python scripts/quality.py <trip-folder> --workspace <workspace> --json\n"
+            "  python scripts/quality.py clip.mp4 --workspace <workspace> --force\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -63,8 +63,10 @@ command per clip:
 ```
 
 - `--inbox DIR` is the watched folder (required, read-only). `--projects DIR`
-  (default `~/media/projects`) holds one workspace per day (`<projects>/YYYY-MM-DD/`)
-  and must not be inside the inbox.
+  holds one workspace per day (`<projects>/YYYY-MM-DD/`) and must not be inside
+  the inbox. It is resolved from `--projects`, else the `YT_PIPELINE_PROJECTS`
+  environment variable, else `projects.path` in the config, else a usage error
+  naming those three ways.
 - Groups clips by day: a dated parent folder (`inbox/2026-10-14/`) wins, then a
   date in the filename (`YYYY-MM-DD`, `YYYYMMDD`, `YYYY_MM_DD`), then the file's
   mtime. A day whose clips share one folder is handed to `recap.py` directly;

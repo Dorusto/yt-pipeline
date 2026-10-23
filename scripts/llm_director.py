@@ -154,11 +154,11 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"about 90 seconds, calm start\"\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief-file brief.txt --json\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --dry-run\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --rounds 2 --out my_edit.json\n"
-            "  python scripts/llm_director.py --workspace ~/Videos/ws --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"about 90 seconds, calm start\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief-file brief.txt --json\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --dry-run\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --rounds 2 --out my_edit.json\n"
+            "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

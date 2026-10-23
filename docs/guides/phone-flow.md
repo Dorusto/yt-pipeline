@@ -10,11 +10,11 @@ recap. **Two ways to get the clips over** — pick one:
 
 1. **The web app (no setup).** Open `http://<agent-host>:8091/upload` in the
    phone browser, pick the clips and photos, type the project folder name and
-   the brief, press **Start**. The files stream into `~/media/inbox/<folder>/`
+   the brief, press **Start**. The files stream into `<inbox>/<folder>/`
    and `recap.py` starts in the background; the Projects page shows the
    status. This is the path the demo uses.
 2. **Syncthing (optional, automatic).** Syncthing copies the camera folder
-   into `~/media/inbox/`; `inbox.py` waits until the inbox is quiet, groups the
+   into `<inbox>/`; `inbox.py` waits until the inbox is quiet, groups the
    clips per day and runs `recap.py` per day. Use it when you want the phone
    to sync by itself without opening a page.
 
@@ -30,15 +30,15 @@ and these instructions.
 |:---|:---|
 | Browser (Upload page, preview link, Re-edit) | `serve.py` on port 8091 (projects, upload, recap/why/shots) |
 | ntfy app (subscribed to the topic) | ntfy server on port 8090 |
-| Syncthing (send-only camera folder) — *optional* | Syncthing (receive-only → `~/media/inbox`) — *optional* |
+| Syncthing (send-only camera folder) — *optional* | Syncthing (receive-only → `<inbox>`) — *optional* |
 |  | `inbox.py` (watches the inbox, runs `recap.py`) — *optional* |
 |  | `recap.py` (analysis → edit → 720p MP4) |
 
 ## 0. LXC: the web app (the only step that is required)
 
 ```bash
-cd ~/projects/yt-pipeline
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox
+cd <repo>
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
 Keep it running (see the `yt-serve.service` unit in step 4). Then from the
@@ -73,7 +73,7 @@ session instead.
 ## 3. Share the camera folder
 
 On the phone share the camera folder (e.g. `DCIM/Camera`) with the LXC. On the
-LXC set that folder to **receive only** and point it at `~/media/inbox`. On the
+LXC set that folder to **receive only** and point it at `<inbox>`. On the
 phone set it to **send only**, so nothing the pipeline does can ever delete
 clips from the phone. Optionally add ignore patterns (`.thumbnails`, `.*`).
 
@@ -82,11 +82,11 @@ clips from the phone. Optionally add ignore patterns (`.thumbnails`, `.*`).
 Doru runs these on the LXC, in two terminals or two tmux windows:
 
 ```bash
-cd ~/Proiecte-AI/YouTube/yt-pipeline
+cd <repo>
 export OPENROUTER_API_KEY=...        # never commit it
-.venv/bin/python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects \
+.venv/bin/python scripts/inbox.py --inbox <inbox> --projects <projects> \
     --quiet-minutes 5 --notify --preview-base http://<agent-host>:8091
-.venv/bin/python scripts/serve.py --workspaces ~/media/projects --bind <agent-host> --port 8091
+.venv/bin/python scripts/serve.py --workspaces <workspaces> --bind <agent-host> --port 8091
 ```
 
 `--once` makes `inbox.py` do a single scan and exit instead of watching. Every
@@ -102,10 +102,10 @@ Create two files under `~/.config/systemd/user/` and enable them yourself:
 [Unit]
 Description=yt-pipeline inbox watcher
 [Service]
-WorkingDirectory=%h/Proiecte-AI/YouTube/yt-pipeline
+WorkingDirectory=<repo>
 Environment=OPENROUTER_API_KEY=...
-ExecStart=%h/Proiecte-AI/YouTube/yt-pipeline/.venv/bin/python scripts/inbox.py \
-    --inbox %h/media/inbox --projects %h/media/projects --notify \
+ExecStart=<repo>/.venv/bin/python scripts/inbox.py \
+    --inbox <inbox> --projects <projects> --notify \
     --preview-base http://<agent-host>:8091
 Restart=on-failure
 [Install]
@@ -117,9 +117,9 @@ WantedBy=default.target
 [Unit]
 Description=yt-pipeline preview server
 [Service]
-WorkingDirectory=%h/Proiecte-AI/YouTube/yt-pipeline
-ExecStart=%h/Proiecte-AI/YouTube/yt-pipeline/.venv/bin/python scripts/serve.py \
-    --workspaces %h/media/projects --bind <agent-host> --port 8091
+WorkingDirectory=<repo>
+ExecStart=<repo>/.venv/bin/python scripts/serve.py \
+    --workspaces <workspaces> --bind <agent-host> --port 8091
 Restart=on-failure
 [Install]
 WantedBy=default.target
@@ -148,7 +148,7 @@ preview link. Enabling and maintaining Hermes itself is Doru's step.
 
 ## 7. Test the loop end to end
 
-Copy a few clips into `~/media/inbox/2026-10-14/` (a `YYYY-MM-DD` folder names
+Copy a few clips into `<inbox>/2026-10-14/` (a `YYYY-MM-DD` folder names
 the project day), wait `--quiet-minutes`, check the ntfy message and open the
 preview link on the phone. A recap costs a few cents per run, capped by
 `--budget-usd`.

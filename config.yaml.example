@@ -17,8 +17,11 @@ models:
 
 # Names thanked verbatim in the publish description (the channel members
 # sentence). Never commit real names; config.yaml is git-ignored.
+# github_url is the channel's code URL the metadata draft links; it is handed
+# to the model in the Inputs. Never commit the real URL here.
 channel:
   members: "Andrei, Mihai și Maria"
+  github_url: "<channel-code-url>"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
@@ -58,3 +61,9 @@ llm_backend: openrouter
 # variable, or pass --inbox. Docs and examples write <inbox>.
 # inbox:
 #   path: <inbox>
+
+# Projects folder for inbox.py: it holds one workspace per day. There is no
+# personal default in code: set the folder here, in the YT_PIPELINE_PROJECTS
+# environment variable, or pass --projects. Docs and examples write <projects>.
+# projects:
+#   path: <projects>

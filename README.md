@@ -189,8 +189,8 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ```bash
 .venv/bin/python scripts/finish_pip.py --sequence sequence.json \
-  --camera-dir ~/Videos/<clip>/camera --matte-dir ~/Videos/<clip>/matte \
-  --out-dir ~/Videos/<clip>/finish --bridge 127.0.0.1:7714 --dry-run
+  --camera-dir <clip-folder>/camera --matte-dir <clip-folder>/matte \
+  --out-dir <clip-folder>/finish --bridge 127.0.0.1:7714 --dry-run
 ```
 
 | Script | Input | Output |

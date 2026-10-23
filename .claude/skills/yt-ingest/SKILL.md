@@ -44,5 +44,5 @@ The `--json` output is a single object, e.g. `{"clips": 21, "photos": 3, "output
 ## Notes
 
 - This is the first stage of the AI Director analysis pipeline (D1a). It only reads metadata; it does not score or describe footage.
-- Do not point it at `~/media/yt-test/raw` unless asked — that folder is for source footage and the tool treats whatever it is given as read-only.
+- Do not point it at `<source-folder>` unless asked — that folder is for source footage and the tool treats whatever it is given as read-only.
 - For later stages see `docs/VISION.md`; the output is meant to be read by the motion and quality tools.

@@ -139,11 +139,11 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace --json\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/describe.py --workspace <workspace>\n"
+            "  python scripts/describe.py --workspace <workspace> --json\n"
+            "  python scripts/describe.py --workspace <workspace> \\\n"
             "      --clips 0067,0081 --backend mock --force --json\n"
-            "  python scripts/describe.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/describe.py --workspace <workspace> \\\n"
             "      --backend mock --photos-only\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

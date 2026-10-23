@@ -3,8 +3,8 @@
 """Check that this machine can run the recap pipeline and print what to fix.
 
 Usage:
-    python scripts/doctor.py --source ~/media/raw
-    python scripts/doctor.py --source ~/media/raw --workspace /tmp/recap --json
+    python scripts/doctor.py --source <source-folder>
+    python scripts/doctor.py --source <source-folder> --workspace <workspace> --json
 
 The tool runs thirteen setup checks in a fixed order: python dependencies,
 ``ffmpeg`` and ``ffprobe``, the project config, the models the recap chain
@@ -71,8 +71,8 @@ def build_parser():
         description="Check that this machine can run the recap pipeline and print what to fix.",
         epilog=(
             "examples:\n"
-            "  python scripts/doctor.py --source ~/media/raw\n"
-            "  python scripts/doctor.py --source ~/media/raw --workspace /tmp/recap --json\n"
+            "  python scripts/doctor.py --source <source-folder>\n"
+            "  python scripts/doctor.py --source <source-folder> --workspace <workspace> --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

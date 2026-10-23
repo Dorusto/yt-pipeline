@@ -65,7 +65,7 @@ Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publis
 ```
 
 - `SRT` is the corrected Romanian `.srt` (timeline time). `--context` is required: a markdown note with the clip's angle and what the viewer leaves with.
-- `--previous-url` links a relevant earlier clip; `--repo-url` links the clip's own code repo. Both are optional and are passed to the model in a `## Links` section.
+- `--previous-url` links a relevant earlier clip; `--repo-url` links the clip's own code repo. Both are optional and are passed to the model in a `## Links` section together with `channel_url`, the channel's code URL from `channel.github_url` in the config.
 - `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's: each `start_s` becomes a normalized `HH:MM:SS` timestamp and the existing chapter rules apply (first at `00:00:00`, non-decreasing, inside the transcript). The model's own `chapters` key becomes optional and is ignored when present; without the flag nothing changes. A missing or invalid file exits 2 naming the path or the offending chapter.
 - `--out-dir` is the output folder (default: the SRT's parent; created if missing). `--name` is used in the draft header and the `--json` summary (default: the SRT stem). It writes `<out-dir>/metadata.md` and, next to it, `<out-dir>/metadata.json` with the validated fields (`name`, `titles`, `description_ro`, `description_en`, `chapters`, `tags`, `pinned_comment`, `thumbnail_concepts`) so the publish kit is deterministic from the model JSON.
 - `--prompt` is an alternative prompt file (default: `prompts/metadata.md`).
@@ -74,7 +74,7 @@ Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publis
 - Chapters must be `HH:MM:SS` or `MM:SS` (normalized to `HH:MM:SS`), non-decreasing, inside the transcript, first one `00:00:00`.
 - The `## Thumbnail` section holds 2-3 distinct photo concepts (the `thumbnail_concepts` model key): each with pose, a real emotion (never neutral), thumbnail text of 3-4 words that says the same as the titles (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and the source — a clip-frame timecode inside the transcript where that emotion fits, or a new photo to shoot. The chosen concept maps directly to the `thumbnail.py` flags (`--photo --title --keyword --kicker --theme`). Channel formula: own face + authentic emotion + short text, never a generic illustration.
 - `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `thumbnail_concepts`, `wall_time_s` and `llm_cost_usd`.
-- Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` missing or empty in the config, a missing model role, budget or LLM errors, unparseable model JSON, a missing or invalid JSON key (named), a bad chapter (named) or a bad thumbnail concept (named).
+- Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` or `channel.github_url` missing or empty in the config, a missing model role, budget or LLM errors, unparseable model JSON, a missing or invalid JSON key (named), a bad chapter (named) or a bad thumbnail concept (named).
 - Re-run safe: the output is a derived file and is overwritten.
 
 ## Step 4: the publish chain

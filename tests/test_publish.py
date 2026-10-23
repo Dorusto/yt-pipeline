@@ -527,7 +527,10 @@ def write_mock_config(tmp_path):
                 }
             ),
         },
-        "channel": {"members": "Andrei, Mihai și Maria"},
+        "channel": {
+            "members": "Andrei, Mihai și Maria",
+            "github_url": "https://example.invalid/channel",
+        },
     }
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")

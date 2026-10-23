@@ -44,8 +44,8 @@ def build_parser():
         description="Build 720p H.264 constant-frame-rate proxies with audio from originals.",
         epilog=(
             "examples:\n"
-            "  python scripts/proxy.py ~/media/raw\n"
-            "  python scripts/proxy.py ~/media/raw --out ~/media/workspace/proxy --json\n"
+            "  python scripts/proxy.py <source-folder>\n"
+            "  python scripts/proxy.py <source-folder> --out <workspace>/proxy --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

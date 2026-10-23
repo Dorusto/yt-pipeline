@@ -12,10 +12,10 @@ Each problem is reported once: once per UTC day for spend, once per stall
 episode for stall. State lives in a small JSON file.
 
 Usage:
-    python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline
-    python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --spend-usd 3 --stall-hours 2 --json
-    python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --dry-run
-    python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --run-cap 6 --lot "S51 lot 1" --start-run
+    python scripts/agent_watchdog.py --repo <repo>
+    python scripts/agent_watchdog.py --repo <repo> --spend-usd 3 --stall-hours 2 --json
+    python scripts/agent_watchdog.py --repo <repo> --dry-run
+    python scripts/agent_watchdog.py --repo <repo> --run-cap 6 --lot "S51 lot 1" --start-run
 
 The API key is read from OPENROUTER_API_KEY or from --key-file
 (default ~/.config/opencode/secrets/openrouter.key). It is never printed.
@@ -475,7 +475,7 @@ def check_stall(running, last_activity, now, stall_seconds, state):
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Alert on ntfy when the build agent overspends or stalls.",
-        epilog="Example: python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --json",
+        epilog="Example: python scripts/agent_watchdog.py --repo <repo> --json",
     )
     parser.add_argument("--repo", required=True, help="folder the agent works in")
     parser.add_argument("--watch", action="append", default=None,

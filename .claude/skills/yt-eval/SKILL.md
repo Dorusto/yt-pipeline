@@ -11,8 +11,8 @@ Turn "the labels look plausible" into a number. The ground-truth YAML holds the 
 ## Step 1: score a ground-truth file against a workspace
 
 ```bash
-.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace /root/media/yt-test/workspace
-.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace /root/media/yt-test/workspace --labels shotlog
+.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace <workspace>
+.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace <workspace> --labels shotlog
 ```
 
 - `--ground-truth PATH` (required) is the YAML below. `--workspace DIR` (required) holds `motion/*.json` and `quality/*.json`.

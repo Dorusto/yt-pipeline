@@ -4,7 +4,7 @@
 
 Usage:
     python scripts/render.py --edit edit.json --out recap_720p.mp4
-    python scripts/render.py --edit edit.json --out final.mp4 --originals-dir ~/media/yt-test/raw
+    python scripts/render.py --edit edit.json --out final.mp4 --originals-dir <source-folder>
 
 The tool cuts each video slot from the clip named in ``sources[]`` (the proxy)
 or, when ``--originals-dir`` is given, from the full-resolution original of the
@@ -69,7 +69,7 @@ def build_parser():
             "examples:\n"
             "  python scripts/render.py --edit edit.json --out recap_720p.mp4\n"
             "  python scripts/render.py --edit edit.json --out final.mp4"
-            " --originals-dir ~/media/yt-test/raw\n"
+            " --originals-dir <source-folder>\n"
             "  python scripts/render.py --edit edit.json --out recap_720p_9x16.mp4 --format 9x16\n"
             "  python scripts/render.py --edit edit.json --out recap_720p.mp4 --format both\n"
         ),

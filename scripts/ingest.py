@@ -48,8 +48,8 @@ def build_parser():
             "video extensions: .mp4, .mov, .m4v\n"
             "photo extensions: .jpg, .jpeg, .heic\n"
             "examples:\n"
-            "  python scripts/ingest.py ~/Videos/clip --workspace ~/Videos/workspace\n"
-            "  python scripts/ingest.py ~/Videos/clip --workspace ~/Videos/workspace --json\n"
+            "  python scripts/ingest.py <trip-folder> --workspace <workspace>\n"
+            "  python scripts/ingest.py <trip-folder> --workspace <workspace> --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

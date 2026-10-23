@@ -220,3 +220,42 @@ def test_inbox_section_validated():
     for bad in ("nope", {"path": ""}, {"path": 5}):
         with pytest.raises(config.ConfigError):
             config._validate(with_value("inbox", bad))
+
+
+def test_no_projects_message_names_the_flag():
+    message = config.no_projects_message("--projects")
+    assert "no projects folder configured" in message
+    assert "--projects" in message
+    assert config.PROJECTS_ENV in message
+    assert "projects.path" in message
+
+
+def test_projects_path_flag_env_and_config(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.PROJECTS_ENV, raising=False)
+    config_path = write_config(tmp_path, with_value("projects", {"path": str(tmp_path / "from-config")}))
+    monkeypatch.setenv("YT_CONFIG", str(config_path))
+    assert config.projects_path(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+    assert config.projects_path() == (tmp_path / "from-config").expanduser()
+    monkeypatch.setenv(config.PROJECTS_ENV, str(tmp_path / "from-env"))
+    assert config.projects_path() == (tmp_path / "from-env").expanduser()
+    assert config.projects_path(str(tmp_path / "from-flag")) == (tmp_path / "from-flag").expanduser()
+
+
+def test_projects_path_config_argument_wins_over_config_file(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.PROJECTS_ENV, raising=False)
+    explicit = {"projects": {"path": str(tmp_path / "explicit")}}
+    assert config.projects_path(config=explicit) == (tmp_path / "explicit").expanduser()
+
+
+def test_projects_path_none_when_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv(config.PROJECTS_ENV, raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, VALID)))
+    assert config.projects_path() is None
+
+
+def test_projects_section_validated():
+    assert config._validate(with_value("projects", {"path": "/days"}))["projects"]["path"] == "/days"
+    assert config._validate(with_value("projects", {}))["projects"] == {}
+    for bad in ("nope", {"path": ""}, {"path": 5}):
+        with pytest.raises(config.ConfigError):
+            config._validate(with_value("projects", bad))

@@ -770,9 +770,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python3 scripts/mode_b.py ~/media/obs --json\n"
-            "  python3 scripts/mode_b.py ~/media/obs --backend mock --force --json\n"
-            "  python3 scripts/mode_b.py ~/media/second-brain --config config.yaml --json\n"
+            "  python3 scripts/mode_b.py <trip-folder> --json\n"
+            "  python3 scripts/mode_b.py <trip-folder> --backend mock --force --json\n"
+            "  python3 scripts/mode_b.py <trip-folder> --config config.yaml --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

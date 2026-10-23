@@ -98,16 +98,15 @@ def format_transcript(cues):
     return "\n".join(f"[{format_clock(cue['start'])}] {cue['text']}" for cue in cues)
 
 
-def build_message(prompt_text, context_text, transcript_text, previous_url, repo_url):
+def build_message(prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url):
     parts = [prompt_text, "## Context", context_text, "## Transcript", transcript_text]
-    links = []
+    links = [f"channel_url: {channel_url}"]
     if previous_url:
         links.append(f"previous_url: {previous_url}")
     if repo_url:
         links.append(f"repo_url: {repo_url}")
-    if links:
-        parts.append("## Links")
-        parts.extend(links)
+    parts.append("## Links")
+    parts.extend(links)
     return "\n\n".join(parts)
 
 
@@ -430,6 +429,9 @@ def run(
     if not isinstance(members, str) or not members.strip():
         raise MetadataError("config is missing channel.members (a non-empty string)")
     members_sentence = MEMBERS_SENTENCE.replace("{members}", members)
+    channel_url = (config.get("channel") or {}).get("github_url")
+    if not isinstance(channel_url, str) or not channel_url.strip():
+        raise MetadataError("config is missing channel.github_url (a non-empty string)")
 
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
     prompt_text = read_text(prompt_file, "prompt")
@@ -440,7 +442,9 @@ def run(
 
     file_chapters = load_chapters_file(chapters_path) if chapters_path else None
 
-    message = build_message(prompt_text, context_text, transcript_text, previous_url, repo_url)
+    message = build_message(
+        prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url
+    )
     response = get_client().complete(
         "metadata",
         [{"role": "user", "content": message}],

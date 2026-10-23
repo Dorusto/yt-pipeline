@@ -3,8 +3,8 @@
 """Watch an inbox folder and turn each day of new clips into a recap project.
 
 Usage:
-    python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects
-    python scripts/inbox.py --inbox ~/media/inbox --once --json
+    python scripts/inbox.py --inbox <inbox> --projects <projects>
+    python scripts/inbox.py --inbox <inbox> --once --json
 
 ``inbox.py`` is the phone flow front door. A sync tool drops clips into the
 inbox (Syncthing target), the tool groups them by day, waits until the inbox
@@ -26,8 +26,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from common.config import no_projects_message, projects_path
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
-DEFAULT_PROJECTS = "~/media/projects"
 DEFAULT_BRIEF = (
     "about 90 seconds, chronological, calm start, more energy towards the end, "
     "ambient sound only"
@@ -84,16 +85,19 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/inbox.py --inbox ~/media/inbox --projects ~/media/projects\n"
-            "  python scripts/inbox.py --inbox ~/media/inbox --once --json\n"
+            "  python scripts/inbox.py --inbox <inbox> --projects <projects>\n"
+            "  python scripts/inbox.py --inbox <inbox> --once --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--inbox", required=True, help="watched folder (read-only)")
     parser.add_argument(
         "--projects",
-        default=DEFAULT_PROJECTS,
-        help=f"folder holding one workspace per day (default: {DEFAULT_PROJECTS})",
+        default=None,
+        help=(
+            "folder holding one workspace per day; pass it here, set the "
+            "YT_PIPELINE_PROJECTS environment variable, or set projects.path in the config"
+        ),
     )
     parser.add_argument(
         "--quiet-minutes",
@@ -658,7 +662,10 @@ def resolve_paths(args):
         raise InboxError(f"inbox not found: {inbox}")
     if not inbox.is_dir():
         raise InboxError(f"inbox is not a directory: {inbox}")
-    projects = Path(args.projects).expanduser().resolve()
+    resolved = projects_path(args.projects)
+    if resolved is None:
+        raise InboxError(no_projects_message("--projects"))
+    projects = resolved.resolve()
     if is_within(projects, inbox):
         raise InboxError(f"projects folder must not be inside the inbox: {projects}")
     projects.mkdir(parents=True, exist_ok=True)

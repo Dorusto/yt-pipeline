@@ -14,8 +14,13 @@ CONFIG = {
     "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
     "llm_budget_usd": None,
     "llm_backend": "mock",
-    "channel": {"members": "Andrei, Mihai și Maria"},
+    "channel": {
+        "members": "Andrei, Mihai și Maria",
+        "github_url": "https://example.invalid/channel",
+    },
 }
+
+CHANNEL_URL = "https://example.invalid/channel"
 
 MEMBERS = metadata.MEMBERS_SENTENCE.replace("{members}", "Andrei, Mihai și Maria")
 
@@ -155,6 +160,43 @@ def test_missing_channel_members_exits_2(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "channel.members" in err
     assert "Traceback" not in err
+
+
+def test_missing_channel_github_url_exits_2(tmp_path, monkeypatch, capsys):
+    config = {
+        "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
+        "llm_budget_usd": None,
+        "llm_backend": "mock",
+        "channel": {"members": "Andrei, Mihai și Maria"},
+    }
+    code, _ = run_main(tmp_path, monkeypatch, FULL, config=config)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "channel.github_url" in err
+    assert "Traceback" not in err
+
+
+class RecordingClient(MockClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.messages = []
+
+    def complete(self, role, messages, model=None, **kwargs):
+        self.messages.append(messages)
+        return super().complete(role, messages, model=model, **kwargs)
+
+
+def test_channel_url_sent_to_model(tmp_path, monkeypatch):
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=CONFIG)
+    patch(monkeypatch, client)
+    code = metadata.main(
+        [str(srt), "--context", str(context), "--out-dir", str(tmp_path / "out")]
+    )
+    assert code == 0
+    message = client.messages[0][0]["content"]
+    assert "## Links" in message
+    assert f"channel_url: {CHANNEL_URL}" in message
 
 
 def test_missing_json_key_exits_2(tmp_path, monkeypatch, capsys):

@@ -60,7 +60,7 @@ Analysis runs once per folder and is cached; a new brief only re-runs the right-
 
 ## Today (command line on the homelab)
 
-Run everything from the repository root, `~/projects/yt-pipeline`. `WS` is the workspace folder next to the footage; the originals are never modified.
+Run everything from the repository root, `<repo>`. `WS` is the workspace folder next to the footage; the originals are never modified.
 
 ```bash
 WS=<trip-folder>/workspace
@@ -84,28 +84,28 @@ Every tool takes `--help` and `--json`. To review on the phone over Tailscale: `
 A talking-head recording with a screen capture (one `Start Recording` in OBS
 writes both files) is a different flow from a trip recap: you film, rough-cut
 the recording, finish the edit in FilmCraft and then publish. The Second Brain
-clip is the reference: one dated clip folder per project under `~/Videos/`
-(e.g. `~/Videos/2026-09-second-brain/`) with `camera/`, `ecran/`,
+clip is the reference: one dated clip folder per project (named e.g.
+`2026-09-second-brain/`, and written `<trip-folder>` below) with `camera/`, `ecran/`,
 `transcrieri/` (the Whisper word JSONs) and the FilmCraft `.fcproj`. The
 examples below use that layout; the agent-side eval copy of the clip lives at
-`/root/media/eval/second-brain`.
+`<eval-folder>/second-brain`.
 
 ```bash
 # 1. right after recording — is any "screen" file really a camera recording?
-.venv/bin/python scripts/mode_b.py ~/Videos/2026-09-second-brain --check
+.venv/bin/python scripts/mode_b.py <trip-folder> --check
 
 # 2. the whole flow on the folder (transcribe what has no words JSON, pair
 #    camera and screen, rough-cut the pauses/fillers/retakes, chapters,
 #    FilmCraft project):
-.venv/bin/python scripts/mode_b.py ~/Videos/2026-09-second-brain --json
-# -> ~/Videos/2026-09-second-brain/mode_b/ : sessions.yaml, edit.json,
+.venv/bin/python scripts/mode_b.py <trip-folder> --json
+# -> <trip-folder>/mode_b/ : sessions.yaml, edit.json,
 #    chapters.json, words/, project.fcproj
 
 # 3. finish the edit in FilmCraft (the .fcproj sits in the clip folder), then
 #    from the FINAL project:
-.venv/bin/python scripts/publish.py --project ~/Videos/2026-09-second-brain \
+.venv/bin/python scripts/publish.py --project <trip-folder> \
   --context notes.md --fcproj project.fcproj --sequence "Second Brain - 15 min" \
-  --words-dir ~/Videos/2026-09-second-brain/transcrieri --chapters chapters.json \
+  --words-dir <trip-folder>/transcrieri --chapters chapters.json \
   --photo portrait.jpg --title "..." --keyword "..." --theme tech \
   --final-video final.mp4 --kit
 ```

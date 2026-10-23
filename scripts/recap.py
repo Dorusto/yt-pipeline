@@ -3,9 +3,9 @@
 """Run every pipeline station from a folder of clips and a brief to a recap MP4.
 
 Usage:
-    python scripts/recap.py --source ~/media/raw --brief "about 90 seconds, calm start"
-    python scripts/recap.py --source ~/media/raw --brief-file brief.txt --final --json
-    python scripts/recap.py --source ~/media/raw --brief "..." --feedback "drop 0071/s2" --json
+    python scripts/recap.py --source <source-folder> --brief "about 90 seconds, calm start"
+    python scripts/recap.py --source <source-folder> --brief-file brief.txt --final --json
+    python scripts/recap.py --source <source-folder> --brief "..." --feedback "drop 0071/s2" --json
 
 ``recap.py`` is the single entry point: it chains the existing station CLIs as
 subprocesses in order (proxy, ingest, motion, quality, describe, similarity,
@@ -101,8 +101,8 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/recap.py --source ~/media/raw --brief \"about 90 seconds\"\n"
-            "  python scripts/recap.py --source ~/media/raw --brief-file brief.txt"
+            "  python scripts/recap.py --source <source-folder> --brief \"about 90 seconds\"\n"
+            "  python scripts/recap.py --source <source-folder> --brief-file brief.txt"
             " --final --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

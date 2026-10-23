@@ -81,13 +81,13 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace --json\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/index.py --workspace <workspace>\n"
+            "  python scripts/index.py --workspace <workspace> --json\n"
+            "  python scripts/index.py --workspace <workspace> \\\n"
             "      --clips 0072,0081 --force --json\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/index.py --workspace <workspace> \\\n"
             "      --html /tmp/shotlog.html\n"
-            "  python scripts/index.py --workspace ~/Videos/workspace --no-html\n"
+            "  python scripts/index.py --workspace <workspace> --no-html\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

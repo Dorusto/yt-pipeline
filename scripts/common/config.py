@@ -119,11 +119,20 @@ def _validate(data):
         if folder is not None and (not isinstance(folder, str) or not folder):
             raise ConfigError("inbox.path must be a non-empty string")
 
+    projects = data.get("projects")
+    if projects is not None:
+        if not isinstance(projects, dict):
+            raise ConfigError("projects must be a mapping")
+        folder = projects.get("path")
+        if folder is not None and (not isinstance(folder, str) or not folder):
+            raise ConfigError("projects.path must be a non-empty string")
+
     return data
 
 
 MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
 INBOX_ENV = "YT_PIPELINE_INBOX"
+PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 
 
 def no_music_library_message(flag_name):
@@ -139,6 +148,14 @@ def no_inbox_message(flag_name):
     return (
         f"no inbox configured: pass {flag_name} DIR, set the "
         f"{INBOX_ENV} environment variable, or set inbox.path in the config"
+    )
+
+
+def no_projects_message(flag_name):
+    """The one usage error for an unconfigured projects folder, naming the flag."""
+    return (
+        f"no projects folder configured: pass {flag_name} DIR, set the "
+        f"{PROJECTS_ENV} environment variable, or set projects.path in the config"
     )
 
 
@@ -175,6 +192,26 @@ def inbox_path(cli_value=None, config=None):
         return Path(from_env).expanduser()
     data = config if config is not None else load_config()
     section = data.get("inbox")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def projects_path(cli_value=None, config=None):
+    """The projects folder: CLI flag, else PROJECTS_ENV, else projects.path.
+
+    Returns None when none of the three is set — the caller turns that into a
+    usage error naming the three ways. There is no personal default path.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(PROJECTS_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("projects")
     if isinstance(section, dict):
         value = section.get("path")
         if value:

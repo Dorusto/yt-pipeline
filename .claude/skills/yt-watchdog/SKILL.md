@@ -12,9 +12,9 @@ compatibility: Run from the repository root on the machine where the agent runs 
 - **stall** — an `opencode` process runs but no file changed in the repo or `~/.local/share/opencode` for `--stall-hours` (default 2). Once per stall episode.
 
 ```bash
-.venv/bin/python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --dry-run --json
-.venv/bin/python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --spend-usd 3 --stall-hours 2
-.venv/bin/python scripts/agent_watchdog.py --repo ~/projects/yt-pipeline --run-cap 6 --lot "S51 lot 1" --start-run --dry-run --json
+.venv/bin/python scripts/agent_watchdog.py --repo <repo> --dry-run --json
+.venv/bin/python scripts/agent_watchdog.py --repo <repo> --spend-usd 3 --stall-hours 2
+.venv/bin/python scripts/agent_watchdog.py --repo <repo> --run-cap 6 --lot "S51 lot 1" --start-run --dry-run --json
 ```
 
 The key comes from `OPENROUTER_API_KEY` or `--key-file` (default `~/.config/opencode/secrets/openrouter.key`) and is never printed. Alerts already sent are remembered in `~/.cache/yt-pipeline/watchdog-state.json`. `--dry-run` sends nothing and keeps no state.

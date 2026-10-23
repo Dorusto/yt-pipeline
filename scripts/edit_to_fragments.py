@@ -20,8 +20,8 @@ clamped so it never lands before ``in`` and rounded to milliseconds.
 Usage:
     python3 edit_to_fragments.py --edit edit.json --out fragments.yaml
     python3 edit_to_fragments.py --edit edit.json --out fragments.yaml \\
-        --source-dir ~/media/yt-test/raw \\
-        --kdenlive-out ~/media/yt-test/workspace/recap.kdenlive
+        --source-dir <source-folder> \\
+        --kdenlive-out <workspace>/recap.kdenlive
 """
 import argparse
 import json
@@ -55,8 +55,8 @@ def build_parser():
             "examples:\n"
             "  python scripts/edit_to_fragments.py --edit edit.json --out fragments.yaml\n"
             "  python scripts/edit_to_fragments.py --edit edit.json --out fragments.yaml \\\n"
-            "      --source-dir ~/media/yt-test/raw \\\n"
-            "      --kdenlive-out ~/media/yt-test/workspace/recap.kdenlive\n"
+            "      --source-dir <source-folder> \\\n"
+            "      --kdenlive-out <workspace>/recap.kdenlive\n"
             "  python scripts/edit_to_fragments.py --edit edit.json --out fragments.yaml --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -37,8 +37,8 @@ Each fragment carries `file` (the slot's `clip`), `in`, `out`, and the extra fie
 ```bash
 .venv/bin/python scripts/edit_to_fragments.py --edit /path/to/workspace/edit.json \
   --out /path/to/workspace/fragments.yaml \
-  --source-dir ~/media/yt-test/raw \
-  --kdenlive-out ~/media/yt-test/workspace/recap.kdenlive
+  --source-dir <source-folder> \
+  --kdenlive-out <workspace>/recap.kdenlive
 
 .venv/bin/python scripts/kdenlive_from_fragments.py /path/to/workspace/fragments.yaml
 ```

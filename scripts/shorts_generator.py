@@ -107,7 +107,7 @@ def load_and_validate_config(interactive: bool = True, require_segments: bool = 
 
 def ask_video_path() -> Path:
     print("\nPath to the video file:")
-    print("  (e.g. ~/Videos/MyClip/Export/video/MyClip.mp4)")
+    print("  (e.g. <clip-folder>/Export/video/<clip>.mp4)")
     raw = input("> ").strip()
     path = Path(raw).expanduser().resolve()
     if not path.exists():

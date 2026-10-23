@@ -150,14 +150,14 @@ The server URL comes from `NTFY_URL` or the config key `ntfy_url`; there is no b
 `scripts/agent_watchdog.py` alerts only when something is wrong: today's OpenRouter spend above a threshold, or an `opencode` process running with no file changes for hours. Run it from a separate checkout of `master`, so it never touches the agent's working tree, and schedule it with cron:
 
 ```bash
-git -C ~/projects/yt-pipeline worktree add --detach ~/yt-watchdog origin/master
+git -C <repo> worktree add --detach <watchdog-checkout> origin/master
 mkdir -p ~/.cache/yt-pipeline
-( crontab -l 2>/dev/null; echo '*/15 * * * * cd ~/yt-watchdog/scripts && python3 agent_watchdog.py --repo ~/projects/yt-pipeline --run-cap 6 --lot "S59" --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
+( crontab -l 2>/dev/null; echo '*/15 * * * * cd <watchdog-checkout>/scripts && python3 agent_watchdog.py --repo <repo> --run-cap 6 --lot "S59" --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
 ```
 
 `--spend-usd X` is the daily spend threshold for the alert (default 3); `--stall-hours H` is the stall alert after H hours with an `opencode` process running and no file change (default 2); `--no-commit-hours H` is the alert after H hours with no commit (default 1.5, measured from the later of the last commit and the agent start, so a fresh run is not flagged); `--kill-over-usd X` stops every `opencode` process when today's OpenRouter spend passes X dollars; `--kill-no-commit-hours H` stops it after H hours without a commit; `--run-cap X --lot NAME` is the hard cap for the current agent run (spend since the run started, from the run-spend ledger) with an ntfy `Budget` at 80 % of the cap and a stop at the cap with `Blocked` — update the `--lot` label when a new run starts. `--lot NAME` prefixes every alert with the lot name; without it the watchdog uses the tmux session running the agent, else no prefix. A stop is claimed only after the process is re-checked, so the alert says "Stopped the agent" only when it really ended. The kill flags and the run cap are off unless given. The agent's uncommitted changes stay in the working tree; save them on a branch before starting another run. These are the only watchdog thresholds; `docs/RULES.md` points here.
 
-Update it later with `git -C ~/yt-watchdog checkout --detach origin/master` after a `git fetch`.
+Update it later with `git -C <watchdog-checkout> checkout --detach origin/master` after a `git fetch`.
 
 ## Troubleshooting
 

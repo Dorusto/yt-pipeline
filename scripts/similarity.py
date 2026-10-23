@@ -72,9 +72,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/similarity.py --workspace ~/Videos/workspace\n"
-            "  python scripts/similarity.py --workspace ~/Videos/workspace --json\n"
-            "  python scripts/similarity.py --workspace ~/Videos/workspace \\\n"
+            "  python scripts/similarity.py --workspace <workspace>\n"
+            "  python scripts/similarity.py --workspace <workspace> --json\n"
+            "  python scripts/similarity.py --workspace <workspace> \\\n"
             "      --backend hist --force --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

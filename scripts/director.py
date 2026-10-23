@@ -98,12 +98,12 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/director.py --workspace ~/Videos/ws\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --brief \"calm start\" \\\n"
+            "  python scripts/director.py --workspace <workspace>\n"
+            "  python scripts/director.py --workspace <workspace> --brief \"calm start\" \\\n"
             "      --target-duration-s 90 --order chronological --pacing calm-to-energy --json\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --order score --pacing uniform --force\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --important-max-s 6.0 --json\n"
-            "  python scripts/director.py --workspace ~/Videos/ws --speed-ramp --json\n"
+            "  python scripts/director.py --workspace <workspace> --order score --pacing uniform --force\n"
+            "  python scripts/director.py --workspace <workspace> --important-max-s 6.0 --json\n"
+            "  python scripts/director.py --workspace <workspace> --speed-ramp --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

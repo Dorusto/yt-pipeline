@@ -323,7 +323,7 @@ def main():
     for label, path in [("SRT", srt_file), ("Video", video_file)]:
         if not path.exists():
             print(f"[eroare] {label} negăsit: {path}")
-            print("Folosește căi absolute (ex: ~/Videos/Lenea/Export/subtitles/Lenea_RO.srt)")
+            print("Folosește căi absolute (ex: <clip-folder>/Export/subtitles/<clip>_RO.srt)")
             sys.exit(1)
 
     args = sys.argv[3:]

@@ -46,9 +46,9 @@ def build_parser():
         ),
         epilog=(
             "examples:\n"
-            "  python scripts/explain.py --workspace ~/Videos/2026-04-30/workspace\n"
-            "  python scripts/explain.py --workspace ~/Videos/2026-04-30/workspace --json\n"
-            "  python scripts/explain.py --workspace ~/Videos/2026-04-30/workspace \\\n"
+            "  python scripts/explain.py --workspace <workspace>\n"
+            "  python scripts/explain.py --workspace <workspace> --json\n"
+            "  python scripts/explain.py --workspace <workspace> \\\n"
             "      --out /tmp/explain.html --force\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

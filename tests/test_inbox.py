@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+import yaml
 
 import inbox
 
@@ -645,3 +646,81 @@ def test_once_prints_group_line_every_run(tmp_path, monkeypatch, capsys):
     second = capsys.readouterr().out
     assert second.count("[group] 2026-10-14") == 1
     assert "skipped (nothing new)" in second
+
+
+VALID_CONFIG = {
+    "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
+    "llm_budget_usd": None,
+    "llm_backend": "mock",
+}
+
+BANNED_STRINGS = (
+    "~/Videos",
+    "~/media",
+    "/root/media",
+    "~/projects",
+    "~/Proiecte",
+    "%h/media",
+    "~/yt-watchdog",
+    "Dorusto/resurse",
+)
+
+
+def write_config(tmp_path, data):
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
+def run_inbox_without_projects(inbox_dir):
+    return inbox.main(
+        ["--inbox", str(inbox_dir), "--once", "--quiet-minutes", "0"]
+    )
+
+
+def test_missing_projects_exits_1_with_three_ways(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("YT_PIPELINE_PROJECTS", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, VALID_CONFIG)))
+    inbox_dir = tmp_path / "inbox"
+    make_clip(inbox_dir / "2026-10-14" / "dji_20261014_120000.mp4")
+    assert run_inbox_without_projects(inbox_dir) == 1
+    err = capsys.readouterr().err
+    assert "[error]" in err
+    assert "no projects folder configured" in err
+    assert "--projects" in err
+    assert "YT_PIPELINE_PROJECTS" in err
+    assert "projects.path" in err
+
+
+def test_projects_from_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("YT_CONFIG", raising=False)
+    projects = tmp_path / "projects"
+    monkeypatch.setenv("YT_PIPELINE_PROJECTS", str(projects))
+    inbox_dir = tmp_path / "inbox"
+    make_clip(inbox_dir / "2026-10-14" / "dji_20261014_120000.mp4")
+    recorder = Recorder()
+    monkeypatch.setattr(inbox, "run_recap", recorder)
+    assert run_inbox_without_projects(inbox_dir) == 0
+    assert recorder.calls[0]["workspace"] == projects / "2026-10-14"
+
+
+def test_projects_from_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("YT_PIPELINE_PROJECTS", raising=False)
+    projects = tmp_path / "projects"
+    config = dict(VALID_CONFIG, projects={"path": str(projects)})
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, config)))
+    inbox_dir = tmp_path / "inbox"
+    make_clip(inbox_dir / "2026-10-14" / "dji_20261014_120000.mp4")
+    recorder = Recorder()
+    monkeypatch.setattr(inbox, "run_recap", recorder)
+    assert run_inbox_without_projects(inbox_dir) == 0
+    assert recorder.calls[0]["workspace"] == projects / "2026-10-14"
+
+
+def test_help_has_no_personal_path(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        inbox.main(["--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    for banned in BANNED_STRINGS:
+        assert banned not in out
