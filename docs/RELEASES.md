@@ -24,6 +24,7 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - Costs ledger.
 - The Costs page and the feedback/requests form.
 - Title, description and hashtags for a recap.
+- The brief facts fields and the title rewrite (`brief_facts.json`, `POST /<project>/rewrite-meta`).
 - The upload consent checkbox.
 - Per-project delete from the project page.
 - Per-instance feature switches (`--features` / `YT_PIPELINE_FEATURES` / `web.features`).

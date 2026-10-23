@@ -2668,3 +2668,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) the owner had already rejected the look; the tokens alone do not change what people see.
 
 **Consequence:** the app looks clearly different (warm charcoal and amber, footage-forward); the thumbs station and the served thumbnails are experimental in the v0.1.0 candidate; RULES gains the thumbs routes and the station line; no schema change.
+
+---
+
+## [2026-10-23] Brief facts fields and the title rewrite (V010 lot facts)
+
+**Context:** The Recap tab's title box hinted "add the place name to the brief for a better title", but the brief is written before the edit and there was no way to act on the hint afterwards; the four facts the title needs (place, when, who, occasion) had no home of their own.
+
+**Options:** (A) keep the hint and ask the person to rewrite the brief; (B) four optional fact fields (place, when, who, occasion) on the Upload and Re-edit forms and in the Recap tab's Rewrite form, stored as `brief_facts.json` in the inbox source and the workspace, read as facts by the director prompt and `recap_meta.py`, plus a `POST /<project>/rewrite-meta` route that saves the fields and re-runs `recap_meta.py --force` for the shown version only.
+
+**Decision:** B. `scripts/common/brief_facts.py` holds the four fields, the labels and the atomic read/write; `serve.py` renders the fields above the brief on the Upload and Re-edit forms and in the Recap tab's collapsed Rewrite form, writes `brief_facts.json` to the inbox source and the workspace, and the new `POST /<project>/rewrite-meta` route saves the fields and re-runs `recap_meta.py --force` for the shown version (no new edit). `recap_meta.py` reads the facts (winning over the brief syntax and the ingest date) and lists the missing ones by field name; `llm_director.py` appends the facts block to the brief so the screenwriter, editor and reviewer prompts carry them.
+
+**Why not:** A) the hint gives no way to act on it, and the brief is written before the edit exists.
+
+**Consequence:** `brief_facts.json` is a new machine-owned file (no schema, four optional string keys); `recap_meta.py` `missing` now uses the field names (`place`, `when`, `who`, `occasion`); the new route is in RULES; the new parts are experimental in the v0.1.0 candidate.

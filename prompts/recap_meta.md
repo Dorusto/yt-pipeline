@@ -13,8 +13,8 @@ Write in the same language as the brief. Concrete over clever.
 The tool appends these sections after this prompt:
 
 - `## Brief` — the brief in plain language, verbatim.
-- `## Facts` — `Place:` and `Date:` when the tool could read them, else
-  `(unknown)`.
+- `## Facts` — `Place:`, `When:`, `Who is in it:` and `Occasion:` when the tool
+  could read them, else `(unknown)`.
 - `## Shots` — one `- <description>` line per shot in the edit, in timeline
   order.
 
