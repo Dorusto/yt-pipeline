@@ -54,8 +54,11 @@ def upsert_by_source(connection, kind, source, entry_date, amount, note):
     return row[0], "updated"
 
 
-def compute_totals(connection, month=None):
-    """Sum the ledger per kind and compute the balance, without ``ok`` or summary fields."""
+def compute_totals(connection, month=None, upkeep_percent=0.0):
+    """Sum the ledger per kind and compute the balance, without ``ok`` or summary fields.
+
+    ``upkeep_percent`` adds the owner's upkeep share on top of every cost before the balance.
+    """
     rows = connection.execute("SELECT date, kind, amount_usd FROM entries").fetchall()
     selected = rows if month is None else [row for row in rows if row[0].startswith(month + "-")]
     by_kind = {kind: 0.0 for kind in KINDS}
@@ -78,9 +81,9 @@ def compute_totals(connection, month=None):
     else:
         fixed_months = 0
     fixed_total = monthly_running * fixed_months
-    balance = by_kind["donation"] - (
-        by_kind["model_job"] + by_kind["dev_spend"] + by_kind["investment"] + fixed_total
-    )
+    spent = by_kind["model_job"] + by_kind["dev_spend"] + by_kind["investment"] + fixed_total
+    upkeep = spent * float(upkeep_percent or 0.0) / 100.0
+    balance = by_kind["donation"] - (spent + upkeep)
     return {
         "month": month,
         "by_kind": {kind: round(value, 2) for kind, value in by_kind.items()},
@@ -91,6 +94,10 @@ def compute_totals(connection, month=None):
         "investments_usd": round(by_kind["investment"], 2),
         "fixed_months": fixed_months,
         "fixed_total_usd": round(float(fixed_total), 2),
+        "spent_usd": round(spent, 2),
+        "upkeep_percent": float(upkeep_percent or 0.0),
+        "upkeep_usd": round(upkeep, 2),
+        "total_cost_usd": round(spent + upkeep, 2),
         "balance_usd": round(balance, 2),
     }
 

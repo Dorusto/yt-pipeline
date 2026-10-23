@@ -25,7 +25,7 @@ import re
 import sqlite3
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError, costs_db, load_config, no_costs_message
@@ -64,6 +64,7 @@ def build_parser():
             "  python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01\n"
             "  python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>\n"
             "  python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>\n"
+            "  python scripts/costs.py --ledger <costs.db> import-opencode --db <opencode.db> --match yt-pipeline\n"
             "  python scripts/costs.py --ledger <costs.db> totals --json\n"
             "  python scripts/costs.py --ledger <costs.db> list --kind model_job\n"
         ),
@@ -94,6 +95,17 @@ def build_parser():
     dev = subparsers.add_parser("import-dev", help="import build-agent spend from a run-spend file")
     dev.add_argument("--from", dest="from_file", required=True, help="run-spend JSON file")
     dev.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
+    agents = subparsers.add_parser(
+        "import-opencode",
+        help="import build-agent spend per day from opencode's session database, only for this project's folders",
+    )
+    agents.add_argument("--db", required=True, help="opencode.db (opencode's session database)")
+    agents.add_argument(
+        "--match", action="append", required=True,
+        help="a folder name part that marks this project's sessions (repeatable), for example yt-pipeline",
+    )
+    agents.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
     totals = subparsers.add_parser("totals", help="sum the ledger and compute the balance")
     totals.add_argument("--month", default=None, help="limit the sums to one month YYYY-MM")
@@ -206,6 +218,34 @@ def command_import_dev(connection, args, started):
     }
 
 
+def command_import_opencode(connection, args, started):
+    db_file = Path(args.db).expanduser()
+    if not db_file.is_file():
+        raise CostsUsageError(f"opencode database not found: {db_file}")
+    try:
+        source = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+        try:
+            rows = source.execute("SELECT directory, cost, time_created FROM session").fetchall()
+        finally:
+            source.close()
+    except sqlite3.Error as exc:
+        raise CostsUsageError(f"could not read opencode database {db_file}: {exc}") from exc
+    per_day = {}
+    for directory, cost, created in rows:
+        if not directory or not cost or not any(part in directory for part in args.match):
+            continue
+        day = datetime.fromtimestamp((created or 0) / 1000, timezone.utc).date().isoformat()
+        per_day[day] = per_day.get(day, 0.0) + float(cost)
+    imported = []
+    for day in sorted(per_day):
+        _, action = upsert_by_source(
+            connection, "dev_spend", f"opencode:{day}", day, per_day[day],
+            "build agents (opencode sessions of this project)",
+        )
+        imported.append({"date": day, "cost_usd": round(per_day[day], 2), "action": action})
+    return {"ok": True, "imported": imported, "count": len(imported), **summary_fields(started)}
+
+
 def command_totals(connection, args, started):
     month = args.month
     if month is not None and not MONTH_RE.match(month):
@@ -237,6 +277,10 @@ def emit(command, summary, json_mode):
             print(f"{row['action']} {row['project']}: ${row['total_usd']:.2f}")
         print(f"imported {summary['count']} project(s)")
     elif command == "import-dev":
+        for row in summary["imported"]:
+            print(f"{row['action']} {row['date']}: ${row['cost_usd']:.2f}")
+        print(f"imported {summary['count']} day(s)")
+    elif command == "import-opencode":
         for row in summary["imported"]:
             print(f"{row['action']} {row['date']}: ${row['cost_usd']:.2f}")
         print(f"imported {summary['count']} day(s)")
@@ -278,6 +322,8 @@ def main(argv=None):
             summary = command_import_jobs(connection, args, started)
         elif args.command == "import-dev":
             summary = command_import_dev(connection, args, started)
+        elif args.command == "import-opencode":
+            summary = command_import_opencode(connection, args, started)
         elif args.command == "totals":
             summary = command_totals(connection, args, started)
         else:

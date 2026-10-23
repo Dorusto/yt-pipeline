@@ -42,6 +42,9 @@ from pathlib import Path
 import yaml
 
 from common.config import (
+    owner_time,
+    upkeep_percent,
+    usd_to_eur,
     BRAND_OPTIONS,
     ConfigError,
     DEFAULT_BRAND_LOGO,
@@ -66,7 +69,7 @@ from common.config import (
     storage_gb,
     web_features,
 )
-from common.costs import compute_totals, connect as connect_ledger
+from common.costs import compute_totals, connect as connect_ledger, list_entries
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
 from common.media import clip_kind, video_files
 from common.photos import is_photo
@@ -775,13 +778,19 @@ def spend_between(directory, start, end=None):
     return total
 
 
+# The display rate from the config (costs.usd_to_eur); None shows dollars.
+EUR_PER_USD = None
+
+
 def format_cost(usd):
-    """$0.047, or < $0.001 for a tiny spend."""
+    """€1.234,56 (or $ without a rate): two decimals, a decimal comma; < €0,01 for a tiny spend."""
     if usd is None:
         return "?"
-    if 0 < usd < 0.001:
-        return "< $0.001"
-    return f"${usd:.3f}"
+    symbol, value = ("\u20ac", usd * EUR_PER_USD) if EUR_PER_USD else ("$", usd)
+    if 0 < abs(value) < 0.01:
+        return f"< {symbol}0,01"
+    text = f"{value:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".")
+    return f"{symbol}{text}"
 
 
 def tree_size_bytes(path):
@@ -914,22 +923,87 @@ def project_totals(url, now=None, timeout=10, opener=None):
     return value
 
 
-def totals_rows(totals):
-    """The ledger totals as a list: monthly running, development, donations and the balance."""
+def signed_cost(usd):
+    """A cost with a real minus sign in front of the dollar sign."""
+    return ("\u2212" if usd < 0 else "") + format_cost(abs(usd))
+
+
+def totals_rows(totals, fixed_notes=()):
+    """The ledger totals: the balance as the headline, then what the project has cost, line by line."""
     balance = totals["balance_usd"]
-    colour = "var(--keep)" if balance >= 0 else "var(--left)"
-    return (
-        '<ul class="projects">'
-        f'<li><span class="name">Monthly running</span>'
-        f'<span class="facts num">{format_cost(totals["monthly_running_usd"])}</span></li>'
-        f'<li><span class="name">Development total</span>'
-        f'<span class="facts num">{format_cost(totals["development_total_usd"])}</span></li>'
-        f'<li><span class="name">Donations</span>'
-        f'<span class="facts num">{format_cost(totals["donations_usd"])}</span></li>'
-        f'<li><span class="name">Balance</span>'
-        f'<span class="facts num" style="color:{colour}">{format_cost(balance)}</span></li>'
-        '</ul>'
+    state = "plus" if balance >= 0 else "minus"
+    by_kind = totals.get("by_kind") or {}
+    api = (totals.get("development_total_usd", 0.0) + totals.get("model_total_usd", 0.0)
+           + totals.get("investments_usd", 0.0))
+    lines = [("AI models and building the app", format_cost(api), "From the spend ledger.")]
+    if totals.get("fixed_total_usd"):
+        months = totals.get("fixed_months", 0)
+        note = "; ".join(fixed_notes) or "Fixed monthly costs."
+        lines.append((
+            "Server and running costs",
+            format_cost(totals["fixed_total_usd"]),
+            f'{format_cost(totals["monthly_running_usd"])} a month for {months} month'
+            f'{"s" if months != 1 else ""}. {note}',
+        ))
+    if totals.get("upkeep_usd"):
+        lines.append((
+            "Upkeep and the owner's time",
+            format_cost(totals["upkeep_usd"]),
+            f'{totals.get("upkeep_percent", 0):g} % on top of the costs above.',
+        ))
+    rows = "".join(
+        f'<tr><th scope="row">{html_escape(name)}<span class="why">{html_escape(why)}</span></th>'
+        f'<td class="num cost">{value}</td></tr>'
+        for name, value, why in lines
     )
+    total = totals.get("total_cost_usd", api + totals.get("fixed_total_usd", 0.0))
+    return (
+        f'<div class="balance {state}">'
+        f'<span class="balance-label">Balance</span>'
+        f'<span class="balance-value num">{signed_cost(balance)}</span>'
+        f'<span class="balance-note">Donations minus everything the project has cost so far.</span>'
+        "</div>"
+        '<dl class="cost-stats">'
+        f'<div><dt>Monthly running</dt><dd class="num">{format_cost(totals["monthly_running_usd"])}</dd></div>'
+        f'<div><dt>Development total</dt><dd class="num">{format_cost(totals["development_total_usd"])}</dd></div>'
+        f'<div><dt>Donations</dt><dd class="num">{format_cost(totals["donations_usd"])}</dd></div>'
+        "</dl>"
+        '<table class="clip-costs cost-lines"><caption>What the project has cost</caption>'
+        f"<tbody>{rows}</tbody>"
+        f'<tfoot><tr><th scope="row">Total</th><td class="num cost">{format_cost(total)}</td></tr></tfoot>'
+        "</table>"
+    )
+
+
+def owner_time_block(time_info):
+    """The owner's time, on the owner's own page only: hours and, with a rate, what they are worth."""
+    if not time_info:
+        return ""
+    hours = time_info["hours"]
+    worth = ""
+    if time_info["rate_eur"]:
+        value = f"{hours * time_info['rate_eur']:,.0f}".replace(",", ".")
+        worth = f'<span class="owner-worth num">worth about \u20ac{value} at \u20ac{time_info["rate_eur"]:g} an hour</span>'
+    note = html_escape(time_info["note"]) if time_info["note"] else "An estimate."
+    return (
+        '<div class="owner-time"><span class="owner-label">Your time on the project (only you see this)</span>'
+        f'<span class="owner-hours num">about {hours:g} hours</span>{worth}'
+        f'<span class="owner-note">{note} Not part of the balance.</span></div>'
+    )
+
+
+def donations_list(entries):
+    """The donation history, newest first, or an empty-state line."""
+    if not entries:
+        return ('<section class="donations"><h2>Donations</h2>'
+                '<p class="empty">No donations yet. The first one shows up here.</p></section>')
+    rows = "".join(
+        f'<li><span class="num">{html_escape(entry["date"])}</span>'
+        f'<span class="note">{html_escape(entry.get("note") or "Donation")}</span>'
+        f'<span class="num amount">{format_cost(entry["amount_usd"])}</span></li>'
+        for entry in sorted(entries, key=lambda e: e["date"], reverse=True)
+    )
+    return f'<section class="donations"><h2>Donations</h2><ul class="donation-list">{rows}</ul></section>'
 
 
 def last_run_start(directory):
@@ -1265,35 +1339,50 @@ def render_costs(server, thanks=False):
             cost = None
         versions = len(list_versions(directory))
         rows.append(
-            f'<li><span class="name">{html_escape(name)}</span>'
-            f'<span class="facts num">model cost {format_cost(cost)} \u00b7 '
-            f'{versions} version{"s" if versions != 1 else ""}</span></li>'
+            f'<tr><th scope="row"><a href="/{html_escape(name)}/">{html_escape(name)}</a></th>'
+            f'<td class="num">{versions} version{"s" if versions != 1 else ""}</td>'
+            f'<td class="num cost">{format_cost(cost)}</td></tr>'
         )
     if rows:
-        per_clip = f'<ul class="projects">{"".join(rows)}</ul>'
+        per_clip = (
+            '<table class="clip-costs"><caption>Model cost per clip</caption>'
+            '<thead><tr><th scope="col">Project</th><th scope="col">Versions</th>'
+            '<th scope="col" class="cost">Model cost</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
+        )
     else:
         per_clip = '<p class="empty">No projects yet.</p>'
 
     ledger_parts = []
+    donation_entries = None
     if server.ledger is not None and Path(server.ledger).is_file():
         try:
             connection = connect_ledger(server.ledger)
             try:
-                totals = compute_totals(connection)
+                totals = compute_totals(connection, upkeep_percent=upkeep_percent())
+                fixed_notes = [e["note"] for e in list_entries(connection, "fixed_monthly") if e.get("note")]
+                donation_entries = list_entries(connection, "donation")
             finally:
                 connection.close()
         except (sqlite3.Error, OSError):
             ledger_parts.append('<p class="empty">The ledger could not be read.</p>')
         else:
-            ledger_parts.append(totals_rows(totals))
+            ledger_parts.append(totals_rows(totals, fixed_notes))
     else:
         ledger_parts.append('<p class="empty">The ledger is not set up.</p>')
 
     donation = ""
     if server.donation_links:
-        donation = "".join(
-            f'<p><a href="{html_escape(link["url"])}">{html_escape(link["label"])}</a></p>'
+        buttons = "".join(
+            f'<a class="donate-link" href="{html_escape(link["url"])}" target="_blank" '
+            f'rel="noopener">{html_escape(link["label"])}</a>'
             for link in server.donation_links
+        )
+        donation = (
+            '<section class="donate"><h2>Help cover the costs</h2>'
+            "<p>The app runs on a home server and pays for every model call. "
+            "A donation keeps it running for everyone.</p>"
+            f'<div class="donate-links">{buttons}</div></section>'
         )
 
     thanks_line = (
@@ -1314,35 +1403,41 @@ def render_costs(server, thanks=False):
             f'maxlength="{REQUESTS_MAX_CHARS}"></textarea></label>'
             f'<label>Contact (optional)<input type="text" name="contact" '
             f'maxlength="{CONTACT_MAX_CHARS}" autocomplete="off"></label>'
-            '<label><span>I would back this with a donation</span>'
-            '<input type="checkbox" name="backed" value="1"></label>'
-            '<button class="go" type="submit">Send</button>'
+            '<label class="check"><input type="checkbox" name="backed" value="1">'
+            '<span>I would back this with a donation</span></label>'
+            '<button class="go" type="submit">Send request</button>'
             "</form>"
         )
     else:
         request_form = '<p class="empty">Requests are not set up.</p>'
 
+    # A friend's instance shows the shared project costs and donations from the
+    # owner's instance, and only its own projects in the per-clip table.
     parts = []
     if server.project_totals_url:
         fetched = project_totals(server.project_totals_url)
         if fetched is None:
-            parts.append(
-                "<h2>Project costs (everyone)</h2>"
-                '<p class="empty">Project costs are unavailable.</p>'
-            )
+            parts.append('<p class="empty">Project costs are unavailable.</p>')
+            donation_entries = None
         else:
-            parts.append("<h2>Project costs (everyone)</h2>" + totals_rows(fetched))
-    parts.append("<h2>This instance</h2>" + per_clip + "".join(ledger_parts))
+            parts.append(totals_rows(fetched, fetched.get("fixed_notes") or ()))
+            donation_entries = fetched.get("donations") or []
+        parts.append(per_clip.replace("Model cost per clip", "Model cost of your clips"))
+    else:
+        parts.append("".join(ledger_parts) + owner_time_block(owner_time()) + per_clip)
 
+    limits = f"{storage_line(server)}{credit_line(server)}"
     body = (
         "<h1>Costs</h1>"
-        f"{storage_line(server)}"
-        f"{credit_line(server)}"
+        '<p class="lede">What this app has cost, who helped pay for it, and what you have left.</p>'
         f'{"".join(parts)}'
+        f'{f"<div class=limits>{limits}</div>" if limits else ""}'
         f"{donation}"
-        "<h2>Feedback and requests</h2>"
+        f'{donations_list(donation_entries) if donation_entries is not None else ""}'
+        '<section class="requests"><h2>Feedback and requests</h2>'
+        "<p>Tell the owner what to fix or build next. Requests turn into planned work.</p>"
         f"{thanks_line}"
-        f"{request_form}"
+        f"{request_form}</section>"
     )
     return render_page("Costs", body, active="costs", features=server.features,
                        brand_logo=server.brand_logo)
@@ -3759,13 +3854,18 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         try:
             connection = connect_ledger(self.server.ledger)
             try:
-                totals = compute_totals(connection)
+                totals = compute_totals(connection, upkeep_percent=upkeep_percent())
+                fixed_notes = [e["note"] for e in list_entries(connection, "fixed_monthly") if e.get("note")]
+                donations = [
+                    {"date": e["date"], "amount_usd": e["amount_usd"], "note": e.get("note") or ""}
+                    for e in list_entries(connection, "donation")
+                ]
             finally:
                 connection.close()
         except (sqlite3.Error, OSError):
             self.send_error_text(500, "the ledger could not be read")
             return
-        self.send_json({"ok": True, **totals})
+        self.send_json({"ok": True, **totals, "fixed_notes": fixed_notes, "donations": donations})
 
     def handle_request(self, send_body):
         """Route one request against the allowlist and write the response."""
@@ -4171,6 +4271,8 @@ def main(argv=None):
         if requests is None:
             print(f"[warn] {no_requests_message('--requests')}", file=sys.stderr)
         donation = donation_links(args.donation_url)
+        global EUR_PER_USD
+        EUR_PER_USD = usd_to_eur()
         features = web_features(args.features)
         consent = consent_text(args.consent_text)
         storage = storage_gb(args.storage_gb)

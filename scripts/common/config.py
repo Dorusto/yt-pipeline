@@ -152,6 +152,10 @@ def _validate(data):
                     raise ConfigError(
                         "costs.donation_links entries must map a non-empty label and url"
                     )
+        for key in ("upkeep_percent", "usd_to_eur", "owner_hours", "owner_rate_eur"):
+            value = costs.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
+                raise ConfigError(f"costs.{key} must be a number of zero or more")
         totals_url = costs.get("project_totals_url")
         if totals_url is not None and (not isinstance(totals_url, str) or not totals_url):
             raise ConfigError("costs.project_totals_url must be a non-empty string")
@@ -222,6 +226,8 @@ INBOX_ENV = "YT_PIPELINE_INBOX"
 PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
 DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
+UPKEEP_PERCENT_ENV = "YT_PIPELINE_UPKEEP_PERCENT"
+USD_TO_EUR_ENV = "YT_PIPELINE_USD_TO_EUR"
 REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
 STORAGE_GB_ENV = "YT_PIPELINE_STORAGE_GB"
 PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
@@ -394,6 +400,54 @@ def donation_links(cli_value=None, config=None):
         if value:
             return [{"label": DEFAULT_DONATION_LABEL, "url": value}]
     return None
+
+
+def upkeep_percent(config=None):
+    """The owner's upkeep share in percent: UPKEEP_PERCENT_ENV, else costs.upkeep_percent, else 0.
+
+    Optional: without it the costs page shows no upkeep line.
+    """
+    from_env = os.environ.get(UPKEEP_PERCENT_ENV)
+    if from_env:
+        return max(0.0, float(from_env))
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict) and section.get("upkeep_percent") is not None:
+        return max(0.0, float(section["upkeep_percent"]))
+    return 0.0
+
+
+def usd_to_eur(config=None):
+    """The display rate from US dollars to euros: USD_TO_EUR_ENV, else costs.usd_to_eur, else None.
+
+    The ledger stays in US dollars (the model provider bills in dollars); with a rate
+    the web app shows euros, without one it shows dollars.
+    """
+    from_env = os.environ.get(USD_TO_EUR_ENV)
+    if from_env:
+        return float(from_env)
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if isinstance(section, dict) and section.get("usd_to_eur"):
+        return float(section["usd_to_eur"])
+    return None
+
+
+def owner_time(config=None):
+    """The owner's own time for the Costs page: costs.owner_hours, costs.owner_rate_eur, costs.owner_hours_note.
+
+    Shown only on the owner's instance, never in the balance and never in /costs.json.
+    Returns None when no hours are set.
+    """
+    data = config if config is not None else load_config()
+    section = data.get("costs")
+    if not isinstance(section, dict) or not section.get("owner_hours"):
+        return None
+    return {
+        "hours": float(section["owner_hours"]),
+        "rate_eur": float(section["owner_rate_eur"]) if section.get("owner_rate_eur") else None,
+        "note": str(section.get("owner_hours_note") or ""),
+    }
 
 
 def requests_path(cli_value=None, config=None):
