@@ -26,4 +26,4 @@ Rules for the owner and for every agent. A version is a tag on `master` plus a G
 - The pre-commit hook (public check).
 - CI on every push (tests and public check).
 - Branch protection on `master` (merge only with green CI, set by the owner on GitHub).
-- The stable-files check (planned: CI fails when a stable file changes without the approval marker the protocol names).
+- The stable-files check (`scripts/check_stable.py`, CI on pull requests): a diff that touches a file in the `stable-files` block of `docs/RELEASES.md` fails unless a commit in the range carries the trailer `Stable-change: approved`. Before the first tag (the latest version is a candidate) nothing is enforced.

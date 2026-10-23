@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: a read-only Costs page (per-clip model cost, ledger totals, donation link) and a feedback/requests form that appends one JSON line to the requests file.
 - Recap metadata: `recap_meta.py` writes `recap_meta.json` (title, description, hashtags) from `edit.json`, the Recap tab shows it with a Copy button per field, and each version keeps its own text.
 - Pilot host: `deploy/update.sh` updates a container to a released tag with a smoke test and a rollback, `deploy/yt-pipeline-web.service` is the systemd unit template, and `docs/guides/pilot-host.md` describes one container per person.
+- Releasing: `scripts/check_stable.py` and the `stable-check` CI job fail a pull request that changes a file in the `stable-files` block of `docs/RELEASES.md` without the `Stable-change: approved` trailer.
 
 ### Changed
 

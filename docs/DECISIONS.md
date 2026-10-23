@@ -2564,3 +2564,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) a model call behind a web route has no re-run safety, no versioned output and no `--json` summary; the station keeps the same contract as every other tool.
 
 **Consequence:** `recap_meta.json` is a new interface file (schema `recap_meta`); the Recap tab shows the text for the shown version; no RULES change (the station is covered by the existing recap skip rule and the `recap.py` → the stations tool-to-tool pair).
+
+---
+
+## [2026-10-23] Pilot host install, update and rollback, and the stable-files check (V010 lot host)
+
+**Context:** The pilot host needs a repeatable update path with a rollback, and the release protocol's stable-files rule had no enforcement.
+
+**Decision:** `deploy/update.sh <tag>` fetches tags, checks out the tag, installs `requirements.txt` (with `requirements-constraints.txt` when it exists), runs the smoke test (`serve.py --check --port 0` and an HTTP GET of `SMOKE_URL` expecting 200), restarts the `yt-pipeline-web` service and writes the tag to `.deployed-tag`; on failure it checks out the previous tag from `.deployed-tag`, reinstalls, restarts and exits 3. `deploy/yt-pipeline-web.service` is the systemd unit template with an `EnvironmentFile` at `/etc/yt-pipeline/env` (not in the repo). `docs/guides/pilot-host.md` describes one container per person (Tailscale node share, NAS share, storage quota, one OpenRouter key per instance, `costs.project_totals_url`). `scripts/check_stable.py` and `.github/workflows/stable-check.yml` fail a pull request that touches a file in the `stable-files` block of `docs/RELEASES.md` unless a commit in the range carries `Stable-change: approved`; the block sits under the latest version section and is not enforced while that version is a candidate (the rule applies only after the first tag).
+
+**Consequence:** the pilot host runs tags only and rolls back on a failed smoke test; the stable list is machine-readable; the trailer is named in `RELEASING.md`; the guide documents the Lot limits settings ahead of that lot.

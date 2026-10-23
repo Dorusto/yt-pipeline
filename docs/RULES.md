@@ -131,3 +131,4 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 ## Releasing
 
 - Stable tools change only in a lot that names them, with the owner's approval; a fix to a released version is a new patch version; tags are never moved or deleted — see [`RELEASING.md`](RELEASING.md). — 2026-10-23
+- The stable-files check (`scripts/check_stable.py`, CI on pull requests) fails when a diff touches a file in the `stable-files` block of `docs/RELEASES.md` and no commit in the range carries the `Stable-change: approved` trailer; before the first tag the block is not enforced. — 2026-10-23 (V010 lot host)
