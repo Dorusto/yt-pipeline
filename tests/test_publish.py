@@ -182,7 +182,7 @@ def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
     recorder = Recorder()
     monkeypatch.setattr(publish, "execute", recorder)
     media = tmp_path / "clip.mp4"
-    media.write_bytes(b"")
+    make_clip(media)
     argv = [
         "--project",
         str(project),
@@ -623,7 +623,7 @@ def make_thumbnail(path, size=(1280, 720)):
     Image.new("RGB", size, (10, 20, 30)).save(path, "JPEG")
 
 
-def make_clip(path):
+def make_clip(path, duration=10):
     subprocess.run(
         [
             "ffmpeg",
@@ -633,7 +633,7 @@ def make_clip(path):
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=size=64x64:rate=10:duration=1",
+            f"testsrc2=size=64x64:rate=10:duration={duration}",
             "-pix_fmt",
             "yuv420p",
             str(path),
@@ -646,6 +646,8 @@ def make_clip(path):
 def build_kit_project(tmp_path, name="proj"):
     project = tmp_path / name
     project.mkdir()
+    clip = tmp_path / "final.mp4"
+    make_clip(clip)
     (project / f"{name}.srt").write_text(SRT_RAW, encoding="utf-8")
     (project / f"{name}_words.json").write_text("[]", encoding="utf-8")
     (project / f"{name}_RO.srt").write_text(SRT_RAW, encoding="utf-8")
@@ -653,8 +655,6 @@ def build_kit_project(tmp_path, name="proj"):
     (project / "metadata.md").write_text("# Metadata", encoding="utf-8")
     (project / "metadata.json").write_text(json.dumps(KIT_METADATA), encoding="utf-8")
     make_thumbnail(project / "thumbnail.jpg")
-    clip = tmp_path / "final.mp4"
-    make_clip(clip)
     return project, clip
 
 
@@ -685,6 +685,8 @@ def test_kit_builds_the_folder(tmp_path, capsys):
     project, clip = build_kit_project(tmp_path)
     assert run_kit(project, clip) == 0
     summary = json.loads(capsys.readouterr().out)
+    statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
+    assert statuses["verify"] == "done"
     kit = project / "publish-kit"
     assert (kit / "final.mp4").is_file()
     assert (kit / f"{project.name}_RO.srt").is_file()
@@ -813,6 +815,43 @@ def test_kit_requires_final_video_for_fcproj(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "--final-video" in err
     assert not (project / "publish-kit").exists()
+
+
+def test_verify_fails_when_srt_ends_past_the_video(tmp_path, capsys):
+    project, clip = build_kit_project(tmp_path)
+    long_srt = (
+        "1\n00:00:00,200 --> 00:00:03,800\ndoi trei patru cinci.\n\n"
+        "2\n00:00:28,600 --> 00:00:30,000\nprea lung.\n"
+    )
+    (project / f"{project.name}_RO.srt").write_text(long_srt, encoding="utf-8")
+    assert run_kit(project, clip) == 2
+    err = capsys.readouterr().err
+    assert "00:30" in err
+    assert "00:10" in err
+    assert not (project / "publish-kit").exists()
+
+
+def test_verify_fails_when_srt_is_older_than_the_video(tmp_path, capsys):
+    project, clip = build_kit_project(tmp_path)
+    srt = project / f"{project.name}_RO.srt"
+    old = clip.stat().st_mtime - 10
+    os.utime(srt, (old, old))
+    assert run_kit(project, clip) == 2
+    err = capsys.readouterr().err
+    assert "older than the final video" in err
+    assert not (project / "publish-kit").exists()
+
+
+def test_verify_skipped_without_final_video(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    verify = next(entry for entry in summary["steps"] if entry["name"] == "verify")
+    assert verify["status"] == "skipped"
+    state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["verify"]["reason"] == "no final video"
 
 
 def test_kit_loudness_uses_the_loudened_file(tmp_path, monkeypatch, capsys):

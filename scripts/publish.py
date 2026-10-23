@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Run the publish kit for a finished edit: subtitles, corrections, review, translation, thumbnail, metadata and the manual-upload kit.
+"""Run the publish kit for a finished edit: subtitles, corrections, verify, review, translation, thumbnail, metadata and the manual-upload kit.
 
 Usage:
     python3 scripts/publish.py --project DIR --context FILE \
@@ -11,11 +11,12 @@ Usage:
 
 ``publish.py`` is the single entry point for the publish chain: it chains the
 existing station CLIs as subprocesses in order (subs_from_edit or transcribe,
-correct_srt, a human-review stop, translate_srt, thumbnail, metadata and the
-manual-upload kit), skips a step whose output already exists, keeps a state file
-in the project folder and prints a ``--json`` summary with the wall time and the
-total LLM cost. It imports no other tool and calls no model itself.
-Originals are read-only; everything is written under the project folder.
+correct_srt, a subtitle/video match check, a human-review stop, translate_srt,
+thumbnail, metadata and the manual-upload kit), skips a step whose output already
+exists, keeps a state file in the project folder and prints a ``--json`` summary
+with the wall time and the total LLM cost. It imports no other tool and calls no
+model itself. Originals are read-only; everything is written under the project
+folder.
 """
 
 import argparse
@@ -30,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
+from common.ffmpeg_tools import probe_duration
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/publish.py"
@@ -41,6 +43,8 @@ DESCRIPTION_MAX = 5000
 TAGS_MAX = 500
 THUMBNAIL_MAX_BYTES = 2_000_000
 THUMBNAIL_SIZE = (1280, 720)
+MATCH_TOLERANCE_S = 2.0
+SRT_END = re.compile(r"--> (\d{2}):(\d{2}):(\d{2}),(\d{3})")
 
 
 class PublishError(RuntimeError):
@@ -124,10 +128,13 @@ def build_parser():
             " [--kit [--final-video FILE] [--kit-loudness] [--kit-title TITLE]]"
         ),
         description=(
-            "Run the publish kit for a finished edit: subtitles, corrections, a human-review "
-            "stop, translation, thumbnail, metadata and the manual-upload kit."
+            "Run the publish kit for a finished edit: subtitles, corrections, a subtitle/video "
+            "match check, a human-review stop, translation, thumbnail, metadata and the "
+            "manual-upload kit."
         ),
         epilog=(
+            "steps: subtitles -> corrections -> verify -> review -> translation -> thumbnail -> "
+            "metadata -> kit (only with --kit)\n"
             "example:\n"
             "  python3 scripts/publish.py --project out/ --context ctx.md \\\n"
             "    --fcproj project.fcproj --sequence Main --words-dir words/ --json\n"
@@ -382,6 +389,10 @@ def build_steps(ctx):
             ],
         }
     )
+    if resolve_final_video(ctx) is None:
+        steps.append({"name": "verify", "skip_reason": "no final video"})
+    else:
+        steps.append({"name": "verify"})
     steps.append({"name": "review"})
     steps.append(
         {
@@ -458,7 +469,8 @@ def step_outputs(name, ctx):
 
 def step_outputs_exist(name, ctx):
     """True when every output of a step already exists (the skip rule)."""
-    return all(Path(path).is_file() for path in step_outputs(name, ctx))
+    outputs = step_outputs(name, ctx)
+    return bool(outputs) and all(Path(path).is_file() for path in outputs)
 
 
 def normalize_subs_output(ctx):
@@ -663,6 +675,29 @@ def resolve_final_video(ctx):
     if ctx.source_kind == "media":
         return ctx.media
     return None
+
+
+def srt_end_seconds(path):
+    """Return the last cue's end time in seconds, or None when there is none."""
+    try:
+        content = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    matches = SRT_END.findall(content)
+    if not matches:
+        return None
+    hours, minutes, seconds, millis = matches[-1]
+    return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
+
+
+def format_seconds(seconds):
+    """Render a duration as MM:SS, or H:MM:SS past an hour."""
+    total = int(round(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
 
 
 def load_metadata_json(ctx):
@@ -950,6 +985,58 @@ def execute_kit(ctx):
     }
 
 
+def execute_verify(ctx):
+    """Check that the corrected SRT matches the final video before the rest of the chain."""
+    started = time.monotonic()
+    errors = []
+    final_video = resolve_final_video(ctx)
+    srt = ctx.project / f"{ctx.name}_RO.srt"
+    if not srt.is_file():
+        errors.append(f"RO subtitles not found: {srt}")
+    if final_video is None:
+        errors.append("no final video to compare the subtitles against")
+    elif not Path(final_video).is_file():
+        errors.append(f"final video not found: {final_video}")
+    if not errors:
+        duration = probe_duration(final_video)
+        end = srt_end_seconds(srt)
+        if duration is None:
+            errors.append(f"cannot read the final video duration: {final_video}")
+        if end is None:
+            errors.append(f"cannot read the last subtitle time: {srt}")
+        if duration is not None and end is not None:
+            if end > duration + MATCH_TOLERANCE_S or end < duration - MATCH_TOLERANCE_S:
+                errors.append(
+                    f"subtitles end at {format_seconds(end)} but the final video is "
+                    f"{format_seconds(duration)}; the subtitles no longer match the final video "
+                    "(a cut was removed or added) — re-export them from the final edit"
+                )
+            if srt.stat().st_mtime < Path(final_video).stat().st_mtime - MATCH_TOLERANCE_S:
+                errors.append(
+                    f"subtitles are older than the final video: {srt} was written before "
+                    f"{final_video}; re-export them from the final edit"
+                )
+    if errors:
+        return {
+            "status": "FAIL",
+            "returncode": EXIT_USAGE,
+            "outputs": [],
+            "llm_cost_usd": 0.0,
+            "stderr": "\n".join(f"[error] {error}" for error in errors),
+            "stdout": "",
+            "wall_time_s": round(time.monotonic() - started, 3),
+        }
+    return {
+        "status": "done",
+        "returncode": 0,
+        "outputs": [],
+        "llm_cost_usd": 0.0,
+        "stderr": "",
+        "stdout": "",
+        "wall_time_s": round(time.monotonic() - started, 3),
+    }
+
+
 def run(ctx):
     """Run the step chain and return the flat summary object."""
     started = time.monotonic()
@@ -996,6 +1083,8 @@ def run(ctx):
         print_start(ctx, index, total, name)
         if name == "kit":
             result = execute_kit(ctx)
+        elif name == "verify":
+            result = execute_verify(ctx)
         else:
             result = execute(step, step["argv"], ctx)
         if result["status"] == "FAIL":

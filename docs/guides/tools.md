@@ -45,7 +45,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 
 | Script | Input | Output |
 |:---|:---|:---|
-| `correct_srt.py` | `raw.srt` | `raw_corectat.srt` |
+| `correct_srt.py` | `raw.srt` | `raw_corectat.srt` (`--capitalised` also fixes the capitalised variant; a `*wrong|correct` line does it per line) |
 | `translate_srt.py` | `_RO.srt` + `video.mp4` | `_EN.srt` next to video |
 | `analyze_srt.py` | `_RO.srt` + `video.mp4` | `video_metadata.txt` + `shorts_candidates.txt` |
 | `analyze_srt.py --shorts-config` | config yaml | `{name}_metadata.txt` in `shorts/` |
@@ -360,7 +360,9 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 
 ### Publish kit (publish.py)
 
-`publish.py` chains the publish stations for a finished edit (subtitles → corrections → a human-review stop → EN translation → thumbnail → metadata) and, with `--kit`, builds `<project>/publish-kit/` for a manual YouTube Studio upload: the final video (optionally through the lot 5 `loudness.py` pass with `--kit-loudness`), `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. Skill: `yt-publish`.
+`publish.py` chains the publish stations for a finished edit (subtitles → corrections → verify → a human-review stop → EN translation → thumbnail → metadata) and, with `--kit`, builds `<project>/publish-kit/` for a manual YouTube Studio upload: the final video (optionally through the lot 5 `loudness.py` pass with `--kit-loudness`), `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. Skill: `yt-publish`.
+
+The `verify` step compares the corrected `<name>_RO.srt` with the final video already known to the run (`--final-video`, or the `--media` file): the last cue's end time must be within 2 s of the video duration and the SRT must not be older than the video. A mismatch exits 2 naming both times (or saying the subtitles are older) and aborts the chain before translation, metadata and the kit; with no final video the step is skipped with reason `no final video`.
 
 ```bash
 .venv/bin/python scripts/publish.py --project out/ --context ctx.md \

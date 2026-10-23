@@ -22,6 +22,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 - Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, the script prints a warning and falls back to `scripts/corrections_example.txt` (0 active corrections), so it never crashes and always writes the output. Copy the example to `scripts/corrections.txt` to add your own corrections.
 - Without the second argument the output is `<input>_corectat.srt`.
 - Matching is a plain, case-sensitive text replace over the whole file, timestamps included. Do not add very short patterns.
+- A line `*wrong|correct` also fixes the capitalised variant (first letter only): `*pasnicii|paznicii` fixes `Pasnicii` → `Paznicii` too. A pattern that already starts with a capital letter gets no variant. `--capitalised` turns the variant on for every line, `*` or not.
 - It prints `Corecturi încărcate: N` and `Termeni înlocuiți: M`. M counts distinct wrong terms that were found, not occurrences. N = 0 means the list is empty; M = 0 with N > 0 means nothing matched.
 - `--json` prints one JSON summary (`ok`, `output`, `corrections`, `changes`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
 

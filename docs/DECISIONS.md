@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Publish subtitle/video match check and capitalised corrections (V020N lot n8)
+
+**Context:** Two issues in the publish/subtitle path. #78: after a cut is removed or added in the final edit, the corrected SRT can silently no longer match the video, and the chain still translates, writes metadata and builds the kit from stale subtitles. #79: a correction like `pasnicii|paznicii` misses the sentence-initial `Pasnicii`, so the same word needs a second line.
+
+**Options:** For #78: (A) a new `publish.py` flag to point at the video; (B) a `verify` step that uses the final video the run already knows (`--final-video`, or `--media`) and compares the SRT's last cue end and file date with the video. For #79: (A) a global case-insensitive replace; (B) an opt-in capitalised variant, per line with a leading `*` or globally with `--capitalised`.
+
+**Decision:** B for both. `publish.py` gains a `verify` step between `correct` and `review`: `srt_end_seconds` reads the last `-->` end timestamp, `probe_duration` reads the video, and a difference over `MATCH_TOLERANCE_S` (2 s) or an SRT older than the video is `EXIT_USAGE` with one `[error]` line naming both times (or the age), aborting before translation, metadata and the kit; with no final video the step is skipped with reason `no final video`. `common/corrections.py` returns `Correction(wrong, correct, capitalised)`; a leading `*` on the wrong side sets `capitalised`, and `apply_corrections(..., capitalised=False)` also replaces the first-letter-uppercased wrong with the first-letter-uppercased correct when the wrong side starts with a lowercase letter. `correct_srt.py` gains `--capitalised` for every line.
+
+**Why not:** A) a new flag duplicates the video the run already has and would be forgotten; the check belongs in the chain. A global case-insensitive replace would touch patterns that are already capitalised (e.g. `CloudCode`) and change meaning; the opt-in variant keeps the default behaviour and never double-applies.
+
+**Consequence:** No new `publish.py` CLI flag; `--final-video`/`--kit` rules are unchanged. `shorts_generator.py` keeps working through the shared `apply_corrections` (per-line `*` markers apply there too, no new flag). RULES records both lines.
+
+---
+
 ## [2026-10-23] Donations import and the low-credit warning (V020N lot n7)
 
 **Context:** Issue #97 asks for two things: importing donations into the costs ledger from a provider's CSV export instead of typing each one with `add --kind donation`, and warning the person on the Upload page when the OpenRouter key's remaining credit is low, before a run that would pass the key limit.

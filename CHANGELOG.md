@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Publish: `publish.py` gains a `verify` step between corrections and the human-review stop — it compares the corrected SRT's end time and file date with the final video and stops with a clear message (exit 2) before translation, metadata and the kit when they no longer match.
+- Subtitles: a corrections line `*wrong|correct` also fixes the capitalised variant (first letter only), and `correct_srt.py --capitalised` turns the variant on for every line; a pattern that already starts with a capital letter gets no variant.
 - Costs: `costs.py import-opencode` imports build-agent spend per day from opencode's session database, only for this project's folders (`--db`, repeatable `--match`), idempotent by date.
 - Costs: `costs.py import-donations --from <donations.csv>` imports donations from a CSV export (required `date`, `amount`; optional `note`, `id`), idempotent by `source`, skipping bad rows with a warning.
 - Web app: the Upload page shows a low-credit warning banner when the OpenRouter key's remaining credit is under `limits.credit_warn_usd`, before a run that would pass the key limit.
