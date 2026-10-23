@@ -908,9 +908,21 @@ def _clip_path_map(workspace_path, quality_files):
 def _write_html(html_path, record, clip_paths):
     shots = sorted(record.get("shots") or [], key=lambda shot: shot.get("score") or 0.0, reverse=True)
     workspace_name = Path(record.get("workspace") or "").name
-    eligible = sum(1 for shot in shots if shot.get("eligible"))
-    cards = "\n".join(_shot_card(shot, clip_paths) for shot in shots)
-    document = _html_document(workspace_name, len(shots), eligible, record.get("generated_at"), cards)
+    used_keys = _used_shot_keys(record)
+    sections = []
+    for verdict, title in (
+        ("used", "Used in the edit"),
+        ("kept", "Kept but not used"),
+        ("unusable", "Not usable"),
+    ):
+        rows = [shot for shot in shots if _verdict_of(shot, used_keys) == verdict]
+        sections.append(_shots_section(verdict, title, rows, clip_paths))
+    document = _html_document(
+        workspace_name,
+        _summary_line(shots),
+        record.get("generated_at"),
+        "\n".join(sections),
+    )
     html_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = html_path.with_name(html_path.name + ".tmp")
     try:
@@ -919,6 +931,80 @@ def _write_html(html_path, record, clip_paths):
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def _used_shot_keys(record):
+    """The shot keys the workspace's edit.json marks as used, or an empty set."""
+    workspace = record.get("workspace")
+    if not workspace:
+        return set()
+    edit = _load_json(Path(workspace) / "edit.json")
+    if not isinstance(edit, dict) or not isinstance(edit.get("decisions"), list):
+        return set()
+    return {
+        str(row["id"])
+        for row in edit["decisions"]
+        if isinstance(row, dict) and row.get("status") == "used" and row.get("id")
+    }
+
+
+def _verdict_of(shot, used_keys):
+    if str(shot.get("key") or "") in used_keys:
+        return "used"
+    if shot.get("eligible"):
+        return "kept"
+    return "unusable"
+
+
+def _summary_line(shots):
+    """One plain line about the shots: pieces, clips, usable, shaky, moves and scenes."""
+    pieces = len(shots)
+    clips = len({str(shot.get("clip") or "") for shot in shots})
+    usable = sum(1 for shot in shots if shot.get("eligible"))
+    shaky = sum(1 for shot in shots if "shake" in (shot.get("defects") or []))
+    parts = [f"{pieces} pieces from {clips} clips", f"{usable} usable", f"{shaky} shaky"]
+    moves = _top_values(shots, "motion_label")
+    if moves:
+        parts.append("moves: " + ", ".join(moves))
+    scenes = _top_values(shots, "scenery")
+    if scenes:
+        parts.append("scenes: " + ", ".join(scenes))
+    return " · ".join(parts)
+
+
+def _top_values(shots, field):
+    counts = {}
+    for shot in shots:
+        value = shot.get(field)
+        if value is None:
+            continue
+        counts[str(value)] = counts.get(str(value), 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [name for name, _ in ordered[:2]]
+
+
+def _shots_section(verdict, title, rows, clip_paths):
+    groups = _clip_groups(rows, clip_paths) if rows else '<p class="missing">None.</p>'
+    return (
+        f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}" data-keep>'
+        f'<summary>{escape(title)} (<span class="count">{len(rows)}</span>)</summary>'
+        f'<div class="groups">{groups}</div>'
+        f"</details>"
+    )
+
+
+def _clip_groups(rows, clip_paths):
+    by_clip = {}
+    for shot in rows:
+        by_clip.setdefault(str(shot.get("clip") or ""), []).append(shot)
+    parts = []
+    for clip in sorted(by_clip):
+        cards = "\n".join(_shot_card(shot, clip_paths) for shot in by_clip[clip])
+        parts.append(
+            f'<section class="clip-group" data-clip="{escape(clip)}">'
+            f"<h3>{escape(clip)}</h3>{cards}</section>"
+        )
+    return "\n".join(parts)
 
 
 def _shot_card(shot, clip_paths):
@@ -993,7 +1079,7 @@ def _format_time(seconds):
     return f"{minutes:02d}:{remainder:04.1f}"
 
 
-def _html_document(workspace_name, shot_count, eligible_count, generated_at, cards):
+def _html_document(workspace_name, summary_line, generated_at, sections):
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -1010,7 +1096,13 @@ def _html_document(workspace_name, shot_count, eligible_count, generated_at, car
         "header { margin-bottom: 14px; }\n"
         "h1 { font-family: ui-serif, Georgia, serif; font-weight: 500; font-size: 1.35rem; margin: 0 0 2px; }\n"
         "header p { margin: 0; color: var(--haze); font-size: 0.88rem; }\n"
-        "main { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }\n"
+        "main { display: flex; flex-direction: column; gap: 18px; }\n"
+        ".shots-section { border-top: 1px solid var(--rope); padding-top: 12px; }\n"
+        ".shots-section summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; "
+        "font-family: ui-serif, Georgia, serif; font-weight: 500; font-size: 1.15rem; }\n"
+        ".groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }\n"
+        ".clip-group h3 { font-family: ui-serif, Georgia, serif; font-weight: 500; font-size: 1rem; "
+        "margin: 0 0 8px; color: var(--haze); overflow-wrap: anywhere; }\n"
         ".card { background: var(--water); border-radius: 12px; overflow: hidden; }\n"
         ".card.ineligible { opacity: 0.55; }\n"
         ".thumb { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--rope); }\n"
@@ -1037,12 +1129,18 @@ def _html_document(workspace_name, shot_count, eligible_count, generated_at, car
         "<body>\n"
         "<header>\n"
         f"<h1>{escape(workspace_name)}</h1>\n"
-        f"<p>{shot_count} shots · {eligible_count} eligible</p>\n"
+        f'<p class="summary">{escape(summary_line)}</p>\n'
         f'<p class="generated">generated {escape(str(generated_at or ""))}</p>\n'
         "</header>\n"
         "<main>\n"
-        f"{cards}\n"
+        f"{sections}\n"
         "</main>\n"
+        "<script>\n"
+        "(function(){var ds=document.querySelectorAll('details[data-keep]');\n"
+        "for(var i=0;i<ds.length;i++){(function(d){var k='shots:'+d.id;\n"
+        "try{if(sessionStorage.getItem(k)==='open')d.open=true;}catch(e){}\n"
+        "d.addEventListener('toggle',function(){try{sessionStorage.setItem(k,d.open?'open':'closed');}catch(e){}});})(ds[i]);}})();\n"
+        "</script>\n"
         "</body>\n"
         "</html>\n"
     )

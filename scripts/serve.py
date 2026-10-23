@@ -214,10 +214,6 @@ BRAND_PROGRESS_COLOR = brand_progress_color(BRAND_PATH)
 
 
 SHOTS_OVERLAY_STYLE = """
-.editbar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
-.editbar button{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--rope);
-background:var(--water);color:var(--stone);font:inherit;font-size:.85rem;cursor:pointer}
-.editbar button.on{background:var(--stone);color:var(--water)}
 .badge.used{color:var(--sea)}
 .why-out{font-size:.8rem;color:var(--left);margin:2px 0 6px;overflow-wrap:anywhere}
 .card.in-edit{outline:2px solid var(--sea)}
@@ -231,11 +227,16 @@ SHOTS_OVERLAY_SCRIPT = """
 (function(){var d=window.EDIT_DECISIONS||{};var cards=[].slice.call(document.querySelectorAll('article.card'));
 if(!cards.length)return;
 var hasEdit=Object.keys(d).length>0;
-if(hasEdit){cards.forEach(function(c){var r=c.querySelector('.range');if(!r)return;var k=r.textContent.split(' \u00b7 ').pop().trim();var x=d[k];
-var b=c.querySelector('.badges');if(!x||!b)return;c.dataset.state=x.status;
-if(x.status==='used'){c.classList.add('in-edit');var s=document.createElement('span');s.className='badge used';s.textContent='in the edit as '+(x.slot||'');b.insertBefore(s,b.firstChild);}
+function info(c){var r=c.querySelector('.range');if(!r)return null;var p=r.textContent.split(' \u00b7 ');if(p.length<3)return null;
+return {clip:p[0].trim(),key:p[p.length-1].trim()};}
+function groupFor(section,clip){var g=section.querySelector('.clip-group[data-clip="'+clip.replace(/"/g,'\\\\"')+'"]');if(g)return g;
+var groups=section.querySelector('.groups');if(!groups)return null;g=document.createElement('section');g.className='clip-group';
+g.setAttribute('data-clip',clip);var h=document.createElement('h3');h.textContent=clip;g.appendChild(h);groups.appendChild(g);return g;}
+if(hasEdit){cards.forEach(function(c){var i=info(c);if(!i)return;var x=d[i.key];var b=c.querySelector('.badges');if(!x||!b)return;c.dataset.state=x.status;
+if(x.status==='used'){c.classList.add('in-edit');var s=document.createElement('span');s.className='badge used';s.textContent='in the edit as '+(x.slot||'');b.insertBefore(s,b.firstChild);
+var used=document.getElementById('used');if(used){var g=groupFor(used,i.clip);if(g)g.appendChild(c);}}
 else{var w=document.createElement('p');w.className='why-out';w.textContent='left out: '+(x.reason||'');b.parentNode.insertBefore(w,b.nextSibling);}});}
-cards.forEach(function(c){var r=c.querySelector('.range');if(!r)return;var k=r.textContent.split(' \u00b7 ').pop().trim();var b=c.querySelector('.badges');if(!b)return;
+cards.forEach(function(c){var i=info(c);if(!i)return;var k=i.key;var b=c.querySelector('.badges');if(!b)return;
 var wrap=document.createElement('div');wrap.className='shot-actions';
 [['must_include','must be in'],['wrong_label','wrong label']].forEach(function(o){
 var btn=document.createElement('button');btn.type='button';btn.textContent=o[1];
@@ -243,15 +244,11 @@ btn.addEventListener('click',function(){var body=new URLSearchParams();body.set(
 fetch(window.location.pathname.split('/shotlog.html')[0]+'/expectations',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()}).then(function(res){if(res.ok)btn.classList.add('on');});});
 wrap.appendChild(btn);});
 b.parentNode.insertBefore(wrap,b.nextSibling);});
-if(hasEdit){var used=cards.filter(function(c){return c.dataset.state==='used';}).length;
-var good=cards.filter(function(c){return c.dataset.state!=='used'&&!c.classList.contains('ineligible');}).length;
-var bar=document.createElement('div');bar.className='editbar';
-[['all','All '+cards.length],['used','In the edit '+used],['out','Good but left out '+good]].forEach(function(o,i){
-var btn=document.createElement('button');btn.type='button';btn.textContent=o[1];if(!i)btn.className='on';
-btn.addEventListener('click',function(){[].forEach.call(bar.children,function(e){e.classList.remove('on');});btn.classList.add('on');
-cards.forEach(function(c){var st=c.dataset.state;var show=o[0]==='all'||(o[0]==='used'&&st==='used')||(o[0]==='out'&&st!=='used'&&!c.classList.contains('ineligible'));c.style.display=show?'':'none';});});
-bar.appendChild(btn);});
-var main=document.querySelector('main');if(main)main.parentNode.insertBefore(bar,main);}})();
+if(hasEdit){[].forEach.call(document.querySelectorAll('.shots-section'),function(section){
+[].forEach.call(section.querySelectorAll('.clip-group'),function(g){if(!g.querySelector('article.card'))g.parentNode.removeChild(g);});
+var n=section.querySelectorAll('article.card').length;var miss=section.querySelector('.missing');
+if(miss&&n>0)miss.parentNode.removeChild(miss);
+var count=section.querySelector('.count');if(count)count.textContent=String(n);});}})();
 """
 
 CUTS_STYLE = """
@@ -1049,6 +1046,8 @@ border-radius:var(--radius-l);width:fit-content;max-width:100%}
 .tabs a{min-height:40px;display:inline-flex;align-items:center;padding:0 18px;
 border-radius:10px;color:var(--haze);text-decoration:none}
 .tabs a.active{background:var(--stone);color:var(--water)}
+.tabs .tab-group{display:inline-flex;align-items:center;gap:4px;border-left:1px solid var(--rope);padding-left:6px;margin-left:2px}
+.tabs .tab-group-label{color:var(--haze);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;padding:0 6px}
 video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-l)}
 video.vertical{aspect-ratio:9/16;max-width:360px;margin-top:14px}
 .strip{margin:14px 0 4px}
@@ -1938,6 +1937,29 @@ def render_shorts_panel(directory, name):
     return f'<style>{SHORTS_STYLE}</style><div class="shorts">{"".join(rows)}</div>'
 
 
+def _render_tabs(name, enabled, tab):
+    """The project tab bar: Recap, the Details group (Why? and Shots), then Cuts and Shorts."""
+    labels = dict(TABS)
+
+    def link(key):
+        active = ' class="active"' if key == tab else ""
+        return f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(labels[key])}</a>'
+
+    parts = []
+    if "recap" in enabled:
+        parts.append(link("recap"))
+    details = [key for key in ("why", "shots") if key in enabled]
+    if details:
+        parts.append(
+            '<span class="tab-group"><span class="tab-group-label">Details</span>'
+            f'{"".join(link(key) for key in details)}</span>'
+        )
+    for key in ("cuts", "shorts"):
+        if key in enabled:
+            parts.append(link(key))
+    return f'<nav class="tabs">{"".join(parts)}</nav>'
+
+
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
                    feedback_prefill=""):
     """Return the project page with the tabs and the Re-edit form."""
@@ -1946,7 +1968,6 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     has_shorts = (directory / SHORTS_CANDIDATES_FILE).is_file()
     status = project_status(directory)
     report = run_report(directory)
-    tab_links = []
     enabled = []
     for key, label in TABS:
         if key == "cuts" and not mode_b:
@@ -1956,12 +1977,9 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         if key in ("recap", "why", "shots") and not feature_on(features, key):
             continue
         enabled.append(key)
-        active = ' class="active"' if key == tab else ""
-        tab_links.append(
-            f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(label)}</a>'
-        )
     if tab not in enabled:
         tab = enabled[0] if enabled else "recap"
+    nav = _render_tabs(name, enabled, tab)
     panels = {}
     if "recap" in enabled:
         panels["recap"] = render_recap_panel(directory, name, wanted, compare_with, status, report)
@@ -1997,7 +2015,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f"<style>{RUN_NOTICE_STYLE}</style><h1>{html_escape(name)}</h1>"
         f'<p class="lede">{lede}</p>'
         f"{render_delete_form(name)}"
-        f'<nav class="tabs">{"".join(tab_links)}</nav>'
+        f"{nav}"
         f'<section class="panel">{panels.get(tab, "")}</section>'
         f"{reedit}"
     )

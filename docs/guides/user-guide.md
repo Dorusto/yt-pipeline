@@ -201,11 +201,7 @@ finished recap, the explanation and the contact sheet.
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
   never outside the inbox) and starts `recap.py` in the background; the status
   shows on Projects.
-- **A project page** has the tabs **Recap** (the player, and the vertical 9:16 player when the format was 9:16 or both), **Why?**
-  (`explain.html` — the brief, the screenwriter plan in words, the timeline
-  with a thumbnail per shot and the cut versus the candidate window, and every
-  candidate used or rejected with the reason, by short id like `0071/s2`) and
-  **Shots** (`shotlog.html`, the contact sheet).
+- **A project page** has the tabs **Recap** (the player, and the vertical 9:16 player when the format was 9:16 or both), then a **Details** group holding **Why?** and **Shots**, then **Cuts** and **Shorts**. **Why?** (`explain.html`) opens with a short plain-language summary and collapsed sections: the brief, the director's plan, the shots in the edit, what was left out and why grouped by reason, and the technical notes. **Shots** (`shotlog.html`) opens with a summary line and collapsed sections — used in the edit, kept but not used, not usable — grouped per clip.
 - **Re-edit** on the project page repeats the options and adds a **feedback
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
   It re-runs only the edit and the render — the analysis is reused. The

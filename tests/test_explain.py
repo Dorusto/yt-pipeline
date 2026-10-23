@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -445,6 +446,50 @@ def test_rule_fallback_is_said_and_the_plan_marked_unused():
     assert "same_take" in html
     assert "not used" in explain._plan_section({"logline": "x"}, used_plan=False)
     assert explain._director_section(None) == ""
+
+
+def test_explain_opens_with_a_plain_language_summary(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    edit["meta"]["director"] = {
+        "by": "llm",
+        "approved": False,
+        "review": {
+            "approved": False,
+            "objections": [{"slot": "v2", "shot": 2, "text": "the tunnel is too short"}],
+        },
+    }
+    write_json(workspace / "edit.json", edit)
+    result = run_tool(workspace, "--force")
+    assert result.returncode == EXIT_OK, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "3 shots in the edit, 3 of 5 candidates used, 2 left out." in html
+    assert "The plan runs: Calm open → Wind picks up." in html
+    assert "The reviewer did not approve: the tunnel is too short (shot 2)." in html
+    assert "Edited by the model." in html
+
+
+def test_explain_sections_are_collapsed_by_default(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    result = run_tool(workspace, "--force")
+    assert result.returncode == EXIT_OK, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    for section_id in ("plan", "timeline", "left-out", "notes"):
+        assert f'<details class="why-section" id="{section_id}" data-keep>' in html
+    for tag in re.findall(r'<details class="why-section"[^>]*>', html):
+        assert " open" not in tag
+
+
+def test_explain_groups_the_left_out_candidates_by_reason(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    result = run_tool(workspace, "--force")
+    assert result.returncode == EXIT_OK, result.stderr
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "Left out and why" in html
+    assert "near duplicate (1)" in html
+    assert "setup/teardown (1)" in html
+    assert "0073/s1" in html
+    assert "0074/s1" in html
 
 
 def test_thumbnails_read_the_workspace_proxy_when_the_recorded_path_is_gone(tmp_path):

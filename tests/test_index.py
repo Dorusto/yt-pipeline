@@ -717,6 +717,88 @@ def test_cards_are_in_score_order(tmp_path):
     assert text.index("0081/s2") < text.index("0081/s1")
 
 
+def test_summary_line_carries_pieces_clips_usable_shaky_moves_and_scenes():
+    shots = [
+        {"clip": "a.mp4", "eligible": True, "defects": ["shake"], "motion_label": "pan_right", "scenery": "coast"},
+        {"clip": "a.mp4", "eligible": True, "defects": [], "motion_label": "pan_right", "scenery": "coast"},
+        {"clip": "b.mp4", "eligible": False, "defects": [], "motion_label": "static", "scenery": "forest"},
+    ]
+    line = index._summary_line(shots)
+    assert line == (
+        "3 pieces from 2 clips · 2 usable · 1 shaky · "
+        "moves: pan_right, static · scenes: coast, forest"
+    )
+
+
+def test_summary_line_omits_moves_and_scenes_when_there_are_none():
+    shots = [{"clip": "a.mp4", "eligible": True, "defects": [], "motion_label": None, "scenery": None}]
+    assert index._summary_line(shots) == "1 pieces from 1 clips · 1 usable · 0 shaky"
+
+
+def test_html_opens_with_a_summary_line(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    build(tmp_path, clip_path=clip)
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    assert "1 pieces from 1 clips" in text
+    assert "1 usable" in text
+    assert "0 shaky" in text
+
+
+def test_html_has_three_collapsed_verdict_sections(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    build(tmp_path, clip_path=clip)
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    for verdict in ("used", "kept", "unusable"):
+        assert (
+            f'<details class="shots-section" data-verdict="{verdict}" id="{verdict}" data-keep>'
+            in text
+        )
+    for tag in re.findall(r'<details class="shots-section"[^>]*>', text):
+        assert " open" not in tag
+
+
+def test_used_shot_lands_in_the_used_section(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    build(tmp_path, clip_path=clip)
+    (tmp_path / "edit.json").write_text(
+        json.dumps({"decisions": [{"id": "0081/s1", "status": "used", "slot": "v1"}]}),
+        encoding="utf-8",
+    )
+    index._write_html(tmp_path / "shotlog.html", read_shotlog(tmp_path), {"clip.mp4": str(clip)})
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    used = text[text.index('id="used"'):text.index('id="kept"')]
+    kept = text[text.index('id="kept"'):text.index('id="unusable"')]
+    assert "0081/s1" in used
+    assert '<span class="count">1</span>' in used
+    assert '<span class="count">0</span>' in kept
+
+
+def test_without_an_edit_the_used_section_is_empty(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    build(tmp_path, clip_path=clip)
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    used = text[text.index('id="used"'):text.index('id="kept"')]
+    assert '<span class="count">0</span>' in used
+    assert "None." in used
+
+
+def test_shots_are_grouped_per_source_clip(tmp_path):
+    record = {
+        "workspace": str(tmp_path),
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "shots": [
+            shot_record("0081/s1", 0.4, clip="a.mp4"),
+            shot_record("0082/s1", 0.9, clip="b.mp4"),
+        ],
+    }
+    index._write_html(tmp_path / "shotlog.html", record, {})
+    text = (tmp_path / "shotlog.html").read_text(encoding="utf-8")
+    assert '<section class="clip-group" data-clip="a.mp4">' in text
+    assert '<section class="clip-group" data-clip="b.mp4">' in text
+    assert "<h3>a.mp4</h3>" in text
+    assert "<h3>b.mp4</h3>" in text
+
+
 def test_missing_clip_file_does_not_fail(tmp_path):
     missing = tmp_path / "missing.mp4"
     data, summary = build(tmp_path, clip_path=missing)

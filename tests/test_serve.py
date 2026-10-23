@@ -1440,7 +1440,7 @@ def test_shots_tab_has_the_review_buttons(tmp_path):
         server.server_close()
 
 
-def test_shots_tab_keeps_the_filter_bar_with_an_edit(tmp_path):
+def test_shots_tab_moves_used_cards_into_the_used_section(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     (project / "shotlog.html").write_text(
@@ -1463,8 +1463,27 @@ def test_shots_tab_keeps_the_filter_bar_with_an_edit(tmp_path):
         page = body.decode()
         assert status == 200
         assert "must be in" in page and "wrong label" in page
-        assert "In the edit" in page and "Good but left out" in page
+        assert "shots-section" in page
+        assert "getElementById('used')" in page
         assert "EDIT_DECISIONS" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_project_page_groups_why_and_shots_under_details(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        page = body.decode()
+        assert status == 200
+        assert '<span class="tab-group">' in page
+        assert '<span class="tab-group-label">Details</span>' in page
+        start = page.index('<span class="tab-group">')
+        group = page[start:page.index("</nav>", start)]
+        assert 'href="/2026-10-14/?tab=why"' in group
+        assert 'href="/2026-10-14/?tab=shots"' in group
     finally:
         server.shutdown()
         server.server_close()

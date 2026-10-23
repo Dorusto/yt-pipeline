@@ -208,25 +208,78 @@ def _html_document(workspace_path, edit, plan, shotlog):
     used_by_slot, by_id = _decision_maps(decisions)
     shotlog_by_key = _shotlog_windows(shotlog)
     sources = _source_paths(edit.get("sources") or [], workspace_path)
-    used = sum(1 for row in decisions if row.get("status") == "used")
+    director = (edit.get("meta") or {}).get("director")
+    used_plan = (director or {}).get("by") != "rules"
+    summary = " ".join(_summary_sentences(edit, plan, slots, decisions))
     sections = [
         _brief_section(edit.get("brief") or {}, edit.get("audio") or {}),
-        _director_section((edit.get("meta") or {}).get("director")),
-        _plan_section(plan, used_plan=((edit.get("meta") or {}).get("director") or {}).get("by") != "rules"),
-        _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key),
-        _candidates_section(decisions),
+        _details_section("plan", "The director's plan", _plan_section(plan, used_plan=used_plan)),
+        _details_section(
+            "timeline",
+            "Shots in the edit",
+            _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key),
+        ),
+        _details_section("left-out", "Left out and why", _left_out_section(decisions)),
+        _details_section(
+            "notes",
+            "Technical notes",
+            _director_section(director) or '<p class="missing">No repairs or notes.</p>',
+        ),
     ]
-    return _page(
-        workspace_path.name,
-        len(slots),
-        len(decisions),
-        used,
-        len(decisions) - used,
-        "\n".join(sections),
+    return _page(workspace_path.name, summary, "\n".join(sections))
+
+
+def _summary_sentences(edit, plan, slots, decisions):
+    """The 3-4 plain sentences at the top of the page, joined with a space."""
+    used = sum(1 for row in decisions if row.get("status") == "used")
+    sentences = [
+        f"{len(slots)} shots in the edit, {used} of {len(decisions)} candidates used, "
+        f"{len(decisions) - used} left out."
+    ]
+    names = [
+        str(beat.get("name"))
+        for beat in (plan or {}).get("structure") or []
+        if isinstance(beat, dict) and beat.get("name")
+    ]
+    if names:
+        sentences.append("The plan runs: " + " → ".join(names) + ".")
+    else:
+        sentences.append("No shot plan was used for this edit.")
+    director = (edit.get("meta") or {}).get("director") or {}
+    review = director.get("review")
+    if isinstance(review, dict):
+        if review.get("approved"):
+            sentences.append("The reviewer approved the edit.")
+        else:
+            objections = review.get("objections") or []
+            first = objections[0] if objections and isinstance(objections[0], dict) else None
+            if first is None:
+                sentences.append("The reviewer did not approve.")
+            else:
+                text = str(first.get("text") or "")
+                shot = first.get("shot")
+                if isinstance(shot, int) and not isinstance(shot, bool):
+                    sentences.append(f"The reviewer did not approve: {text} (shot {shot}).")
+                else:
+                    sentences.append(f"The reviewer did not approve: {text}.")
+    by = director.get("by")
+    if by == "llm":
+        sentences.append("Edited by the model.")
+    elif by == "rules":
+        sentences.append("Edited by the rule-based director.")
+    return sentences
+
+
+def _details_section(section_id, title, content):
+    return (
+        f'<details class="why-section" id="{section_id}" data-keep>'
+        f"<summary>{escape(title)}</summary>"
+        f"{content}"
+        f"</details>"
     )
 
 
-def _page(workspace_name, slot_count, candidate_count, used_count, rejected_count, sections):
+def _page(workspace_name, summary, sections):
     return (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -246,6 +299,12 @@ def _page(workspace_name, slot_count, candidate_count, used_count, rejected_coun
         "main { display: flex; flex-direction: column; gap: 22px; max-width: 760px; }\n"
         "section { border-top: 1px solid var(--rope); padding-top: 12px; }\n"
         "h2 { font-family: ui-serif, Georgia, serif; font-weight: 500; font-size: 1.15rem; margin: 0 0 10px; }\n"
+        ".why-section { border-top: 1px solid var(--rope); padding-top: 12px; }\n"
+        ".why-section summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; "
+        "font-family: ui-serif, Georgia, serif; font-weight: 500; font-size: 1.15rem; }\n"
+        ".reason-group { margin: 6px 0 0 14px; }\n"
+        ".reason-group summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; "
+        "font-size: 0.95rem; color: var(--haze); }\n"
         ".brief { margin: 0 0 8px; padding: 10px 14px; background: var(--water); "
         "border-left: 3px solid var(--sea); border-radius: 0 10px 10px 0; font-size: 1rem; }\n"
         ".meta-line { font-size: 0.82rem; color: var(--haze); margin: 2px 0; }\n"
@@ -279,13 +338,18 @@ def _page(workspace_name, slot_count, candidate_count, used_count, rejected_coun
         "</head>\n"
         "<body>\n"
         "<header>\n"
-        f"<h1>Why the edit looks like this</h1>\n"
-        f"<p>{escape(workspace_name)}: {slot_count} shots in the edit, "
-        f"{used_count} of {candidate_count} candidates used, {rejected_count} left out</p>\n"
+        "<h1>Why the edit looks like this</h1>\n"
+        f'<p class="summary">{escape(summary)}</p>\n'
         "</header>\n"
         "<main>\n"
         f"{sections}\n"
         "</main>\n"
+        "<script>\n"
+        "(function(){var ds=document.querySelectorAll('details[data-keep]');\n"
+        "for(var i=0;i<ds.length;i++){(function(d){var k='why:'+d.id;\n"
+        "try{if(sessionStorage.getItem(k)==='open')d.open=true;}catch(e){}\n"
+        "d.addEventListener('toggle',function(){try{sessionStorage.setItem(k,d.open?'open':'closed');}catch(e){}});})(ds[i]);}})();\n"
+        "</script>\n"
         "</body>\n"
         "</html>\n"
     )
@@ -329,23 +393,21 @@ def _director_section(director):
     title = DIRECTOR_TITLES[director["by"]]
     if director["by"] == "llm" and director.get("approved") is False:
         title += " (reviewer did not approve; the last draft was kept and repaired)"
-    lines = ['<section id="director">', f"<h2>{escape(title)}</h2>"]
+    lines = [f"<h2>{escape(title)}</h2>"]
     notes = [str(note) for note in director.get("notes") or []]
     if notes:
         lines.append("<ul>" + "".join(f"<li>{escape(note)}</li>" for note in notes) + "</ul>")
-    lines.append("</section>")
     return "\n".join(lines)
 
 
 def _plan_section(plan, used_plan=True):
     heading = "The plan in words" if used_plan else "The model's plan (not used for this edit)"
-    lines = ['<section id="plan">', f"<h2>{heading}</h2>"]
+    lines = [f"<h2>{heading}</h2>"]
     if not isinstance(plan, dict):
         lines.append(
             '<p class="missing">No shot plan (shot_plan.json) in this workspace — '
             "the edit was not planned by the LLM director.</p>"
         )
-        lines.append("</section>")
         return "\n".join(lines)
     logline = escape(str(plan.get("logline") or ""))
     lines.append(f'<blockquote class="brief">{logline}</blockquote>')
@@ -372,7 +434,6 @@ def _plan_section(plan, used_plan=True):
                 f'<span class="cand-reason">{why}</span></div>'
             )
         lines.append("\n".join(items))
-    lines.append("</section>")
     return "\n".join(lines)
 
 
@@ -380,7 +441,7 @@ def _timeline_section(slots, sources, used_by_slot, by_id, shotlog_by_key):
     rows = "\n".join(
         _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key) for slot in slots
     )
-    return f'<section id="timeline">\n<h2>Timeline</h2>\n{rows}\n</section>'
+    return f"<h2>Timeline</h2>\n{rows}"
 
 
 def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
@@ -418,12 +479,16 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
     shot_key = slot.get("shot_key")
     key_html = f' <span class="short-id">· {escape(str(shot_key))}</span>' if shot_key else ""
     reason = escape(str(slot.get("reason") or ""))
+    meta_parts = [escape(source_name)]
+    if _is_number(slot.get("score")):
+        meta_parts.append(f"score {float(slot['score']):.2f}")
+    meta_html = " · ".join(meta_parts)
     return (
         f'<div class="slot">'
         f"{thumb}"
         f'<div class="body">'
         f'<div class="slot-id">{slot_id}{key_html}</div>'
-        f'<div class="meta-line">{escape(source_name)}</div>'
+        f'<div class="meta-line">{meta_html}</div>'
         f'<div class="cut">{escape(cut_text)}</div>'
         f"{move_html}"
         f'<p class="reason">{reason}</p>'
@@ -432,11 +497,45 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
     )
 
 
-def _candidates_section(decisions):
-    rows = "\n".join(_candidate_row(row) for row in decisions)
-    if not rows:
-        rows = '<p class="missing">No decisions recorded in edit.json.</p>'
-    return f'<section id="candidates">\n<h2>Every candidate</h2>\n{rows}\n</section>'
+REASON_GROUPS = (
+    ("near-duplicate", "near duplicate"),
+    ("setup/teardown", "setup/teardown"),
+    ("accidental", "accidental"),
+    ("shake", "shaky"),
+    ("blur", "blurry"),
+    ("defect", "defect"),
+    ("overlapping", "overlapping window"),
+    ("low score", "low score"),
+    ("did not fit", "did not fit the length"),
+    ("not eligible", "not eligible"),
+)
+
+
+def _reason_group(reason):
+    """The category a rejected candidate's reason falls into."""
+    text = str(reason or "").lower()
+    for needle, label in REASON_GROUPS:
+        if needle in text:
+            return label
+    return str(reason or "").strip() or "other"
+
+
+def _left_out_section(decisions):
+    rejected = [row for row in decisions if row.get("status") != "used"]
+    if not rejected:
+        return '<p class="missing">Nothing was left out.</p>'
+    groups = {}
+    for row in rejected:
+        groups.setdefault(_reason_group(row.get("reason")), []).append(row)
+    ordered = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    parts = []
+    for category, rows in ordered:
+        body = "\n".join(_candidate_row(row) for row in rows)
+        parts.append(
+            f'<details class="reason-group"><summary>{escape(category)} ({len(rows)})</summary>'
+            f"{body}</details>"
+        )
+    return "\n".join(parts)
 
 
 def _candidate_row(row):
