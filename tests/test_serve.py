@@ -674,7 +674,6 @@ def test_upload_page_form(tmp_path):
             b'name="music"',
             b'name="ambient_under_music_db"',
             b">Auto<",
-            b"inbox",
         ):
             assert fragment in body, fragment
     finally:
@@ -3426,7 +3425,7 @@ def test_key_classes_on_each_page(tmp_path):
         assert b'class="projects"' in index_page
         _, _, upload = request(server, "GET", "/upload")
         assert b'class="drop"' in upload
-        assert b'class="go"' in upload
+        assert b'class="go start"' in upload
         assert b'class="brief-hints"' in upload
         _, _, costs = request(server, "GET", "/costs")
         assert b"class=\"clip-costs\"" in costs

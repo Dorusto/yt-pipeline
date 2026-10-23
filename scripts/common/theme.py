@@ -212,6 +212,36 @@ border-bottom:1px solid var(--line);font-size:var(--fs-s)}
 .owner-label,.owner-note{color:var(--muted);font-size:var(--fs-s)}
 .owner-hours{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em}
 .owner-worth{font-size:var(--fs-m)}
+.upload-form{max-width:560px;gap:var(--sp-4)}
+.upload-form .drop{display:grid;justify-items:center;gap:var(--sp-1);cursor:pointer;
+padding:var(--sp-6) var(--sp-4);border-radius:var(--radius-l);border:2px dashed var(--line);background:var(--surface);
+text-align:center;transition:border-color .15s}
+.upload-form .drop:hover,.upload-form .drop:focus-within{border-color:var(--accent)}
+.drop-input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.upload-form .drop .drop-icon{width:48px;height:48px;margin:0 0 var(--sp-2)}
+.drop-title{font-weight:650;font-size:var(--fs-l);color:var(--text);letter-spacing:-.01em}
+.upload-form .drop-hint{color:var(--muted);font-size:var(--fs-s);font-weight:400}
+.upload-form .drop-list{width:100%}
+.drop-limits{display:grid;gap:0;margin-top:var(--sp-3);color:var(--muted);font-size:var(--fs-xs);font-weight:400}
+.drop-limits p{margin:0;font-size:inherit}
+.upload-form .step{display:grid;gap:var(--sp-3)}
+.upload-form .step h2{margin:var(--sp-2) 0 0;font-size:var(--fs-m)}
+.upload-form .facts-card,.upload-form .brief-card{max-width:none;margin:0}
+.upload-form .facts-card{grid-template-columns:1fr 1fr;gap:var(--sp-3);padding:0;border:0;background:none}
+.upload-form .facts-card input{background:var(--surface)}
+@media (max-width:440px){.upload-form .facts-card{grid-template-columns:1fr}}
+.upload-form details.options{border-top:1px solid var(--line);padding-top:var(--sp-2)}
+.upload-form details.options summary{min-height:var(--tap);display:flex;align-items:center;justify-content:space-between;
+cursor:pointer;font-weight:650}
+.options-state{color:var(--muted);font-weight:400;font-size:var(--fs-s)}
+.upload-form button.start{justify-self:stretch;min-height:52px;font-size:var(--fs-m)}
+.tabs .tab-group-label{display:none}
+.tabs .tab-group a{font-size:var(--fs-s)}
+.project-del{background:transparent;border:1px solid var(--line)}
+.project-del svg{fill:var(--muted)}
+.project-del:hover{border-color:var(--danger)}
+.project-del:hover svg{fill:var(--danger)}
+.meta-box .meta-field button.copy{order:2;margin-left:auto}
 .limits{display:grid;gap:2px;margin:var(--sp-5) 0 0;padding:var(--sp-3) var(--sp-4);
 background:var(--surface);border-radius:var(--radius-s)}
 .limits p{margin:0}

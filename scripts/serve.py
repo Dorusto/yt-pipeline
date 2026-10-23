@@ -299,8 +299,8 @@ META_STYLE = """
 .meta-box h2{margin:0 0 8px;font-size:1.05rem}
 .meta-field{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}
 .meta-field:first-of-type{border-top:none}
-.meta-label{color:var(--muted);font-size:.85rem;min-width:80px}
-.meta-value{color:var(--text);flex:1 1 200px;overflow-wrap:anywhere;white-space:pre-wrap}
+.meta-label{color:var(--muted);font-size:.85rem;flex:1 1 auto}
+.meta-value{color:var(--text);flex:1 1 100%;order:3;overflow-wrap:anywhere;white-space:pre-wrap}
 .meta-field button.copy{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid var(--line);
 background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:pointer}
 .meta-rewrite{margin:8px 0 0;border-top:1px solid var(--line);padding-top:8px}
@@ -2511,15 +2511,22 @@ ask.querySelector('.yes').onclick=function(){f.submit();};});});})();
 def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html="",
                   brand_logo=DEFAULT_BRAND_LOGO):
     """Return the Upload page with the form wired to POST /upload."""
-    fields = [
-        ("Clips and photos", '<div class="drop" data-drop>'
-                             '<input type="file" name="files" multiple accept="video/*,image/*">'
-                             f'{DROP_ICON}'
-                             '<p class="drop-hint">Drop clips and photos here, or tap to choose. '
-                             '<span class="drop-count"></span></p>'
-                             '<ul class="drop-list" hidden></ul></div>'),
-        ("Project name", '<input type="text" name="folder" placeholder="kotor-day-2" autocomplete="off">'),
-    ]
+    limits = f"{storage_html}{credit_html}"
+    drop = (
+        '<label class="drop" data-drop>'
+        '<input class="drop-input" type="file" name="files" multiple accept="video/*,image/*">'
+        f'{DROP_ICON}'
+        '<span class="drop-title">Add clips and photos</span>'
+        '<span class="drop-hint">Drop them here, or tap to pick from your gallery. '
+        '<span class="drop-count"></span></span>'
+        '<ul class="drop-list" hidden></ul>'
+        f'{f"<span class=drop-limits>{limits}</span>" if limits else ""}'
+        "</label>"
+    )
+    name_field = (
+        '<label>Project name<input type="text" name="folder" placeholder="kotor-day-2" '
+        'autocomplete="off"></label>'
+    )
     brief_card = (
         '<div class="card brief-card"><label>Brief'
         f'<textarea class="brief-input" name="brief" rows="4" '
@@ -2535,18 +2542,19 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         )
     body = (
         "<h1>New recap</h1>"
-        '<p class="lede">Pick the clips and photos of one day, say what you want, and start. '
-        "The files go to the inbox and the edit runs on the server; the project shows up under Projects.</p>"
-        f"{storage_html}"
-        f"{credit_html}"
-        '<form method="post" action="/upload" enctype="multipart/form-data">'
-        f"{render_form_rows(fields)}"
-        f"{brief_facts_fields_html()}"
-        f"{brief_card}"
+        '<p class="lede">Add the clips of one day, say what you want, and start.</p>'
+        '<form class="upload-form" method="post" action="/upload" enctype="multipart/form-data">'
+        f"{drop}"
+        '<section class="step"><h2>About the day</h2>'
+        f"{name_field}{brief_facts_fields_html()}</section>"
+        '<section class="step"><h2>What you want</h2>'
+        f"{brief_card}</section>"
+        '<details class="step options"><summary><span>Options</span>'
+        '<span class="options-state">All on Auto</span></summary>'
         f"{render_form_rows(option_fields(music_tracks))}"
-        f"{AUTO_HINT}"
+        f"{AUTO_HINT}</details>"
         f"{consent}"
-        '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
+        '<button class="go start" type="submit" name="submit" value="start">Upload and start</button>'
         '<div class="upload-progress" hidden><progress max="100" value="0"></progress>'
         '<p class="upload-status" aria-live="polite"></p></div>'
         "</form>"
