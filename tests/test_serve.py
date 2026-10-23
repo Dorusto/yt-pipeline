@@ -2336,6 +2336,20 @@ def test_drop_form_names_the_shown_version():
     assert "Tap shots" not in form and "<button" not in form
 
 
+def test_trim_form_names_the_shown_version():
+    form = serve.render_trim_form("trip", {"name": "v002"})
+    assert 'action="/trip/trim-shot"' in form
+    assert 'value="v002"' in form
+    assert 'name="shot" value=""' in form and 'name="delta" value=""' in form
+    assert "<button" not in form
+
+
+def test_strip_script_handles_the_trim_form():
+    assert "form.trim-shot" in serve.PICK_SCRIPT
+    assert "trim.submit()" in serve.PICK_SCRIPT
+    assert "shot-edit" in serve.PICK_SCRIPT
+
+
 def make_ledger(path):
     connection = connect(path)
     insert_entry(connection, "2026-10-01", "fixed_monthly", 3.0, "", None)

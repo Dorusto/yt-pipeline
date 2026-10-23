@@ -99,6 +99,9 @@ display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
 .shot-ask button{border:0;border-radius:var(--radius-s);padding:.35em 1em;cursor:pointer;min-height:44px}
 .shot-ask .yes{background:var(--danger);color:#fff}
 .shot-ask .no{background:var(--surface);color:var(--text);border:1px solid var(--line)}
+.shot-edit{display:flex;align-items:center;gap:.6em;margin:.5em 0;flex-wrap:wrap}
+.shot-edit span{color:var(--muted);font-size:var(--fs-s)}
+.shot-edit button{border:1px solid var(--line);border-radius:var(--radius-s);padding:.35em 1em;cursor:pointer;min-height:44px;background:var(--surface);color:var(--text)}
 .strip-legend{display:flex;gap:var(--sp-4);margin-top:var(--sp-2);color:var(--muted);font-size:var(--fs-s)}
 .strip-legend span::before{content:"";display:inline-block;width:10px;height:10px;
 border-radius:3px;margin-right:6px;vertical-align:-1px}

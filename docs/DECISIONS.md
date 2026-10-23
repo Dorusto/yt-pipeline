@@ -2801,3 +2801,15 @@ README short and its links resolving.
 **Why not A:** the issue asks for one shared file for every agent and no copies; keeping the rules in `CLAUDE.md` alone leaves opencode without them once `AGENTS.md` exists.
 
 **Consequence:** `AGENTS.md` and `docs/agents/` are the agent entry point; `docs/AGENT_SETUP.md` and `docs/RELEASING.md` name them; `tests/test_agents_md.py` and `tests/test_dependabot.py` keep the shape; `tests/test_no_personal_setup.py` scans the new files; RULES gains two lines.
+
+## [2026-10-23] Make a shot longer or shorter in the web app (V020N lot n6)
+
+**Context:** Issue #93: after the first holiday pilot the owner wants light editing of a finished edit from the phone. Removing a shot already works (the strip's bin icon → `edit_drop.py` → a new version). The next step is making a shot a little longer or shorter without a new director run.
+
+**Options:** (A) a new tool `edit_trim.py` with its own version/render machinery; (B) extend `edit_drop.py` with a `--trim N:DELTA` option that shares the existing "modify the edit, render a new version" path.
+
+**Decision:** B. `edit_drop.py` gains `--trim N:DELTA` (repeatable, e.g. `3:+1` or `3:-1`), mutually exclusive with `--drop`. A longer shot extends its out edge up to the source clip's duration (`sources[].duration_s`) and takes the rest from the in edge down to 0; a shorter shot trims the out edge with a 1.0 s floor; a change that cannot move is a usage error. The web app's strip shows a "− 1 s" / "+ 1 s" row when a shot is picked, next to the existing bin icon; both post to a new `POST /<project>/trim-shot` route that runs `edit_drop.py --trim` and shows the new version. No model call, the old version is never edited.
+
+**Why not A:** the version/render/thumbnail path already exists in `edit_drop.py` and is named in the RULES tool-to-tool list (`serve.py → edit_drop.py`); a second tool would duplicate it and add a pair.
+
+**Consequence:** the RULES route list names `POST /<project>/trim-shot` and the trim semantics; the `yt-edit-drop` skill covers the trim; the new control is experimental in the v0.1.0 candidate; no schema change.

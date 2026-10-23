@@ -1178,13 +1178,22 @@ ask.querySelector('.yes').onclick=function(){onYes(ask);};return ask;}
 """
 
 PICK_SCRIPT = """
-(function(){var f=document.querySelector('form.drop-shot');var p=document.querySelector('.player');if(!f||!p)return;
-var hid=f.querySelector('input[name=shots]');var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
-function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});var a=p.querySelector('.strip .shot-ask');if(a)a.remove();}
+(function(){var drop=document.querySelector('form.drop-shot');var trim=document.querySelector('form.trim-shot');
+var p=document.querySelector('.player');if(!drop||!trim||!p)return;
+var hid=drop.querySelector('input[name=shots]');var tshot=trim.querySelector('input[name=shot]');var tdelta=trim.querySelector('input[name=delta]');
+var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
+function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});
+var a=p.querySelector('.strip .shot-ask');if(a)a.remove();var r=p.querySelector('.strip .shot-edit');if(r)r.remove();}
+function trimRow(host,i){var r=document.createElement('div');r.className='shot-edit';
+r.innerHTML='<span>Shot '+(i+1)+'</span><button type="button" class="minus">-1 s</button><button type="button" class="plus">+1 s</button>';
+host.appendChild(r);
+r.querySelector('.minus').onclick=function(){askYesNo(host,'Make shot '+(i+1)+' 1 s shorter?',function(ask){tshot.value=String(i+1);tdelta.value='-1';ask.innerHTML='<span>Shortening shot '+(i+1)+', about 15 s...</span>';trim.submit();});};
+r.querySelector('.plus').onclick=function(){askYesNo(host,'Make shot '+(i+1)+' 1 s longer?',function(ask){tshot.value=String(i+1);tdelta.value='1';ask.innerHTML='<span>Lengthening shot '+(i+1)+', about 15 s...</span>';trim.submit();});};}
 b.forEach(function(x,i){x.addEventListener('click',function(){var was=x.classList.contains('picked');clear();if(was)return;
 x.classList.add('picked');var d=document.createElement('span');d.className='shot-del';d.setAttribute('role','button');
 d.setAttribute('aria-label','Remove shot '+(i+1));d.innerHTML='__BIN__';x.appendChild(d);
-d.addEventListener('click',function(e){e.stopPropagation();askYesNo(p.querySelector('.strip'),'Remove shot '+(i+1)+'?',function(ask){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';f.submit();});});});});})();
+d.addEventListener('click',function(e){e.stopPropagation();askYesNo(p.querySelector('.strip'),'Remove shot '+(i+1)+'?',function(ask){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';drop.submit();});});
+trimRow(p.querySelector('.strip'),i);});});})();
 """
 
 STRIP_SCRIPT = """
@@ -1727,6 +1736,18 @@ def render_drop_form(name, version):
     )
 
 
+def render_trim_form(name, version):
+    """A small form that makes a shot longer or shorter and renders a new version."""
+    return (
+        f'<form class="trim-shot" method="post" action="/{html_escape(name)}/trim-shot" '
+        'enctype="multipart/form-data">'
+        f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
+        '<input type="hidden" name="shot" value="">'
+        '<input type="hidden" name="delta" value="">'
+        '</form>'
+    )
+
+
 def render_version_links(name, versions, shown, compare=None):
     """The row of version chips, plus compare links for the other versions."""
     if len(versions) < 2:
@@ -1883,6 +1904,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     parts.append(render_version_links(name or directory.name, versions, shown, compare))
     if status != "running" and has_video(shown):
         parts.append(render_drop_form(name or directory.name, shown))
+        parts.append(render_trim_form(name or directory.name, shown))
     heading = shown["name"].lstrip("v").lstrip("0") or "0"
     parts.append(
         render_player(
@@ -3377,6 +3399,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_drop_shot(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "trim-shot":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_trim_shot(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "add-files":
             if not feature_on(features, "recap"):
                 self.send_not_found()
@@ -3636,6 +3664,37 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             command += ["--version", version]
         for number in numbers:
             command += ["--drop", number]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        if result.returncode != 0:
+            message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
+            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            return
+        self.send_redirect(f"/{project}/?tab=recap")
+
+    def handle_trim_shot(self, project):
+        """Make a shot longer or shorter with edit_drop.py and show the new version."""
+        workspace = self.server.root / project
+        if not (workspace / "versions").is_dir():
+            self.send_error_text(404, "no such project")
+            return
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        try:
+            fields = parse_fields_only(self._reader())
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        shot = (fields.get("shot") or "").strip()
+        delta = (fields.get("delta") or "").strip()
+        if not re.fullmatch(r"\d+", shot) or not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", delta):
+            self.send_error_text(400, "give the shot number and the change in seconds")
+            return
+        command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
+                   "--workspace", str(workspace), "--json", "--trim", f"{shot}:{delta}"]
+        version = fields.get("version") or ""
+        if re.fullmatch(r"v\d+", version):
+            command += ["--version", version]
         result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
