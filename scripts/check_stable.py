@@ -48,8 +48,13 @@ def _first_stable_block(lines):
     return [entry for entry in (line.strip() for line in collected) if entry]
 
 
+def _version_key(version):
+    """The three numeric parts of ``vX.Y.Z`` for comparison."""
+    return tuple(int(part) for part in version.lstrip("v").split("."))
+
+
 def parse_stable_files(releases_text):
-    """Return ``(version, enforced, stable_files)`` from the latest version section."""
+    """Return ``(version, enforced, stable_files)`` from the highest released version section."""
     sections = []
     heading = None
     body = []
@@ -63,13 +68,19 @@ def parse_stable_files(releases_text):
             body.append(line)
     if heading is not None:
         sections.append((heading, body))
+    released = []
     for heading, body in sections:
-        if VERSION_RE.match(heading):
-            token = VERSION_TOKEN_RE.search(heading)
-            version = token.group(0) if token else heading.strip()
-            enforced = not re.search(r"candidate|not released", heading, re.IGNORECASE)
-            return version, enforced, _first_stable_block(body)
-    return None, False, []
+        if not VERSION_RE.match(heading):
+            continue
+        if re.search(r"candidate|not released", heading, re.IGNORECASE):
+            continue
+        token = VERSION_TOKEN_RE.search(heading)
+        version = token.group(0) if token else heading.strip()
+        released.append((version, body))
+    if not released:
+        return None, False, []
+    version, body = max(released, key=lambda item: _version_key(item[0]))
+    return version, True, _first_stable_block(body)
 
 
 def has_approval(commit_messages):

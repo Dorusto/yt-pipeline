@@ -20,6 +20,7 @@ VERSIONS_DIR = "versions"
 META_NAME = "version.json"
 EDIT_NAME = "edit.json"
 THUMBS_DIR = "thumbs"
+POSTER_NAME = "poster.jpg"
 RENDER_NAMES = (
     "recap_720p.mp4",
     "recap_720p_9x16.mp4",
@@ -28,6 +29,23 @@ RENDER_NAMES = (
     "explain.html",
     "recap_meta.json",
 )
+
+
+def thumbs_are_fresh(thumbs_dir, recap, shots):
+    """True when the poster and every shot thumbnail exist and are newer than the recap."""
+    thumbs_dir = Path(thumbs_dir)
+    recap = Path(recap)
+    if not recap.is_file():
+        return False
+    reference = recap.stat().st_mtime
+    poster = thumbs_dir / POSTER_NAME
+    if not poster.is_file() or poster.stat().st_mtime <= reference:
+        return False
+    for number in range(1, shots + 1):
+        path = thumbs_dir / f"shot-{number}.jpg"
+        if not path.is_file() or path.stat().st_mtime <= reference:
+            return False
+    return True
 
 
 def version_dirs(workspace):

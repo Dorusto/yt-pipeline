@@ -129,6 +129,13 @@ def main(argv=None):
         tail = (render.stderr or render.stdout or "").strip().splitlines()[-1:] or ["no output"]
         return report_error(f"render failed: {tail[0]}", EXIT_RUNTIME, args.json, base=base["name"])
     os.replace(temporary, workspace / versions.EDIT_NAME)
+    thumbs = subprocess.run(
+        [sys.executable, str(SCRIPTS / "thumbs.py"), "--workspace", str(workspace),
+         "--force", "--json"],
+        capture_output=True, text=True,
+    )
+    if thumbs.returncode != 0:
+        summary["warnings"] = ["the thumbnails could not be written"]
     meta = dict(base["meta"])
     for key in ("created_at", "files"):
         meta.pop(key, None)

@@ -46,7 +46,7 @@ Direct an edit with a model in three roles instead of the fixed rules. The scree
 
 The `--json` summary is a flat object: `status` (`written`/`skipped`/`fallback`), `out`, `plan`, `rounds_used`, `approved` (bool or null), `fallback` (null or `"rules"`), `slots` (video slots written), `candidates` (rows offered to the screenwriter), `total_duration_s`, `validator_violations` (count of the last validation), `warnings`, `wall_time_s`, `llm_cost_usd` (the sum of the run's calls), `beat_snap` (the `--beats` snap tally `{"beats", "snapped", "unsnapped"}`, or null without a grid) and `feedback` (the `--feedback` texts given, `[]` without). When the loop ends with rule violations each one is also listed in `warnings` as `violation <slot id>: <rule>: <message>`. `--dry-run` adds `baseline` and `dry_run`.
 
-Exit codes: `0` when an edit was written (including a fallback), `2` when the budget ran out and no fallback was written, `1` for any other error (one `[error] ...` line on stderr).
+Exit codes follow the table: `0` success (an edit was written, including a fallback), `1` finished but a human must look at the result, `2` usage, input or config error (nothing ran), `3` runtime failure after work started (including the budget running out with no fallback written).
 
 ## How the loop works
 

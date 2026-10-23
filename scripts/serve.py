@@ -70,7 +70,7 @@ from common.config import (
     web_features,
 )
 from common.costs import compute_totals, connect as connect_ledger, list_entries
-from common.brief_facts import load_brief_facts, write_brief_facts
+from common.brief_facts import FACT_LABELS, load_brief_facts, write_brief_facts
 from common.decisions import used_shot_keys
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
 from common.jsonio import load_json, write_json
@@ -96,6 +96,8 @@ UPLOAD_CHUNK = 65536
 STORAGE_WARN_RATIO = 0.8
 CREDIT_CACHE_SECONDS = 600
 TOTALS_CACHE_SECONDS = 600
+FAILURE_CACHE_SECONDS = 120
+HTTP_TIMEOUT_SECONDS = 3
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BRIEF_MAX_CHARS = 4000
@@ -128,9 +130,12 @@ SERVED_FILES = (
     "explain.html",
 )
 ARTIFACT_FEATURES = {
+    "recap_720p.mp4": "recap",
+    VERTICAL_PREVIEW: "recap",
+    "recap_final.mp4": "recap",
+    VERTICAL_FINAL: "recap",
     "explain.html": "why",
     "shotlog.html": "shots",
-    "shorts_candidates.json": "shorts",
 }
 CONTENT_TYPES = {
     "recap_720p.mp4": "video/mp4",
@@ -175,7 +180,6 @@ STATION_PLAIN_NAMES = {
     "render_vertical": "rendering 9:16",
 }
 
-BRAND_PATH = REPO_ROOT / "brand.json"
 BRAND_DIR = REPO_ROOT / "assets" / "brand"
 SHOT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,63}$")
 THUMB_NAME_RE = re.compile(r"^(poster|shot-\d{1,4})\.jpg$")
@@ -193,21 +197,19 @@ REQUEST_TYPES = ("Feedback", "Feature request")
 BRIEF_HINTS = (
     ("The story or the best moment", "The best moment: "),
     ("Mood", "Mood: "),
-    ("Length", "Length: "),
     ("What to leave out", "Leave out: "),
 )
 BRIEF_PLACEHOLDER = (
     "For example:\n"
     "The best moment: the ride down the tree-lined lane\n"
     "Mood: calm start, energy at the end\n"
-    "Length: about 60 seconds\n"
     "Leave out: the parking lot shots"
 )
 FACT_FIELD_SPECS = (
-    ("place", "Place", "Monschau, Germany"),
-    ("when", "When", "April 2026"),
-    ("who", "Who is in it", "me and a friend"),
-    ("occasion", "Occasion", "motorbike weekend"),
+    ("place", FACT_LABELS["place"], "Monschau, Germany"),
+    ("when", FACT_LABELS["when"], "April 2026"),
+    ("who", FACT_LABELS["who"], "me and a friend"),
+    ("occasion", FACT_LABELS["occasion"], "motorbike weekend"),
 )
 
 
@@ -645,16 +647,26 @@ def content_type_for(path):
 
 
 def project_date(directory):
-    """The newest activity date of a project folder as ``YYYY-MM-DD``, or an empty string."""
+    """The filming date of a project as ``YYYY-MM-DD``: the earliest creation_time in ingest.json."""
     directory = Path(directory)
-    times = [
-        (directory / name).stat().st_mtime
-        for name in DETECTED_ARTIFACTS
-        if (directory / name).is_file()
-    ]
-    if not times:
+    try:
+        data = json.loads((directory / "ingest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return ""
-    return datetime.fromtimestamp(max(times)).strftime("%Y-%m-%d")
+    if not isinstance(data, dict):
+        return ""
+    values = []
+    for group in ("clips", "photos"):
+        for item in data.get(group) or []:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("creation_time")
+            if isinstance(value, str) and value.strip():
+                values.append(value.strip())
+    if not values:
+        return ""
+    earliest = min(values)
+    return earliest[:10] if len(earliest) >= 10 else ""
 
 
 def read_run_pid(directory):
@@ -790,7 +802,7 @@ def storage_line(server):
     return f'<p class="storage">{format_gb(used)} of {server.storage_gb:g} GB used</p>'
 
 
-def fetch_model_credit(api_key, timeout=10, opener=None):
+def fetch_model_credit(api_key, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     """GET the OpenRouter key endpoint; return {"usage", "limit", "remaining"} or raise."""
     data = key_info(api_key, timeout=timeout, opener=opener)
     usage = float(data.get("usage") or 0.0)
@@ -804,14 +816,16 @@ def fetch_model_credit(api_key, timeout=10, opener=None):
     return {"usage": usage, "limit": limit, "remaining": remaining}
 
 
-_credit_cache = {"at": 0.0, "value": None}
+_credit_cache = {"at": 0.0, "value": None, "failed_at": 0.0}
 
 
-def model_credit(api_key, now=None, timeout=10, opener=None):
+def model_credit(api_key, now=None, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     """Cached OpenRouter credit info, or None when unknown (cached 10 minutes)."""
     now = time.monotonic() if now is None else now
     if _credit_cache["value"] is not None and now - _credit_cache["at"] < CREDIT_CACHE_SECONDS:
         return _credit_cache["value"]
+    if _credit_cache["value"] is None and now - _credit_cache["failed_at"] < FAILURE_CACHE_SECONDS:
+        return None
     if not api_key:
         return None
     try:
@@ -820,6 +834,7 @@ def model_credit(api_key, now=None, timeout=10, opener=None):
         value = None
     _credit_cache["at"] = now
     _credit_cache["value"] = value
+    _credit_cache["failed_at"] = now if value is None else 0.0
     return value
 
 
@@ -841,7 +856,7 @@ def credit_line(server):
     return f'<p class="credit{warn}">Model credit: ${remaining:.2f} left of ${limit:.2f}</p>'
 
 
-def fetch_project_totals(url, timeout=10, opener=None):
+def fetch_project_totals(url, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     """GET the owner instance's /costs.json; return the totals dict or raise."""
     opener = opener or urllib.request.urlopen
     with opener(url, timeout=timeout) as response:
@@ -851,10 +866,10 @@ def fetch_project_totals(url, timeout=10, opener=None):
     return data
 
 
-_totals_cache = {"at": 0.0, "url": None, "value": None}
+_totals_cache = {"at": 0.0, "url": None, "value": None, "failed_at": 0.0}
 
 
-def project_totals(url, now=None, timeout=10, opener=None):
+def project_totals(url, now=None, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     """Cached project totals from the owner instance, or None when unavailable."""
     now = time.monotonic() if now is None else now
     if (
@@ -863,6 +878,12 @@ def project_totals(url, now=None, timeout=10, opener=None):
         and now - _totals_cache["at"] < TOTALS_CACHE_SECONDS
     ):
         return _totals_cache["value"]
+    if (
+        _totals_cache["url"] == url
+        and _totals_cache["value"] is None
+        and now - _totals_cache["failed_at"] < FAILURE_CACHE_SECONDS
+    ):
+        return None
     try:
         value = fetch_project_totals(url, timeout=timeout, opener=opener)
     except (OSError, ValueError, KeyError):
@@ -870,6 +891,7 @@ def project_totals(url, now=None, timeout=10, opener=None):
     _totals_cache["at"] = now
     _totals_cache["url"] = url
     _totals_cache["value"] = value
+    _totals_cache["failed_at"] = now if value is None else 0.0
     return value
 
 
@@ -1113,19 +1135,24 @@ function go(){var n=Date.now()/1000;t.forEach(function(e){e.textContent=f(n-pars
 
 # Shot removal: tapping a block on the first strip selects it and shows a bin icon
 # on it; the icon asks "Remove shot N?" with Yes and No, Yes posts /<project>/drop-shot.
+BIN_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>'
+
+ASK_SCRIPT = """
+function askYesNo(host, question, onYes){var old=host.querySelector('.shot-ask');if(old)old.remove();
+var ask=document.createElement('div');ask.className='shot-ask';
+ask.innerHTML='<span>'+question+'</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
+host.appendChild(ask);ask.querySelector('.no').onclick=function(){ask.remove();};
+ask.querySelector('.yes').onclick=function(){onYes(ask);};return ask;}
+"""
+
 PICK_SCRIPT = """
 (function(){var f=document.querySelector('form.drop-shot');var p=document.querySelector('.player');if(!f||!p)return;
 var hid=f.querySelector('input[name=shots]');var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
-var bin='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>';
-var ask=document.createElement('div');ask.className='shot-ask';ask.hidden=true;p.querySelector('.strip').appendChild(ask);
-function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});ask.hidden=true;}
+function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});var a=p.querySelector('.strip .shot-ask');if(a)a.remove();}
 b.forEach(function(x,i){x.addEventListener('click',function(){var was=x.classList.contains('picked');clear();if(was)return;
 x.classList.add('picked');var d=document.createElement('span');d.className='shot-del';d.setAttribute('role','button');
-d.setAttribute('aria-label','Remove shot '+(i+1));d.innerHTML=bin;x.appendChild(d);
-d.addEventListener('click',function(e){e.stopPropagation();ask.innerHTML='<span>Remove shot '+(i+1)+'?</span>'+
-'<button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';ask.hidden=false;
-ask.querySelector('.no').onclick=function(){ask.hidden=true;};
-ask.querySelector('.yes').onclick=function(){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';f.submit();};});});});})();
+d.setAttribute('aria-label','Remove shot '+(i+1));d.innerHTML='__BIN__';x.appendChild(d);
+d.addEventListener('click',function(e){e.stopPropagation();askYesNo(p.querySelector('.strip'),'Remove shot '+(i+1)+'?',function(ask){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';f.submit();});});});});})();
 """
 
 STRIP_SCRIPT = """
@@ -1143,6 +1170,21 @@ document.body.appendChild(a);a.select();try{document.execCommand('copy');}catch(
 [].forEach.call(document.querySelectorAll('button.copy'),function(b){b.addEventListener('click',function(){
 var t=b.getAttribute('data-copy')||'';var was=b.textContent;Promise.resolve(copy(t)).then(function(){b.textContent='Copied';
 setTimeout(function(){b.textContent=was;},1200);});});});})();
+"""
+
+
+def page_script(*parts):
+    """Join page scripts, substitute the shared bin icon and prepend the ask helper when used."""
+    text = "".join(parts).replace("__BIN__", BIN_ICON)
+    if "askYesNo(" in text:
+        text = ASK_SCRIPT + text
+    return text
+
+
+CONSENT_SCRIPT = """
+(function(){var c=document.querySelector('input[name=consent]');if(!c)return;
+var b=document.querySelector('form.upload-form button[type=submit]');if(!b)return;
+function sync(){b.disabled=!c.checked;}c.addEventListener('change',sync);sync();})();
 """
 
 
@@ -2130,7 +2172,7 @@ def _render_tabs(name, enabled, tab):
     details = [key for key in ("why", "shots") if key in enabled]
     if details:
         parts.append(
-            '<span class="tab-group"><span class="tab-group-label">Details</span>'
+            '<span class="tab-group">'
             f'{"".join(link(key) for key in details)}</span>'
         )
     for key in ("cuts", "shorts"):
@@ -2199,6 +2241,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f'{total} files, {new} new since the last edit, {excluded} left out · '
         f'<a href="/{html_escape(name)}/?tab=files">Manage files</a>'
     )
+    shown = pick_version(list_versions(directory), wanted)
+    shown_version = shown["name"] if shown else ""
     reedit = (
         render_reedit(
             name,
@@ -2208,6 +2252,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             files_line=files_line,
             open_=reedit_open,
             facts=load_brief_facts(directory),
+            version=shown_version,
         )
         if feature_on(features, "recap")
         else ""
@@ -2220,18 +2265,17 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f'<section class="panel">{panels.get(tab, "")}</section>'
         f"{reedit}"
     )
-    script = (
-        (STRIP_SCRIPT + TICK_SCRIPT + PICK_SCRIPT + COPY_SCRIPT if tab == "recap" else "")
-        + LENGTH_SCRIPT
-        + DELETE_SCRIPT
-        + BRIEF_HINTS_SCRIPT
-    )
+    script_parts = []
+    if tab == "recap":
+        script_parts += [STRIP_SCRIPT, TICK_SCRIPT, PICK_SCRIPT, COPY_SCRIPT]
+    script_parts += [LENGTH_SCRIPT, DELETE_SCRIPT, BRIEF_HINTS_SCRIPT]
     if tab == "cuts":
-        script += CUTS_SCRIPT
+        script_parts.append(CUTS_SCRIPT)
     if tab == "shorts":
-        script += SHORTS_SCRIPT
+        script_parts.append(SHORTS_SCRIPT)
     if tab == "files":
-        script += DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT + FILES_SCRIPT
+        script_parts += [DROP_SCRIPT, UPLOAD_PROGRESS_SCRIPT, FILES_SCRIPT]
+    script = page_script(*script_parts)
     refresh = 20 if status == "running" else None
     return render_page(name, body, active="projects", script=script, refresh=refresh, features=features,
                        brand_logo=brand_logo)
@@ -2387,15 +2431,9 @@ def render_delete_form(name):
 DELETE_SCRIPT = """
 (function(){var f=document.querySelector('form.delete-project');if(!f)return;
 var h=document.querySelector('h1');if(!h)return;
-var bin='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>';
 var b=document.createElement('button');b.type='button';b.className='project-del';
-b.setAttribute('aria-label','Delete this project');b.innerHTML=bin;h.appendChild(b);
-var ask=document.createElement('div');ask.className='shot-ask';ask.hidden=true;
-h.parentNode.insertBefore(ask,h.nextSibling);
-b.addEventListener('click',function(){ask.innerHTML='<span>Delete this project?</span>'+
-'<button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';ask.hidden=false;
-ask.querySelector('.no').onclick=function(){ask.hidden=true;};
-ask.querySelector('.yes').onclick=function(){ask.innerHTML='<span>Deleting, about 5 s...</span>';f.submit();};});})();
+b.setAttribute('aria-label','Delete this project');b.innerHTML='__BIN__';h.appendChild(b);
+b.addEventListener('click',function(){askYesNo(h.parentNode,'Delete this project?',function(ask){ask.innerHTML='<span>Deleting, about 5 s...</span>';f.submit();});});})();
 """
 
 BRIEF_HINTS_SCRIPT = """
@@ -2410,17 +2448,13 @@ box.value=value+line;box.focus();box.setSelectionRange(box.value.length,box.valu
 # Files tab: each kept file row's exclude form becomes a bin icon that asks
 # "Leave out <name>?" with Yes and No; Yes submits the form.
 FILES_SCRIPT = """
-(function(){var bin='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>';
+(function(){
 [].forEach.call(document.querySelectorAll('form.file-row'),function(f){
 var a=f.querySelector('input[name=action]');if(!a||a.value!=='exclude')return;
 var n=f.querySelector('input[name=name]');var label=n?n.value:'this file';
-var b=f.querySelector('button');if(!b)return;b.innerHTML=bin;b.setAttribute('aria-label','Leave out '+label);
+var b=f.querySelector('button');if(!b)return;b.innerHTML='__BIN__';b.setAttribute('aria-label','Leave out '+label);
 b.addEventListener('click',function(e){e.preventDefault();
-var ask=document.createElement('div');ask.className='shot-ask';
-ask.innerHTML='<span>Leave out '+label+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
-f.appendChild(ask);
-ask.querySelector('.no').onclick=function(){ask.remove();};
-ask.querySelector('.yes').onclick=function(){f.submit();};});});})();
+askYesNo(f,'Leave out '+label+'?',function(){f.submit();});});});})();
 """
 
 
@@ -2450,12 +2484,14 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         f'{brief_hints_html()}</label></div>'
     )
     consent = ""
+    start_disabled = ""
     if consent_text:
         consent = (
             f'<p class="consent-text">{html_escape(consent_text)}</p>'
             '<label class="consent"><input type="checkbox" name="consent" value="1" required>'
             " I agree</label>"
         )
+        start_disabled = " disabled"
     body = (
         "<h1>New recap</h1>"
         '<p class="lede">Add the clips of one day, say what you want, and start.</p>'
@@ -2470,18 +2506,19 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         f"{render_form_rows(option_fields(music_tracks))}"
         f"{AUTO_HINT}</details>"
         f"{consent}"
-        '<button class="go start" type="submit" name="submit" value="start">Upload and start</button>'
+        f'<button class="go start" type="submit" name="submit" value="start"{start_disabled}>Upload and start</button>'
         '<div class="upload-progress" hidden><progress max="100" value="0"></progress>'
         '<p class="upload-status" aria-live="polite"></p></div>'
         "</form>"
     )
     return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
-                       script=LENGTH_SCRIPT + DROP_SCRIPT + UPLOAD_PROGRESS_SCRIPT + BRIEF_HINTS_SCRIPT,
+                       script=page_script(LENGTH_SCRIPT, DROP_SCRIPT, UPLOAD_PROGRESS_SCRIPT,
+                                          BRIEF_HINTS_SCRIPT, CONSENT_SCRIPT),
                        features=features, brand_logo=brand_logo)
 
 
 def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_line="", open_=False,
-                  facts=None):
+                  facts=None, version=""):
     """Return the Re-edit form with the same options plus a feedback box."""
     brief_card = (
         '<div class="card brief-card"><label>Brief'
@@ -2493,11 +2530,15 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_
     fields.append(("What should change?", '<textarea name="feedback" rows="3" '
                    f'placeholder="drop 0071/s2, tunnel longer">{html_escape(feedback_prefill)}</textarea>'))
     open_attr = " open" if open_ else ""
+    version_field = (
+        f'<input type="hidden" name="version" value="{html_escape(version)}">' if version else ""
+    )
     return (
         f'<details class="reedit"{open_attr}><summary>Re-edit</summary>'
         f"{files_line}"
         f'<form method="post" action="/{html_escape(name)}/re-edit" '
         'enctype="multipart/form-data">'
+        f"{version_field}"
         f"{brief_facts_fields_html(facts)}"
         f"{brief_card}"
         f"{render_form_rows(fields)}"
@@ -3467,6 +3508,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             "--interpret-feedback", feedback,
             "--json",
         ]
+        version = (fields.get("version") or "").strip()
+        if VERSION_RE.match(version):
+            command += ["--version", version]
         result = subprocess.run(command, capture_output=True, text=True, timeout=180)
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the director could not answer"]
@@ -4116,15 +4160,19 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
 
-    def send_wav(self, path, send_body):
+    def send_bytes(self, path, content_type, send_body):
+        """Serve one file's bytes with the given Content-Type."""
         data = Path(path).read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         if send_body:
             self.wfile.write(data)
+
+    def send_wav(self, path, send_body):
+        self.send_bytes(path, "audio/wav", send_body)
 
     def send_svg(self, path, send_body):
         """Serve one brand SVG from BRAND_DIR, or a 404 when it is missing or outside it."""
@@ -4136,14 +4184,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not inside or not path.is_file():
             self.send_not_found()
             return
-        data = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "image/svg+xml")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if send_body:
-            self.wfile.write(data)
+        self.send_bytes(path, "image/svg+xml", send_body)
 
 
 class WorkspaceServer(http.server.ThreadingHTTPServer):

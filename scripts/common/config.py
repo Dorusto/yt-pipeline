@@ -62,6 +62,12 @@ def model_for(config, role):
     return models[role]
 
 
+def _check_brand_logo(value):
+    """Raise a ConfigError when ``value`` is not one of the brand options."""
+    if value is not None and value not in BRAND_OPTIONS:
+        raise ConfigError(f"brand.logo must be one of: {', '.join(BRAND_OPTIONS)}")
+
+
 def _validate(data):
     if not isinstance(data, dict):
         raise ConfigError("config root must be a mapping")
@@ -213,10 +219,7 @@ def _validate(data):
         if not isinstance(brand, dict):
             raise ConfigError("brand must be a mapping")
         logo = brand.get("logo")
-        if logo is not None and logo not in BRAND_OPTIONS:
-            raise ConfigError(
-                f"brand.logo must be one of: {', '.join(BRAND_OPTIONS)}"
-            )
+        _check_brand_logo(logo)
 
     return data
 
@@ -470,20 +473,32 @@ def requests_path(cli_value=None, config=None):
     return None
 
 
+def _positive_storage(value, source):
+    """Return ``value`` as a float, or raise a ConfigError when it is not positive."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{source} must be a positive number") from exc
+    if not math.isfinite(number) or number <= 0:
+        raise ConfigError(f"{source} must be a positive number")
+    return number
+
+
 def storage_gb(cli_value=None, config=None):
     """The storage limit in GB: CLI flag, else STORAGE_GB_ENV, else limits.storage_gb.
 
     Returns None when none of the three is set — the caller shows no limit. A
-    non-numeric environment value is a ConfigError. There is no personal default.
+    non-numeric or non-positive value is a ConfigError. There is no personal default.
     """
     if cli_value is not None:
-        return float(cli_value)
+        return _positive_storage(cli_value, "storage limit")
     from_env = os.environ.get(STORAGE_GB_ENV)
     if from_env:
         try:
-            return float(from_env)
+            value = float(from_env)
         except ValueError as exc:
             raise ConfigError(f"{STORAGE_GB_ENV} must be a number") from exc
+        return _positive_storage(value, STORAGE_GB_ENV)
     data = config if config is not None else load_config()
     section = data.get("limits")
     if isinstance(section, dict):
@@ -588,6 +603,5 @@ def brand_logo(cli_value=None, config=None):
             value = section.get("logo")
     if not value:
         return DEFAULT_BRAND_LOGO
-    if value not in BRAND_OPTIONS:
-        raise ConfigError(f"brand.logo must be one of: {', '.join(BRAND_OPTIONS)}")
+    _check_brand_logo(value)
     return value

@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: a Files tab that lists every clip and photo of a project, adds more files into the inbox source and leaves a file out (reversibly, `excluded.json`); every station skips the left-out names.
 - Deploy: `.github/workflows/deploy.yml` deploys a published release (or a manual dispatch with a tag) to every pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner.
 - Web app: a `thumbs` station (`scripts/thumbs.py`) writes `thumbs/poster.jpg` (30 % of the recap) and `thumbs/shot-N.jpg` (the middle frame of each slot) after the render; the Projects page shows poster cards and the shot strip shows each shot's thumbnail.
+- Release: `.github/workflows/release.yml` creates the GitHub Release from the version's `CHANGELOG.md` and `RELEASES.md` sections when a `v*` tag is pushed.
 
 ### Changed
 
@@ -37,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Why? and Shots pages now open with a plain-language summary and collapsed, grouped sections, and the two tabs moved under a Details group.
 - Web app: the "editing room" redesign — a warm charcoal base with an amber accent for primary actions and teal only for clip blocks, one token set in `scripts/common/theme.py` shared by every page, and a footage-forward layout (poster cards, the player poster, shot thumbnails).
 - Shared helpers extracted into `scripts/common/` (`jsonio`, `git`, `openrouter`, `sizes`, `runlog`, `feedback`, `html`, plus `used_shot_keys`/`REASON_GROUPS`/`probe_duration`/`extract_frame`); the web app's shotlog grouping is regenerated from `index.py` instead of a JavaScript overlay; new `yt-thumbs` skill.
+- Review fixes (V010 lot fix2b): `recap_meta.py` reads the place from the brief in plain words and its limits from the schema, `check_stable.py` reads the highest released version, `storage_gb` rejects a non-positive value, `brand.logo` is validated once, `edit_drop.py` regenerates the thumbnails and `recap.py` checks every thumbnail, the web app shares one bin icon and one Yes/No helper, refuses the recap artifacts with the recap part off, disables Start until consent is ticked, caches a failed credit/totals fetch for two minutes with a 3 s timeout, shows the filming date on the project card and builds its fact fields from `FACT_LABELS`; `deploy/update.sh` takes the smoke URL from `YT_PIPELINE_SMOKE_URL` and installs with `uv pip` when available.
 
 ### Fixed
 

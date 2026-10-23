@@ -2579,9 +2579,27 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Context:** The costs ledger CLI (`costs.py`) had a `totals` view but no web page, and the app had no way for a visitor to leave feedback or a feature request. The totals computation lived inside `costs.py`, so a page could not read it without importing another tool.
 
-**Decision:** the totals computation moves to `scripts/common/costs.py` so `costs.py` and `serve.py` share it (no tool imports another tool). `GET /costs` is read-only and shows the per-clip model cost and version count plus the ledger totals, and says the ledger is not set up when none is configured. The donation links come from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_links` (a list of `{label, url}`; `costs.donation_url` with one link stays accepted) in the config, and the app never handles payments. The feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set. `--check` warns about a missing ledger or requests file without failing.
+**Decision:** the totals computation moves to `scripts/common/costs.py` so `costs.py` and `serve.py` share it (no tool imports another tool). `GET /costs` is read-only and shows the per-clip model cost and version count plus the ledger totals, and says the ledger is not set up when none is configured. The donation link comes from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_url` in the config (a single link), and the app never handles payments. The feedback/requests form posts to `/costs/request` and appends one JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file (`--requests`, else `YT_PIPELINE_REQUESTS`, else `requests.path`), hidden when none is set. `--check` warns about a missing ledger or requests file without failing.
 
-**Consequence:** the page reads the same totals object as `costs.py totals --json` through `compute_totals` in `scripts/common/costs.py`; the ledger schema and the five kinds are unchanged; the `yt-costs` skill points at the page. The per-workspace `feedback.jsonl` (about an edit) and the per-instance requests file (feature requests to the owner) are two separate stores.
+---
+
+## [2026-10-23] Correction: donation links are a list (V010 lot fix1)
+
+**Context:** The review of lot fix1 found that one donation link is not enough: an instance may want to show several ways to support the project.
+
+**Decision:** the donation links come from `--donation-url`, else `YT_PIPELINE_DONATION_URL`, else `costs.donation_links`, a list of `{label, url}`; `costs.donation_url` with one link stays accepted; the app never handles payments.
+
+**Consequence:** the costs page shows the list as plain links; the real links live only in each instance's local `config.yaml`, never in the repo or `config.yaml.example`.
+
+---
+
+## [2026-10-23] serve.py calls llm_director.py for the feedback reply (V010 lot fix2b)
+
+**Context:** The "Ask the director" button needs the director's reading of a feedback request before a new version is made, but `serve.py` may not import another tool.
+
+**Decision:** `serve.py` runs `llm_director.py --interpret-feedback` as a subprocess (the `--interpret-feedback` mode only, which writes no edit), added to the named tool-to-tool set.
+
+**Consequence:** the RULES tool-to-tool list names `serve.py -> llm_director.py`; the reply is a model call charged to the workspace ledger like any other.
 
 ---
 

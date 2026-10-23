@@ -21,8 +21,8 @@ from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    serve._credit_cache.update({"at": 0.0, "value": None})
-    serve._totals_cache.update({"at": 0.0, "url": None, "value": None})
+    serve._credit_cache.update({"at": 0.0, "value": None, "failed_at": 0.0})
+    serve._totals_cache.update({"at": 0.0, "url": None, "value": None, "failed_at": 0.0})
 
 
 def make_root(tmp_path):
@@ -1627,7 +1627,7 @@ def test_project_page_groups_why_and_shots_under_details(tmp_path):
         page = body.decode()
         assert status == 200
         assert '<span class="tab-group">' in page
-        assert '<span class="tab-group-label">Details</span>' in page
+        assert '<span class="tab-group-label">Details</span>' not in page
         start = page.index('<span class="tab-group">')
         group = page[start:page.index("</nav>", start)]
         assert 'href="/2026-10-14/?tab=why"' in group
@@ -3002,7 +3002,6 @@ def test_brief_placeholder_is_multiline_and_not_a_value():
     for line in (
         "The best moment: the ride down the tree-lined lane",
         "Mood: calm start, energy at the end",
-        "Length: about 60 seconds",
         "Leave out: the parking lot shots",
     ):
         assert line in page
@@ -3658,3 +3657,98 @@ def test_pages_are_phone_first(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_shared_bin_icon_and_ask_helper():
+    assert serve.BIN_ICON in serve.page_script(serve.PICK_SCRIPT)
+    assert serve.BIN_ICON in serve.page_script(serve.DELETE_SCRIPT)
+    assert serve.BIN_ICON in serve.page_script(serve.FILES_SCRIPT)
+    for script in (serve.PICK_SCRIPT, serve.DELETE_SCRIPT, serve.FILES_SCRIPT):
+        assert "askYesNo(" in script
+        assert "__BIN__" in script
+    assert serve.page_script(serve.PICK_SCRIPT).count(serve.BIN_ICON) == 1
+
+
+def test_recap_artifacts_are_refused_with_the_recap_part_off():
+    for artifact in ("recap_720p.mp4", "recap_720p_9x16.mp4", "recap_final.mp4", "recap_final_9x16.mp4"):
+        assert serve.ARTIFACT_FEATURES[artifact] == "recap"
+    assert "shorts_candidates.json" not in serve.ARTIFACT_FEATURES
+
+
+def test_brief_hints_and_placeholder_have_no_length():
+    labels = [label for label, _ in serve.BRIEF_HINTS]
+    assert "Length" not in labels
+    assert "Length: about 60 seconds" not in serve.BRIEF_PLACEHOLDER
+
+
+def test_upload_without_consent_removes_the_staged_files(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox, consent_text="I own this footage.")
+    try:
+        status, _, _ = upload(
+            server,
+            [("folder", None, "kotor-day"), ("brief", None, "hello"), ("files", "a.mp4", b"x")],
+        )
+        assert status == 400
+        assert list(inbox.glob(".upload-*")) == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_credit_failure_is_cached_for_two_minutes(monkeypatch):
+    calls = []
+
+    def boom(*args, **kwargs):
+        calls.append(1)
+        raise OSError("down")
+
+    monkeypatch.setattr(serve, "fetch_model_credit", boom)
+    assert serve.model_credit("k", now=1000.0) is None
+    assert serve.model_credit("k", now=1001.0) is None
+    assert len(calls) == 1
+    assert serve.model_credit("k", now=1000.0 + serve.FAILURE_CACHE_SECONDS + 1) is None
+    assert len(calls) == 2
+
+
+def test_totals_failure_is_cached_for_two_minutes(monkeypatch):
+    calls = []
+
+    def boom(*args, **kwargs):
+        calls.append(1)
+        raise OSError("down")
+
+    monkeypatch.setattr(serve, "fetch_project_totals", boom)
+    assert serve.project_totals("http://x/costs.json", now=1000.0) is None
+    assert serve.project_totals("http://x/costs.json", now=1001.0) is None
+    assert len(calls) == 1
+
+
+def test_http_timeout_is_three_seconds():
+    assert serve.HTTP_TIMEOUT_SECONDS == 3
+    assert serve.fetch_model_credit.__defaults__[0] == 3
+    assert serve.fetch_project_totals.__defaults__[0] == 3
+
+
+def test_reedit_form_carries_the_shown_version():
+    page = serve.render_reedit("kotor-day", [], version="v002")
+    assert '<input type="hidden" name="version" value="v002">' in page
+    assert 'name="version"' not in serve.render_reedit("kotor-day", [])
+
+
+def test_project_date_is_the_filming_date(tmp_path):
+    project = tmp_path / "p"
+    project.mkdir()
+    (project / "ingest.json").write_text(
+        json.dumps(
+            {
+                "clips": [{"creation_time": "2026-07-10T10:00:00+00:00"}],
+                "photos": [{"creation_time": "2026-07-08T10:00:00+00:00"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert serve.project_date(project) == "2026-07-08"
+    assert serve.project_date(tmp_path / "missing") == ""

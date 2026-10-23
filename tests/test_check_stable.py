@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import check_stable
 
@@ -28,11 +29,8 @@ scripts/recap.py
 """
 
 
-def test_parse_candidate_is_not_enforced():
-    version, enforced, stable_files = check_stable.parse_stable_files(CANDIDATE)
-    assert version == "v0.1.0"
-    assert enforced is False
-    assert stable_files == ["scripts/serve.py", "scripts/recap.py", "scripts/common/versions.py"]
+def test_parse_candidate_only_is_not_released():
+    assert check_stable.parse_stable_files(CANDIDATE) == (None, False, [])
 
 
 def test_parse_released_is_enforced():
@@ -42,8 +40,45 @@ def test_parse_released_is_enforced():
     assert stable_files == ["scripts/serve.py", "scripts/recap.py"]
 
 
+def test_parse_picks_the_highest_released_version():
+    text = """# RELEASES
+
+## v0.2.0 (candidate, not released)
+
+```stable-files
+scripts/new.py
+```
+
+## v0.1.0
+
+```stable-files
+scripts/serve.py
+```
+
+## v0.0.9
+
+```stable-files
+scripts/old.py
+```
+"""
+    version, enforced, stable_files = check_stable.parse_stable_files(text)
+    assert version == "v0.1.0"
+    assert enforced is True
+    assert stable_files == ["scripts/serve.py"]
+
+
 def test_parse_without_version_section():
     assert check_stable.parse_stable_files("# RELEASES\n\nnothing here\n") == (None, False, [])
+
+
+def test_parse_real_releases_file():
+    releases = Path(__file__).resolve().parents[1] / "docs" / "RELEASES.md"
+    version, enforced, stable_files = check_stable.parse_stable_files(
+        releases.read_text(encoding="utf-8")
+    )
+    assert version is None
+    assert enforced is False
+    assert stable_files == []
 
 
 def test_find_violations():

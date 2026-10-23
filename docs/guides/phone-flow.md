@@ -41,7 +41,8 @@ cd <repo>
 .venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
-Keep it running (see the `yt-serve.service` unit in step 4). Then from the
+Keep it running (see `deploy/yt-pipeline-web.service` and
+[`pilot-host.md`](pilot-host.md)). Then from the
 phone browser: **Upload** → pick files → folder name + brief → **Start**. The
 project appears on **Projects** with a `running` badge and turns `done` when
 the recap is ready. The project page's tabs are **Recap**, **Why?** (why the

@@ -67,7 +67,8 @@ def test_render_success_replaces_the_edit(tmp_path, monkeypatch, capsys):
     seen = {}
 
     def fake_run(command, **kwargs):
-        seen["command"] = command
+        if any("render.py" in part for part in command):
+            seen["command"] = command
         return FakeRender(0)
 
     monkeypatch.setattr(edit_drop.subprocess, "run", fake_run)

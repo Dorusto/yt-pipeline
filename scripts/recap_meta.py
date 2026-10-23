@@ -38,17 +38,12 @@ from common.errors import report_error
 
 TOOL = "scripts/recap_meta.py"
 SCHEMA_VERSION = "0.1"
-DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "recap_meta.md"
-MAX_TITLE = 100
-MAX_DESCRIPTION = 1000
-MIN_HASHTAGS = 5
-MAX_HASHTAGS = 10
-PLACE_RE = re.compile(
-    r"^\s*(where and when|where|place|location)\s*:\s*(.+)$",
-    re.IGNORECASE | re.MULTILINE,
-)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PROMPT = REPO_ROOT / "prompts" / "recap_meta.md"
+SCHEMA_PATH = REPO_ROOT / "schemas" / "recap_meta.schema.json"
 
 _client = None
+_limits_cache = None
 
 
 class RecapMetaError(Exception):
@@ -88,13 +83,25 @@ def read_prompt(prompt_file):
         raise RecapMetaError(f"cannot read prompt file '{prompt_file}': {exc}")
 
 
-def find_place(brief_text):
-    """The value after the first place line of the brief, or None."""
-    match = PLACE_RE.search(brief_text or "")
-    if match is None:
-        return None
-    value = match.group(2).strip()
-    return value or None
+def schema_limits():
+    """The title/description length and hashtag count limits from the schema file."""
+    global _limits_cache
+    if _limits_cache is None:
+        try:
+            schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RecapMetaError(f"cannot read the recap_meta schema: {exc}")
+        properties = schema.get("properties") or {}
+        title = properties.get("title") or {}
+        description = properties.get("description") or {}
+        hashtags = properties.get("hashtags") or {}
+        _limits_cache = (
+            int(title["maxLength"]),
+            int(description["maxLength"]),
+            int(hashtags["minItems"]),
+            int(hashtags["maxItems"]),
+        )
+    return _limits_cache
 
 
 def shot_descriptions(edit):
@@ -116,17 +123,18 @@ def shot_descriptions(edit):
 
 
 def earliest_date(workspace_path):
-    """The date part of the earliest clip creation_time in ingest.json, or None."""
+    """The date part of the earliest clip or photo creation_time in ingest.json, or None."""
     data = load_json(Path(workspace_path) / "ingest.json")
     if not isinstance(data, dict):
         return None
     values = []
-    for clip in data.get("clips") or []:
-        if not isinstance(clip, dict):
-            continue
-        value = clip.get("creation_time")
-        if isinstance(value, str) and value.strip():
-            values.append(value.strip())
+    for group in ("clips", "photos"):
+        for item in data.get(group) or []:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("creation_time")
+            if isinstance(value, str) and value.strip():
+                values.append(value.strip())
     if not values:
         return None
     earliest = min(values)
@@ -137,7 +145,7 @@ def build_facts(edit, workspace_path):
     """The deterministic facts the message carries and the missing list."""
     facts = load_brief_facts(workspace_path)
     brief_text = (edit.get("brief") or {}).get("text") or ""
-    place = facts["place"] or find_place(brief_text)
+    place = facts["place"]
     when = facts["when"] or earliest_date(workspace_path)
     who = facts["who"]
     occasion = facts["occasion"]
@@ -181,6 +189,7 @@ def build_message(prompt_text, facts):
 
 def normalize_answer(text):
     """Parse and normalize the model answer; raise on any invalid shape or range."""
+    max_title, max_description, min_hashtags, max_hashtags = schema_limits()
     try:
         data = parse_model_json(text)
     except ValueError as exc:
@@ -191,17 +200,17 @@ def normalize_answer(text):
     if not isinstance(title, str):
         raise RecapMetaRuntimeError("model JSON key 'title' must be a string")
     title = title.strip()
-    if not 1 <= len(title) <= MAX_TITLE:
+    if not 1 <= len(title) <= max_title:
         raise RecapMetaRuntimeError(
-            f"title must be 1-{MAX_TITLE} characters after strip (got {len(title)})"
+            f"title must be 1-{max_title} characters after strip (got {len(title)})"
         )
     description = data.get("description")
     if not isinstance(description, str):
         raise RecapMetaRuntimeError("model JSON key 'description' must be a string")
     description = description.strip()
-    if not 1 <= len(description) <= MAX_DESCRIPTION:
+    if not 1 <= len(description) <= max_description:
         raise RecapMetaRuntimeError(
-            f"description must be 1-{MAX_DESCRIPTION} characters after strip "
+            f"description must be 1-{max_description} characters after strip "
             f"(got {len(description)})"
         )
     sentences = [part for part in re.split(r"[.!?]+", description) if part.strip()]
@@ -220,14 +229,16 @@ def normalize_answer(text):
         tag = item.strip().lstrip("#").strip()
         if not tag:
             continue
+        if any(character.isspace() for character in tag):
+            raise RecapMetaRuntimeError(f"hashtag must not contain spaces: {item!r}")
         key = tag.lower()
         if key in seen:
             continue
         seen.add(key)
         normalized.append("#" + tag)
-    if not MIN_HASHTAGS <= len(normalized) <= MAX_HASHTAGS:
+    if not min_hashtags <= len(normalized) <= max_hashtags:
         raise RecapMetaRuntimeError(
-            f"hashtags must be {MIN_HASHTAGS}-{MAX_HASHTAGS} after normalisation "
+            f"hashtags must be {min_hashtags}-{max_hashtags} after normalisation "
             f"(got {len(normalized)})"
         )
     return {"title": title, "description": description, "hashtags": normalized}
@@ -255,7 +266,7 @@ def output_is_up_to_date(out_path, edit_path):
     if not Path(out_path).is_file() or not Path(edit_path).is_file():
         return False
     try:
-        return Path(out_path).stat().st_mtime >= Path(edit_path).stat().st_mtime
+        return Path(out_path).stat().st_mtime > Path(edit_path).stat().st_mtime
     except OSError:
         return False
 
@@ -422,6 +433,8 @@ def main(argv=None):
             budget_usd=args.budget_usd,
         )
     except (RecapMetaRuntimeError, LLMError) as exc:
+        return report_error(exc, EXIT_RUNTIME, args.json)
+    except OSError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except (RecapMetaError, ConfigError, SchemaError) as exc:
         return report_error(exc, EXIT_USAGE, args.json)

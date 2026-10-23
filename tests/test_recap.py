@@ -85,7 +85,11 @@ class Recorder:
         elif name == "router":
             self.touch(ws / "route.json", json.dumps({"brief": {"text": brief_text}}))
         elif name == "llm_director":
-            self.touch(ws / "edit.json", json.dumps({"brief": {"text": brief_text}, "made": self.clock}))
+            self.touch(ws / "edit.json", json.dumps({
+                "brief": {"text": brief_text},
+                "made": self.clock,
+                "video": [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.0}],
+            }))
         elif name == "explain":
             self.touch(ws / "explain.html", "<html></html>")
         elif name == "recap_meta":
@@ -981,10 +985,18 @@ def test_thumbs_skip_rule(tmp_path):
     ctx = make_context(tmp_path)
     recap_file = ctx.workspace / "recap_720p.mp4"
     recap_file.write_bytes(b"video")
+    (ctx.workspace / "edit.json").write_text(
+        json.dumps({"video": [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.0}]}),
+        encoding="utf-8",
+    )
     assert recap.is_up_to_date("thumbs", ctx) is False
     poster = ctx.workspace / "thumbs" / "poster.jpg"
     poster.parent.mkdir()
     poster.write_bytes(b"jpg")
     stamp = recap_file.stat().st_mtime + 5
     os.utime(poster, (stamp, stamp))
+    assert recap.is_up_to_date("thumbs", ctx) is False
+    shot = ctx.workspace / "thumbs" / "shot-1.jpg"
+    shot.write_bytes(b"jpg")
+    os.utime(shot, (stamp, stamp))
     assert recap.is_up_to_date("thumbs", ctx) is True

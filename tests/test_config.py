@@ -306,6 +306,19 @@ def test_storage_gb_section_validated(tmp_path):
             config.load_config(write_config(tmp_path, with_value("limits", {"storage_gb": bad})))
 
 
+def test_storage_gb_flag_and_env_reject_non_positive(monkeypatch):
+    monkeypatch.delenv(config.STORAGE_GB_ENV, raising=False)
+    for bad in (0, -1):
+        with pytest.raises(config.ConfigError):
+            config.storage_gb(bad, {})
+    monkeypatch.setenv(config.STORAGE_GB_ENV, "0")
+    with pytest.raises(config.ConfigError):
+        config.storage_gb()
+    monkeypatch.setenv(config.STORAGE_GB_ENV, "-5")
+    with pytest.raises(config.ConfigError):
+        config.storage_gb()
+
+
 def test_credit_warn_usd_default_and_config():
     assert config.credit_warn_usd(config={}) == 1.0
     assert config.credit_warn_usd(config={"limits": {"credit_warn_usd": 2.5}}) == 2.5
@@ -375,3 +388,8 @@ def test_brand_logo_rejects_an_unknown_value(monkeypatch):
         config.brand_logo("nope", {})
     with pytest.raises(config.ConfigError):
         config.brand_logo(None, {"brand": {"logo": "nope"}})
+
+
+def test_brand_logo_invalid_in_config_is_rejected(tmp_path):
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("brand", {"logo": "nope"})))

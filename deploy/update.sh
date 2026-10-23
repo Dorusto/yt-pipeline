@@ -5,7 +5,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SERVICE_NAME="${SERVICE_NAME:-yt-pipeline-web}"
 ENV_FILE="${ENV_FILE:-/etc/yt-pipeline/env}"
-SMOKE_URL="${SMOKE_URL:-http://127.0.0.1:8091/upload}"
 PYTHON="$REPO_ROOT/.venv/bin/python"
 PIP="$REPO_ROOT/.venv/bin/pip"
 DEPLOYED_TAG_FILE="$REPO_ROOT/.deployed-tag"
@@ -27,7 +26,7 @@ Options:
 Examples:
   deploy/update.sh <tag>            # update to a released tag, smoke test, roll back on failure
   deploy/update.sh <tag> --dry-run  # print the steps, change nothing
-  SMOKE_URL=http://<container>:8091/upload deploy/update.sh <tag>
+  YT_PIPELINE_SMOKE_URL=http://<container>:8091/upload deploy/update.sh <tag>
 EOF
 }
 
@@ -60,11 +59,17 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
+SMOKE_URL="${YT_PIPELINE_SMOKE_URL:-}"
+
 install_requirements() {
+    local installer=("$PIP")
+    if command -v uv >/dev/null 2>&1; then
+        installer=(uv pip)
+    fi
     if [ -f "$CONSTRAINTS" ]; then
-        "$PIP" install -r "$REPO_ROOT/requirements.txt" -c "$CONSTRAINTS"
+        "${installer[@]}" install -r "$REPO_ROOT/requirements.txt" -c "$CONSTRAINTS"
     else
-        "$PIP" install -r "$REPO_ROOT/requirements.txt"
+        "${installer[@]}" install -r "$REPO_ROOT/requirements.txt"
     fi
 }
 
@@ -88,14 +93,23 @@ rollback() {
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "[dry-run] git -C $REPO_ROOT fetch --tags"
     echo "[dry-run] git -C $REPO_ROOT checkout $TAG"
-    if [ -f "$CONSTRAINTS" ]; then
-        echo "[dry-run] $PIP install -r $REPO_ROOT/requirements.txt -c $CONSTRAINTS"
+    if command -v uv >/dev/null 2>&1; then
+        installer="uv pip"
     else
-        echo "[dry-run] $PIP install -r $REPO_ROOT/requirements.txt"
+        installer="$PIP"
+    fi
+    if [ -f "$CONSTRAINTS" ]; then
+        echo "[dry-run] $installer install -r $REPO_ROOT/requirements.txt -c $CONSTRAINTS"
+    else
+        echo "[dry-run] $installer install -r $REPO_ROOT/requirements.txt"
     fi
     echo "[dry-run] smoke test: $PYTHON $REPO_ROOT/scripts/serve.py --check --json --port 0 --workspaces ${YT_PIPELINE_WORKSPACES:-}"
     echo "[dry-run] systemctl restart $SERVICE_NAME"
-    echo "[dry-run] smoke test: curl -fsS --max-time 10 $SMOKE_URL"
+    if [ -n "$SMOKE_URL" ]; then
+        echo "[dry-run] smoke test: curl -fsS --max-time 10 $SMOKE_URL"
+    else
+        echo "[dry-run] warning: YT_PIPELINE_SMOKE_URL is not set; the HTTP smoke test is skipped"
+    fi
     echo "[dry-run] echo $TAG > $DEPLOYED_TAG_FILE"
     exit 0
 fi
@@ -115,17 +129,21 @@ echo "[update] smoke test: serve.py --check"
 echo "[update] restarting $SERVICE_NAME"
 systemctl restart "$SERVICE_NAME" || rollback "systemctl restart"
 
-echo "[update] smoke test: GET $SMOKE_URL"
-smoke_ok=0
-for _ in $(seq 1 10); do
-    if curl -fsS --max-time 10 "$SMOKE_URL" >/dev/null 2>&1; then
-        smoke_ok=1
-        break
+if [ -n "$SMOKE_URL" ]; then
+    echo "[update] smoke test: GET $SMOKE_URL"
+    smoke_ok=0
+    for _ in $(seq 1 10); do
+        if curl -fsS --max-time 10 "$SMOKE_URL" >/dev/null 2>&1; then
+            smoke_ok=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$smoke_ok" -ne 1 ]; then
+        rollback "HTTP smoke test"
     fi
-    sleep 1
-done
-if [ "$smoke_ok" -ne 1 ]; then
-    rollback "HTTP smoke test"
+else
+    echo "[update] warning: YT_PIPELINE_SMOKE_URL is not set; skipped the HTTP smoke test" >&2
 fi
 
 echo "$TAG" > "$DEPLOYED_TAG_FILE"

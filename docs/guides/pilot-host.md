@@ -14,6 +14,28 @@ the env file; `deploy/update.sh` does the rest.
 Placeholders in this guide: `<container>`, `<nas-share>`, `<tag>`, `<repo>`,
 `<tailnet-ip>`. Nothing here is a real address or a real key.
 
+## How a version reaches people
+
+```mermaid
+flowchart LR
+    A["Agent host<br/>work branch, tests, reviewer,<br/>the owner's test interface"] --> B["GitHub<br/>merge to master, tag,<br/>release page with automatic notes"]
+    B --> C["Pilot container 1<br/>tag vX.Y.Z"]
+    B --> D["Pilot container 2<br/>tag vX.Y.Z"]
+    B --> E["Pilot container N<br/>tag vX.Y.Z"]
+```
+
+1. **Development on the agent host.** Work happens on a branch; the tests, the
+   reviewer and the owner's test interface run there.
+2. **Release on GitHub.** The branch is merged to `master`, tagged `vX.Y.Z`,
+   and the release page carries the automatic notes.
+3. **Production on one container per person.** Every container runs the same
+   tag. A release deploys to every container at once (the deploy lot);
+   `deploy/update.sh` updates a container and rolls back to the previous tag
+   when the smoke test fails.
+
+A staged rollout (the owner's container first, then the others) is left for
+when more people are involved.
+
 ## What the owner sets up (once per person)
 
 1. **Container.** One small container per person, the same image, the same
@@ -56,10 +78,14 @@ changes nothing.
 
 ```bash
 cd <repo>
-sudo deploy/update.sh <tag>
-SMOKE_URL=http://<container>:8091/upload sudo deploy/update.sh <tag>
+deploy/update.sh <tag>
+YT_PIPELINE_SMOKE_URL=http://<container>:8091/upload deploy/update.sh <tag>
 deploy/update.sh <tag> --dry-run
 ```
+
+The runner on a pilot container runs as root inside that container (the
+container is the boundary), so `update.sh` can restart the service; run the
+manual command as root too, without `sudo`.
 
 ## Continuous deployment
 
@@ -67,7 +93,9 @@ Publishing a GitHub Release (or a manual dispatch with a tag) deploys that tag
 to every pilot container, one job per container on its own self-hosted runner.
 
 1. **Runner.** Install a GitHub Actions runner on each container with its own
-   label (for example `<label>` = `yt-owner`, `yt-friend-1`).
+   label (for example `<label>` = `yt-owner`, `yt-friend-1`). The runner runs
+   as root inside that container (the container is the boundary), so
+   `update.sh` can restart the service.
 2. **Clone path.** Set `YT_PIPELINE_PATH` in the runner's environment to the
    clone path (`<repo>`).
 3. **Repository variable.** Add the label to the repository variable

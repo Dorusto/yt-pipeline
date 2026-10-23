@@ -1,0 +1,31 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          {
+            echo "## What's new"
+            echo
+            awk -v heading="## [${version}]" 'index($0, heading) == 1 {found=1; next} found && /^## / {exit} found {print}' CHANGELOG.md
+            echo
+            echo "## Release notes"
+            echo
+            awk -v heading="## ${TAG}" 'index($0, heading) == 1 {found=1; next} found && /^## / {exit} found {print}' docs/RELEASES.md
+          } > release-notes.md
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md

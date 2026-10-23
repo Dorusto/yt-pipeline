@@ -25,11 +25,10 @@ from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.ffmpeg_tools import probe_duration
 from common.frames import FramesError, extract_frame
 from common.summary import summary_fields
-from common.versions import THUMBS_DIR
+from common.versions import POSTER_NAME, THUMBS_DIR, thumbs_are_fresh
 
 TOOL = "thumbs.py"
 DEFAULT_WIDTH = 320
-POSTER_NAME = "poster.jpg"
 RECAP_NAMES = ("recap_720p.mp4", "recap_720p_9x16.mp4")
 POSTER_FRACTION = 0.30
 
@@ -86,21 +85,6 @@ def load_summary(workspace):
     if summary is None:
         raise ThumbsError(f"{path} has no usable video list")
     return summary
-
-
-def thumbs_are_fresh(thumbs_dir, recap, shots):
-    """True when the poster and every shot thumbnail exist and are newer than the recap."""
-    if not recap.is_file():
-        return False
-    reference = recap.stat().st_mtime
-    poster = thumbs_dir / POSTER_NAME
-    if not poster.is_file() or poster.stat().st_mtime <= reference:
-        return False
-    for number in range(1, shots + 1):
-        path = thumbs_dir / f"shot-{number}.jpg"
-        if not path.is_file() or path.stat().st_mtime <= reference:
-            return False
-    return True
 
 
 def build_thumbs(workspace, recap, width, force):

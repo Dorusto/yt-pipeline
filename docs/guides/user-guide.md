@@ -248,12 +248,13 @@ finished recap, the explanation and the contact sheet.
   1.0).
 - **Brief help.** The four fact fields (Place, When, Who is in it, Occasion)
   sit above the Brief field on the Upload and Re-edit forms. The Brief field
-  has hint chips (The story or the best moment, Mood, Length, What to leave
-  out); tapping one appends its line. The grey example text is a placeholder,
+  has hint chips (The story or the best moment, Mood, What to leave out);
+  tapping one appends its line. The grey example text is a placeholder,
   never sent.
-- **Consent.** When the instance sets a consent text (`--consent-text`, else
-  `YT_PIPELINE_CONSENT_TEXT`, else `web.consent_text`), the Upload page shows
-  it with a required "I agree" checkbox and refuses an upload without it.
+- **Consent.** The consent checkbox only appears when the instance sets a
+  consent text (`--consent-text`, else `YT_PIPELINE_CONSENT_TEXT`, else
+  `web.consent_text`); then the Upload page shows it with a required "I agree"
+  checkbox and refuses an upload without it.
 - **Delete.** A project page has a bin icon next to the title; it asks once,
   then deletes the workspace and its inbox source. It is refused while a run
   is going.

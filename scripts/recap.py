@@ -29,6 +29,7 @@ from pathlib import Path
 
 from common import notify, versions
 from common.config import ConfigError, music_library, no_music_library_message
+from common.edit_timeline import edit_summary
 from common.media import video_files
 from common.photos import is_photo
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -369,7 +370,11 @@ def is_up_to_date(name, ctx):
         recap = ws / "recap_720p.mp4"
         if not recap.is_file():
             recap = ws / VERTICAL_PREVIEW_NAME
-        return is_newer(ws / "thumbs" / "poster.jpg", recap)
+        document = load_json(ws / "edit.json")
+        summary = edit_summary(document) if isinstance(document, dict) else None
+        if summary is None:
+            return False
+        return versions.thumbs_are_fresh(ws / "thumbs", recap, summary["shots"])
     if name == "render_final":
         return is_newer(ws / "recap_final.mp4", ws / "edit.json")
     if name == "render_final_vertical":

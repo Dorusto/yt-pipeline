@@ -112,7 +112,7 @@ llm_backend: openrouter
 # YT_PIPELINE_CONSENT_TEXT environment variable, or pass --consent-text.
 # web:
 #   features: [upload, recap, why, shots, shorts, costs, requests]
-#   consent_text: <consent text>
+#   consent_text: "I have the rights to upload this footage."
 
 # App logo: one of the three flat SVG marks in assets/brand/ (option-1
 # clapperboard, option-2 viewfinder, option-3 reticle). There is a default:

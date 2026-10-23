@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import recap_meta
 from common.llm import MockClient
 from common.schema import validate_or_raise
@@ -165,7 +167,7 @@ def test_missing_place_name_when_brief_has_no_place_line(tmp_path, monkeypatch, 
     assert "place" in summary["missing"]
 
 
-def test_place_line_removes_the_missing_hint(tmp_path, monkeypatch, capsys):
+def test_brief_place_line_no_longer_sets_the_place(tmp_path, monkeypatch, capsys):
     write_edit(
         tmp_path / "edit.json",
         brief_text="a calm recap\nWhere and when: Retezat, July",
@@ -174,7 +176,7 @@ def test_place_line_removes_the_missing_hint(tmp_path, monkeypatch, capsys):
     patch(monkeypatch, client)
     assert recap_meta.main(["--workspace", str(tmp_path), "--json"]) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
-    assert "place" not in summary["missing"]
+    assert "place" in summary["missing"]
 
 
 def test_brief_facts_win_over_the_brief_line(tmp_path, monkeypatch, capsys):
@@ -301,3 +303,89 @@ def test_help_lists_the_flags():
     for flag in ("--workspace", "--out", "--prompt", "--dry-run", "--force", "--budget-usd", "--json"):
         assert flag in text
     assert "examples:" in text
+
+
+def test_date_comes_from_photos_too(tmp_path, monkeypatch, capsys):
+    write_edit(tmp_path / "edit.json")
+    (tmp_path / "ingest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-07-11T00:00:00+00:00",
+                "source_dir": "/x",
+                "clips": [],
+                "photos": [
+                    {"file": "a.jpg", "path": "/x/a.jpg", "creation_time": "2026-07-09T10:00:00+00:00"},
+                    {"file": "b.jpg", "path": "/x/b.jpg", "creation_time": "2026-07-07T10:00:00+00:00"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+    assert recap_meta.main(["--workspace", str(tmp_path), "--json"]) == EXIT_OK
+    summary = json.loads(capsys.readouterr().out)
+    assert "when" not in summary["missing"]
+    document = json.loads((tmp_path / "recap_meta.json").read_text(encoding="utf-8"))
+    assert document["missing"] == ["place", "who", "occasion"]
+
+
+def test_write_oserror_exits_3(tmp_path, monkeypatch, capsys):
+    write_edit(tmp_path / "edit.json")
+    client = MockClient(text=json.dumps(VALID), config=CONFIG)
+    patch(monkeypatch, client)
+
+    def boom(path, document):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(recap_meta, "write_json", boom)
+    code = recap_meta.main(["--workspace", str(tmp_path), "--json"])
+    assert code == EXIT_RUNTIME
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == 3
+
+
+def test_hashtag_with_a_space_is_retried_then_exits_3(tmp_path, monkeypatch, capsys):
+    write_edit(tmp_path / "edit.json")
+    bad = dict(VALID)
+    bad["hashtags"] = ["#munte", "#two words", "#recap", "#vara", "#drone"]
+    client = FakeClient([json.dumps(bad), json.dumps(bad)])
+    patch(monkeypatch, client)
+    code = recap_meta.main(["--workspace", str(tmp_path)])
+    assert code == EXIT_RUNTIME
+    assert client.calls == 2
+    assert not (tmp_path / "recap_meta.json").exists()
+
+
+def test_limits_come_from_the_schema(tmp_path, monkeypatch):
+    schema = tmp_path / "recap_meta.schema.json"
+    schema.write_text(
+        json.dumps(
+            {
+                "properties": {
+                    "title": {"maxLength": 3},
+                    "description": {"maxLength": 1000},
+                    "hashtags": {"minItems": 1, "maxItems": 2},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(recap_meta, "SCHEMA_PATH", schema)
+    monkeypatch.setattr(recap_meta, "_limits_cache", None)
+    assert recap_meta.schema_limits() == (3, 1000, 1, 2)
+    with pytest.raises(recap_meta.RecapMetaRuntimeError):
+        recap_meta.normalize_answer(json.dumps(VALID))
+
+
+def test_output_is_up_to_date_is_strictly_newer(tmp_path):
+    edit = tmp_path / "edit.json"
+    out = tmp_path / "recap_meta.json"
+    edit.write_text("{}", encoding="utf-8")
+    out.write_text("{}", encoding="utf-8")
+    stamp = edit.stat().st_mtime
+    os.utime(out, (stamp, stamp))
+    assert recap_meta.output_is_up_to_date(out, edit) is False
+    os.utime(out, (stamp + 1, stamp + 1))
+    assert recap_meta.output_is_up_to_date(out, edit) is True

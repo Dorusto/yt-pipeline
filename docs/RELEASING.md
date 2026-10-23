@@ -9,14 +9,15 @@ Rules for the owner and for every agent. A version is a tag on `master` plus a G
 3. Real test: the owner uses the flow from the web app on real footage and confirms it works. What did not pass the real test ships as experimental, never as stable.
 4. Every feature that passed the real test has an automated regression test on synthetic data that fixes its behaviour.
 5. Release notes in [`CHANGELOG.md`](../CHANGELOG.md): new, stable, experimental, known problems.
-6. Tag `vX.Y.Z` on `master` and a GitHub Release. A tag is never moved or deleted.
+6. A coding agent writes "What's new" for the release page: 3 to 5 plain sentences for the people who use the app, no technical terms. The owner reads it before tagging.
+7. Tag `vX.Y.Z` on `master` and a GitHub Release. A tag is never moved or deleted. Pushing the tag runs `.github/workflows/release.yml`, which creates the release page from the "What's new" text and the `CHANGELOG.md` and `RELEASES.md` sections of that version (no build artefacts).
 
 ## After a version
 
-7. The stable list lives in [`RELEASES.md`](RELEASES.md). An agent changes a stable tool only in a lot that names it, with the owner's approval; the reviewer flags any unannounced change to a stable file.
-8. A fix to a released version is a new patch version (`vX.Y.Z+1`), never a change to the old one.
-9. The pilot host runs tags only; it is updated with the update script, which rolls back to the previous tag when the smoke test after the update fails.
-10. Publishing the release triggers `.github/workflows/deploy.yml`: one job per pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner. Watch the run in the Actions tab; `update.sh` rolls back to the previous tag when the smoke test fails.
+8. The stable list lives in [`RELEASES.md`](RELEASES.md). An agent changes a stable tool only in a lot that names it, with the owner's approval; the reviewer flags any unannounced change to a stable file.
+9. A fix to a released version is a new patch version (`vX.Y.Z+1`), never a change to the old one.
+10. The pilot host runs tags only; it is updated with the update script, which rolls back to the previous tag when the smoke test after the update fails.
+11. Publishing the release triggers `.github/workflows/deploy.yml`: one job per pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner. Watch the run in the Actions tab; `update.sh` rolls back to the previous tag when the smoke test fails.
 
 ## Versioning
 

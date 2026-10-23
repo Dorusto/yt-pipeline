@@ -2741,8 +2741,9 @@ def _run_loop(
 
     hints = parse_brief(brief_text)
     facts_block_text = facts_block(load_brief_facts(workspace_path))
+    prompt_brief = brief_text
     if facts_block_text:
-        brief_text = brief_text.rstrip() + "\n\n" + facts_block_text
+        prompt_brief = brief_text.rstrip() + "\n\n" + facts_block_text
     all_good = target_duration_s is not None and target_duration_s <= 0
     if all_good:
         estimate = estimate_all_good(load_json(workspace_path / "shotlog.json"))
@@ -2807,7 +2808,7 @@ def _run_loop(
             effective["llm_budget_usd"] = budget_usd
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
 
-    content_type = detect_content_type(brief_text, workspace_path)
+    content_type = detect_content_type(prompt_brief, workspace_path)
     screenwriter_prompt = read_prompt("screenwriter.md")
     editor_prompt = read_prompt("editor.md")
     reviewer_prompt = read_prompt("reviewer.md")
@@ -2818,12 +2819,12 @@ def _run_loop(
     record = None
     plan = None
     try:
-        plan = screenwriter(client, screenwriter_prompt, brief_text, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block)
+        plan = screenwriter(client, screenwriter_prompt, prompt_brief, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block)
         if plan is None:
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
         if dry_run:
-            baseline = run_baseline(workspace_path, brief_text, hints, beats_path, music, ambient_under_music_db, speed_ramp)
+            baseline = run_baseline(workspace_path, prompt_brief, hints, beats_path, music, ambient_under_music_db, speed_ramp)
             summary = base_summary("written", None, plan_path, 0, None, None, 0, 0.0, 0, warnings, started, state.cost_usd, candidates)
             summary["baseline"] = baseline
             summary["dry_run"] = True
@@ -2843,7 +2844,7 @@ def _run_loop(
             if record is None:
                 raise LoopFailure("editor produced no valid edit")
             violations = validate_edit(record, plan, facts, effective_important_max_s)
-            verdict = reviewer(client, reviewer_prompt, brief_text, plan, record, violations, state, feedback_block)
+            verdict = reviewer(client, reviewer_prompt, prompt_brief, plan, record, violations, state, feedback_block)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
             last_verdict = verdict
