@@ -76,9 +76,9 @@ def test_parse_real_releases_file():
     version, enforced, stable_files = check_stable.parse_stable_files(
         releases.read_text(encoding="utf-8")
     )
-    assert version is None
-    assert enforced is False
-    assert stable_files == []
+    assert version == "v0.1.0"
+    assert enforced is True
+    assert "scripts/serve.py" in stable_files
 
 
 def test_find_violations():
