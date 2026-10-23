@@ -944,6 +944,57 @@ def test_project_page_lists_versions_and_compares_two(tmp_path):
         server.server_close()
 
 
+def write_meta(directory, title="O zi pe munte", missing=None):
+    (directory / "recap_meta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "0.1",
+                "generated_at": "2026-10-15T10:00:00+00:00",
+                "tool": "scripts/recap_meta.py",
+                "title": title,
+                "description": "Prima propoziție. A doua propoziție.",
+                "hashtags": ["#munte", "#recap", "#vara", "#drone", "#drumetie"],
+                "missing": missing or [],
+                "model": "mock-model",
+                "llm_cost_usd": 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_recap_panel_shows_the_meta_box(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_meta(project, missing=["place name"])
+    page = serve.render_recap_panel(project)
+    assert "O zi pe munte" in page
+    assert "Prima propoziție. A doua propoziție." in page
+    assert "#munte #recap #vara #drone #drumetie" in page
+    assert page.count('class="copy"') == 3
+    assert "add the place name to the brief for a better title" in page
+
+
+def test_recap_panel_without_meta_box(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    page = serve.render_recap_panel(project)
+    assert 'class="copy"' not in page
+    assert "Title, description and hashtags" not in page
+
+
+def test_recap_panel_uses_the_shown_version_meta(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_meta(project / "versions" / "v001", title="Titlu vechi")
+    write_meta(project / "versions" / "v002", title="Titlu nou")
+    page = serve.render_recap_panel(project, wanted=1)
+    assert "Titlu vechi" in page
+    assert "Titlu nou" not in page
+
+
 def test_latest_version_without_video_falls_back_to_the_last_one_that_played(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"

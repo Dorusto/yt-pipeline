@@ -215,6 +215,13 @@ finished recap, the explanation and the contact sheet.
   each with its own strip and the feedback that asked for it. While a run is
   going the page shows the last finished version, the step it is on, and
   refreshes by itself; a failed run says where it failed and why.
+- **Title, description and hashtags.** The Recap tab shows a box with the
+  YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
+  version, each with a **Copy** button. When the brief did not carry the place
+  or the date, the box hints at it ("add the place name to the brief for a
+  better title"). The text comes from `recap_meta.py`, which reads `edit.json`
+  and writes `recap_meta.json` (kept in each version):
+  `.venv/bin/python scripts/recap_meta.py --workspace <workspace>`.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 - **Costs** (top bar) is a read-only page: per project the model cost and the
   number of versions, then the ledger totals (monthly running cost, development

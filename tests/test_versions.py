@@ -30,6 +30,22 @@ def test_snapshot_leaves_out_a_render_older_than_the_edit(tmp_path):
     assert not (kept / "recap_720p.mp4").exists()
 
 
+def test_snapshot_keeps_recap_meta_when_newer_than_the_edit(tmp_path):
+    now = time.time()
+    touch(tmp_path / "edit.json", "{}", now - 10)
+    touch(tmp_path / "recap_meta.json", "{}", now)
+    kept = versions.snapshot(tmp_path)
+    assert (kept / "recap_meta.json").is_file()
+
+
+def test_snapshot_leaves_out_recap_meta_older_than_the_edit(tmp_path):
+    now = time.time()
+    touch(tmp_path / "recap_meta.json", "{}", now - 10)
+    touch(tmp_path / "edit.json", "{}", now)
+    kept = versions.snapshot(tmp_path)
+    assert not (kept / "recap_meta.json").exists()
+
+
 def test_first_snapshot_of_an_old_workspace_keeps_the_video(tmp_path):
     now = time.time()
     touch(tmp_path / "recap_720p.mp4", "old video", now - 10)

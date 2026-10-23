@@ -2550,3 +2550,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Decision:** the 2026-10-13 accidental run rule now covers junk frames only by default (obstruction, near-uniform frame, static low-detail frame). A long shaky run keeps its role and its shake defect; `YT_PIPELINE_SHAKY=drop` restores the old upgrade to `accidental`. The policy passed the real test, so it is listed as stable in the v0.1.0 candidate.
 
 **Consequence:** RULES, the user guide and the `yt-quality` skill state the default and the switch; `docs/RELEASES.md` moves the shaky review policy to the stable candidate.
+
+---
+
+## [2026-10-23] Recap title, description and hashtags (V010 lot meta)
+
+**Context:** A finished recap has no upload text: the title, the description and the hashtags are written by hand from the brief and the shots. The web app already shows the recap, its versions and the explanation, so the text belongs next to them.
+
+**Options:** (A) a new web route that calls the model on demand; (B) a standalone station `recap_meta.py` that reads `edit.json` and writes `recap_meta.json`, wired into `recap.py` after `explain`, kept in versions and rendered server-side in the Recap tab.
+
+**Decision:** B. `scripts/recap_meta.py` builds the deterministic facts (the brief text, the place line, the date from `ingest.json` and the deduplicated shot descriptions), asks the `metadata` text role (the role `metadata.py` and `chapters.py` use) for one title, a 2-3 sentence description and 5-10 hashtags, retries once on an invalid answer and writes `recap_meta.json` validated against `schemas/recap_meta.schema.json`. The facts the brief did not carry are listed in `missing` (`place name`, `date`). The station runs after `explain` in `recap.py` and follows the existing recap skip rule (its output newer than `edit.json`); `recap_meta.json` is added to `common.versions.RENDER_NAMES` so each version keeps its own text. The Recap tab renders the shown version's `recap_meta.json` as a box with a Copy button per field and a hint per missing fact.
+
+**Why not:** A) a model call behind a web route has no re-run safety, no versioned output and no `--json` summary; the station keeps the same contract as every other tool.
+
+**Consequence:** `recap_meta.json` is a new interface file (schema `recap_meta`); the Recap tab shows the text for the shown version; no RULES change (the station is covered by the existing recap skip rule and the `recap.py` → the stations tool-to-tool pair).

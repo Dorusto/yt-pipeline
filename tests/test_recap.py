@@ -88,6 +88,8 @@ class Recorder:
             self.touch(ws / "edit.json", json.dumps({"brief": {"text": brief_text}, "made": self.clock}))
         elif name == "explain":
             self.touch(ws / "explain.html", "<html></html>")
+        elif name == "recap_meta":
+            self.touch(ws / "recap_meta.json", "{}")
         elif name == "render":
             self.touch(ws / "recap_720p.mp4", "video")
         elif name == "render_final":
@@ -153,6 +155,7 @@ def test_station_order_without_final(tmp_path, monkeypatch, capsys):
         "router",
         "llm_director",
         "explain",
+        "recap_meta",
         "render",
     ]
 
@@ -174,6 +177,7 @@ def test_station_order_with_final(tmp_path, monkeypatch, capsys):
         "router",
         "llm_director",
         "explain",
+        "recap_meta",
         "render",
         "render_final",
         "export_kdenlive",
@@ -205,7 +209,7 @@ def test_new_brief_redoes_only_the_edit(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     recorder.calls.clear()
     assert run_recap(source, workspace, brief="brief B", extra=["--json"]) == 0
-    assert recorder.calls == ["router", "llm_director", "explain", "render"]
+    assert recorder.calls == ["router", "llm_director", "explain", "recap_meta", "render"]
 
 
 def test_failure_stops_the_chain(tmp_path, monkeypatch, capsys):
@@ -256,7 +260,7 @@ def test_progress_lines_format(tmp_path, monkeypatch, capsys):
         for line in lines
         if re.match(r"^\[\s*\d+/\d+\] \S+\s+(done|skip|FAIL)\s", line)
     ]
-    assert len(progress) == 11
+    assert len(progress) == 12
     assert any(line.startswith("recap:") for line in lines)
     assert run_recap(source, workspace, extra=["--json"]) == 0
     captured = capsys.readouterr()
@@ -300,7 +304,7 @@ def test_no_start_line_for_skipped_stations(tmp_path, monkeypatch, capsys):
     start_pattern = re.compile(r"^\[\s*\d+/\d+\] \S+\s+start$")
     assert not [line for line in lines if start_pattern.match(line)]
     skips = [line for line in lines if re.match(r"^\[\s*\d+/\d+\] \S+\s+skip\s", line)]
-    assert len(skips) == 11
+    assert len(skips) == 12
 
 
 def test_start_line_format(tmp_path, monkeypatch, capsys):
@@ -461,7 +465,7 @@ def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
         run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
         == 0
     )
-    assert recorder.calls == ["llm_director", "explain", "render"]
+    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render"]
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
     statuses = {entry["name"]: entry["status"] for entry in summary["stations"]}
@@ -717,6 +721,17 @@ def test_vertical_station_skip_rule_follows_its_own_file(tmp_path):
     assert recap.is_up_to_date("render_vertical", ctx) is True
 
 
+def test_recap_meta_station_skip_rule_follows_its_own_file(tmp_path):
+    ctx = make_context(tmp_path)
+    edit = ctx.workspace / "edit.json"
+    edit.write_text("{}", encoding="utf-8")
+    assert recap.is_up_to_date("recap_meta", ctx) is False
+    out = ctx.workspace / "recap_meta.json"
+    out.write_text("{}", encoding="utf-8")
+    os.utime(out, (edit.stat().st_mtime + 5, edit.stat().st_mtime + 5))
+    assert recap.is_up_to_date("recap_meta", ctx) is True
+
+
 def test_format_flag_reaches_the_context_and_the_outputs(tmp_path, monkeypatch, capsys):
     source = make_source(tmp_path)
     workspace = tmp_path / "workspace"
@@ -835,7 +850,7 @@ def test_new_edit_reruns_the_edit_without_feedback(tmp_path, monkeypatch, capsys
     recorder.clock += 10000.0
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--new-edit", "--json"]) == 0
-    assert recorder.calls == ["llm_director", "explain", "render"]
+    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render"]
     director_argv = dict(recorder.argvs)["llm_director"]
     flat = director_argv[0] if isinstance(director_argv[0], list) else director_argv
     assert "--force" in flat

@@ -139,6 +139,7 @@ STATION_PLAIN_NAMES = {
     "music_pick": "choosing music",
     "llm_director": "editing (model)",
     "explain": "writing the explanation",
+    "recap_meta": "writing the title and description",
     "render": "rendering 16:9",
     "render_vertical": "rendering 9:16",
 }
@@ -259,6 +260,18 @@ SHORTS_SCRIPT = """
 [].forEach.call(row.querySelectorAll('.short-layout select'),function(sel){
 sel.addEventListener('change',function(){var body=new URLSearchParams();body.set('rank',rank);body.set('layout',sel.value);
 fetch(base+'/shorts-candidates',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});});});});})();
+"""
+
+META_STYLE = """
+.meta-box{border:1px solid var(--rope);border-radius:10px;padding:12px 14px;margin:0 0 14px;background:var(--water)}
+.meta-box h2{margin:0 0 8px;font-size:1.05rem}
+.meta-field{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;padding:6px 0;border-top:1px solid var(--rope)}
+.meta-field:first-of-type{border-top:none}
+.meta-label{color:var(--haze);font-size:.85rem;min-width:80px}
+.meta-value{color:var(--stone);flex:1 1 200px;overflow-wrap:anywhere;white-space:pre-wrap}
+.meta-field button.copy{min-height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--rope);
+background:var(--deck);color:var(--stone);font:inherit;font-size:.8rem;cursor:pointer}
+.meta-hint{color:var(--haze);font-size:.85rem;margin:6px 0 0}
 """
 
 
@@ -960,6 +973,17 @@ if(!v||!b.length)return;b.forEach(function(x){x.addEventListener('click',functio
 v.addEventListener('timeupdate',function(){var t=v.currentTime;b.forEach(function(x){var s=parseFloat(x.dataset.t),e=parseFloat(x.dataset.e);x.classList.toggle('now',t>=s&&t<e);});});});
 """
 
+# Copy buttons: tapping one copies its data-copy value to the clipboard and
+# shows "Copied" for a moment.
+COPY_SCRIPT = """
+(function(){function copy(t){if(navigator.clipboard&&navigator.clipboard.writeText){return navigator.clipboard.writeText(t);}
+var a=document.createElement('textarea');a.value=t;a.setAttribute('readonly','');a.style.position='fixed';a.style.opacity='0';
+document.body.appendChild(a);a.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(a);return Promise.resolve();}
+[].forEach.call(document.querySelectorAll('button.copy'),function(b){b.addEventListener('click',function(){
+var t=b.getAttribute('data-copy')||'';var was=b.textContent;Promise.resolve(copy(t)).then(function(){b.textContent='Copied';
+setTimeout(function(){b.textContent=was;},1200);});});});})();
+"""
+
 
 def render_page(title, body, active=None, script="", refresh=None):
     """Return one full HTML page with the top bar and the shared theme."""
@@ -1429,6 +1453,59 @@ def render_version_links(name, versions, shown, compare=None):
     return row
 
 
+def _load_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def render_meta_box(directory, version_path=None):
+    """The title/description/hashtags box for a workspace or one version, or "" when absent."""
+    base = Path(version_path) if version_path else Path(directory)
+    data = _load_json(base / "recap_meta.json")
+    if not isinstance(data, dict):
+        return ""
+    title = data.get("title")
+    description = data.get("description")
+    hashtags = data.get("hashtags")
+    if not isinstance(title, str) or not isinstance(description, str) or not isinstance(hashtags, list):
+        return ""
+    hashtag_text = " ".join(str(tag) for tag in hashtags)
+    rows = [
+        _meta_field("Title", title),
+        _meta_field("Description", description),
+        _meta_field("Hashtags", hashtag_text),
+    ]
+    hints = []
+    for item in data.get("missing") or []:
+        if item == "place name":
+            hints.append("add the place name to the brief for a better title")
+        elif item == "date":
+            hints.append("add the date to the brief for a better title")
+        else:
+            hints.append(f"add {item} to the brief for a better title")
+    hint_html = "".join(
+        f'<p class="meta-hint">{html_escape(hint)}</p>' for hint in hints
+    )
+    return (
+        f"<style>{META_STYLE}</style>"
+        '<section class="meta-box"><h2>Title, description and hashtags</h2>'
+        f'{"".join(rows)}{hint_html}</section>'
+    )
+
+
+def _meta_field(label, value):
+    escaped = html_escape(value)
+    return (
+        '<div class="meta-field">'
+        f'<span class="meta-label">{html_escape(label)}</span>'
+        f'<span class="meta-value">{escaped}</span>'
+        f'<button type="button" class="copy" data-copy="{escaped}">Copy</button>'
+        "</div>"
+    )
+
+
 def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
     directory = Path(directory)
@@ -1451,6 +1528,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
+        parts.append(render_meta_box(directory))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
     if compare is not None and compare["number"] == shown["number"]:
@@ -1468,6 +1546,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             trust_edit=True,
         )
     )
+    parts.append(render_meta_box(directory, shown["path"]))
     if compare is not None:
         other = compare["name"].lstrip("v").lstrip("0") or "0"
         parts.append(
@@ -1629,7 +1708,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f'<section class="panel">{panels[tab]}</section>'
         f"{render_reedit(name, music_tracks)}"
     )
-    script = (STRIP_SCRIPT + TICK_SCRIPT + PICK_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
+    script = (STRIP_SCRIPT + TICK_SCRIPT + PICK_SCRIPT + COPY_SCRIPT if tab == "recap" else "") + LENGTH_SCRIPT
     if tab == "cuts":
         script += CUTS_SCRIPT
     if tab == "shorts":

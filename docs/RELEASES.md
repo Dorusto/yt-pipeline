@@ -23,3 +23,4 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 - The audit changes.
 - Costs ledger.
 - The Costs page and the feedback/requests form.
+- Title, description and hashtags for a recap.

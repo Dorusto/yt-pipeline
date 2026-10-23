@@ -351,6 +351,8 @@ def is_up_to_date(name, ctx):
         )
     if name == "explain":
         return is_newer(ws / "explain.html", ws / "edit.json")
+    if name == "recap_meta":
+        return is_newer(ws / "recap_meta.json", ws / "edit.json")
     if name == "render":
         return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
     if name == "render_vertical":
@@ -540,6 +542,16 @@ def build_stations(ctx):
         {
             "name": "explain",
             "argv": [station_command(ctx, "explain.py", ["--workspace", str(ws)], force=force)],
+        }
+    )
+    stations.append(
+        {
+            "name": "recap_meta",
+            "argv": [
+                station_command(
+                    ctx, "recap_meta.py", ["--workspace", str(ws)], force=force, budget=True
+                )
+            ],
         }
     )
     if ctx.frame_format in ("16x9", "both"):

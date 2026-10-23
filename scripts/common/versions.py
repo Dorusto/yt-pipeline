@@ -25,6 +25,7 @@ RENDER_NAMES = (
     "recap_final.mp4",
     "recap_final_9x16.mp4",
     "explain.html",
+    "recap_meta.json",
 )
 
 
