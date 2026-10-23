@@ -189,8 +189,7 @@ finished recap, the explanation and the contact sheet.
 # open http://<tailnet-ip>:8091/
 ```
 
-- **Projects** lists every workspace with its status (`running` / `failed` /
-  `done`, from `<workspace>/.run.json`) and links to what exists.
+- **Projects** is a grid of poster cards, one per workspace, each with the recap's poster image, the name, the status (`running` / `failed` / `done`, from `<workspace>/.run.json`), the length and the date; a running project shows its current step.
 - **Upload** takes clips and photos straight from the phone browser: the files,
   a project folder name, the brief and an options form where **every field
   defaults to Auto** (length 30 s / 60 s / 90 s / 3 min, order chronological /
@@ -201,7 +200,7 @@ finished recap, the explanation and the contact sheet.
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
   never outside the inbox) and starts `recap.py` in the background; the status
   shows on Projects.
-- **A project page** has the tabs **Recap** (the player, and the vertical 9:16 player when the format was 9:16 or both), **Files**, then a **Details** group holding **Why?** and **Shots**, then **Cuts** and **Shorts**. **Why?** (`explain.html`) opens with a short plain-language summary and collapsed sections: the brief, the director's plan, the shots in the edit, what was left out and why grouped by reason, and the technical notes. **Shots** (`shotlog.html`) opens with a summary line and collapsed sections — used in the edit, kept but not used, not usable — grouped per clip.
+- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there — and the vertical 9:16 player when the format was 9:16 or both), **Files**, then a **Details** group holding **Why?** and **Shots**, then **Cuts** and **Shorts**. **Why?** (`explain.html`) opens with a short plain-language summary and collapsed sections: the brief, the director's plan, the shots in the edit, what was left out and why grouped by reason, and the technical notes. **Shots** (`shotlog.html`) opens with a summary line and collapsed sections — used in the edit, kept but not used, not usable — grouped per clip.
 - **Files** lists every clip and photo of the project (from its proxies and its inbox source) with its length or "photo", its size and its state — `in the edit`, `new` (added after the last edit) or `left out`. **Add files** drops more clips and photos into the project's inbox source folder (the same consent and storage checks as the Upload page); when there are new files the tab says "N new files. They join the next edit." with a **Make a new edit** button that opens the Re-edit form. A bin icon next to a file asks "Leave out <name>?" and writes the name to `<workspace>/excluded.json`; a left-out file shows **Bring back**. Nothing is deleted from disk — every station that lists clips or photos skips the left-out names, and only a project delete removes files.
 - **Re-edit** on the project page repeats the options and adds a **feedback
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").

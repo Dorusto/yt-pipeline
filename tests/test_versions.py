@@ -83,3 +83,16 @@ def test_list_versions_orders_by_number(tmp_path):
         directory.mkdir(parents=True)
     (tmp_path / "versions" / "notes").mkdir()
     assert [version["number"] for version in versions.list_versions(tmp_path)] == [1, 2, 10]
+
+
+def test_snapshot_keeps_thumbs(tmp_path):
+    now = time.time()
+    touch(tmp_path / "edit.json", "{}", now - 10)
+    touch(tmp_path / "recap_720p.mp4", "video", now)
+    touch(tmp_path / "thumbs" / "poster.jpg", "jpg", now)
+    touch(tmp_path / "thumbs" / "shot-1.jpg", "jpg", now)
+    kept = versions.snapshot(tmp_path)
+    assert (kept / "thumbs" / "poster.jpg").is_file()
+    assert (kept / "thumbs" / "shot-1.jpg").is_file()
+    listed = versions.list_versions(tmp_path)[0]
+    assert "thumbs" in listed["files"]

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: the project page shows the director's reviewer verdict per version, and the Re-edit box has an "Ask the director" button that shows how the director reads a request with a cost/time estimate before a new version is made (llm_director.py --interpret-feedback).
 - Web app: a Files tab that lists every clip and photo of a project, adds more files into the inbox source and leaves a file out (reversibly, `excluded.json`); every station skips the left-out names.
 - Deploy: `.github/workflows/deploy.yml` deploys a published release (or a manual dispatch with a tag) to every pilot container in the `PILOT_RUNNERS` repository variable, each running `deploy/update.sh <tag>` on its own self-hosted runner.
+- Web app: a `thumbs` station (`scripts/thumbs.py`) writes `thumbs/poster.jpg` (30 % of the recap) and `thumbs/shot-N.jpg` (the middle frame of each slot) after the render; the Projects page shows poster cards and the shot strip shows each shot's thumbnail.
 
 ### Changed
 
@@ -33,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared overlap math in `scripts/common/overlap.py`.
 - Docs: the shaky review policy is the default (long shaky runs reach the director with their shake defect; `YT_PIPELINE_SHAKY=drop` restores the old upgrade), the `yt-edit-drop` skill, the `drop-shot` write route and the donation-links wording.
 - The Why? and Shots pages now open with a plain-language summary and collapsed, grouped sections, and the two tabs moved under a Details group.
+- Web app: the "editing room" redesign — a warm charcoal base with an amber accent for primary actions and teal only for clip blocks, one token set in `scripts/common/theme.py` shared by every page, and a footage-forward layout (poster cards, the player poster, shot thumbnails).
 
 ### Fixed
 

@@ -231,7 +231,7 @@ def test_project_page_default_tab_is_recap(tmp_path):
     try:
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
-        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
         assert b'href="/2026-10-14/?tab=recap"' in body
         assert b'href="/2026-10-14/?tab=why"' in body
         assert b'href="/2026-10-14/?tab=shots"' in body
@@ -307,7 +307,7 @@ def test_unknown_tab_falls_back_to_recap(tmp_path):
     try:
         status, _, body = request(server, "GET", "/2026-10-14/?tab=bogus")
         assert status == 200
-        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -1222,22 +1222,6 @@ def test_the_reedit_button_always_asks_for_a_new_edit(tmp_path):
     assert "--new-edit" not in command
 
 
-def test_brand_progress_color_reads_cool(tmp_path):
-    brand = tmp_path / "brand.json"
-    brand.write_text(json.dumps({"colors": {"cool": "#123456"}}), encoding="utf-8")
-    assert serve.brand_progress_color(brand) == "#123456"
-
-
-def test_brand_progress_color_falls_back(tmp_path):
-    assert serve.brand_progress_color(tmp_path / "missing.json") == "#57b8c4"
-    malformed = tmp_path / "malformed.json"
-    malformed.write_text("{not json", encoding="utf-8")
-    assert serve.brand_progress_color(malformed) == "#57b8c4"
-    empty = tmp_path / "empty.json"
-    empty.write_text(json.dumps({"colors": {}}), encoding="utf-8")
-    assert serve.brand_progress_color(empty) == "#57b8c4"
-
-
 def test_served_html_themes_the_progress_bar(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
@@ -1247,7 +1231,7 @@ def test_served_html_themes_the_progress_bar(tmp_path):
         assert status == 200
         assert "::-webkit-progress-value" in page
         assert "::-moz-progress-bar" in page
-        assert serve.BRAND_PROGRESS_COLOR in page
+        assert "var(--accent)" in page
     finally:
         server.shutdown()
         server.server_close()
@@ -1654,7 +1638,7 @@ def test_non_mode_b_project_has_no_cuts_tab(tmp_path):
         assert b"?tab=cuts" not in body
         status, _, body = request(server, "GET", "/2026-10-14/?tab=cuts")
         assert status == 200
-        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -1824,7 +1808,7 @@ def test_project_without_shorts_candidates_has_no_shorts_tab(tmp_path):
         assert b"?tab=shorts" not in body
         status, _, body = request(server, "GET", "/2026-10-14/?tab=shorts")
         assert status == 200
-        assert b'<video controls preload="metadata" src="recap_720p.mp4">' in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -3359,8 +3343,8 @@ def test_check_json_reports_brand_logo(tmp_path, capsys):
 
 def test_theme_has_a_light_palette():
     assert "prefers-color-scheme:light" in serve.THEME_CSS
-    assert "--water:#eef3f5" in serve.THEME_CSS
-    assert "--stone:#14232c" in serve.THEME_CSS
+    assert "--water:#f6f1e8" in serve.THEME_CSS
+    assert "--stone:#241f19" in serve.THEME_CSS
 
 
 def test_key_classes_on_each_page(tmp_path):
@@ -3381,6 +3365,123 @@ def test_key_classes_on_each_page(tmp_path):
         assert b'class="tabs"' in project
         assert b'class="panel"' in project
         assert b'class="player"' in project
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def write_edit(project, slots):
+    (project / "edit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "0.1",
+                "generated_at": "2026-10-23T00:00:00+00:00",
+                "brief": {"text": "a calm recap"},
+                "sources": [{"file": "a.mp4", "path": "/x/a.mp4", "duration_s": 10.0}],
+                "video": slots,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_thumbs_are_served(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "thumbs").mkdir()
+    (project / "thumbs" / "poster.jpg").write_bytes(b"posterbytes")
+    (project / "thumbs" / "shot-1.jpg").write_bytes(b"shotbytes")
+    version = project / "versions" / "v001"
+    (version / "thumbs").mkdir(parents=True)
+    (version / "edit.json").write_text("{}", encoding="utf-8")
+    (version / "thumbs" / "poster.jpg").write_bytes(b"versionposter")
+    server = start_server(root)
+    try:
+        status, headers, body = request(server, "GET", "/2026-10-14/thumbs/poster.jpg")
+        assert status == 200
+        assert headers["Content-Type"] == "image/jpeg"
+        assert body == b"posterbytes"
+        status, _, body = request(server, "GET", "/2026-10-14/thumbs/shot-1.jpg")
+        assert status == 200
+        assert body == b"shotbytes"
+        status, _, body = request(server, "GET", "/2026-10-14/versions/v001/thumbs/poster.jpg")
+        assert status == 200
+        assert body == b"versionposter"
+        assert request(server, "GET", "/2026-10-14/thumbs/evil.jpg")[0] == 404
+        assert request(server, "GET", "/2026-10-14/thumbs/../edit.json")[0] == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_projects_page_shows_poster_cards(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "thumbs").mkdir()
+    (project / "thumbs" / "poster.jpg").write_bytes(b"jpg")
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/")
+        text = body.decode()
+        assert 'class="card"' in text
+        assert 'src="/2026-10-14/thumbs/poster.jpg"' in text
+    finally:
+        server.shutdown()
+        server.server_close()
+    (project / "thumbs" / "poster.jpg").unlink()
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/")
+        text = body.decode()
+        assert 'class="poster empty"' in text
+        assert "thumbs/poster.jpg" not in text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_strip_shows_shot_thumbnails(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_edit(
+        project,
+        [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.5, "reason": "r"}],
+    )
+    (project / "thumbs").mkdir()
+    (project / "thumbs" / "shot-1.jpg").write_bytes(b"jpg")
+    recap = project / "recap_720p.mp4"
+    stamp = (project / "edit.json").stat().st_mtime + 10
+    os.utime(recap, (stamp, stamp))
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/2026-10-14/")
+        assert "background-image:url('thumbs/shot-1.jpg')" in body.decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+    (project / "thumbs" / "shot-1.jpg").unlink()
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/2026-10-14/")
+        assert "background-image" not in body.decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_pages_are_phone_first(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        for path in ("/", "/upload", "/costs", "/2026-10-14/"):
+            status, _, body = request(server, "GET", path)
+            assert status == 200, path
+            assert b'name="viewport" content="width=device-width, initial-scale=1"' in body, path
+        _, _, upload = request(server, "GET", "/upload")
+        assert b'accept="video/*,image/*"' in upload
+        assert b"multiple" in upload
+        _, _, project = request(server, "GET", "/2026-10-14/")
+        assert b"playsinline" in project
     finally:
         server.shutdown()
         server.server_close()

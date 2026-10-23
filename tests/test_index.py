@@ -1180,6 +1180,6 @@ def test_a_lone_photo_with_closed_eyes_is_not_eligible(tmp_path):
 
 def test_shotlog_page_shares_the_theme_tokens():
     page = index._html_document("w", "summary", "now", [])
-    for token in ("--water:#13202b", "--sea:#57b8c4", "--tap:44px",
-                  "--font-display:", "prefers-color-scheme: light"):
+    for token in ("--water:#1b1917", "--sea:#4fb0bd", "--tap:44px",
+                  "--font-display:", "prefers-color-scheme:light"):
         assert token in page

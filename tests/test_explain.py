@@ -503,6 +503,6 @@ def test_thumbnails_read_the_workspace_proxy_when_the_recorded_path_is_gone(tmp_
 
 def test_explain_page_shares_the_theme_tokens():
     page = explain._page("w", "summary", [])
-    for token in ("--water:#13202b", "--sea:#57b8c4", "--tap:44px",
-                  "--font-display:", "prefers-color-scheme: light"):
+    for token in ("--water:#1b1917", "--sea:#4fb0bd", "--tap:44px",
+                  "--font-display:", "prefers-color-scheme:light"):
         assert token in page

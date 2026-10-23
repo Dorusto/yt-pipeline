@@ -2654,3 +2654,17 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) a raster logo or an icon font adds a dependency and does not adapt to the light and dark theme; the app already ships no external assets.
 
 **Consequence:** the header placeholder becomes the chosen mark; the favicon is the chosen SVG; `brand.logo` is documented in `config.yaml.example`; the new parts are experimental in the v0.1.0 candidate; no schema change and no new tool.
+
+---
+
+## [2026-10-23] Web app redesign: the editing room look and poster thumbnails (V010 lot design2)
+
+**Context:** The first design lot (V010 lot design) only renamed the tokens and kept the old blue-slate look, so the owner still saw the old design. The app also showed no picture of the footage: the projects page was a list of rows and the shot strip was coloured blocks with a number.
+
+**Options:** (A) keep the token set and only restyle a few components; (B) a decided visual direction ("editing room": a warm charcoal base, an amber accent for primary actions, teal only for clip blocks, a light theme that mirrors it) applied to every page, plus poster thumbnails so the footage carries the pages.
+
+**Decision:** B. `THEME_CSS` and `PROGRESS_CSS` move to `scripts/common/theme.py` and are imported by `serve.py`, `explain.py` and `index.py` (the tokens were written three times); the palette is warm charcoal (`--water:#1b1917`) with warm off-white text, an amber accent (`--amber`, `--accent`) for primary actions, teal (`--sea`, `--clip`) only for clip blocks, and `--hero` defined in both themes; the progress bar reads `var(--accent)` instead of a brand.json colour. A new `thumbs` station (`scripts/thumbs.py`) writes `<workspace>/thumbs/poster.jpg` (30 % of the recap) and `thumbs/shot-N.jpg` (the middle frame of each timeline slot), 320 px wide, skipped when newer than the recap; `serve.py` serves them (`GET /<project>/thumbs/<poster|shot-N>.jpg` and the version path) and shows a grid of poster cards on Projects, the poster on the player and a thumbnail with its number on each strip block. The timeline math moves to `scripts/common/edit_timeline.py` so `serve.py` and `thumbs.py` agree on where every slot starts. `versions.py` keeps the thumbs folder in a version. No route, form field or behaviour changes beyond the thumbs routes and the station.
+
+**Why not:** A) the owner had already rejected the look; the tokens alone do not change what people see.
+
+**Consequence:** the app looks clearly different (warm charcoal and amber, footage-forward); the thumbs station and the served thumbnails are experimental in the v0.1.0 candidate; RULES gains the thumbs routes and the station line; no schema change.

@@ -365,6 +365,11 @@ def is_up_to_date(name, ctx):
         return is_newer(ws / "recap_720p.mp4", ws / "edit.json")
     if name == "render_vertical":
         return is_newer(ws / VERTICAL_PREVIEW_NAME, ws / "edit.json")
+    if name == "thumbs":
+        recap = ws / "recap_720p.mp4"
+        if not recap.is_file():
+            recap = ws / VERTICAL_PREVIEW_NAME
+        return is_newer(ws / "thumbs" / "poster.jpg", recap)
     if name == "render_final":
         return is_newer(ws / "recap_final.mp4", ws / "edit.json")
     if name == "render_final_vertical":
@@ -596,6 +601,12 @@ def build_stations(ctx):
                 ],
             }
         )
+    stations.append(
+        {
+            "name": "thumbs",
+            "argv": [station_command(ctx, "thumbs.py", ["--workspace", str(ws)], force=force)],
+        }
+    )
     if ctx.music == "auto":
         pick_args = [
             "--brief-file",

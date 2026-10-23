@@ -92,6 +92,9 @@ class Recorder:
             self.touch(ws / "recap_meta.json", "{}")
         elif name == "render":
             self.touch(ws / "recap_720p.mp4", "video")
+        elif name == "thumbs":
+            self.touch(ws / "thumbs" / "poster.jpg", "jpg")
+            self.touch(ws / "thumbs" / "shot-1.jpg", "jpg")
         elif name == "render_final":
             self.touch(ws / "recap_final.mp4", "video")
         elif name == "export_kdenlive":
@@ -157,6 +160,7 @@ def test_station_order_without_final(tmp_path, monkeypatch, capsys):
         "explain",
         "recap_meta",
         "render",
+        "thumbs",
     ]
 
 
@@ -179,6 +183,7 @@ def test_station_order_with_final(tmp_path, monkeypatch, capsys):
         "explain",
         "recap_meta",
         "render",
+        "thumbs",
         "render_final",
         "export_kdenlive",
     ]
@@ -209,7 +214,7 @@ def test_new_brief_redoes_only_the_edit(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     recorder.calls.clear()
     assert run_recap(source, workspace, brief="brief B", extra=["--json"]) == 0
-    assert recorder.calls == ["router", "llm_director", "explain", "recap_meta", "render"]
+    assert recorder.calls == ["router", "llm_director", "explain", "recap_meta", "render", "thumbs"]
 
 
 def test_failure_stops_the_chain(tmp_path, monkeypatch, capsys):
@@ -260,7 +265,7 @@ def test_progress_lines_format(tmp_path, monkeypatch, capsys):
         for line in lines
         if re.match(r"^\[\s*\d+/\d+\] \S+\s+(done|skip|FAIL)\s", line)
     ]
-    assert len(progress) == 12
+    assert len(progress) == 13
     assert any(line.startswith("recap:") for line in lines)
     assert run_recap(source, workspace, extra=["--json"]) == 0
     captured = capsys.readouterr()
@@ -304,7 +309,7 @@ def test_no_start_line_for_skipped_stations(tmp_path, monkeypatch, capsys):
     start_pattern = re.compile(r"^\[\s*\d+/\d+\] \S+\s+start$")
     assert not [line for line in lines if start_pattern.match(line)]
     skips = [line for line in lines if re.match(r"^\[\s*\d+/\d+\] \S+\s+skip\s", line)]
-    assert len(skips) == 12
+    assert len(skips) == 13
 
 
 def test_start_line_format(tmp_path, monkeypatch, capsys):
@@ -465,7 +470,7 @@ def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
         run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
         == 0
     )
-    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render"]
+    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render", "thumbs"]
     captured = capsys.readouterr()
     summary = json.loads(captured.out)
     statuses = {entry["name"]: entry["status"] for entry in summary["stations"]}
@@ -739,7 +744,7 @@ def test_format_flag_reaches_the_context_and_the_outputs(tmp_path, monkeypatch, 
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--format", "both", "--json"]) == 0
     summary = json.loads(capsys.readouterr().out)
-    assert recorder.calls[-2:] == ["render", "render_vertical"]
+    assert recorder.calls[-3:] == ["render", "render_vertical", "thumbs"]
     assert summary["outputs"]["preview_vertical"] == str(workspace / "recap_720p_9x16.mp4")
 
 
@@ -798,7 +803,7 @@ def test_a_failed_vertical_render_does_not_stop_the_other_renders(tmp_path, monk
     recorder = Recorder(fail_at="render_vertical")
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--format", "both", "--final", "--json"]) == EXIT_RUNTIME
-    assert recorder.calls[-4:] == ["render_vertical", "render_final", "render_final_vertical", "export_kdenlive"]
+    assert recorder.calls[-5:] == ["render_vertical", "thumbs", "render_final", "render_final_vertical", "export_kdenlive"]
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "failed"
     assert (workspace / "recap_720p.mp4").is_file()
@@ -850,7 +855,7 @@ def test_new_edit_reruns_the_edit_without_feedback(tmp_path, monkeypatch, capsys
     recorder.clock += 10000.0
     monkeypatch.setattr(recap, "execute", recorder)
     assert run_recap(source, workspace, extra=["--new-edit", "--json"]) == 0
-    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render"]
+    assert recorder.calls == ["llm_director", "explain", "recap_meta", "render", "thumbs"]
     director_argv = dict(recorder.argvs)["llm_director"]
     flat = director_argv[0] if isinstance(director_argv[0], list) else director_argv
     assert "--force" in flat
@@ -964,3 +969,22 @@ def test_proxy_station_carries_the_exclude_file(tmp_path):
     argv = proxy["argv"][0]
     assert "--exclude-file" in argv
     assert argv[argv.index("--exclude-file") + 1] == str(ctx.workspace / "excluded.json")
+
+
+def test_thumbs_station_after_render(tmp_path):
+    ctx = make_context(tmp_path)
+    names = [station["name"] for station in recap.build_stations(ctx)]
+    assert names.index("thumbs") == names.index("render") + 1
+
+
+def test_thumbs_skip_rule(tmp_path):
+    ctx = make_context(tmp_path)
+    recap_file = ctx.workspace / "recap_720p.mp4"
+    recap_file.write_bytes(b"video")
+    assert recap.is_up_to_date("thumbs", ctx) is False
+    poster = ctx.workspace / "thumbs" / "poster.jpg"
+    poster.parent.mkdir()
+    poster.write_bytes(b"jpg")
+    stamp = recap_file.stat().st_mtime + 5
+    os.utime(poster, (stamp, stamp))
+    assert recap.is_up_to_date("thumbs", ctx) is True

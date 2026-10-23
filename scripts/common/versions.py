@@ -19,6 +19,7 @@ from pathlib import Path
 VERSIONS_DIR = "versions"
 META_NAME = "version.json"
 EDIT_NAME = "edit.json"
+THUMBS_DIR = "thumbs"
 RENDER_NAMES = (
     "recap_720p.mp4",
     "recap_720p_9x16.mp4",
@@ -50,11 +51,21 @@ def read_meta(directory):
     return data if isinstance(data, dict) else {}
 
 
+def _thumbs_files(workspace):
+    """The sorted ``.jpg`` files in ``<workspace>/thumbs/``."""
+    directory = Path(workspace) / THUMBS_DIR
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.iterdir() if path.is_file() and path.suffix == ".jpg")
+
+
 def list_versions(workspace):
     """One dict per version, oldest first: number, folder, files and metadata."""
     versions = []
     for directory in version_dirs(workspace):
         files = [name for name in (EDIT_NAME, *RENDER_NAMES) if (directory / name).is_file()]
+        if (directory / THUMBS_DIR).is_dir():
+            files.append(THUMBS_DIR)
         versions.append(
             {
                 "number": int(directory.name[1:]),
@@ -118,7 +129,13 @@ def same_as_latest(workspace, names):
     if not versions:
         return False
     latest = versions[-1]
-    return all(same_file(latest / name, Path(workspace) / name) for name in names)
+    if not all(same_file(latest / name, Path(workspace) / name) for name in names):
+        return False
+    current = _thumbs_files(workspace)
+    kept = _thumbs_files(latest)
+    if [path.name for path in current] != [path.name for path in kept]:
+        return False
+    return all(same_file(kept_path, current_path) for kept_path, current_path in zip(kept, current))
 
 
 def snapshot(workspace, meta=None, keep_renders=False):
@@ -140,6 +157,15 @@ def snapshot(workspace, meta=None, keep_renders=False):
     directory.mkdir(parents=True, exist_ok=False)
     for name in names:
         keep_file(workspace / name, directory / name)
+    thumbs = _thumbs_files(workspace)
+    if thumbs:
+        edit = workspace / EDIT_NAME
+        newest = max(path.stat().st_mtime for path in thumbs)
+        if not edit.is_file() or newest >= edit.stat().st_mtime:
+            thumbs_target = directory / THUMBS_DIR
+            thumbs_target.mkdir(parents=True, exist_ok=True)
+            for path in thumbs:
+                shutil.copy2(path, thumbs_target / path.name)
     record = {"created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "files": names}
     record.update(meta or {})
     (directory / META_NAME).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

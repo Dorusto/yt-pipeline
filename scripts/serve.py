@@ -70,8 +70,8 @@ from common.costs import compute_totals, connect as connect_ledger
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
 from common.media import clip_kind, video_files
 from common.photos import is_photo
-from common.moves import slot_screen_length
-from common.timeline_words import fade_for_join
+from common.edit_timeline import edit_summary as edit_summary_document
+from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
 from common.versions import list_versions
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -172,8 +172,8 @@ STATION_PLAIN_NAMES = {
 
 BRAND_PATH = REPO_ROOT / "brand.json"
 BRAND_DIR = REPO_ROOT / "assets" / "brand"
-PROGRESS_FALLBACK_COLOR = "#57b8c4"
 SHOT_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,63}$")
+THUMB_NAME_RE = re.compile(r"^(poster|shot-\d{1,4})\.jpg$")
 EXPECTATION_KINDS = ("must_include", "wrong_label")
 NOTE_MAX_CHARS = 200
 EXPECTATIONS_FILE = "expectations.yaml"
@@ -204,29 +204,14 @@ BRIEF_PLACEHOLDER = (
 )
 
 
-def brand_progress_color(brand_path):
-    """The brand accent for the progress bar, or the fallback when brand.json is unusable."""
-    try:
-        data = json.loads(Path(brand_path).read_text(encoding="utf-8"))
-        color = data["colors"]["cool"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return PROGRESS_FALLBACK_COLOR
-    if not isinstance(color, str) or not color.strip():
-        return PROGRESS_FALLBACK_COLOR
-    return color.strip()
-
-
-BRAND_PROGRESS_COLOR = brand_progress_color(BRAND_PATH)
-
-
 SHOTS_OVERLAY_STYLE = """
-.badge.used{color:var(--sea)}
-.why-out{font-size:.8rem;color:var(--left);margin:2px 0 6px;overflow-wrap:anywhere}
-.card.in-edit{outline:2px solid var(--sea)}
+.badge.used{color:var(--accent)}
+.why-out{font-size:.8rem;color:var(--danger);margin:2px 0 6px;overflow-wrap:anywhere}
+.card.in-edit{outline:2px solid var(--accent)}
 .shot-actions{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 0}
-.shot-actions button{min-height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--rope);
-background:var(--water);color:var(--stone);font:inherit;font-size:.8rem;cursor:pointer}
-.shot-actions button.on{background:var(--sea);color:var(--water)}
+.shot-actions button{min-height:44px;padding:0 10px;border-radius:999px;border:1px solid var(--line);
+background:var(--surface);color:var(--text);font:inherit;font-size:.8rem;cursor:pointer}
+.shot-actions button.on{background:var(--accent);color:var(--bg)}
 """
 
 SHOTS_OVERLAY_SCRIPT = """
@@ -258,17 +243,17 @@ var count=section.querySelector('.count');if(count)count.textContent=String(n);}
 """
 
 CUTS_STYLE = """
-.cut-row{border-top:1px solid var(--rope);padding:12px 0}
-.cut-row:last-child{border-bottom:1px solid var(--rope)}
+.cut-row{border-top:1px solid var(--line);padding:12px 0}
+.cut-row:last-child{border-bottom:1px solid var(--line)}
 .cut-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
-.cut-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sea)}
-.cut-reason{color:var(--stone)}
-.cut-meta{color:var(--haze);font-size:.85rem}
-.cut-words{color:var(--haze);font-size:.9rem;margin:4px 0;overflow-wrap:anywhere}
+.cut-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent)}
+.cut-reason{color:var(--text)}
+.cut-meta{color:var(--muted);font-size:.85rem}
+.cut-words{color:var(--muted);font-size:.9rem;margin:4px 0;overflow-wrap:anywhere}
 .cut-actions{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 0}
-.cut-actions button{min-height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--rope);
-background:var(--water);color:var(--stone);font:inherit;font-size:.85rem;cursor:pointer}
-.cut-actions button.on{background:var(--sea);color:var(--water)}
+.cut-actions button{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line);
+background:var(--surface);color:var(--text);font:inherit;font-size:.85rem;cursor:pointer}
+.cut-actions button.on{background:var(--accent);color:var(--bg)}
 .cut-audio{margin-top:8px;width:100%}
 @media (max-width:600px){.cut-head{display:block}.cut-meta{display:block;margin-top:2px}}
 """
@@ -282,15 +267,15 @@ fetch(base+'/cut-review',{method:'POST',headers:{'Content-Type':'application/x-w
 """
 
 SHORTS_STYLE = """
-.short-row{border-top:1px solid var(--rope);padding:12px 0}
-.short-row:last-child{border-bottom:1px solid var(--rope)}
+.short-row{border-top:1px solid var(--line);padding:12px 0}
+.short-row:last-child{border-bottom:1px solid var(--line)}
 .short-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
-.short-rank{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sea)}
-.short-reason{color:var(--stone)}
+.short-rank{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent)}
+.short-reason{color:var(--text)}
 .short-title{margin:4px 0 0}
-.short-description{color:var(--stone);margin:2px 0 0}
-.short-meta{color:var(--haze);font-size:.85rem}
-.short-chapter{color:var(--haze);font-size:.9rem;margin:4px 0}
+.short-description{color:var(--text);margin:2px 0 0}
+.short-meta{color:var(--muted);font-size:.85rem}
+.short-chapter{color:var(--muted);font-size:.9rem;margin:4px 0}
 .short-layout{display:flex;align-items:center;gap:8px;margin:6px 0 0}
 .short-layout select{width:auto;min-width:120px}
 """
@@ -304,19 +289,19 @@ fetch(base+'/shorts-candidates',{method:'POST',headers:{'Content-Type':'applicat
 """
 
 META_STYLE = """
-.meta-box{border:1px solid var(--rope);border-radius:10px;padding:12px 14px;margin:0 0 14px;background:var(--water)}
+.meta-box{border:1px solid var(--line);border-radius:var(--radius-l);padding:12px 14px;margin:0 0 14px;background:var(--surface)}
 .meta-box h2{margin:0 0 8px;font-size:1.05rem}
-.meta-field{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;padding:6px 0;border-top:1px solid var(--rope)}
+.meta-field{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}
 .meta-field:first-of-type{border-top:none}
-.meta-label{color:var(--haze);font-size:.85rem;min-width:80px}
-.meta-value{color:var(--stone);flex:1 1 200px;overflow-wrap:anywhere;white-space:pre-wrap}
-.meta-field button.copy{min-height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--rope);
-background:var(--deck);color:var(--stone);font:inherit;font-size:.8rem;cursor:pointer}
-.meta-hint{color:var(--haze);font-size:.85rem;margin:6px 0 0}
+.meta-label{color:var(--muted);font-size:.85rem;min-width:80px}
+.meta-value{color:var(--text);flex:1 1 200px;overflow-wrap:anywhere;white-space:pre-wrap}
+.meta-field button.copy{min-height:44px;padding:0 12px;border-radius:999px;border:1px solid var(--line);
+background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:pointer}
+.meta-hint{color:var(--muted);font-size:.85rem;margin:6px 0 0}
 """
 
 REVIEW_STYLE = """
-.review{border:1px solid var(--rope);border-radius:10px;padding:10px 14px;margin:0 0 14px;background:var(--water)}
+.review{border:1px solid var(--line);border-radius:var(--radius-l);padding:10px 14px;margin:0 0 14px;background:var(--surface)}
 .review-line{margin:0;font-weight:600}
 .objections{margin:6px 0 0;padding-left:1.2em}
 .obj-shot{font-weight:700;margin-right:.3em}
@@ -635,6 +620,27 @@ def discover_projects(root):
 def existing_artifacts(directory):
     """Return the served artifact names present in ``directory``, in fixed order."""
     return [name for name in SERVED_FILES if (Path(directory) / name).is_file()]
+
+
+def content_type_for(path):
+    """The Content-Type for a served file: JPEG for thumbnails, else the allowlist."""
+    path = Path(path)
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        return "image/jpeg"
+    return CONTENT_TYPES.get(path.name, "application/octet-stream")
+
+
+def project_date(directory):
+    """The newest activity date of a project folder as ``YYYY-MM-DD``, or an empty string."""
+    directory = Path(directory)
+    times = [
+        (directory / name).stat().st_mtime
+        for name in DETECTED_ARTIFACTS
+        if (directory / name).is_file()
+    ]
+    if not times:
+        return ""
+    return datetime.fromtimestamp(max(times)).strftime("%Y-%m-%d")
 
 
 def read_run_pid(directory):
@@ -1014,193 +1020,42 @@ def html_escape(text):
     )
 
 
-THEME_CSS = """
-:root{color-scheme:dark light;
---water:#13202b;--deck:#1b2a37;--rope:#2b3d4d;--stone:#ece5d5;--haze:#9badbb;
---sea:#57b8c4;--keep:#a3cf7f;--left:#e2806f;--busy:#e8b54d;
---bg:var(--water);--surface:var(--deck);--line:var(--rope);--text:var(--stone);
---muted:var(--haze);--accent:var(--sea);--ok:var(--keep);--warn:var(--busy);--danger:var(--left);
---fs-xs:.78rem;--fs-s:.88rem;--fs-m:1rem;--fs-l:1.25rem;--fs-xl:1.6rem;--fs-2xl:2rem;
---lh-tight:1.15;--lh-body:1.55;
---font-display:ui-serif,Georgia,"Times New Roman",serif;
---font-body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
---font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
---sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;
---radius-s:6px;--radius-l:14px;--radius-pill:999px;--tap:44px}
-@media (prefers-color-scheme:light){:root{
---water:#eef3f5;--deck:#ffffff;--rope:#d5dee3;--stone:#14232c;--haze:#5a6f7b;
---sea:#17707c;--keep:#3d7a38;--left:#b0432e;--busy:#8a6410}}
-*{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--text);
-font:var(--fs-m)/var(--lh-body) var(--font-body)}
-a{color:var(--accent)}
-a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible,
-textarea:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.wrap{max-width:760px;margin:0 auto;padding:0 var(--sp-4) var(--sp-6)}
-.bar{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) 0;margin-bottom:var(--sp-2);
-border-bottom:1px solid var(--line)}
-.brand-mark{display:inline-flex;align-items:center;flex:0 0 auto}
-.brand-mark svg{width:26px;height:26px;display:block}
-.mark{font-family:var(--font-display);font-size:var(--fs-l);
-color:var(--text);text-decoration:none;margin-right:auto;letter-spacing:.01em;
-display:inline-flex;align-items:center;gap:var(--sp-2)}
-.bar a.nav{color:var(--muted);text-decoration:none;min-height:var(--tap);
-display:inline-flex;align-items:center}
-.bar a.nav.on{color:var(--text)}
-h1{font-family:var(--font-display);font-weight:500;
-font-size:var(--fs-2xl);line-height:var(--lh-tight);margin:var(--sp-5) 0 var(--sp-2);overflow-wrap:anywhere}
-.lede{color:var(--muted);margin:0 0 var(--sp-4);display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-4);align-items:center}
-.num{font-variant-numeric:tabular-nums}
-.projects{list-style:none;margin:var(--sp-2) 0 0;padding:0}
-.projects li{border-top:1px solid var(--line)}
-.projects li:last-child{border-bottom:1px solid var(--line)}
-.projects a.row{display:grid;grid-template-columns:1fr auto;gap:2px var(--sp-3);
-padding:var(--sp-3) 2px;text-decoration:none;color:inherit}
-.projects .name{font-family:var(--font-display);font-size:var(--fs-l)}
-.projects .facts{grid-column:1;color:var(--muted);font-size:var(--fs-s)}
-.state{grid-row:1/span 2;grid-column:2;align-self:center;font-size:var(--fs-s);
-display:inline-flex;align-items:center;gap:6px}
-.state::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
-.badge-done{color:var(--ok)}.badge-running{color:var(--warn)}.badge-failed{color:var(--danger)}
-.badge-running::before{animation:pulse 1.6s ease-in-out infinite}
-@keyframes pulse{50%{opacity:.25}}
-@media (prefers-reduced-motion:reduce){.badge-running::before{animation:none}}
-.empty{color:var(--muted)}
-.tabs{display:flex;flex-wrap:wrap;gap:var(--sp-1);padding:var(--sp-1);margin:var(--sp-2) 0 var(--sp-4);
-background:var(--surface);border-radius:var(--radius-l);width:fit-content;max-width:100%}
-.tabs a{min-height:var(--tap);display:inline-flex;align-items:center;padding:0 var(--sp-4);
-border-radius:10px;color:var(--muted);text-decoration:none}
-.tabs a.active{background:var(--text);color:var(--bg)}
-.tabs .tab-group{display:inline-flex;align-items:center;gap:var(--sp-1);border-left:1px solid var(--line);
-padding-left:6px;margin-left:2px}
-.tabs .tab-group-label{color:var(--muted);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;padding:0 6px}
-video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-l)}
-video.vertical{aspect-ratio:9/16;max-width:360px;margin-top:var(--sp-3)}
-.strip{margin:var(--sp-3) 0 var(--sp-1)}
-.strip-track{display:flex;gap:3px;height:56px;overflow-x:auto}
-.strip-track button{flex:var(--w) 1 0;min-width:16px;border:0;border-radius:var(--radius-s);
-padding:0;font:inherit;font-size:.72rem;letter-spacing:-.02em;color:var(--bg);cursor:pointer;
-background:var(--accent);overflow:hidden;white-space:nowrap;text-overflow:clip;
-text-align:center;opacity:.72;transition:opacity .15s}
-.strip-track button.photo{background:repeating-linear-gradient(135deg,var(--text) 0 6px,var(--line) 6px 12px)}
-.strip-track button.now{opacity:1;box-shadow:inset 0 -4px 0 var(--bg)}
-.strip-track button{position:relative}
-.strip-track button.picked{opacity:1;outline:3px solid var(--danger);outline-offset:-3px}
-.shot-del{position:absolute;top:2px;right:2px;width:32px;height:32px;border-radius:50%;background:var(--danger);
-display:flex;align-items:center;justify-content:center;cursor:pointer}
-.shot-del svg{width:13px;height:13px;fill:#fff}
-.shot-ask{display:flex;align-items:center;gap:.6em;margin:.5em 0}
-.shot-ask button{border:0;border-radius:var(--radius-s);padding:.35em 1em;cursor:pointer}
-.shot-ask .yes{background:var(--danger);color:#fff}
-.shot-ask .no{background:var(--surface);color:var(--text);border:1px solid var(--line)}
-.strip-legend{display:flex;gap:var(--sp-4);margin-top:var(--sp-2);color:var(--muted);font-size:var(--fs-s)}
-.strip-legend span::before{content:"";display:inline-block;width:10px;height:10px;
-border-radius:3px;margin-right:6px;vertical-align:-1px}
-.strip-legend .k-clip::before{background:var(--accent)}
-.strip-legend .k-photo::before{background:var(--text)}
-.download{display:inline-flex;align-items:center;min-height:var(--tap);margin-top:6px}
-iframe{display:block;width:100%;height:78vh;border:0;border-radius:var(--radius-l);
-background:var(--surface)}
-details.reedit{margin-top:var(--sp-5);border-top:1px solid var(--line);padding-top:var(--sp-2)}
-details.reedit summary{min-height:var(--tap);display:flex;align-items:center;cursor:pointer;
-font-family:var(--font-display);font-size:var(--fs-l)}
-form{display:grid;gap:var(--sp-3);max-width:520px;margin-top:var(--sp-2)}
-form label{display:grid;gap:6px;font-size:.95rem}
-.hint{color:var(--muted);font-size:var(--fs-s)}
-.pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3)}
-@media (max-width:420px){.pair{grid-template-columns:1fr}}
-input,select,textarea{width:100%;min-height:var(--tap);background:var(--surface);color:var(--text);
-border:1px solid var(--line);border-radius:10px;padding:var(--sp-2) var(--sp-3);font:inherit}
-input[type=file]{padding:10px}
-textarea{resize:vertical}
-.notice{border-radius:var(--radius-l);padding:var(--sp-3) var(--sp-4);margin:0 0 var(--sp-3);background:var(--surface);
-border-left:4px solid var(--warn)}
-.notice.failed{border-left-color:var(--danger)}
-.notice code{overflow-wrap:anywhere;font-size:var(--fs-s);color:var(--muted)}
-.versions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 var(--sp-3);color:var(--muted);font-size:var(--fs-s)}
-.versions a{min-height:var(--tap);min-width:var(--tap);display:inline-flex;align-items:center;justify-content:center;
-padding:0 var(--sp-3);border-radius:var(--radius-pill);background:var(--surface);color:var(--text);text-decoration:none}
-.versions a.on{background:var(--text);color:var(--bg)}
-.versions a.failed{color:var(--danger)}
-.versions a.on.failed{background:var(--danger);color:var(--bg)}
-.brief-hints{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.brief-hints .chip{min-height:var(--tap);border:1px solid var(--line);border-radius:var(--radius-pill);
-background:var(--surface);color:var(--muted);padding:0 var(--sp-3);font:inherit;font-size:var(--fs-s);cursor:pointer}
-.brief-hints .chip:hover{color:var(--text)}
-.consent-text{color:var(--muted);font-size:var(--fs-s);margin:0}
-.consent{display:flex;align-items:center;gap:var(--sp-2);font-size:.95rem}
-.consent input{width:auto;min-height:0}
-.project-del{width:var(--tap);height:var(--tap);border:0;border-radius:50%;background:var(--danger);
-display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
-vertical-align:middle;margin-left:10px}
-.project-del svg{width:16px;height:16px;fill:#fff}
-.player{margin-bottom:var(--sp-5)}
-.player h2{font-family:var(--font-display);font-weight:500;font-size:var(--fs-l);margin:0 0 var(--sp-2)}
-.vmeta{color:var(--muted);font-size:var(--fs-s);margin:6px 0 0;overflow-wrap:anywhere}
-input.length-s{margin-top:var(--sp-2)}
-input.length-s[hidden]{display:none}
-button.go{min-height:48px;border:0;border-radius:12px;background:var(--accent);color:var(--bg);
-font:inherit;font-weight:600;padding:0 var(--sp-5);cursor:pointer;justify-self:start}
-button.ask{min-height:var(--tap);border:1px solid var(--line);border-radius:var(--radius-pill);
-background:var(--surface);color:var(--text);font:inherit;padding:0 var(--sp-4);cursor:pointer}
-.panel{display:block}
-.storage,.credit{color:var(--muted);font-size:var(--fs-s);margin:0 0 var(--sp-2)}
-.storage.warn,.credit.warn{color:var(--warn)}
-.files-summary{color:var(--muted);font-size:var(--fs-s);margin:0 0 var(--sp-2)}
-.files-new{color:var(--text);margin:0 0 var(--sp-3)}
-.file-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2) var(--sp-3);
-padding:var(--sp-3) 0;border-top:1px solid var(--line)}
-.file-row:last-of-type{border-bottom:1px solid var(--line)}
-.file-name{flex:1 1 100%;overflow-wrap:anywhere}
-.file-meta{color:var(--muted);font-size:var(--fs-s);font-variant-numeric:tabular-nums}
-.file-state{color:var(--muted);font-size:var(--fs-s)}
-form.file-row{display:inline-flex;align-items:center;border:0;padding:0;margin-left:auto}
-.file-del{width:var(--tap);height:var(--tap);border:0;border-radius:50%;background:var(--danger);
-display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
-.file-del svg{width:16px;height:16px;fill:#fff}
-.bring-back{min-height:var(--tap);padding:0 var(--sp-3);border:1px solid var(--line);
-border-radius:var(--radius-pill);background:var(--surface);color:var(--text);font:inherit;cursor:pointer}
-.add-files{margin-top:var(--sp-4);border-top:1px solid var(--line);padding-top:var(--sp-2)}
-.add-files summary{min-height:var(--tap);display:flex;align-items:center;cursor:pointer;
-font-family:var(--font-display);font-size:var(--fs-l)}
-.upload-progress{margin-top:var(--sp-3)}
-.upload-status{color:var(--muted);font-size:var(--fs-s);margin:var(--sp-2) 0 0}
-.reply{font-size:var(--fs-l);line-height:var(--lh-body);margin:0 0 var(--sp-2)}
-.estimate{color:var(--muted);margin:0 0 var(--sp-4)}
-.tick{font-variant-numeric:tabular-nums}
-.brand-options{display:flex;flex-wrap:wrap;gap:var(--sp-4);margin:var(--sp-4) 0 0}
-.brand-option{background:var(--surface);border-radius:var(--radius-l);padding:var(--sp-4);
-display:flex;flex-direction:column;align-items:center;gap:var(--sp-2);min-width:120px}
-.brand-option svg{width:48px;height:48px;display:block}
-.brand-option .name{font-family:var(--font-mono);font-size:var(--fs-s);color:var(--muted)}
-.brand-option .badge{color:var(--ok);font-size:var(--fs-s)}
-"""
-
-PROGRESS_CSS = (
-    "progress{width:100%;height:10px;accent-color:var(--sea);border-radius:999px;display:block;margin:8px 0 0}\n"
-    f"progress::-webkit-progress-value{{background:{BRAND_PROGRESS_COLOR};border-radius:999px}}\n"
-    f"progress::-moz-progress-bar{{background:{BRAND_PROGRESS_COLOR};border-radius:999px}}\n"
-)
-
 LENGTH_SCRIPT = """
 [].forEach.call(document.querySelectorAll('select[name=length]'),function(s){var i=s.parentNode.querySelector('.length-s');if(!i)return;
 function sync(){var on=s.value==='custom';i.hidden=!on;if(!on)i.value='';}
 s.addEventListener('change',function(){sync();if(s.value==='custom')i.focus();});sync();});
 """
 
+DROP_ICON = (
+    '<svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" '
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="3" y="5" width="18" height="14" rx="2"/>'
+    '<path d="M3 9h18M7 5v4M17 5v4M12 12v5M9.5 14.5 12 12l2.5 2.5"/></svg>'
+)
+
 DROP_STYLE = (
-    ".drop{border:2px dashed currentColor;border-radius:12px;padding:16px;opacity:.85}"
-    ".drop.over{opacity:1;border-style:solid}"
-    ".drop-hint{margin:.5em 0 0}"
-    ".drop-count{font-weight:600}"
+    ".drop{border:2px dashed var(--line);border-radius:var(--radius-l);padding:var(--sp-5) var(--sp-4);"
+    "text-align:center;background:var(--surface);color:var(--muted)}"
+    ".drop.over{border-style:solid;border-color:var(--accent);color:var(--text)}"
+    ".drop-icon{width:40px;height:40px;display:block;margin:0 auto var(--sp-2);color:var(--accent)}"
+    ".drop-hint{margin:0}"
+    ".drop-count{font-weight:600;color:var(--text)}"
+    ".drop-list{list-style:none;margin:var(--sp-3) 0 0;padding:0;text-align:left;display:grid;gap:4px}"
+    ".drop-list li{display:flex;justify-content:space-between;gap:var(--sp-3);font-size:var(--fs-s)}"
+    ".drop-list .fsize{color:var(--muted);font-variant-numeric:tabular-nums}"
+    ".brief-card{padding:var(--sp-4);border:1px solid var(--line);border-radius:var(--radius-l);"
+    "background:var(--surface);max-width:520px}"
+    ".brief-card label{display:grid;gap:6px;font-size:.95rem}"
 )
 
 # Drag and drop for the upload form: every drop (or pick) adds to the selection
 # instead of replacing it, and a drop anywhere on the page lands in the form.
 DROP_SCRIPT = """
-(function(){var z=document.querySelector('[data-drop]');if(!z)return;var inp=z.querySelector('input[type=file]');var c=z.querySelector('.drop-count');var keep=[];
-function show(){c.textContent=keep.length?keep.length+(keep.length===1?' file selected':' files selected'):'';}
+(function(){var z=document.querySelector('[data-drop]');if(!z)return;var inp=z.querySelector('input[type=file]');var c=z.querySelector('.drop-count');var list=z.querySelector('.drop-list');var keep=[];
+function size(n){return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';}
+function esc(s){return String(s).replace(/[<>&"]/g,'');}
+function show(){c.textContent=keep.length?keep.length+(keep.length===1?' file selected':' files selected'):'';
+if(list){list.hidden=!keep.length;list.innerHTML=keep.map(function(f){return '<li><span class="fname">'+esc(f.name)+'</span><span class="fsize">'+size(f.size)+'</span></li>';}).join('');}}
 function put(list){[].forEach.call(list,function(f){if(!keep.some(function(k){return k.name===f.name&&k.size===f.size;}))keep.push(f);});
 try{var dt=new DataTransfer();keep.forEach(function(f){dt.items.add(f);});inp.files=dt.files;}catch(e){}show();}
 inp.addEventListener('change',function(){put([].slice.call(inp.files));});
@@ -1327,37 +1182,7 @@ def edit_summary(directory):
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    slots = document.get("video") if isinstance(document, dict) else None
-    if not isinstance(slots, list):
-        return None
-    blocks = []
-    start = 0.0
-    for slot in slots:
-        if not isinstance(slot, dict):
-            continue
-        try:
-            if slot.get("kind") == "photo" or slot.get("photo"):
-                length = float(slot.get("duration_s") or 0.0)
-                kind = "photo"
-            else:
-                length = slot_screen_length(
-                    {**slot, "in_s": float(slot.get("in_s", 0.0)), "out_s": float(slot.get("out_s", 0.0))}
-                )
-                kind = "clip"
-        except (TypeError, ValueError):
-            continue
-        if length <= 0:
-            continue
-        label = slot.get("shot_key") or slot.get("photo") or slot.get("clip") or slot.get("id") or ""
-        if blocks:
-            start -= fade_for_join(slot, blocks[-1]["end"] - blocks[-1]["start"], length)
-            blocks[-1]["end"] = start
-        blocks.append({"start": start, "end": start + length, "kind": kind, "label": str(label)})
-        start += length
-    if not blocks:
-        return None
-    photos = sum(1 for block in blocks if block["kind"] == "photo")
-    return {"blocks": blocks, "total": start, "shots": len(blocks), "photos": photos}
+    return edit_summary_document(document)
 
 
 def all_good_estimate(directory):
@@ -1389,17 +1214,31 @@ def describe_summary(summary):
 
 
 def render_index(entries, features=None, brand_logo=DEFAULT_BRAND_LOGO):
-    """Return the Projects page: one row per project with its state and edit facts."""
+    """Return the Projects page: a grid of poster cards, one per project."""
     rows = []
     for entry in entries:
         name = html_escape(entry["name"])
         status = html_escape(entry["status"])
         facts = html_escape(describe_summary(entry.get("summary")))
+        date = html_escape(entry.get("date") or "")
+        if entry.get("poster"):
+            poster = (
+                f'<span class="poster"><img src="/{name}/thumbs/poster.jpg" '
+                'alt="" loading="lazy"></span>'
+            )
+        else:
+            poster = '<span class="poster empty" aria-hidden="true"></span>'
+        step = ""
+        if entry.get("step"):
+            step = f'<span class="step-badge">{html_escape(entry["step"])}</span>'
         rows.append(
-            f'<li><a class="row" href="/{name}/">'
+            f'<li><a class="card" href="/{name}/">{poster}'
+            '<span class="card-body">'
             f'<span class="name">{name}</span>'
             f'<span class="state badge-{status}">{status}</span>'
-            f'<span class="facts num">{facts}</span></a></li>'
+            f'<span class="facts num">{facts}</span>'
+            f'<span class="date">{date}</span>'
+            f'{step}</span></a></li>'
         )
     if rows:
         body = f'<ul class="projects">{"".join(rows)}</ul>'
@@ -1546,19 +1385,24 @@ def append_feedback_action(workspace, action, **fields):
     append_request(Path(workspace) / "feedback.jsonl", line)
 
 
-def render_strip(summary):
+def render_strip(summary, prefix="", thumbs=()):
     """The edit as a proportional strip under the player; tap a block to jump there."""
     if not summary:
         return ""
+    thumbs = set(thumbs)
     buttons = []
     for number, block in enumerate(summary["blocks"], start=1):
         width = max(0.4, block["end"] - block["start"])
         label = html_escape(block["label"])
+        style = f"--w:{width:.2f}"
+        if number in thumbs:
+            style += f";background-image:url('{prefix}thumbs/shot-{number}.jpg')"
         buttons.append(
-            f'<button type="button" class="{block["kind"]}" style="--w:{width:.2f}" '
+            f'<button type="button" class="{block["kind"]}" style="{style}" '
             f'data-t="{block["start"]:.2f}" data-e="{block["end"]:.2f}" '
             f'title="{number}: {label} at {block["start"]:.1f} s" '
-            f'aria-label="Shot {number}, {label}, at {block["start"]:.1f} s">{number}</button>'
+            f'aria-label="Shot {number}, {label}, at {block["start"]:.1f} s">'
+            f'<span class="n">{number}</span></button>'
         )
     return (
         '<div class="strip" aria-label="Edit timeline">'
@@ -1586,14 +1430,24 @@ def render_player(directory, prefix="", heading=None, meta_line=None, trust_edit
     has_wide = (directory / "recap_720p.mp4").is_file()
     has_vertical = (directory / VERTICAL_PREVIEW).is_file()
     if has_wide:
-        parts.append(f'<video controls preload="metadata" src="{prefix}recap_720p.mp4"></video>')
+        parts.append(
+            f'<video controls playsinline preload="metadata" poster="{prefix}thumbs/poster.jpg" '
+            f'src="{prefix}recap_720p.mp4"></video>'
+        )
     if has_vertical:
         parts.append(
-            f'<video class="vertical" controls preload="metadata" src="{prefix}{VERTICAL_PREVIEW}"></video>'
+            f'<video class="vertical" controls playsinline preload="metadata" '
+            f'poster="{prefix}thumbs/poster.jpg" src="{prefix}{VERTICAL_PREVIEW}"></video>'
         )
     if has_wide or has_vertical:
         if trust_edit or edit_matches_renders(directory):
-            parts.append(render_strip(edit_summary(directory)))
+            summary = edit_summary(directory)
+            blocks = summary["blocks"] if summary else []
+            thumbs = {
+                number for number in range(1, len(blocks) + 1)
+                if (directory / "thumbs" / f"shot-{number}.jpg").is_file()
+            }
+            parts.append(render_strip(summary, prefix=prefix, thumbs=thumbs))
     else:
         parts.append('<p class="empty">This version has no video: its render did not finish.</p>')
     if meta_line:
@@ -2498,14 +2352,18 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
     fields = [
         ("Clips and photos", '<div class="drop" data-drop>'
                              '<input type="file" name="files" multiple accept="video/*,image/*">'
-                             '<p class="drop-hint">Drag clips and photos here (several at once, '
-                             'or in several drops), or tap to choose. <span class="drop-count"></span></p></div>'),
+                             f'{DROP_ICON}'
+                             '<p class="drop-hint">Drop clips and photos here, or tap to choose. '
+                             '<span class="drop-count"></span></p>'
+                             '<ul class="drop-list" hidden></ul></div>'),
         ("Project name", '<input type="text" name="folder" placeholder="kotor-day-2" autocomplete="off">'),
-        ("Brief", f'<textarea class="brief-input" name="brief" rows="4" '
-                  f'placeholder="{html_escape(BRIEF_PLACEHOLDER)}"></textarea>'
-                  f'{brief_hints_html()}'),
     ]
-    fields.extend(option_fields(music_tracks))
+    brief_card = (
+        '<div class="card brief-card"><label>Brief'
+        f'<textarea class="brief-input" name="brief" rows="4" '
+        f'placeholder="{html_escape(BRIEF_PLACEHOLDER)}"></textarea>'
+        f'{brief_hints_html()}</label></div>'
+    )
     consent = ""
     if consent_text:
         consent = (
@@ -2521,6 +2379,8 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         f"{credit_html}"
         '<form method="post" action="/upload" enctype="multipart/form-data">'
         f"{render_form_rows(fields)}"
+        f"{brief_card}"
+        f"{render_form_rows(option_fields(music_tracks))}"
         f"{AUTO_HINT}"
         f"{consent}"
         '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
@@ -2535,12 +2395,13 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
 
 def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_line="", open_=False):
     """Return the Re-edit form with the same options plus a feedback box."""
-    fields = [
-        ("Brief", f'<textarea class="brief-input" name="brief" rows="4" '
-                  f'placeholder="{html_escape(BRIEF_PLACEHOLDER)}"></textarea>'
-                  f'{brief_hints_html()}'),
-    ]
-    fields.extend(option_fields(music_tracks))
+    brief_card = (
+        '<div class="card brief-card"><label>Brief'
+        f'<textarea class="brief-input" name="brief" rows="4" '
+        f'placeholder="{html_escape(BRIEF_PLACEHOLDER)}"></textarea>'
+        f'{brief_hints_html()}</label></div>'
+    )
+    fields = option_fields(music_tracks)
     fields.append(("What should change?", '<textarea name="feedback" rows="3" '
                    f'placeholder="drop 0071/s2, tunnel longer">{html_escape(feedback_prefill)}</textarea>'))
     open_attr = " open" if open_ else ""
@@ -2549,6 +2410,7 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_
         f"{files_line}"
         f'<form method="post" action="/{html_escape(name)}/re-edit" '
         'enctype="multipart/form-data">'
+        f"{brief_card}"
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
         '<button class="go" type="submit" name="submit" value="reedit">Re-edit</button>'
@@ -3864,17 +3726,27 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
     do_OPTIONS = _method_not_allowed
 
     def collect_entries(self):
-        """Return one list entry per project with its status and artifacts."""
+        """Return one list entry per project with its status, artifacts and card facts."""
         root = self.server.root
         entries = []
         for name in discover_projects(root):
             directory = root / name
+            status = project_status(directory)
+            step = None
+            if status == "running":
+                report = run_report(directory)
+                current = report.get("current")
+                if current:
+                    step = STATION_PLAIN_NAMES.get(current, current)
             entries.append(
                 {
                     "name": name,
-                    "status": project_status(directory),
+                    "status": status,
                     "artifacts": existing_artifacts(directory),
                     "summary": edit_summary(directory),
+                    "date": project_date(directory),
+                    "poster": (directory / "thumbs" / "poster.jpg").is_file(),
+                    "step": step,
                 }
             )
         return entries
@@ -4011,7 +3883,32 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.send_file(target, send_body)
             return
+        if len(segments) == 3 and segments[1] == "thumbs":
+            self.handle_thumb(root / segments[0], segments[2], send_body)
+            return
+        if (
+            len(segments) == 5
+            and segments[1] == "versions"
+            and VERSION_RE.match(segments[2])
+            and segments[3] == "thumbs"
+        ):
+            self.handle_thumb(root / segments[0] / "versions" / segments[2], segments[4], send_body)
+            return
         self.send_not_found()
+
+    def handle_thumb(self, directory, name, send_body):
+        """Serve one project thumbnail (poster or shot-N), or a 404."""
+        if not feature_on(self.server.features, "recap") or not THUMB_NAME_RE.match(name):
+            self.send_not_found()
+            return
+        if not is_project(directory):
+            self.send_not_found()
+            return
+        target = Path(directory) / "thumbs" / name
+        if not target.is_file():
+            self.send_not_found()
+            return
+        self.send_file(target, send_body)
 
     def send_not_found(self):
         self.send_response(404)
@@ -4053,7 +3950,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             status = 206
         length = end - start + 1 if size else 0
         self.send_response(status)
-        self.send_header("Content-Type", CONTENT_TYPES.get(path.name, "application/octet-stream"))
+        self.send_header("Content-Type", content_type_for(path))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
         if status == 206:

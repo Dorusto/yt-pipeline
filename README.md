@@ -15,7 +15,8 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 .venv/bin/python scripts/doctor.py --source <trip-folder>/raw
 .venv/bin/python scripts/recap.py --source <trip-folder>/raw --workspace <trip-folder>/workspace \
     --brief "90 s, chronological, calm start, ambient sound only"
-# -> <trip-folder>/workspace/recap_720p.mp4 (plus edit.json and shotlog.html)
+# -> <trip-folder>/workspace/recap_720p.mp4 (plus edit.json, shotlog.html and thumbs/)
+# the recap also writes thumbs/poster.jpg and thumbs/shot-N.jpg for the web app
 # full quality from the originals + a Kdenlive project:
 .venv/bin/python scripts/recap.py --source <trip-folder>/raw --workspace <trip-folder>/workspace --final --brief "90 s, chronological, calm start, ambient sound only"
 # re-running skips finished stations; a new brief only redoes the edit
@@ -99,7 +100,8 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the reviewer verdict per version and the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches, the upload consent checkbox, the Details tab group and the summary-first Why?/Shots pages |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the Shots-tab expectations buttons, the Mode B Cuts-tab cut review, the reviewer verdict per version and the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete, per-instance feature switches, the upload consent checkbox, the Details tab group, the summary-first Why?/Shots pages, the poster cards and the shot-strip thumbnails |
+| `thumbs.py` | workspace with `edit.json` + recap | `thumbs/poster.jpg` + `thumbs/shot-N.jpg` (320 px) |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
