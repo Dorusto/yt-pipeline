@@ -44,12 +44,14 @@ PAIRED_SENTENCES = [(index * 6.0, index * 6.0 + 5.0) for index in range(50)]
 class AutoScoreClient:
     """A client that scores every candidate id it finds in the message."""
 
-    def __init__(self, scores=None, default=(50, 50), reason="ok", cost_per_call=0.0, omit=None):
+    def __init__(self, scores=None, default=(50, 50), reason="ok", cost_per_call=0.0, omit=None,
+                 description="Prima propozitie. A doua propozitie."):
         self.scores = scores or {}
         self.default = default
         self.reason = reason
         self.cost_per_call = cost_per_call
         self.omit = set(omit or ())
+        self.description = description
         self.calls = 0
         self.spent_usd = 0.0
 
@@ -69,7 +71,7 @@ class AutoScoreClient:
                 "payoff": payoff,
                 "reason": self.reason,
                 "title": f"Titlu {candidate_id}",
-                "description": "Prima propozitie. A doua propozitie.",
+                "description": self.description,
             })
         return SimpleNamespace(text=json.dumps({"scores": rows}), cost_usd=self.cost_per_call)
 
@@ -158,9 +160,9 @@ def paired_edit(tmp_path):
     edit = write_edit(
         tmp_path / "edit.json",
         [
-            {"id": "w001", "clip": SCREEN_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"},
-            {"id": "w001", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 40.0, "score": 1.0, "reason": "a"},
-            {"id": "w002", "clip": CAMERA_CLIP, "in_s": 40.0, "out_s": 300.0, "score": 1.0, "reason": "b"},
+            {"id": "w001", "clip": SCREEN_CLIP, "in_s": 0.0, "out_s": 84.0, "score": 1.0, "reason": "a"},
+            {"id": "w001", "clip": CAMERA_CLIP, "in_s": 0.0, "out_s": 84.0, "score": 1.0, "reason": "a"},
+            {"id": "w002", "clip": CAMERA_CLIP, "in_s": 84.0, "out_s": 300.0, "score": 1.0, "reason": "b"},
         ],
         sources=[
             {"file": SCREEN_CLIP, "path": "/x/" + SCREEN_CLIP, "duration_s": 300.0, "media_type": "video"},
@@ -205,7 +207,7 @@ def first_face_candidate_id(edit, words):
     candidates = candidates_of(edit, words)
     return next(
         index for index, candidate in enumerate(candidates, 1)
-        if candidate["start_s"] >= 40.0
+        if candidate["start_s"] >= 84.0
     )
 
 
@@ -344,7 +346,7 @@ def test_layout_policy_auto_paired(tmp_path, monkeypatch, capsys):
     validate_or_raise(document, "shorts_candidates")
     assert {candidate["layout"] for candidate in document["candidates"]} == {"split", "face"}
     for candidate in document["candidates"]:
-        expected = "face" if candidate["start_s"] >= 40.0 else "split"
+        expected = "face" if candidate["start_s"] >= 84.0 else "split"
         assert candidate["layout"] == expected
 
 
@@ -562,16 +564,28 @@ def test_tie_break_earlier_start(tmp_path, monkeypatch, capsys):
     assert starts == [70.0, 170.0, 270.0, 370.0, 470.0]
 
 
-@pytest.mark.parametrize("start_s,end_s,expected", [
-    (0.0, 58.0, False),
-    (10.0, 50.0, False),
-    (0.0, 75.0, False),
-    (10.0, 65.0, True),
-    (70.0, 112.0, True),
-    (50.0, 95.0, True),
+@pytest.mark.parametrize("start_s,expected", [
+    (0.0, False),
+    (10.0, False),
+    (50.0, False),
+    (59.9, False),
+    (60.0, True),
+    (70.0, True),
+    (470.0, True),
 ])
-def test_is_standalone_table(start_s, end_s, expected):
-    assert shorts_rank.is_standalone(start_s, end_s) is expected
+def test_is_standalone_table(start_s, expected):
+    assert shorts_rank.is_standalone(start_s) is expected
+
+
+def test_intro_span_crossing_60_is_dropped(tmp_path):
+    edit = one_slot_edit(tmp_path, out_s=120.0)
+    words = write_sentence_words(tmp_path / "words" / "cam.json", [
+        (50.0, 55.0), (56.0, 61.0), (62.0, 67.0), (68.0, 73.0), (74.0, 79.0), (80.0, 85.0),
+    ])
+    candidates = candidates_of(edit, words)
+    assert candidates
+    assert all(candidate["start_s"] >= shorts_rank.INTRO_END_S for candidate in candidates)
+    assert not any(candidate["start_s"] == 50.0 for candidate in candidates)
 
 
 def test_build_candidates_never_intro(tmp_path):
@@ -579,11 +593,7 @@ def test_build_candidates_never_intro(tmp_path):
     candidates = candidates_of(edit, words)
     assert candidates
     for candidate in candidates:
-        assert candidate["start_s"] > shorts_rank.INTRO_START_EPS
-        assert not (
-            candidate["start_s"] < shorts_rank.INTRO_END_S
-            and candidate["end_s"] <= shorts_rank.INTRO_END_S
-        )
+        assert candidate["start_s"] >= shorts_rank.INTRO_END_S
 
 
 def test_build_candidates_drops_intro_only(tmp_path):
@@ -682,6 +692,36 @@ def test_title_and_description_written(tmp_path, monkeypatch, capsys):
         assert len(candidate["title"]) <= 60
         assert candidate["description"]
         assert len(candidate["description"]) <= 400
+
+
+def test_description_sentence_rule_is_a_warning_json(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    client = AutoScoreClient(description="O singura propozitie")
+    code = run_main(tmp_path, monkeypatch, client, edit, words, extra=["--json"])
+    assert code == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert any(
+        "description should be exactly 2 sentences (found 1)" in warning
+        for warning in summary["warnings"]
+    )
+    document = json.loads((tmp_path / "shorts_candidates.json").read_text(encoding="utf-8"))
+    validate_or_raise(document, "shorts_candidates")
+    assert document["candidates"]
+    assert all(
+        candidate["description"] == "O singura propozitie"
+        for candidate in document["candidates"]
+    )
+
+
+def test_description_sentence_rule_is_a_warning_printed(tmp_path, monkeypatch, capsys):
+    edit, words = short_fixture(tmp_path)
+    client = AutoScoreClient(description="O singura propozitie. Si a doua. Si a treia.")
+    code = run_main(tmp_path, monkeypatch, client, edit, words)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "warning: candidate 1: description should be exactly 2 sentences (found 3)" in out
+    assert "written:" in out
+    assert (tmp_path / "shorts_candidates.json").is_file()
 
 
 def test_title_too_long_exit_2(tmp_path, monkeypatch, capsys):
@@ -1020,7 +1060,7 @@ def test_reference_final_project(tmp_path, monkeypatch, capsys):
     ])
     assert code == 0
     summary = json.loads(capsys.readouterr().out)
-    assert summary["written"] == 5
+    assert summary["written"] <= 5
     assert summary["wall_time_s"] >= 0
     assert summary["llm_cost_usd"] == 0.0
     document = json.loads(out.read_text(encoding="utf-8"))
@@ -1030,6 +1070,12 @@ def test_reference_final_project(tmp_path, monkeypatch, capsys):
         assert 0 <= candidate["end_s"] <= REFERENCE_END_S
         assert 20.0 <= candidate["end_s"] - candidate["start_s"] <= 60.0
         assert candidate["chapter_start_s"] == 0.0
+    for index, first in enumerate(document["candidates"]):
+        for second in document["candidates"][index + 1:]:
+            overlap_s = max(
+                0.0, min(first["end_s"], second["end_s"]) - max(first["start_s"], second["start_s"])
+            )
+            assert overlap_s / min(first["duration_s"], second["duration_s"]) <= 0.2 + 1e-9
 
 
 def test_fcproj_default_out_is_the_publish_folder(tmp_path, monkeypatch, capsys):

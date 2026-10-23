@@ -36,6 +36,7 @@ from html import escape
 from pathlib import Path
 
 from common.frames import thumbnail_data_uri
+from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
@@ -114,10 +115,6 @@ def clip_counter(name):
 def segment_key(counter, segment_id):
     """The ``<clip counter>/<segment id>`` key used in the output."""
     return f"{counter}/{segment_id}"
-
-
-def overlap_seconds(a_start, a_end, b_start, b_end):
-    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 def run(
@@ -589,9 +586,11 @@ def _apply_suppression(shots):
 
 
 def _suppressing_overlap(first, second):
-    overlap = overlap_seconds(first["start_s"], first["end_s"], second["start_s"], second["end_s"])
-    shorter = min(first["end_s"] - first["start_s"], second["end_s"] - second["start_s"])
-    return shorter > 0 and overlap > SUPPRESS_OVERLAP_RATIO * shorter
+    return (
+        overlap_fraction(
+            first["start_s"], first["end_s"], second["start_s"], second["end_s"]
+        ) > SUPPRESS_OVERLAP_RATIO
+    )
 
 
 def _apply_burst_suppression(shots):

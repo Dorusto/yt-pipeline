@@ -231,6 +231,8 @@ SHORTS_STYLE = """
 .short-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
 .short-rank{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--sea)}
 .short-reason{color:var(--stone)}
+.short-title{margin:4px 0 0}
+.short-description{color:var(--stone);margin:2px 0 0}
 .short-meta{color:var(--haze);font-size:.85rem}
 .short-chapter{color:var(--haze);font-size:.9rem;margin:4px 0}
 .short-layout{display:flex;align-items:center;gap:8px;margin:6px 0 0}
@@ -1157,6 +1159,10 @@ def render_shorts_panel(directory, name):
         )
         meta = " \u00b7 ".join(part for part in (f"[{span}]", length, score_text, hook_text) if part)
         reason = html_escape(candidate.get("reason") or "")
+        title = html_escape(candidate.get("title") or "")
+        description = html_escape(candidate.get("description") or "")
+        title_html = f'<p class="short-title">{title}</p>' if title else ""
+        description_html = f'<p class="short-description">{description}</p>' if description else ""
         chapter = candidate.get("chapter_title")
         chapter_html = f'<p class="short-chapter">Chapter: {html_escape(chapter)}</p>' if chapter else ""
         current = candidate.get("layout") if candidate.get("layout") in layouts else "face"
@@ -1165,7 +1171,9 @@ def render_shorts_panel(directory, name):
             f'<article class="short-row" data-rank="{html_escape(rank)}">'
             f'<div class="short-head"><span class="short-rank">#{html_escape(rank)}</span>'
             f'<span class="short-meta num">{meta}</span></div>'
+            f"{title_html}"
             f'<p class="short-reason">{reason}</p>'
+            f"{description_html}"
             f"{chapter_html}"
             f'<div class="short-layout"><label>Layout {select}</label></div>'
             f'</article>'

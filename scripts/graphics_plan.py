@@ -26,6 +26,7 @@ from pathlib import Path
 
 from common.config import ConfigError, load_config, model_for
 from common.llm import LLMError, make_client
+from common.overlap import overlap_fraction, overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -349,13 +350,12 @@ def overlap_errors(entries):
             if any(as_number(value) is None for value in values):
                 continue
             first_start, first_duration, second_start, second_duration = (float(v) for v in values)
-            overlap = min(first_start + first_duration, second_start + second_duration) - max(
-                first_start, second_start
-            )
-            shorter = min(first_duration, second_duration)
-            if overlap > 0.5 * shorter:
+            first_end = first_start + first_duration
+            second_end = second_start + second_duration
+            overlap_s = overlap_seconds(first_start, first_end, second_start, second_end)
+            if overlap_fraction(first_start, first_end, second_start, second_end) > 0.5:
                 errors.append(
-                    f"entries/{left} and entries/{right} overlap by {overlap:.2f}s, "
+                    f"entries/{left} and entries/{right} overlap by {overlap_s:.2f}s, "
                     "more than half of the shorter"
                 )
     return errors

@@ -16,14 +16,15 @@ The tool maps the per-source Whisper word JSON files onto the cuts of an
 ``edit.json`` timeline (the same midpoint rule ``chapters.py`` uses), splits the
 kept transcript into sentences on pauses over 0.6 s and builds deterministic
 candidates: runs of consecutive sentences inside one chapter whose span is
-20-60 s, never the edit's own opening cut and never a span that lies entirely
-inside the first 60 s. The same mapping is available for a final FilmCraft
+20-60 s starting at or after 60 s of the edit (the intro block never becomes a
+candidate). The same mapping is available for a final FilmCraft
 project (``--fcproj``) or for the timeline ``_words.json`` that
 ``subs_from_edit.py`` already writes (``--timeline-words``). One ``director``
 model pass scores every candidate on hook and payoff and writes a title and a
-description; the top 5 by ``(hook + payoff) / 2`` that do not overlap by more
-than 20 % are written to ``shorts_candidates.json`` (validated against
-``schemas/shorts_candidates.schema.json``). The file is the input of
+description; a description that is not exactly two sentences is a warning in the
+output, never a rejection. The top 5 by ``(hook + payoff) / 2`` that do not
+overlap by more than 20 % are written to ``shorts_candidates.json`` (validated
+against ``schemas/shorts_candidates.schema.json``). The file is the input of
 ``shorts_generator.py --candidates`` and the top 3 become Mango markers in the
 FilmCraft export.
 """
@@ -41,6 +42,7 @@ from pathlib import Path
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.media import clip_kind
+from common.overlap import overlap_fraction
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import (
     EPSILON,
@@ -68,8 +70,8 @@ TOP_N = 5
 MAX_REASON = 200
 MAX_TITLE = 60
 MAX_DESCRIPTION = 400
+DESCRIPTION_SENTENCES = 2
 MAX_OVERLAP_FRAC = 0.2
-INTRO_START_EPS = 0.5
 INTRO_END_S = 60.0
 LAYOUT_POLICIES = ("auto", "on", "off")
 
@@ -247,6 +249,11 @@ def split_sentences(words):
     return sentences
 
 
+def sentence_count(text):
+    """Sentences in a short text, split on the sentence-ending punctuation."""
+    return len([part for part in re.split(r"[.!?]+", text) if part.strip()])
+
+
 def chapter_index_for(start_s, chapter_starts):
     """Return the index of the chapter whose start is the last one at or before ``start_s``."""
     index = 0
@@ -258,27 +265,20 @@ def chapter_index_for(start_s, chapter_starts):
     return index
 
 
-def is_standalone(start_s, end_s):
-    """True when a span is not the edit's opening cut and not only the first 60 s.
+def is_standalone(start_s):
+    """True when a span starts at or after ``INTRO_END_S`` of the edit.
 
-    A span that starts at the very beginning is the edit's own opening cut; a
-    span that lies entirely inside the first 60 s is the intro block. Material
-    from the opening may appear in a candidate cut differently: it starts later
-    and runs past the intro block to its payoff.
+    The intro block (the first 60 s) is the edit's own opening material and
+    never becomes a candidate, whatever the span's end.
     """
-    if start_s <= INTRO_START_EPS:
-        return False
-    if start_s < INTRO_END_S and end_s <= INTRO_END_S:
-        return False
-    return True
+    return start_s >= INTRO_END_S
 
 
 def build_candidates(mapped, chapters, stats=None):
     """Build the deterministic sentence-aligned 20-60 s candidates inside one chapter.
 
-    Candidates that are the edit's opening cut or that lie entirely inside the
-    first 60 s are dropped; ``stats["dropped_intro"]`` counts them when a stats
-    dict is given.
+    Candidates that start before the first 60 s of the edit are dropped;
+    ``stats["dropped_intro"]`` counts them when a stats dict is given.
     """
     sentences = split_sentences(mapped)
     if not sentences:
@@ -325,7 +325,7 @@ def build_candidates(mapped, chapters, stats=None):
         })
     candidates = [
         candidate for candidate in generated
-        if is_standalone(candidate["start_s"], candidate["end_s"])
+        if is_standalone(candidate["start_s"])
     ]
     if stats is not None:
         stats["dropped_intro"] = len(generated) - len(candidates)
@@ -437,14 +437,6 @@ def validate_scores(scores, candidate_ids):
     return by_id
 
 
-def overlap_fraction(first, second):
-    """Overlap of two spans as a fraction of the shorter one."""
-    overlap_s = max(
-        0.0, min(first["end_s"], second["end_s"]) - max(first["start_s"], second["start_s"])
-    )
-    return overlap_s / min(first["duration_s"], second["duration_s"])
-
-
 def rank_candidates(candidates, scores):
     """Score, rank and greedily keep up to ``TOP_N`` candidates under the overlap cap.
 
@@ -473,7 +465,12 @@ def rank_candidates(candidates, scores):
     accepted = []
     dropped_overlap = 0
     for item in ranked:
-        if any(overlap_fraction(item, kept) > MAX_OVERLAP_FRAC for kept in accepted):
+        if any(
+            overlap_fraction(
+                item["start_s"], item["end_s"], kept["start_s"], kept["end_s"]
+            ) > MAX_OVERLAP_FRAC
+            for kept in accepted
+        ):
             dropped_overlap += 1
             continue
         accepted.append(item)
@@ -520,8 +517,8 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
     if not candidates:
         if stats.get("dropped_intro"):
             raise ShortsRankError(
-                "no standalone 20-60 s candidate found: every candidate was the edit's "
-                "opening cut or lay entirely inside the first 60 s"
+                "no standalone 20-60 s candidate found: every candidate started "
+                "before 60 s of the edit"
             )
         raise ShortsRankError(
             "no Shorts candidates found: no 20-60 s sentence-aligned span inside a chapter"
@@ -547,6 +544,7 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
     ranked, dropped_overlap = rank_candidates(candidates, by_id)
 
     output_candidates = []
+    description_warnings = []
     has_both = has_both_angles(spans or [])
     for rank, item in enumerate(ranked, 1):
         candidate = {
@@ -572,6 +570,12 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
                 screen_during(spans or [], item["start_s"], item["end_s"]),
             )
         output_candidates.append(candidate)
+        sentences = sentence_count(item["description"])
+        if sentences != DESCRIPTION_SENTENCES:
+            description_warnings.append(
+                f"candidate {rank}: description should be exactly "
+                f"{DESCRIPTION_SENTENCES} sentences (found {sentences})"
+            )
 
     if out_path:
         out = Path(out_path).expanduser()
@@ -599,7 +603,7 @@ def run(mapped, warnings, primary_input, chapters_path=None, out_path=None, prom
         "dropped_intro": stats.get("dropped_intro", 0),
         "layout": layout,
         "layout_policy": layout_policy,
-        "warnings": warnings,
+        "warnings": list(warnings) + description_warnings,
         "wall_time_s": round(time.monotonic() - started, 3),
         "llm_cost_usd": round(client.spent_usd, 8),
     }

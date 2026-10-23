@@ -48,6 +48,7 @@ from common.moves import (
     screen_factor,
     slot_screen_length,
 )
+from common.overlap import overlap_seconds
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -260,10 +261,6 @@ def clip_counter(name):
 
 def candidate_key(candidate):
     return f"{clip_counter(candidate['clip'])}/{candidate['segment'].get('id')}"
-
-
-def overlap_seconds(a_start, a_end, b_start, b_end):
-    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 def load_shotlog(workspace):

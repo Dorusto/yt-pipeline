@@ -36,6 +36,7 @@ from common.moves import (
     screen_factor,
     slot_screen_length,
 )
+from common.overlap import overlap_seconds
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred
 from common.photos import ken_burns_for
@@ -227,10 +228,6 @@ def load_shotlog(workspace):
         return None
     shots = data.get("shots") or []
     return {shot["key"]: shot for shot in shots if shot.get("key")}
-
-
-def overlap_seconds(a_start, a_end, b_start, b_end):
-    return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
 def load_ingest(workspace):

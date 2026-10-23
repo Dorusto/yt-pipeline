@@ -1,5 +1,42 @@
 # S60 Mode B finishing
 
+## Lot 7b — Review fixes for lot 7
+
+**Works**
+- `scripts/common/overlap.py` holds `overlap_seconds`/`overlap_fraction` (overlap over the
+  shorter span); `shorts_rank.py`, `index.py`, `director.py`, `llm_director.py` and
+  `graphics_plan.py` use them and keep no copy of their own.
+- The Shorts tab of `serve.py` (the phone review) shows every candidate's `title` and
+  `description`; the `SHORTS_CANDIDATES` fixture in `tests/test_serve.py` is the 0.2
+  schema (`schema_version` 0.2, `title` + `description` on every row).
+- A `description` that is not exactly 2 sentences is a warning — in the `--json`
+  `warnings` and in the printed list (`warning: candidate N: description should be
+  exactly 2 sentences (found K)`) — never a rejection; the schema still rejects empty and
+  over-400-character descriptions.
+- Intro rule (user decision): `is_standalone(start_s)` is `start_s >= 60 s`, no
+  exceptions — the intro block never becomes a candidate whatever the span's end, and the
+  "different cut" clause is gone. `docs/RULES.md`, `docs/DECISIONS.md`, the `yt-shorts`
+  skill and the lot 7 line below carry it; the table test drops the old `10-65`/`50-95`
+  keepers and a new test drops a 50-85 span that crosses the 60 s mark.
+- `test_reference_final_project` requires at most 5 written candidates and no pair over
+  the 20 % overlap cap (it required exactly 5).
+- Verified: 3 new tests in `tests/test_shorts_rank.py` plus one table case; the full suite
+  `.venv/bin/python -m pytest tests/ -q -m "not needs_melt and not needs_footage"` =
+  1805 passed, 2 skipped, 1 deselected; `scripts/check_public.py` clean on the 13 changed
+  files. Synthetic smoke (`/tmp/opencode/s60lot7b`, mock backend, 120 s edit with
+  sentences 20-91 s): 9 generated spans, 7 dropped by the intro rule, 2 scored, 1 written
+  and 1 dropped by the overlap cap; the ranked list prints before `written:`.
+
+**Mocked / not verified**
+- The LLM pass ran on the mock backend only; the Shorts tab HTML is covered by the tests,
+  no phone or browser was used here.
+
+**Doru, check this**
+- The intro rule is now "a candidate starts at or after 60 s of the edit, no exceptions"
+  (your decision in the lot 7 review) — say if the old "different cut" clause should come
+  back (`scripts/shorts_rank.py` `is_standalone`).
+
+
 ## Lot 8b — Review fixes for lot 8
 
 **Works**
@@ -97,8 +134,9 @@
 ## Lot 7 — Shorts quality
 
 **Works**
-- `scripts/shorts_rank.py`: candidates are standalone (`is_standalone` — never the edit's
-  opening cut `start_s <= 0.5`, never a span only inside the first 60 s), the written top 5
+- `scripts/shorts_rank.py`: candidates are standalone (`is_standalone` — lot 7 shipped
+  "never the edit's opening cut, never a span only inside the first 60 s"; lot 7b replaced
+  it with "starts at or after 60 s of the edit", user decision), the written top 5
   never overlap by more than 20 % (`overlap_s / min(duration_s) <= 0.2`, greedy in rank
   order, the list refills from the next distinct candidates), and every candidate carries
   `title` (max 60, hook first) and `description` from the same `director` pass
@@ -121,9 +159,8 @@
   quality of the generated titles/descriptions is not judged here.
 
 **Doru, check this**
-- The brief's "never the first 60 s of the edit unless it is a different cut" is implemented
-  as (a) never a candidate starting at the very beginning and (b) never a candidate that
-  lies entirely inside the first 60 s, while a cut that starts later and runs past the 60 s
-  mark is kept (`scripts/shorts_rank.py` `is_standalone`, table in
-  `tests/test_shorts_rank.py` `test_is_standalone_table`) — confirm or correct.
+- The intro rule asked here ("never the first 60 s of the edit unless it is a different
+  cut") is decided and implemented since lot 7b: a candidate starts at or after 60 s of
+  the edit, no exceptions (`scripts/shorts_rank.py` `is_standalone`, table in
+  `tests/test_shorts_rank.py` `test_is_standalone_table`).
 - `docs/RULES.md` `shorts_candidates.json` line and `docs/DECISIONS.md` S60 lot 7 entry.

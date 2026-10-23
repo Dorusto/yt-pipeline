@@ -1626,19 +1626,22 @@ def write_serve_config(tmp_path, shorts_layout=None):
 SHORTS_CANDIDATES = [
     {
         "rank": 1, "start_s": 0.0, "end_s": 30.0, "duration_s": 30.0, "score": 70.0,
-        "hook": 60, "payoff": 80, "reason": "strong open", "chapter_start_s": 0.0,
+        "hook": 60, "payoff": 80, "reason": "strong open",
+        "title": "A strong opening", "description": "It teases the span. It spoils nothing.",
+        "chapter_start_s": 0.0,
         "chapter_title": "Intro", "layout": "split",
     },
     {
         "rank": 2, "start_s": 40.0, "end_s": 65.0, "duration_s": 25.0, "score": 65.0,
         "hook": 55, "payoff": 75, "reason": "nice payoff",
+        "title": "The payoff lands", "description": "The setup pays off. Watch to the end.",
     },
 ]
 
 
 def write_shorts_candidates(project, candidates):
     document = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "generated_at": "2026-10-21T00:00:00+00:00",
         "tool": "scripts/shorts_rank.py",
         "candidates": candidates,
@@ -1702,6 +1705,12 @@ def test_shorts_tab_lists_the_candidates(tmp_path):
         assert page.count('class="short-row"') == 2
         assert "strong open" in page
         assert "nice payoff" in page
+        assert "A strong opening" in page
+        assert "It teases the span. It spoils nothing." in page
+        assert "The payoff lands" in page
+        assert "The setup pays off. Watch to the end." in page
+        assert page.count('class="short-title"') == 2
+        assert page.count('class="short-description"') == 2
         assert "Intro" in page
         assert '<option value="split" selected>split</option>' in page
         assert '<option value="face" selected>face</option>' in page
