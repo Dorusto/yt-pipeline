@@ -762,6 +762,27 @@ function sync(){var on=s.value==='custom';i.hidden=!on;if(!on)i.value='';}
 s.addEventListener('change',function(){sync();if(s.value==='custom')i.focus();});sync();});
 """
 
+DROP_STYLE = (
+    ".drop{border:2px dashed currentColor;border-radius:12px;padding:16px;opacity:.85}"
+    ".drop.over{opacity:1;border-style:solid}"
+    ".drop-hint{margin:.5em 0 0}"
+    ".drop-count{font-weight:600}"
+)
+
+# Drag and drop for the upload form: every drop (or pick) adds to the selection
+# instead of replacing it, and a drop anywhere on the page lands in the form.
+DROP_SCRIPT = """
+(function(){var z=document.querySelector('[data-drop]');if(!z)return;var inp=z.querySelector('input[type=file]');var c=z.querySelector('.drop-count');var keep=[];
+function show(){c.textContent=keep.length?keep.length+(keep.length===1?' file selected':' files selected'):'';}
+function put(list){[].forEach.call(list,function(f){if(!keep.some(function(k){return k.name===f.name&&k.size===f.size;}))keep.push(f);});
+try{var dt=new DataTransfer();keep.forEach(function(f){dt.items.add(f);});inp.files=dt.files;}catch(e){}show();}
+inp.addEventListener('change',function(){put([].slice.call(inp.files));});
+['dragenter','dragover'].forEach(function(t){document.addEventListener(t,function(e){e.preventDefault();z.classList.add('over');});});
+document.addEventListener('dragleave',function(e){if(!e.relatedTarget)z.classList.remove('over');});
+document.addEventListener('drop',function(e){e.preventDefault();z.classList.remove('over');if(e.dataTransfer&&e.dataTransfer.files.length)put(e.dataTransfer.files);});
+})();
+"""
+
 STRIP_SCRIPT = """
 [].forEach.call(document.querySelectorAll('.player'),function(p){var v=p.querySelector('video');var b=[].slice.call(p.querySelectorAll('.strip-track button'));
 if(!v||!b.length)return;b.forEach(function(x){x.addEventListener('click',function(){v.currentTime=parseFloat(x.dataset.t);v.play();});});
@@ -1353,7 +1374,10 @@ AUTO_HINT = '<p class="hint">Leave anything on Auto and the director decides fro
 def render_upload(music_tracks):
     """Return the Upload page with the form wired to POST /upload."""
     fields = [
-        ("Clips and photos", '<input type="file" name="files" multiple accept="video/*,image/*">'),
+        ("Clips and photos", '<div class="drop" data-drop>'
+                             '<input type="file" name="files" multiple accept="video/*,image/*">'
+                             '<p class="drop-hint">Drag clips and photos here (several at once, '
+                             'or in several drops), or tap to choose. <span class="drop-count"></span></p></div>'),
         ("Project name", '<input type="text" name="folder" placeholder="kotor-day-2" autocomplete="off">'),
         ("Brief", '<textarea name="brief" rows="4" '
                   'placeholder="About 60 seconds, chronological, calm start, energy at the end"></textarea>'),
@@ -1369,7 +1393,8 @@ def render_upload(music_tracks):
         '<button class="go" type="submit" name="submit" value="start">Upload and start</button>'
         "</form>"
     )
-    return render_page("New recap", body, active="upload", script=LENGTH_SCRIPT)
+    return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
+                       script=LENGTH_SCRIPT + DROP_SCRIPT)
 
 
 def render_reedit(name, music_tracks):

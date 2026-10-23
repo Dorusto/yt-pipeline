@@ -2032,3 +2032,10 @@ def test_no_personal_default_inbox_path():
     help_text = serve.build_parser().format_help()
     assert "~/media/inbox" not in help_text
     assert "YT_PIPELINE_INBOX" in help_text
+
+
+def test_upload_page_has_a_drop_zone_that_adds_files():
+    page = serve.render_upload([])
+    assert "data-drop" in page
+    assert 'name="files" multiple' in page
+    assert "DataTransfer" in page
