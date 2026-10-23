@@ -785,7 +785,14 @@ background:var(--sea);overflow:hidden;white-space:nowrap;text-overflow:clip;
 text-align:center;opacity:.72;transition:opacity .15s}
 .strip-track button.photo{background:repeating-linear-gradient(135deg,var(--stone) 0 6px,#d9d0bd 6px 12px)}
 .strip-track button.now{opacity:1;box-shadow:inset 0 -4px 0 var(--water)}
-.strip-track button.picked{opacity:1;outline:3px solid #e5484d;outline-offset:-3px;text-decoration:line-through}
+.strip-track button{position:relative}
+.strip-track button.picked{opacity:1;outline:3px solid #e5484d;outline-offset:-3px}
+.shot-del{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;background:#e5484d;
+display:flex;align-items:center;justify-content:center;cursor:pointer}
+.shot-del svg{width:13px;height:13px;fill:#fff}
+.shot-ask{display:flex;align-items:center;gap:.6em;margin:.5em 0}
+.shot-ask button{border:0;border-radius:var(--radius-s);padding:.35em 1em;cursor:pointer}
+.shot-ask .yes{background:#e5484d;color:#fff}
 .strip-legend{display:flex;gap:16px;margin-top:8px;color:var(--haze);font-size:.85rem}
 .strip-legend span::before{content:"";display:inline-block;width:10px;height:10px;
 border-radius:3px;margin-right:6px;vertical-align:-1px}
@@ -894,16 +901,21 @@ var t=[].slice.call(document.querySelectorAll('.tick[data-since]'));if(!t.length
 function go(){var n=Date.now()/1000;t.forEach(function(e){e.textContent=f(n-parseFloat(e.dataset.since));});}go();setInterval(go,1000);})();
 """
 
-# Shot removal: tapping a block on the first strip selects it; the Remove button
-# appears with the selected numbers and posts them to /<project>/drop-shot.
+# Shot removal: tapping a block on the first strip selects it and shows a bin icon
+# on it; the icon asks "Remove shot N?" with Yes and No, Yes posts /<project>/drop-shot.
 PICK_SCRIPT = """
 (function(){var f=document.querySelector('form.drop-shot');var p=document.querySelector('.player');if(!f||!p)return;
-var hid=f.querySelector('input[name=shots]'),btn=f.querySelector('button[type=submit]');
-var b=[].slice.call(p.querySelectorAll('.strip-track button'));
-function sync(){var n=[];b.forEach(function(x,i){if(x.classList.contains('picked'))n.push(i+1);});hid.value=n.join(',');
-btn.hidden=!n.length;btn.textContent=n.length===1?'Remove shot '+n[0]:'Remove shots '+n.join(', ');}
-b.forEach(function(x){x.addEventListener('click',function(){x.classList.toggle('picked');sync();});});
-f.addEventListener('submit',function(){btn.disabled=true;btn.textContent='Removing, about 15 s...';});sync();})();
+var hid=f.querySelector('input[name=shots]');var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
+var bin='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z"/></svg>';
+var ask=document.createElement('div');ask.className='shot-ask';ask.hidden=true;p.querySelector('.strip').appendChild(ask);
+function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});ask.hidden=true;}
+b.forEach(function(x,i){x.addEventListener('click',function(){var was=x.classList.contains('picked');clear();if(was)return;
+x.classList.add('picked');var d=document.createElement('span');d.className='shot-del';d.setAttribute('role','button');
+d.setAttribute('aria-label','Remove shot '+(i+1));d.innerHTML=bin;x.appendChild(d);
+d.addEventListener('click',function(e){e.stopPropagation();ask.innerHTML='<span>Remove shot '+(i+1)+'?</span>'+
+'<button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';ask.hidden=false;
+ask.querySelector('.no').onclick=function(){ask.hidden=true;};
+ask.querySelector('.yes').onclick=function(){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';f.submit();};});});});})();
 """
 
 STRIP_SCRIPT = """
@@ -1240,8 +1252,7 @@ def render_drop_form(name, version):
         'enctype="multipart/form-data">'
         f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
         '<input type="hidden" name="shots" value="">'
-        '<p class="hint">Tap shots on the strip under the video to select them for removal.</p>'
-        '<button type="submit" name="submit" value="drop" hidden>Remove</button></form>'
+        '</form>'
     )
 
 

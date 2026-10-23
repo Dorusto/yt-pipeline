@@ -2095,4 +2095,4 @@ def test_drop_form_names_the_shown_version():
     assert 'action="/trip/drop-shot"' in form
     assert 'value="v002"' in form
     assert 'name="shots" value=""' in form
-    assert "PICK" not in form and "Tap shots on the strip" in form
+    assert "Tap shots" not in form and "<button" not in form
