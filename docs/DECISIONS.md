@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Basic colour recipe for camera clips (V020N lot n13)
+
+**Context:** Issue #69: a talking-head clip filmed over several evenings mixes different light (warmer one night, greener the next) and nothing evens it out, so it shows when two sessions are cut together. The issue asks for a loudness-like colour recipe: one command, no manual grading, the same interface as `loudness.py` (`--fcproj`, `--dry-run`, `--json`).
+
+**Options:** (A) a per-clip auto-grade; (B) a per-session correction toward a neutral target (grey-world white balance, mid-grey exposure, target contrast) applied through the Lumetri Basic Correction of the camera clips.
+
+**Decision:** B. `scripts/colour.py` reads the project JSON directly (no `filmcraft-cli inspect`), groups the enabled camera clips of one video track into sessions by capture time (a gap over `--session-gap-min`, default 180, starts a new session), measures each session's average white balance, exposure and contrast on `--frames-per-clip` frames per clip, and computes one correction toward `--target-luma` (0.5) and `--target-contrast` (0.18). It applies `effects.apply` only when the clip has no `lumetri` effect (the command is not idempotent), then four `effects.setParam` (temperature, tint, exposure, contrast), all in one `filmcraft-cli run` script so the project is opened and saved once. It works on a copy (`<stem>_colour.fcproj`) unless `--in-place` is given. No model is called; `llm_cost_usd` is always `0.0`.
+
+**Why not A:** cuts inside one session must stay identical, and the loudness recipe normalises to an absolute target too; a per-clip grade would make two clips of the same evening drift apart.
+
+**Consequence:** the real-clip comparison (sessions from different evenings, before/after frames) is left for the owner; the tests use synthetic frames and a stub `filmcraft-cli`. No new schema and no config key; `loudness.py` and `common/filmcraft.py` are unchanged.
+
+---
+
 ## [2026-10-23] Metadata prompt fixes and channel wording in the config (V020N lot n11)
 
 **Context:** Issue #76: the metadata prompt produced weak titles (the main keyword first, the "Name: subtitle" pattern), invented links and repos the Inputs never gave, a marketing-style pinned comment, one fixed members sentence and closing reused verbatim in both the RO and the EN description, and Romanian-only chapter titles. The members sentence and the closing were hardcoded in `scripts/metadata.py` (`MEMBERS_SENTENCE`, `CLOSING`) and the thumbnail formula was hardcoded in `prompts/thumbnail_concepts.md`, so one channel's wording lived in tracked code and prompts — against the rule that prompts and tracked templates carry no channel-specific value.

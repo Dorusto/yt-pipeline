@@ -175,6 +175,14 @@ headless file) to run the two steps files it writes, `finish_pip.place.jsonl` an
 when the placements exist but the animate phase is missing it rewrites
 `finish_pip.animate.jsonl` instead.
 
+`scripts/colour.py` evens out the colour between recording sessions: after
+finishing the edit, `colour.py --fcproj project.fcproj` measures each session's
+average white balance, exposure and contrast on a few frames of the camera clips
+and applies one Lumetri Basic Correction per session (temperature, tint,
+exposure, contrast) to every camera clip of that session, through the headless
+`filmcraft-cli`. It writes a copy (`<stem>_colour.fcproj`) unless `--in-place` is
+given; `--dry-run` prints the commands first.
+
 ## Writing a brief
 
 Say what you want, not how to cut it. The router reads length, order, pacing, music and content type from it.

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repo automations: Dependabot opens one grouped weekly pull request per ecosystem (Python requirements and GitHub Actions) inside the owner's working hours, checked by CI like any pull request; `AGENTS.md` is the shared instruction file for every coding agent, pointing to `docs/RULES.md`, the skills and the topic files in `docs/agents/` (code style, testing, conventions), with `CLAUDE.md` pointing to it.
 - Web app: a shot on the strip can be made 1 s longer or shorter (a "− 1 s" / "+ 1 s" control next to the bin icon), rendered as a new version with `edit_drop.py --trim` and no model call.
 - Publish: `metadata.py` gains `--title` — the chosen title is handed to the model in a `## Chosen title` section and used verbatim as the first title.
+- FilmCraft: `colour.py` applies a basic colour recipe to the camera clips of a project — one Lumetri Basic Correction per recording session (white balance, exposure, contrast), measured on a few frames, on a copy unless `--in-place`.
 
 ### Changed
 

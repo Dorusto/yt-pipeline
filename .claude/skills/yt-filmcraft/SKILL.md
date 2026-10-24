@@ -1,7 +1,7 @@
 ---
 name: yt-filmcraft
-description: Bridge the FilmCraft edit and the publish flow without needing FilmCraft installed. Read a .fcproj project's timeline markers into markers.json (the graphics_plan.py contract) and the Rose markers into todo.md, or apply the loudness recipe — in-editor through the headless filmcraft-cli (Essential Sound Dialogue + Auto-Match + Clarity Dynamics) on a copy of the project, or without an editor as an ffmpeg two-pass loudnorm on a video file. Use when the user asks to pull the markers out of a FilmCraft project, wants the redo list outside the editor, wants the project's voice clips loudness-matched, or wants a video normalised to the YouTube loudness targets. Trigger phrases - "scoate markerele din proiectul FilmCraft", "fă markers.json din fcproj", "lista de refăcut din editor", "normalizează sunetul proiectului", "aplică rețeta de loudness", "read the FilmCraft markers", "markers.json from fcproj", "loudness match the project", "normalise this video to -14 LUFS". Not for importing subtitles into the FilmCraft caption track (out of scope), not for choosing the cut (that is `director`/`llm_director`), not for rendering (that is `render`) and not for measuring or cleaning ambient sound (that is `audio-clean`).
-compatibility: Run from the repository root. Needs the repo .venv and ffmpeg/ffprobe. The markers tool reads the .fcproj read-only. The loudness --video backend needs only ffmpeg; the --fcproj backend needs filmcraft-cli (from $FILMCRAFT_CLI or PATH) and never modifies the input project unless --in-place is given.
+description: Bridge the FilmCraft edit and the publish flow without needing FilmCraft installed. Read a .fcproj project's timeline markers into markers.json (the graphics_plan.py contract) and the Rose markers into todo.md, apply the loudness recipe — in-editor through the headless filmcraft-cli (Essential Sound Dialogue + Auto-Match + Clarity Dynamics) on a copy of the project, or without an editor as an ffmpeg two-pass loudnorm on a video file — or apply a basic colour recipe to the camera clips of a project (one Lumetri Basic Correction per recording session: white balance, exposure, contrast, measured on a few frames, on a copy unless --in-place). Use when the user asks to pull the markers out of a FilmCraft project, wants the redo list outside the editor, wants the project's voice clips loudness-matched, wants a video normalised to the YouTube loudness targets, or wants the camera clips' colour evened out between sessions. Trigger phrases - "scoate markerele din proiectul FilmCraft", "fă markers.json din fcproj", "lista de refăcut din editor", "normalizează sunetul proiectului", "aplică rețeta de loudness", "read the FilmCraft markers", "markers.json from fcproj", "loudness match the project", "normalise this video to -14 LUFS", "normalizează culoarea clipurilor", "potrivește culoarea sesiunilor", "even out the colour between sessions", "colour recipe", "white balance per session". Not for importing subtitles into the FilmCraft caption track (out of scope), not for choosing the cut (that is `director`/`llm_director`), not for rendering (that is `render`) and not for measuring or cleaning ambient sound (that is `audio-clean`).
+compatibility: Run from the repository root. Needs the repo .venv and ffmpeg/ffprobe. The markers tool reads the .fcproj read-only. The loudness --video backend needs only ffmpeg; the --fcproj backend needs filmcraft-cli (from $FILMCRAFT_CLI or PATH) and never modifies the input project unless --in-place is given. The colour tool needs filmcraft-cli too and never modifies the input project unless --in-place is given.
 ---
 
 # yt-filmcraft
@@ -68,6 +68,29 @@ medium (`clarity.enabled`, `clarity.dynamics.on`, `clarity.dynamics.amount: 5`).
 - Three commands run (`essentialSound.setType`, `essentialSound.autoMatch`, `essentialSound.set`), then `essentialSound.inspect` prints the measured and final loudness (`measured_lufs`, `target_lufs`, `match_gain`). A non-zero CLI exit or an `{"ok": false}` reply → exit 3 naming the command.
 - `--dry-run` prints the exact command lines and skips the copy, without needing `filmcraft-cli` installed; `--json` then has `commands` and `dry_run: true`.
 - `--json` reports `output`, `backend: "filmcraft"`, `sequence`, `track`, `clips`, `measured` (or `null` on `--dry-run`), `target_lufs`, `commands`, `wall_time_s`, `llm_cost_usd`.
+
+## Colour (`colour.py`)
+
+The basic colour recipe as one command: measures each recording session's average
+white balance, exposure and light contrast on a few frames of the camera clips and
+applies one Lumetri Basic Correction per session (temperature, tint, exposure,
+contrast) to every camera clip of that session, through the headless
+`filmcraft-cli`. No model is called; `llm_cost_usd` is always `0.0`.
+
+```bash
+.venv/bin/python scripts/colour.py --fcproj project.fcproj --sequence Main --json
+.venv/bin/python scripts/colour.py --fcproj project.fcproj --dry-run
+.venv/bin/python scripts/colour.py --fcproj project.fcproj --in-place
+```
+
+- The binary comes from `$FILMCRAFT_CLI` or `filmcraft-cli` on PATH; missing → exit 3 naming both (not on `--dry-run`, which prints without needing the binary).
+- The input project is never modified unless `--in-place` is given; without it the tool copies it to `--out` (default `<stem>_colour.fcproj`) and runs against the copy. `--out` equal to the input is refused (exit 2).
+- The camera clips are the `enabled` timeline clips of the video track named `--track` (default `Camera 1`); a clip whose media file is missing is a warning and is skipped. No enabled clip → exit 2 naming the track.
+- Clips are sorted by capture time (the `YYYY-MM-DD HH-MM-SS` in the file name, else the file mtime) and grouped into sessions: a gap over `--session-gap-min` (default 180) starts a new session. Each session is measured on `--frames-per-clip` (default 3) frames per clip and gets one correction toward `--target-luma` (default 0.5) and `--target-contrast` (default 0.18); a session with no readable frame is a warning and is skipped, and no session at all → exit 2.
+- The recipe is grey-world white balance (temperature, tint), exposure toward the target luma and contrast toward the target contrast, each clamped to the Lumetri Basic Correction range.
+- One `filmcraft-cli run` script applies the corrections: `effects.apply` only when the clip has no `lumetri` effect yet (it is not idempotent), then four `effects.setParam` (temperature, tint, exposure, contrast) per clip. A non-zero CLI exit or an `{"ok": false}` reply → exit 3 naming the command.
+- `--dry-run` prints the exact JSONL lines and skips the copy, without needing `filmcraft-cli` installed; `--json` then has `commands` and `dry_run: true`.
+- `--json` reports `output`, `backend: "filmcraft"`, `sequence`, `track`, `sessions` (each with `key`, `clips`, `frames`, `measured`, `correction`), `clips`, `commands`, `dry_run`, `warnings`, `wall_time_s`, `llm_cost_usd`.
 
 ## Export an edit to FilmCraft (`export_filmcraft.py`)
 

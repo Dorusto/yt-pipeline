@@ -179,6 +179,20 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 - `--fcproj` applies the Essential Sound recipe (Dialogue type, Auto-Match loudness, Clarity Dynamics medium) to the voice clips of one audio track through the headless `filmcraft-cli` (`$FILMCRAFT_CLI` or PATH). The input project is never modified unless `--in-place` is given; without it the tool works on a copy (`<stem>_loudness.fcproj`). `--dry-run` prints the commands without running them.
 - Both backends report `wall_time_s` and `llm_cost_usd` (`0.0`); `--json` adds the measured and target loudness values.
 
+### Colour (colour.py)
+
+`colour.py` applies a basic colour recipe to the camera clips of a FilmCraft project as one command. Skill: `yt-filmcraft`.
+
+```bash
+.venv/bin/python scripts/colour.py --fcproj project.fcproj --sequence Main --json
+.venv/bin/python scripts/colour.py --fcproj project.fcproj --dry-run
+.venv/bin/python scripts/colour.py --fcproj project.fcproj --in-place
+```
+
+- It measures each recording session's average white balance, exposure and light contrast on a few frames of the camera clips and applies one Lumetri Basic Correction per session (temperature, tint, exposure, contrast) to every camera clip of that session, through the headless `filmcraft-cli` (`$FILMCRAFT_CLI` or PATH). The input project is never modified unless `--in-place` is given; without it the tool works on a copy (`<stem>_colour.fcproj`). `--dry-run` prints the JSONL commands without running them.
+- Clips are grouped into sessions by capture time (`--session-gap-min`, default 180); `--track` (default `Camera 1`) picks the video track, `--frames-per-clip` (default 3) the frames sampled per clip, and `--target-luma`/`--target-contrast` (default 0.5/0.18) the targets.
+- It reports `wall_time_s` and `llm_cost_usd` (`0.0`); `--json` adds the per-session measured values and corrections.
+
 ---
 
 ## Media tools
