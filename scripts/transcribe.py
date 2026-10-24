@@ -305,8 +305,9 @@ def build_parser():
         default=None,
         help=(
             "Whisper model id (default: "
-            f"{GPU_MODEL} with a CUDA GPU, else {CPU_NON_ENGLISH_MODEL} for a non-English "
-            f"language and {CPU_ENGLISH_MODEL} for English; or {WHISPER_MODEL_ENV}, or "
+            f"{GPU_MODEL} with a CUDA GPU, else {CPU_NON_ENGLISH_MODEL} on CPU for a "
+            f"non-English language (including auto or no language), {CPU_ENGLISH_MODEL} "
+            f"only for an explicit en; or {WHISPER_MODEL_ENV}, or "
             "transcribe.model in the config)"
         ),
     )

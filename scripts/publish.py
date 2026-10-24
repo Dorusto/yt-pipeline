@@ -202,7 +202,9 @@ def build_parser():
         default=None,
         help=(
             "Whisper model id passed to transcribe.py as --model in the --media step "
-            "(default: transcribe.py resolves it)"
+            "(default: transcribe.py resolves it: turbo on a CUDA GPU, else medium on "
+            "CPU for a non-English language (including auto or no language), small only "
+            "for an explicit en)"
         ),
     )
     parser.add_argument(

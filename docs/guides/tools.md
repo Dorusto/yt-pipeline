@@ -16,8 +16,9 @@ and re-run safety; shared code lives in `scripts/common/`.
 2. Transcribe once when no word JSON exists yet — one Whisper pass per source:
    .venv/bin/python scripts/transcribe.py Clip.mp4 --out-dir words/
    (raw .srt + _words.json; --backend mock for an offline run; the model defaults
-    to turbo on a CUDA GPU, else medium for a non-English language and small for
-    English, overridable with --model, YT_PIPELINE_WHISPER_MODEL or transcribe.model)
+    to turbo on a CUDA GPU, else medium on CPU for a non-English language (including
+    auto or no language), small only for an explicit en, overridable with --model,
+    YT_PIPELINE_WHISPER_MODEL or transcribe.model)
 3. Run the publish chain (skill: yt-publish):
    .venv/bin/python scripts/publish.py --project out/ --context context.md \
        --fcproj project.fcproj --sequence Main --words-dir words/ --json
@@ -396,7 +397,7 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 
 `--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`.
 
-`--whisper-model` is passed to `transcribe.py` as `--model` in the `--media` step; without it `transcribe.py` resolves the default (turbo on a CUDA GPU, else medium for a non-English language and small for English).
+`--whisper-model` is passed to `transcribe.py` as `--model` in the `--media` step; without it `transcribe.py` resolves the default (turbo on a CUDA GPU, else medium on CPU for a non-English language (including auto or no language), small only for an explicit en).
 
 The `verify` step compares the corrected `<name>_RO.srt` with the final video already known to the run (`--final-video`, or the `--media` file): the last cue's end time must be within 2 s of the video duration and the SRT must not be older than the video. A mismatch exits 2 naming both times (or saying the subtitles are older) and aborts the chain before translation, metadata and the kit; with no final video the step is skipped with reason `no final video`.
 
