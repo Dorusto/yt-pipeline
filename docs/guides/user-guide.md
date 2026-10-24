@@ -112,6 +112,13 @@ examples below use that layout; the agent-side eval copy of the clip lives at
   --final-video final.mp4 --kit
 ```
 
+- The kit is its own tool, `publish_kit.py`, so after changing only the
+  thumbnail you can rebuild it alone without re-running the chain:
+  `.venv/bin/python scripts/publish_kit.py --project <trip-folder> \
+  --final-video final.mp4`. It links the final video into `publish-kit/`
+  (hard link, else symlink, else only its path in `studio.md`) instead of
+  copying it.
+
 - The folder is `camera/` + `ecran/` (or `screen/`), or one flat folder with
   `camera ` names. A camera pairs with the screen whose name timestamp is
   nearest (10 s tolerance); unpaired cameras run camera-only. The camera file

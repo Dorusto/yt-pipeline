@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] The publish kit is its own tool and links the video (V020N lot n9)
+
+**Context:** Issue #73: after changing only the thumbnail the kit could not be rebuilt — the kit step is skipped while `publish-kit/studio.md` exists, and `--force` re-runs every step including translation and metadata, which would overwrite a metadata draft chosen by hand (against VISION §2.1). `--kit` also copied the final video (about 1 GB) into `publish-kit/`, so the disk held two copies.
+
+**Options:** (A) a `--kit-only` flag on `publish.py` that re-runs just the kit step; (B) move all the kit logic into a standalone `publish_kit.py` that reads the chain's existing outputs, and make `publish.py --kit` a subprocess call to it. For the video: (A) keep copying; (B) link it (hard link, else symlink, else only its path in `studio.md`).
+
+**Decision:** B for both. `scripts/publish_kit.py` takes `--project`, `--final-video`, `--name`, `--kit-loudness`, `--kit-title` and `--json`, reads `metadata.json`, `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and the final video, and writes `PROJECT/publish-kit/` (the SRTs and thumbnail copied, the video linked, `studio.md`). It never re-runs or overwrites the chain's outputs, so it can be re-run alone. `publish.py` keeps only the orchestration: the `kit` step carries an argv for `publish_kit.py` (or a `fail` message when `--final-video` cannot be resolved), runs it through the generic `execute`, and takes the child's JSON as the run's `kit` summary. The video link tries `os.link`, then `os.symlink`, then records `video_link: "path"` and names the absolute path in `studio.md`; before linking it prints the file and its size, and before the loudness pass one line saying it writes a large file.
+
+**Why not A:** a `--kit-only` flag keeps the kit logic in `publish.py` and duplicates the skip/force rules; the issue asks for a tool that is independent like every other stage. **Why not copy:** the disk held two copies of the same 1 GB file; a link is enough for a manual upload.
+
+**Consequence:** `publish.py` loses `collect_kit_checks`, `build_studio_md`, `write_kit`, `execute_kit`, `run_loudness`, `kit_info`, `image_dimensions`, `chapter_lines`, `chapter_mmss`, `load_metadata_json` and the kit constants; it keeps `KIT_DIR_NAME` for the skip rule and `srt_end_seconds`/`format_seconds`/`probe_duration` for `verify`. The kit skip rule is unchanged (`publish-kit/studio.md` exists; `--force` re-runs). RULES records the new subprocess pair and the kit rule.
+
+---
+
 ## [2026-10-23] Thumbnail concepts move out of the metadata draft (V020N lot n10)
 
 **Context:** Issue #74: `metadata.md` mixed the publish metadata with a `## Thumbnail` section whose labels were English (Pose, Emotion, Theme, Source) while the channel works in Romanian, and thumbnail concepts are not metadata. The 2026-10-20 addendum had put a structured `thumbnail_concepts` model key into `metadata.py` and rendered it with the exact `thumbnail.py --photo --title --keyword --kicker --theme` command line per concept.

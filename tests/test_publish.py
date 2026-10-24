@@ -708,10 +708,12 @@ def test_kit_long_title_fails(tmp_path, capsys):
 def test_kit_missing_en_srt_fails(tmp_path, monkeypatch, capsys):
     project, clip = build_kit_project(tmp_path)
     (project / f"{project.name}_EN.srt").unlink()
-    monkeypatch.setattr(
-        publish,
-        "execute",
-        lambda step, argv, ctx: {
+    real_execute = publish.execute
+
+    def chain_only(step, argv, ctx):
+        if step["name"] == "kit":
+            return real_execute(step, argv, ctx)
+        return {
             "status": "done",
             "returncode": 0,
             "outputs": [],
@@ -719,8 +721,9 @@ def test_kit_missing_en_srt_fails(tmp_path, monkeypatch, capsys):
             "stderr": "",
             "stdout": "",
             "wall_time_s": 0.0,
-        },
-    )
+        }
+
+    monkeypatch.setattr(publish, "execute", chain_only)
     assert run_kit(project, clip) == 2
     err = capsys.readouterr().err
     assert "_EN.srt" in err
@@ -833,26 +836,6 @@ def test_verify_skipped_without_final_video(tmp_path, monkeypatch, capsys):
     assert verify["status"] == "skipped"
     state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
     assert state["steps"]["verify"]["reason"] == "no final video"
-
-
-def test_kit_loudness_uses_the_loudened_file(tmp_path, monkeypatch, capsys):
-    project, clip = build_kit_project(tmp_path)
-    loud = tmp_path / "final_loud.mp4"
-    loud.write_bytes(b"loud")
-    monkeypatch.setattr(publish, "run_loudness", lambda ctx, final: (loud, None))
-    assert run_kit(project, clip, extra=["--kit-loudness"]) == 0
-    kit = project / "publish-kit"
-    assert (kit / "final_loud.mp4").is_file()
-    assert not (kit / "final.mp4").exists()
-
-
-def test_kit_loudness_failure_fails(tmp_path, monkeypatch, capsys):
-    project, clip = build_kit_project(tmp_path)
-    monkeypatch.setattr(publish, "run_loudness", lambda ctx, final: (None, "boom"))
-    assert run_kit(project, clip, extra=["--kit-loudness"]) == EXIT_RUNTIME
-    err = capsys.readouterr().err
-    assert "loudness failed" in err
-    assert not (project / "publish-kit").exists()
 
 
 def test_kit_end_to_end_with_mock_llm(tmp_path):

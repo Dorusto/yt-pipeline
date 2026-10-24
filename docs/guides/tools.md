@@ -359,11 +359,18 @@ Consecutive video slots sharing the same `id` are two angles of one cut window: 
 
 ## Publish
 
-### Publish kit (publish.py)
+### Publish kit (publish_kit.py)
 
-`publish.py` chains the publish stations for a finished edit (subtitles → corrections → verify → a human-review stop → EN translation → thumbnail → metadata) and, with `--kit`, builds `<project>/publish-kit/` for a manual YouTube Studio upload: the final video (optionally through the lot 5 `loudness.py` pass with `--kit-loudness`), `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. Skill: `yt-publish`.
+`publish_kit.py` is the standalone kit tool. It reads the publish chain's existing outputs (`metadata.json`, `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and the final video) and writes `<project>/publish-kit/` for a manual YouTube Studio upload: the RO/EN subtitles and the thumbnail copied, the final video **linked** (hard link, else symlink, else only its absolute path in `studio.md`) and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. It never re-runs or overwrites the chain's outputs, so it can be re-run alone after changing only the thumbnail. Skill: `yt-publish`.
 
-The `verify` step compares the corrected `<name>_RO.srt` with the final video already known to the run (`--final-video`, or the `--media` file): the last cue's end time must be within 2 s of the video duration and the SRT must not be older than the video. A mismatch exits 2 naming both times (or saying the subtitles are older) and aborts the chain before translation, metadata and the kit; with no final video the step is skipped with reason `no final video`.
+```bash
+.venv/bin/python scripts/publish_kit.py --project out/ --final-video final.mp4 \
+  [--name NAME] [--kit-loudness] [--kit-title TITLE] [--json]
+```
+
+`--kit-loudness` runs `loudness.py --video <final video> --json` as a subprocess first and links its `_loud` output; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Before linking the video it prints one line naming the file and its size, and before the loudness pass one line saying it writes a large file (to stderr with `--json`). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500); a failure exits 2 with one `[error]` line per problem and leaves no `publish-kit/` behind. There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
+
+`publish.py --kit` is orchestration only: it calls `publish_kit.py` as its last step and forwards `--project`, `--name`, `--final-video`, `--kit-loudness` and `--kit-title`; the child's JSON is the run's `kit` summary. The step is skipped when `publish-kit/studio.md` exists and `--force` re-runs it.
 
 ```bash
 .venv/bin/python scripts/publish.py --project out/ --context ctx.md \
@@ -371,7 +378,9 @@ The `verify` step compares the corrected `<name>_RO.srt` with the final video al
   --kit --final-video final.mp4 --kit-loudness --json
 ```
 
-`--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`; `--kit-title` picks the Studio title (default: the first `metadata.json` title). Checks that would fail in Studio fail loudly before anything is written (title 100 characters, description 5000, EN subtitles present, thumbnail ≤ 2 MB and 1280x720, tags ≤ 500). There is no API upload — an unaudited Google project locks API uploads as private (see `docs/DECISIONS.md`).
+`--final-video` defaults to the `--media` file and is required with `--fcproj`/`--from-edit`.
+
+The `verify` step compares the corrected `<name>_RO.srt` with the final video already known to the run (`--final-video`, or the `--media` file): the last cue's end time must be within 2 s of the video duration and the SRT must not be older than the video. A mismatch exits 2 naming both times (or saying the subtitles are older) and aborts the chain before translation, metadata and the kit; with no final video the step is skipped with reason `no final video`.
 
 ### Metadata draft (metadata.py)
 

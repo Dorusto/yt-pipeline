@@ -23,7 +23,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -38,11 +37,6 @@ TOOL = "scripts/publish.py"
 STATE_NAME = "publish_state.json"
 COST_LINE = re.compile(r"LLM cost:\s*\$([0-9]+(?:\.[0-9]+)?)")
 KIT_DIR_NAME = "publish-kit"
-TITLE_MAX = 100
-DESCRIPTION_MAX = 5000
-TAGS_MAX = 500
-THUMBNAIL_MAX_BYTES = 2_000_000
-THUMBNAIL_SIZE = (1280, 720)
 MATCH_TOLERANCE_S = 2.0
 SRT_END = re.compile(r"--> (\d{2}):(\d{2}):(\d{2}),(\d{3})")
 
@@ -445,7 +439,31 @@ def build_steps(ctx):
     metadata_argv.append("--json")
     steps.append({"name": "metadata", "argv": metadata_argv})
     if ctx.kit:
-        steps.append({"name": "kit"})
+        final_video = resolve_final_video(ctx)
+        if final_video is None:
+            steps.append(
+                {
+                    "name": "kit",
+                    "fail": "--final-video is required with --kit when the source is --fcproj or --from-edit",
+                }
+            )
+        else:
+            kit_argv = [
+                ctx.python,
+                "scripts/publish_kit.py",
+                "--project",
+                str(ctx.project),
+                "--name",
+                ctx.name,
+                "--final-video",
+                str(final_video),
+            ]
+            if ctx.kit_loudness:
+                kit_argv.append("--kit-loudness")
+            if ctx.kit_title:
+                kit_argv += ["--kit-title", ctx.kit_title]
+            kit_argv.append("--json")
+            steps.append({"name": "kit", "argv": kit_argv})
     return steps
 
 
@@ -700,291 +718,6 @@ def format_seconds(seconds):
     return f"{minutes:02d}:{secs:02d}"
 
 
-def load_metadata_json(ctx):
-    """Return ``(data, path)`` for the metadata side-output; data is None when missing or invalid."""
-    path = ctx.project / "metadata.json"
-    if not path.is_file():
-        return None, path
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None, path
-    return (data if isinstance(data, dict) else None), path
-
-
-def chapter_mmss(timestamp):
-    """Render a normalized HH:MM:SS chapter timestamp as MM:SS (or H:MM:SS past an hour)."""
-    parts = timestamp.split(":")
-    if len(parts) == 3 and parts[0] == "00":
-        return f"{parts[1]}:{parts[2]}"
-    return timestamp
-
-
-def chapter_lines(chapters):
-    """Return the YouTube chapter lines (``MM:SS Title``) for the description blocks."""
-    return "\n".join(
-        f"{chapter_mmss(chapter['timestamp'])} {chapter['title']}" for chapter in chapters
-    )
-
-
-def image_dimensions(path):
-    """Return ``(width, height)`` of an image file, or None when it cannot be read."""
-    from PIL import Image, UnidentifiedImageError
-
-    try:
-        with Image.open(path) as image:
-            return image.size
-    except (OSError, UnidentifiedImageError):
-        return None
-
-
-def collect_kit_checks(ctx):
-    """Return ``(checks, errors)``: the measured check strings and the failing messages."""
-    checks = []
-    errors = []
-    metadata, metadata_path = load_metadata_json(ctx)
-    if metadata is None:
-        errors.append(
-            f"metadata.json not found: {metadata_path}; run the metadata step first (or --force it)"
-        )
-
-    final_video = resolve_final_video(ctx)
-    if final_video is None:
-        errors.append("--final-video is required with --kit when the source is --fcproj or --from-edit")
-    elif not Path(final_video).is_file():
-        errors.append(f"final video not found: {final_video}")
-    else:
-        checks.append(f"final_video {final_video}")
-
-    en_srt = ctx.project / f"{ctx.name}_EN.srt"
-    if not en_srt.is_file():
-        errors.append(f"EN subtitles not found: {en_srt}")
-    else:
-        checks.append(f"en_srt {en_srt}")
-
-    thumbnail = ctx.project / "thumbnail.jpg"
-    if not thumbnail.is_file():
-        errors.append(f"thumbnail not found: {thumbnail}")
-    else:
-        size = thumbnail.stat().st_size
-        dimensions = image_dimensions(thumbnail)
-        if size > THUMBNAIL_MAX_BYTES:
-            errors.append(f"thumbnail is {size} bytes, over the 2 MB limit: {thumbnail}")
-        if dimensions != THUMBNAIL_SIZE:
-            seen = f"{dimensions[0]}x{dimensions[1]}" if dimensions else "unreadable"
-            errors.append(f"thumbnail is {seen}, expected 1280x720: {thumbnail}")
-        if size <= THUMBNAIL_MAX_BYTES and dimensions == THUMBNAIL_SIZE:
-            checks.append(f"thumbnail {dimensions[0]}x{dimensions[1]} {size}B")
-
-    if metadata is not None:
-        titles = metadata.get("titles") or []
-        title = ctx.kit_title or (titles[0] if titles else None)
-        if title is None:
-            errors.append("no title available: metadata.json has no titles and --kit-title was not given")
-        elif len(title) > TITLE_MAX:
-            errors.append(f"title is {len(title)} characters, over the {TITLE_MAX} limit")
-        else:
-            checks.append(f"title {len(title)}/{TITLE_MAX}")
-
-        chapters = metadata.get("chapters") or []
-        lines = chapter_lines(chapters)
-        ro_description = metadata.get("description_ro") or ""
-        en_description = metadata.get("description_en") or ""
-        ro_full = f"{ro_description}\n\n{lines}" if lines else ro_description
-        en_full = f"{en_description}\n\n{lines}" if lines else en_description
-        if len(ro_full) > DESCRIPTION_MAX:
-            errors.append(f"RO description is {len(ro_full)} characters, over the {DESCRIPTION_MAX} limit")
-        else:
-            checks.append(f"description_ro {len(ro_full)}/{DESCRIPTION_MAX}")
-        if len(en_full) > DESCRIPTION_MAX:
-            errors.append(f"EN description is {len(en_full)} characters, over the {DESCRIPTION_MAX} limit")
-        else:
-            checks.append(f"description_en {len(en_full)}/{DESCRIPTION_MAX}")
-
-        tags_line = ", ".join(metadata.get("tags") or [])
-        if len(tags_line) > TAGS_MAX:
-            errors.append(f"tags line is {len(tags_line)} characters, over the {TAGS_MAX} limit")
-        else:
-            checks.append(f"tags {len(tags_line)}/{TAGS_MAX}")
-
-    return checks, errors
-
-
-def kit_info(ctx, checks, video_name=None):
-    """Return the ``kit`` summary object for the run."""
-    metadata, _ = load_metadata_json(ctx)
-    titles = (metadata or {}).get("titles") or []
-    title = ctx.kit_title or (titles[0] if titles else None)
-    if video_name is None:
-        final_video = resolve_final_video(ctx)
-        video_name = Path(final_video).name if final_video else None
-    return {
-        "output": KIT_DIR_NAME,
-        "video": video_name,
-        "title": title,
-        "checks": checks,
-    }
-
-
-def run_loudness(ctx, final_video):
-    """Run loudness.py on the final video and return ``(output_path, error)``."""
-    argv = [ctx.python, "scripts/loudness.py", "--video", str(final_video), "--json"]
-    try:
-        result = subprocess.run(argv, capture_output=True, text=True, cwd=str(ctx.repo_root))
-    except OSError as exc:
-        return None, str(exc)
-    if result.returncode != 0:
-        tail = (result.stderr or result.stdout or "").strip().splitlines()
-        return None, "\n".join(tail[-5:]) or f"exit {result.returncode}"
-    data = parse_child_json(result.stdout)
-    output = data.get("output") if isinstance(data, dict) else None
-    if not output:
-        return None, "loudness.py did not report an output file"
-    return Path(output), None
-
-
-def build_studio_md(ctx, metadata, video_name):
-    """Render the Studio sheet with one copy-ready block per field and a Studio-order checklist."""
-    titles = metadata.get("titles") or []
-    title = ctx.kit_title or (titles[0] if titles else "")
-    others = [option for option in titles if option != title][:2]
-    chapters = metadata.get("chapters") or []
-    lines = chapter_lines(chapters)
-    ro_description = metadata.get("description_ro") or ""
-    en_description = metadata.get("description_en") or ""
-    ro_full = f"{ro_description}\n\n{lines}" if lines else ro_description
-    en_full = f"{en_description}\n\n{lines}" if lines else en_description
-    tags_line = ", ".join(metadata.get("tags") or [])
-    pinned = metadata.get("pinned_comment") or ""
-    parts = [
-        f"# Studio kit — {ctx.name}",
-        "",
-        f"Upload: `{video_name}`",
-        "",
-        "## Checklist (Studio order)",
-        "",
-        "- [ ] Upload the video",
-        "- [ ] Paste the title",
-        "- [ ] Paste the description (RO)",
-        "- [ ] Upload the thumbnail",
-        "- [ ] Upload the subtitles RO + EN (as subtitles, not closed captions)",
-        "- [ ] Set visibility to **private** first",
-        "- [ ] Pick the playlist, category and language",
-        "- [ ] Paste the pinned comment",
-        "- [ ] Add end screen / cards if any",
-        "- [ ] Publish when ready",
-        "",
-        "## Title",
-        "",
-        "```",
-        title,
-        "```",
-        "",
-    ]
-    if others:
-        parts.append("Other options:")
-        parts.extend(f"- {option}" for option in others)
-        parts.append("")
-    parts.extend([
-        "## Description (RO)",
-        "",
-        "```",
-        ro_full,
-        "```",
-        "",
-        "## Description (EN)",
-        "",
-        "```",
-        en_full,
-        "```",
-        "",
-        f"## Tags ({len(tags_line)}/{TAGS_MAX} characters)",
-        "",
-        "```",
-        tags_line,
-        "```",
-        "",
-        "## Pinned comment",
-        "",
-        "```",
-        pinned,
-        "```",
-        "",
-        "## Reminders",
-        "",
-        "- Pick the playlist.",
-        "- Pick the closest category in Studio.",
-        "- Video language: Romanian.",
-        "- Default caption language: RO.",
-        "- Made for kids: no.",
-        "- Visibility: private until you flip it.",
-        "",
-    ])
-    return "\n".join(parts)
-
-
-def write_kit(ctx, video_source):
-    """Write the kit folder from the checked inputs and return its path."""
-    kit_dir = ctx.project / KIT_DIR_NAME
-    if kit_dir.exists():
-        shutil.rmtree(kit_dir)
-    kit_dir.mkdir(parents=True)
-    video_name = Path(video_source).name
-    shutil.copy2(video_source, kit_dir / video_name)
-    shutil.copy2(ctx.project / f"{ctx.name}_RO.srt", kit_dir / f"{ctx.name}_RO.srt")
-    shutil.copy2(ctx.project / f"{ctx.name}_EN.srt", kit_dir / f"{ctx.name}_EN.srt")
-    shutil.copy2(ctx.project / "thumbnail.jpg", kit_dir / "thumbnail.jpg")
-    metadata, _ = load_metadata_json(ctx)
-    (kit_dir / "studio.md").write_text(
-        build_studio_md(ctx, metadata, video_name), encoding="utf-8"
-    )
-    return kit_dir
-
-
-def execute_kit(ctx):
-    """Run the kit step: check every Studio limit, optionally loudness, then write the kit folder."""
-    started = time.monotonic()
-    checks, errors = collect_kit_checks(ctx)
-    if errors:
-        return {
-            "status": "FAIL",
-            "returncode": 2,
-            "outputs": [],
-            "llm_cost_usd": 0.0,
-            "stderr": "\n".join(f"[error] {error}" for error in errors),
-            "stdout": "",
-            "wall_time_s": round(time.monotonic() - started, 3),
-            "kit": kit_info(ctx, checks),
-        }
-    final_video = resolve_final_video(ctx)
-    video_source = final_video
-    if ctx.kit_loudness:
-        loud, error = run_loudness(ctx, final_video)
-        if error is not None:
-            return {
-                "status": "FAIL",
-                "returncode": EXIT_RUNTIME,
-                "outputs": [],
-                "llm_cost_usd": 0.0,
-                "stderr": f"[error] loudness failed: {error}",
-                "stdout": "",
-                "wall_time_s": round(time.monotonic() - started, 3),
-                "kit": kit_info(ctx, checks),
-            }
-        video_source = loud
-    kit_dir = write_kit(ctx, video_source)
-    return {
-        "status": "done",
-        "returncode": 0,
-        "outputs": [str(kit_dir / "studio.md")],
-        "llm_cost_usd": 0.0,
-        "stderr": "",
-        "stdout": "",
-        "wall_time_s": round(time.monotonic() - started, 3),
-        "kit": kit_info(ctx, checks, video_name=Path(video_source).name),
-    }
-
-
 def execute_verify(ctx):
     """Check that the corrected SRT matches the final video before the rest of the chain."""
     started = time.monotonic()
@@ -1077,13 +810,19 @@ def run(ctx):
             write_state(ctx.project, state)
             entries.append({"name": name, "status": "skipped", "outputs": outputs})
             if name == "kit":
-                kit_result = kit_info(ctx, [])
+                kit_result = {"output": KIT_DIR_NAME, "video": None, "title": None, "checks": []}
             print_progress(ctx, index, total, name, "skipped", 0.0, "output exists")
             continue
+        if step.get("fail"):
+            record_step(state, name, "failed", outputs=[])
+            write_state(ctx.project, state)
+            entries.append(
+                {"name": name, "status": "failed", "outputs": [], "returncode": EXIT_USAGE}
+            )
+            print(f"[error] {step['fail']}", file=sys.stderr)
+            break
         print_start(ctx, index, total, name)
-        if name == "kit":
-            result = execute_kit(ctx)
-        elif name == "verify":
+        if name == "verify":
             result = execute_verify(ctx)
         else:
             result = execute(step, step["argv"], ctx)
@@ -1091,12 +830,7 @@ def run(ctx):
             record_step(state, name, "failed", command=step.get("argv"), outputs=[])
             write_state(ctx.project, state)
             entries.append({"name": name, "status": "failed", "outputs": [], "returncode": result["returncode"]})
-            if name == "kit":
-                kit_result = result.get("kit")
-                for line in (result.get("stderr") or "").splitlines():
-                    print(line, file=sys.stderr)
-            else:
-                print_failure(name, result)
+            print_failure(name, result)
             break
         if name == "subtitles":
             normalize_subs_output(ctx)
@@ -1105,7 +839,7 @@ def run(ctx):
         write_state(ctx.project, state)
         entries.append({"name": name, "status": "done", "outputs": result["outputs"]})
         if name == "kit":
-            kit_result = result.get("kit")
+            kit_result = parse_child_json(result["stdout"])
         print_progress(ctx, index, total, name, "done", result["wall_time_s"], "written")
     wall_time_s = round(time.monotonic() - started, 3)
     outputs = {
