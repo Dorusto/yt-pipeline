@@ -1,7 +1,7 @@
 ---
 name: yt-beats
 description: Detect a music file's tempo (BPM), beat and downbeat times and per-0.5 s energy curve with a pure-numpy spectral-flux/autocorrelation tool, and plan a beat-aligned cut grid for an edit of a given length so cuts land on the music. Use when the user asks for the tempo or BPM of a track, its beats/downbeats, when an edit's cuts should land to hit the music, or a beat grid for a given edit duration. Trigger phrases - "cât e BPM-ul piesei", "detectează beat-urile", "unde pică tăieturile pe muzică", "beat grid pentru 90 de secunde", "tempo of this track", "find the beats", "cut on the beat", "beat-aligned cut grid". Not for measuring or cleaning ambient sound (that is `audio-clean`), not for choosing music or SFX (that is the render's audio mix) and not for building the edit list (that is `director`).
-compatibility: Run from the repository root. Needs the repo .venv with numpy and ffmpeg/ffprobe on the PATH; CPU only, no GPU and no network. Reads the music read-only, decodes it to mono 22.05 kHz PCM in a temp folder and writes only --out. It never calls a model service, so llm_cost_usd is 0.0. No new dependency: no librosa, only numpy + ffmpeg.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with numpy and ffmpeg/ffprobe on the PATH; CPU only, no GPU and no network. Reads the music read-only, decodes it to mono 22.05 kHz PCM in a temp folder and writes only --out. It never calls a model service, so llm_cost_usd is 0.0. No new dependency: no librosa, only numpy + ffmpeg.
 ---
 
 # yt-beats
@@ -11,8 +11,8 @@ The D2 `beats` station. It reads a music file and reports its tempo, beat and do
 ## Step 1: measure a track
 
 ```bash
-.venv/bin/python scripts/beats.py /path/to/song.mp3 --json
-.venv/bin/python scripts/beats.py /path/to/song.mp3 --out /path/to/workspace/beats.json
+yt beats /path/to/song.mp3 --json
+yt beats /path/to/song.mp3 --out /path/to/workspace/beats.json
 ```
 
 - `MUSIC` is a music file, read-only (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`).
@@ -22,7 +22,7 @@ The D2 `beats` station. It reads a music file and reports its tempo, beat and do
 ## Step 2: plan a cut grid
 
 ```bash
-.venv/bin/python scripts/beats.py /path/to/song.mp3 --out beats.json \
+yt beats /path/to/song.mp3 --out beats.json \
   --target-duration-s 90 --slots 15
 ```
 

@@ -1,7 +1,7 @@
 ---
 name: yt-quality
 description: Measure footage quality per segment and label each segment with a role — move, hold, transition_in, transition_out, setup, teardown, accidental — with a confidence, plus the measured defects (blur, exposure, shake, obstruction, horizon). Use when the user asks how good the footage is, which shots are blurry, shaky, over- or under-exposed, obstructed or tilted, or wants setup/teardown and transition candidates marked, or wants a junk take flagged as accidental. Trigger phrases - "verifică calitatea footage-ului", "care cadre sunt mișcate sau blurate", "quality check", "etichetează setup și teardown", "unde e blurat sau tremurat", "clipul ăsta e de aruncat". Labels only — it never deletes, cuts or trims anything. Not for camera-motion vocabulary (that is `motion`) or semantic content (that is `describe`).
-compatibility: Run from the repository root. Needs the repo .venv with opencv-python-headless and numpy; CPU only, no GPU and no network. Reads clips read-only and writes quality/<stem>.json into the workspace. Prefers a matching motion/<stem>.json in the workspace for segmentation and shake; without it, it falls back to coarse still/moving segments and warns.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with opencv-python-headless and numpy; CPU only, no GPU and no network. Reads clips read-only and writes quality/<stem>.json into the workspace. Prefers a matching motion/<stem>.json in the workspace for segmentation and shake; without it, it falls back to coarse still/moving segments and warns.
 ---
 
 # yt-quality
@@ -11,7 +11,7 @@ Measure the quality of a clip and label every segment with a role before any edi
 ## Step 1: analyse one clip or a folder
 
 ```bash
-.venv/bin/python scripts/quality.py /path/to/clip.mp4 --workspace /path/to/workspace
+yt quality /path/to/clip.mp4 --workspace /path/to/workspace
 ```
 
 - `INPUT` is one video file, or a folder scanned non-recursively for `.mp4`, `.mov` and `.m4v` files (any letter case, sorted by name).
@@ -24,7 +24,7 @@ Measure the quality of a clip and label every segment with a role before any edi
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/quality.py /path/to/clip.mp4 --workspace /path/to/workspace --json
+yt quality /path/to/clip.mp4 --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"clips": 21, "analyzed": 21, "skipped": 0, "output_dir": "/abs/workspace/quality"}`. Read `DIR/quality/<stem>.json` for the per-clip detail; it is validated against `schemas/quality.schema.json` and written atomically, so a run leaves a complete valid file or none.

@@ -1,7 +1,7 @@
 ---
 name: yt-recap
-description: Turn a folder of raw clips and a brief in plain language into a recap MP4 with one command — doctor.py checks the machine, then recap.py chains proxy, ingest, motion, quality, describe, similarity, index, router, llm_director and render as subprocesses, skipping stations whose outputs are up to date. Add --final for the full-quality render from the originals and a Kdenlive project. Add --music FILE to detect the track's beats, cut on them and mix the track as the bed with the ambient sound under it; add --music auto to let music_pick.py choose the track from the configured music library by the brief and the shot tags. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone", "fă-mi un recap din clipurile de azi", "recap din clipurile noi", "trimite-mi linkul la recap", "pune muzică pe recap", "recap cu muzică". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
-compatibility: Run from the repository root with the repo .venv. Needs ffmpeg and ffprobe on the PATH and OPENROUTER_API_KEY in the environment (unless llm_backend is mock). The originals folder is never written to; proxies and every output go under the workspace. Works from Telegram via an assistant (Hermes): the assistant runs the same commands and replies with the preview link built from `--preview-base`.
+description: Turn a folder of raw clips and a brief into a recap MP4 with one command — chains the whole pipeline. Add --final for the full-quality render and --music FILE or auto. Use when the user asks to build a recap from a folder, run the whole pipeline in one command, turn a folder plus a brief into an MP4, or make a reel from footage. Trigger phrases - "fă un recap din folderul ăsta", "reel din footage", "montaj automat din clipuri", "folder + brief într-un MP4", "build a recap from this folder", "one command recap", "rulează pipeline-ul complet", "serve the workspaces", "preview link", "open the recap on the phone", "fă-mi un recap din clipurile de azi", "recap din clipurile noi", "trimite-mi linkul la recap", "pune muzică pe recap", "recap cu muzică". Not for running a single analysis station (`ingest`/`motion`/`quality`/`describe`/`similarity`/`index`), only building an edit list (`director`/`llm_director`), only rendering (`render`), Shorts (`shorts_generator.py`) or transcripts (`yt-transcript`).
+compatibility: Run with the `yt` entry point on PATH. Needs ffmpeg and ffprobe on the PATH and OPENROUTER_API_KEY in the environment (unless llm_backend is mock). The originals folder is never written to; proxies and every output go under the workspace. Works from Telegram via an assistant (Hermes): the assistant runs the same commands and replies with the preview link built from `--preview-base`.
 ---
 
 # yt-recap
@@ -11,7 +11,7 @@ The front door of the AI Director pipeline: one command turns a folder of raw cl
 ## Step 1: check the machine
 
 ```bash
-.venv/bin/python scripts/doctor.py --source <trip-folder>/raw
+yt doctor --source <trip-folder>/raw
 ```
 
 Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API key, disk space, workspace writable, workspace outside the originals, originals read-only. Exit 0 means nothing failed (warnings are allowed); exit 1 means at least one check failed. Fix what it lists, then continue. Add `--workspace DIR` to check a specific workspace and `--json` for a machine-readable summary.
@@ -19,7 +19,7 @@ Ten checks in a fixed order: python deps, ffmpeg, ffprobe, config, models, API k
 ## Step 2: run the recap
 
 ```bash
-.venv/bin/python scripts/recap.py --source <trip-folder>/raw \
+yt recap --source <trip-folder>/raw \
     --workspace <trip-folder>/workspace \
     --brief "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only"
 ```
@@ -39,7 +39,7 @@ After a run the workspace holds `recap_720p.mp4` (the recap to watch), `edit.jso
 Serve the finished workspaces over the tailnet as a small web app (the Shots-tab review taps and the Mode B Cuts-tab review taps):
 
 ```bash
-.venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
+yt serve --workspaces <workspaces> --inbox <inbox>
 ```
 
 - `--workspaces DIR` is the folder whose direct subfolders are projects (a project holds at least one of `.run.json`, `recap_720p.mp4`, `recap_final.mp4`, `shotlog.html`, `explain.html`, `edit.json`; the list is newest folder name first).
@@ -59,7 +59,7 @@ Turn an inbox folder filled by a phone sync tool into one recap per day with no
 command per clip:
 
 ```bash
-.venv/bin/python scripts/inbox.py --inbox <inbox> --projects <workspaces> \
+yt inbox --inbox <inbox> --projects <workspaces> \
     --preview-base http://<agent-host>:8091 --notify
 ```
 

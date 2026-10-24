@@ -1,7 +1,7 @@
 ---
 name: yt-ingest
 description: Scan a footage folder and record per-clip metadata — duration, fps, resolution, streams, creation time and whether DJI gyro/IMU data is present — plus one row per still photo (JPEG/HEIC) with its EXIF capture time, into ingest.json for the AI Director pipeline. Use when the user asks to scan the footage folder, ingest metadata, check whether clips have gyro, inventory the still photos, or make an inventory of raw clips. Trigger phrases - "scanează folderul de footage", "ingest metadata", "verifică dacă are gyro", "ce poze sunt în folder", "scan the footage folder", "fă inventarul clipurilor". Not for analysing motion, quality or content, and not for generating proxies or editing.
-compatibility: Run from the repository root. Needs the repo .venv and ffprobe on the PATH. Reads the source folder read-only and writes ingest.json into the workspace. Non-recursive; scans .mp4, .mov, .m4v clips and .jpg, .jpeg, .heic still photos only.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and ffprobe on the PATH. Reads the source folder read-only and writes ingest.json into the workspace. Non-recursive; scans .mp4, .mov, .m4v clips and .jpg, .jpeg, .heic still photos only.
 ---
 
 # yt-ingest
@@ -11,7 +11,7 @@ Build a machine-readable inventory of a folder of raw clips and still photos bef
 ## Step 1: scan the folder
 
 ```bash
-.venv/bin/python scripts/ingest.py /path/to/footage --workspace /path/to/workspace
+yt ingest /path/to/footage --workspace /path/to/workspace
 ```
 
 - `SOURCE_DIR` is scanned non-recursively: clips with an `.mp4`, `.mov` or `.m4v` extension and still photos with an `.jpg`, `.jpeg` or `.heic` extension (any letter case) count, each group sorted by file name. Subfolders are ignored.
@@ -25,7 +25,7 @@ Build a machine-readable inventory of a folder of raw clips and still photos bef
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/ingest.py /path/to/footage --workspace /path/to/workspace --json
+yt ingest /path/to/footage --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"clips": 21, "photos": 3, "output": "/abs/workspace/ingest.json", "gyro_clips": 0, "total_duration_s": 749.5, "wall_time_s": 3.2, "llm_cost_usd": 0.0}`. Read `ingest.json` when the per-clip or per-photo detail is needed.

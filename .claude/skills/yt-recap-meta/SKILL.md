@@ -1,7 +1,7 @@
 ---
 name: yt-recap-meta
-description: Write the YouTube title, a 2-3 sentence description and 5-10 hashtags for a recap — reads a workspace edit.json, builds the deterministic facts (the brief text, the four facts place/when/who/occasion from brief_facts.json, with the ingest date for when, and the deduplicated shot descriptions), asks the metadata text model role, retries once on an invalid answer and writes recap_meta.json validated against schemas/recap_meta.schema.json. The fact fields the brief and brief_facts.json did not carry are listed by field name in missing so the web app can mark them. Use when the user asks for the title, description or hashtags of a recap, wants the upload text for a finished edit, or wants recap_meta.json. Trigger phrases - "fă titlul și descrierea recapului", "scrie descrierea pentru YouTube", "ce hashtag-uri pun", "titlu pentru montaj", "write the recap title", "description and hashtags for the recap", "recap_meta.json", "upload text for the edit". Not for building the edit (that is `director`/`llm_director`), rendering the MP4 (that is `render`), the publish kit (`publish`) or the web app (that is `serve.py`).
-compatibility: Run from the repository root. Needs the repo .venv and the model config (config.yaml, llm_backend mock for offline runs). Reads edit.json (required) and ingest.json (optional) read-only, writes recap_meta.json (or --out) atomically. Safe to re-run; an up-to-date output is skipped unless --force.
+description: Write the YouTube title, a 2-3 sentence description and 5-10 hashtags for a recap — reads a workspace edit.json, builds the deterministic facts (the brief text, the four facts place/when/who/occasion from brief_facts.json, with the ingest date for when, and the deduplicated shot descriptions), asks the metadata text model role and writes recap_meta.json validated against the schema. Use when the user asks for the title, description or hashtags of a recap, wants the upload text for a finished edit, or wants recap_meta.json. Trigger phrases - "fă titlul și descrierea recapului", "scrie descrierea pentru YouTube", "ce hashtag-uri pun", "titlu pentru montaj", "write the recap title", "description and hashtags for the recap", "recap_meta.json", "upload text for the edit". Not for building the edit (that is `director`/`llm_director`), rendering the MP4 (that is `render`), the publish kit (`publish`) or the web app (that is `serve.py`).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and the model config (config.yaml, llm_backend mock for offline runs). Reads edit.json (required) and ingest.json (optional) read-only, writes recap_meta.json (or --out) atomically. Safe to re-run; an up-to-date output is skipped unless --force.
 ---
 
 # yt-recap-meta
@@ -11,7 +11,7 @@ Write the upload text for a recap: turn `WORKSPACE/edit.json` into one **`WORKSP
 ## Step 1: write the metadata
 
 ```bash
-.venv/bin/python scripts/recap_meta.py --workspace <workspace>
+yt recap_meta --workspace <workspace>
 ```
 
 - `--workspace` is required and must hold `edit.json` (validated against `schemas/edit.schema.json`); `ingest.json` is optional and only supplies the date, and `brief_facts.json` is optional and supplies the four facts. `WORKSPACE/recap_meta.json` is written there, created if missing.
@@ -26,7 +26,7 @@ Write the upload text for a recap: turn `WORKSPACE/edit.json` into one **`WORKSP
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/recap_meta.py --workspace <workspace> --json
+yt recap_meta --workspace <workspace> --json
 ```
 
 The `--json` output is a single object, e.g. `{"ok": true, "status": "written", "out": "/abs/workspace/recap_meta.json", "title": "...", "hashtags": 7, "missing": ["place"], "model": "...", "wall_time_s": 0.1, "llm_cost_usd": 0.0012}`. `status` is `"written"`, `"skipped"` or `"dry_run"`; `hashtags` is the count; `missing` lists the fact fields the brief and `brief_facts.json` did not carry (`place`, `when`, `who`, `occasion`). A `--dry-run` summary carries `message` instead of `title`/`hashtags`/`model` and `llm_cost_usd` is `0.0`.

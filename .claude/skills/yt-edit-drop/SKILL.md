@@ -1,7 +1,7 @@
 ---
 name: yt-edit-drop
-description: Remove shots from a finished edit or make one longer or shorter, and render it again as a new version — takes the edit of one version, drops the shots named by their number on the edit timeline or changes a shot's length by any number of seconds within its source clip, renders the preview again from the proxies and keeps the result as the next version, with no model call. Use when the user asks to remove a shot from a finished edit, drop a bad shot, cut a shot out of a version, make a new version without one shot, make a shot longer or shorter, or trim a shot's length. Trigger phrases - "scoate un cadru din montaj", "taie un shot din edit", "elimină cadrul 7", "fă o versiune fără cadrul X", "fă cadrul 3 mai lung", "scurtează cadrul 3", "remove a shot from the edit", "drop shot 7", "make shot 3 longer", "trim shot 3", "new version without that shot". Not for building the edit (that is `director`/`llm_director`), not for rendering alone (that is `render`) and not for the phone strip controls (that is `serve.py`, `POST /<project>/drop-shot` and `POST /<project>/trim-shot`).
-compatibility: Run from the repository root. Needs the repo .venv and the workspace's `versions/` folder. No model is called, so llm_cost_usd is always 0.0. Reads the base version's edit.json and writes a new version; the originals are never touched.
+description: Remove shots from a finished edit or make one longer or shorter, and render it as a new version — drops the shots named by their number on the edit timeline or changes a shot's length by any number of seconds within its source clip, renders the preview from the proxies and keeps the result as the next version. Use when the user asks to remove a shot from a finished edit, drop a bad shot, cut a shot out of a version, make a new version without one shot, make a shot longer or shorter, or trim a shot's length. Trigger phrases - "scoate un cadru din montaj", "taie un shot din edit", "elimină cadrul 7", "fă o versiune fără cadrul X", "fă cadrul 3 mai lung", "scurtează cadrul 3", "remove a shot from the edit", "drop shot 7", "make shot 3 longer", "trim shot 3", "new version without that shot". Not for building the edit (that is `director`/`llm_director`), not for rendering alone (that is `render`) and not for the phone strip controls (that is `serve.py`, `POST /<project>/drop-shot` and `POST /<project>/trim-shot`).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and the workspace's `versions/` folder. No model is called, so llm_cost_usd is always 0.0. Reads the base version's edit.json and writes a new version; the originals are never touched.
 ---
 
 # yt-edit-drop
@@ -11,11 +11,11 @@ Remove shots from a finished edit or change a shot's length, and render it again
 ## Command
 
 ```bash
-.venv/bin/python scripts/edit_drop.py --workspace <workspaces>/<project> --drop 7
-.venv/bin/python scripts/edit_drop.py --workspace <workspaces>/<project> --drop 2 --drop 7 --version v002 --json
-.venv/bin/python scripts/edit_drop.py --workspace <workspaces>/<project> --drop 7 --dry-run
-.venv/bin/python scripts/edit_drop.py --workspace <workspaces>/<project> --trim 3:+1
-.venv/bin/python scripts/edit_drop.py --workspace <workspaces>/<project> --trim 3:-1 --version v002 --json
+yt edit_drop --workspace <workspaces>/<project> --drop 7
+yt edit_drop --workspace <workspaces>/<project> --drop 2 --drop 7 --version v002 --json
+yt edit_drop --workspace <workspaces>/<project> --drop 7 --dry-run
+yt edit_drop --workspace <workspaces>/<project> --trim 3:+1
+yt edit_drop --workspace <workspaces>/<project> --trim 3:-1 --version v002 --json
 ```
 
 - `--workspace DIR` is required: the project workspace with `versions/`.

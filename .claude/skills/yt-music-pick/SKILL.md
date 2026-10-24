@@ -1,7 +1,7 @@
 ---
 name: yt-music-pick
 description: Pick a music track from a library folder by the brief and the shot tags, using the beats.py BPM and energy of every track, and write the choice plus the beat grid. Use when the user wants music auto, asks which track fits an edit, wants a soundtrack chosen for a recap, or says "alege o piesă", "pick a track", "music auto", "pune muzică potrivită", "ce melodie se potrivește". Not for detecting the beats of one track (that is `beats`), mixing the track under the recap (that is `render`) or generating music (YuE2, D6).
-compatibility: Run from the repository root. Needs the repo .venv; ffmpeg for beats.py; no model call and no spend. Reads the music library read-only (writes only the `.yt-beats` measurement cache when the library is writable) and the workspace shotlog when given; writes `music_choice.json` and, with `--workspace`, `beats.json`.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv; ffmpeg for beats.py; no model call and no spend. Reads the music library read-only (writes only the `.yt-beats` measurement cache when the library is writable) and the workspace shotlog when given; writes `music_choice.json` and, with `--workspace`, `beats.json`.
 ---
 
 # yt-music-pick
@@ -17,7 +17,7 @@ from the repository root.
 ## Step 1: pick the track
 
 ```bash
-.venv/bin/python scripts/music_pick.py --library <music-library> \
+yt music_pick --library <music-library> \
     --brief "about 60 seconds, chronological, calm start" --workspace /path/to/workspace --json
 ```
 

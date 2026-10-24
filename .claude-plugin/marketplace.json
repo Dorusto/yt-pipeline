@@ -7,9 +7,108 @@
   "description": "Director tools for holiday recaps and YouTube clips.",
   "plugins": [
     {
-      "name": "yt-pipeline",
+      "name": "yt-director",
       "source": "./",
-      "description": "Director tools for holiday recaps and YouTube clips."
+      "description": "Director tools for holiday recaps and YouTube clips.",
+      "author": {
+        "name": "Dorusto",
+        "url": "https://github.com/Dorusto"
+      },
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/Dorusto/yt-pipeline",
+      "repository": "https://github.com/Dorusto/yt-pipeline",
+      "skills": [
+        "./.claude/skills/yt-recap",
+        "./.claude/skills/yt-director",
+        "./.claude/skills/yt-llm-director",
+        "./.claude/skills/yt-beats",
+        "./.claude/skills/yt-music-pick",
+        "./.claude/skills/yt-edit-drop",
+        "./.claude/skills/yt-render",
+        "./.claude/skills/yt-thumbs",
+        "./.claude/skills/yt-explain",
+        "./.claude/skills/yt-ingest",
+        "./.claude/skills/yt-index",
+        "./.claude/skills/yt-describe",
+        "./.claude/skills/yt-quality",
+        "./.claude/skills/yt-similarity",
+        "./.claude/skills/yt-eval-edit",
+        "./.claude/skills/yt-mode-b",
+        "./.claude/skills/yt-rough-cut",
+        "./.claude/skills/yt-router"
+      ]
+    },
+    {
+      "name": "yt-publish",
+      "source": "./",
+      "description": "Director tools for holiday recaps and YouTube clips.",
+      "author": {
+        "name": "Dorusto",
+        "url": "https://github.com/Dorusto"
+      },
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/Dorusto/yt-pipeline",
+      "repository": "https://github.com/Dorusto/yt-pipeline",
+      "skills": [
+        "./.claude/skills/yt-transcript",
+        "./.claude/skills/yt-publish",
+        "./.claude/skills/yt-recap-meta",
+        "./.claude/skills/yt-thumbnail",
+        "./.claude/skills/yt-audio-clean"
+      ]
+    },
+    {
+      "name": "yt-shorts",
+      "source": "./",
+      "description": "Director tools for holiday recaps and YouTube clips.",
+      "author": {
+        "name": "Dorusto",
+        "url": "https://github.com/Dorusto"
+      },
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/Dorusto/yt-pipeline",
+      "repository": "https://github.com/Dorusto/yt-pipeline",
+      "skills": [
+        "./.claude/skills/yt-shorts",
+        "./.claude/skills/yt-reframe"
+      ]
+    },
+    {
+      "name": "yt-editor",
+      "source": "./",
+      "description": "Director tools for holiday recaps and YouTube clips.",
+      "author": {
+        "name": "Dorusto",
+        "url": "https://github.com/Dorusto"
+      },
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/Dorusto/yt-pipeline",
+      "repository": "https://github.com/Dorusto/yt-pipeline",
+      "skills": [
+        "./.claude/skills/yt-filmcraft",
+        "./.claude/skills/yt-export-kdenlive",
+        "./.claude/skills/yt-finish-pip",
+        "./.claude/skills/yt-graphics",
+        "./.claude/skills/yt-matte",
+        "./.claude/skills/yt-motion"
+      ]
+    },
+    {
+      "name": "yt-admin",
+      "source": "./",
+      "description": "Director tools for holiday recaps and YouTube clips.",
+      "author": {
+        "name": "Dorusto",
+        "url": "https://github.com/Dorusto"
+      },
+      "license": "AGPL-3.0-or-later",
+      "homepage": "https://github.com/Dorusto/yt-pipeline",
+      "repository": "https://github.com/Dorusto/yt-pipeline",
+      "skills": [
+        "./.claude/skills/yt-costs",
+        "./.claude/skills/yt-watchdog",
+        "./.claude/skills/yt-eval"
+      ]
     }
   ]
 }

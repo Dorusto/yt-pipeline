@@ -1,7 +1,7 @@
 ---
 name: yt-finish-pip
 description: Matte the camera ranges that cover a FilmCraft sequence's screen spans and write the filmcraft-cli steps that place the matted person as a bottom-right picture-in-picture with an eased entry and a short anticipation exit, snapped to the screen span edges. Use when the user wants the camera picture-in-picture over the screen recording, wants the camera matted and placed over the screen spans, wants the finish_pip steps files, or wants the PiP finishing run against the live FilmCraft or a headless project file. Trigger phrases - "pune camera peste ecran", "picture-in-picture peste screen", "matează camera pentru PiP", "fă finish_pip", "camera PiP over the screen spans", "matte the camera for the picture-in-picture", "finish_pip.place.jsonl", "PiP bottom-right cu intrare/ieșire". Not for removing a background without placing it (that is `matte`), not for building the edit (that is `director`/`llm_director`), not for rendering an MP4 (that is `render`) and not for the intro layout, SFX or music (later lots).
-compatibility: Run from the repository root. Needs the repo .venv with torch + torchvision for matte.py (CPU is fine) and ffmpeg/ffprobe on PATH. The place/animate phases need filmcraft-cli (from $FILMCRAFT_CLI or PATH) and either a running FilmCraft for --bridge or a .fcproj file for --project. Makes no LLM calls, so the run costs 0 USD.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with torch + torchvision for matte.py (CPU is fine) and ffmpeg/ffprobe on PATH. The place/animate phases need filmcraft-cli (from $FILMCRAFT_CLI or PATH) and either a running FilmCraft for --bridge or a .fcproj file for --project. Makes no LLM calls, so the run costs 0 USD.
 ---
 
 # yt-finish-pip
@@ -23,10 +23,10 @@ filmcraft-cli --bridge 127.0.0.1:7714 inspect sequence > sequence.json
 ## Step 2: run the tool
 
 ```bash
-.venv/bin/python scripts/finish_pip.py --sequence sequence.json --camera-dir camera/ --dry-run
-.venv/bin/python scripts/finish_pip.py --sequence sequence.json --camera-dir camera/ --json
-.venv/bin/python scripts/finish_pip.py --sequence sequence.json --camera-dir camera/ --bridge 127.0.0.1:7714
-.venv/bin/python scripts/finish_pip.py --sequence sequence.json --camera-dir camera/ --project project.fcproj
+yt finish_pip --sequence sequence.json --camera-dir camera/ --dry-run
+yt finish_pip --sequence sequence.json --camera-dir camera/ --json
+yt finish_pip --sequence sequence.json --camera-dir camera/ --bridge 127.0.0.1:7714
+yt finish_pip --sequence sequence.json --camera-dir camera/ --project project.fcproj
 ```
 
 - `--sequence` is the inspect JSON (read-only). `--camera-dir` holds the camera

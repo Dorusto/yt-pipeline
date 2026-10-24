@@ -1,7 +1,7 @@
 ---
 name: yt-render
-description: Render an edit.json edit list to an MP4 with ffmpeg — a 720p preview from the proxy clips in sources[] or a full-resolution final from the originals with --originals-dir. It cuts each video slot, scales and pads it to the frame, renders each photo slot as a still with a Ken Burns move (portrait photos on a blurred background, never black bars), joins the slots in timeline order with crossfades or hard cuts, keeps each slot's own ambient audio and cleans the ambient bus like audio_clean (wind high-pass, RNNoise/afftdn, loudnorm; --no-audio-clean for the raw mix). A music track (--music FILE or edit.json audio.music) is looped to the edit length, gained, ducked under the cleaned ambient bus with sidechaincompress and faded out at the end. Use when the user asks to render the edit, preview the edit list, render the final from the originals, turn edit.json into an MP4, mix a music track under the ambience, or make a recap. Trigger phrases - "randează editul", "fă preview-ul din edit.json", "randează finalul din original", "pune muzică sub ambiență", "mix the music under the ambience", "render the edit", "render final from originals", "720p recap", "render edit.json". Not for captions/ASS burn-in, graphics, SFX mixing or Kdenlive export.
-compatibility: Run from the repository root. Needs the repo .venv and ffmpeg/ffprobe on the PATH. CPU-only (libx264). Reads edit.json and the clips, photos and music it names read-only; writes the MP4 to --out and any HEIC→JPEG copy under the workspace. Captions, graphics and SFX are warned about and ignored.
+description: Render an edit.json edit list to an MP4 with ffmpeg — a 720p preview from the proxy clips in sources[] or a full-resolution final from the originals with --originals-dir. It cuts each video slot, renders each photo slot as a still with a Ken Burns move, joins the slots in timeline order, keeps each slot's own ambient audio and cleans the ambient bus like audio_clean. A music track (--music FILE or edit.json audio.music) is looped to the edit length, ducked under the cleaned ambient bus and faded out at the end. Use when the user asks to render the edit, preview the edit list, render the final from the originals, turn edit.json into an MP4, mix a music track under the ambience, or make a recap. Trigger phrases - "randează editul", "fă preview-ul din edit.json", "randează finalul din original", "pune muzică sub ambiență", "mix the music under the ambience", "render the edit", "render final from originals", "720p recap", "render edit.json". Not for captions/ASS burn-in, graphics, SFX mixing or Kdenlive export.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and ffmpeg/ffprobe on the PATH. CPU-only (libx264). Reads edit.json and the clips, photos and music it names read-only; writes the MP4 to --out and any HEIC→JPEG copy under the workspace. Captions, graphics and SFX are warned about and ignored.
 ---
 
 # yt-render
@@ -11,7 +11,7 @@ The output adapter: turn an `edit.json` edit list into an MP4, either a preview-
 ## Step 1: render
 
 ```bash
-.venv/bin/python scripts/render.py --edit <workspace>/edit.json \
+yt render --edit <workspace>/edit.json \
   --out <workspace>/recap_720p.mp4
 ```
 
@@ -65,7 +65,7 @@ When ambience is disabled (`audio.ambience.enabled: false`) there is nothing to 
 ## Step 2: render the final from the originals
 
 ```bash
-.venv/bin/python scripts/render.py --edit <workspace>/edit.json \
+yt render --edit <workspace>/edit.json \
   --out <workspace>/recap_final.mp4 --originals-dir <source-folder>
 ```
 
@@ -76,7 +76,7 @@ When ambience is disabled (`audio.ambience.enabled: false`) there is nothing to 
 ## Step 3: read the result
 
 ```bash
-.venv/bin/python scripts/render.py --edit <workspace>/edit.json \
+yt render --edit <workspace>/edit.json \
   --out <workspace>/recap_720p.mp4 --json
 ```
 

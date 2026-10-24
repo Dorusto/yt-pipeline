@@ -1,7 +1,7 @@
 ---
 name: yt-thumbs
 description: Write the poster and per-shot thumbnails of a recap workspace — thumbs/poster.jpg at 30 % of the recap and thumbs/shot-N.jpg at the middle of each timeline slot, each scaled to --width pixels wide (320 by default), skipping thumbnails newer than the recap unless --force. Use when the user wants the poster or the shot thumbnails of a recap, wants the Projects-page poster or the shot strip to show frames, or asks to regenerate the thumbnails after a new render. Trigger phrases - "fă thumbnail-urile recapului", "posterul recapului", "pozele pentru fiecare cadru", "regenerează thumbnail-urile", "make the recap thumbnails", "poster and shot thumbnails", "thumbs.py". Not for the YouTube thumbnail (that is `thumbnail`), not for building the edit (that is `director`/`llm_director`) and not for rendering the MP4 (that is `render`).
-compatibility: Run from the repository root. Needs ffmpeg and ffprobe on PATH; no model call and no spend. Reads WORKSPACE/edit.json and the recap video read-only, writes WORKSPACE/thumbs/poster.jpg and WORKSPACE/thumbs/shot-N.jpg. Safe to re-run; thumbnails newer than the recap are skipped unless --force.
+compatibility: Run with the `yt` entry point on PATH. Needs ffmpeg and ffprobe on PATH; no model call and no spend. Reads WORKSPACE/edit.json and the recap video read-only, writes WORKSPACE/thumbs/poster.jpg and WORKSPACE/thumbs/shot-N.jpg. Safe to re-run; thumbnails newer than the recap are skipped unless --force.
 ---
 
 # yt-thumbs
@@ -11,7 +11,7 @@ Write the **poster** and the **per-shot thumbnails** of a recap workspace: `WORK
 ## Step 1: write the thumbnails
 
 ```bash
-.venv/bin/python scripts/thumbs.py --workspace /path/to/workspace
+yt thumbs --workspace /path/to/workspace
 ```
 
 - `--workspace` is required. It must hold `edit.json` (the timeline the shot count and the slot middles come from) and a recap video. `WORKSPACE/thumbs/` is created if missing; the recap and `edit.json` are never written to.
@@ -23,7 +23,7 @@ Write the **poster** and the **per-shot thumbnails** of a recap workspace: `WORK
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/thumbs.py --workspace /path/to/workspace --json
+yt thumbs --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"tool": "thumbs.py", "workspace": "...", "recap": ".../recap_720p.mp4", "poster": ".../thumbs/poster.jpg", "shots": 12, "skipped": false, "wall_time_s": 1.2, "llm_cost_usd": 0.0}`. `shots` is the number of timeline slots (one `shot-N.jpg` per slot), `skipped` is true when the existing thumbnails were newer than the recap, and `llm_cost_usd` is always `0.0` — this tool calls no model service.

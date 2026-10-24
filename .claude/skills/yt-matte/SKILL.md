@@ -1,7 +1,7 @@
 ---
 name: yt-matte
 description: Remove the background of a clip with RobustVideoMatting (RVM) and write a ProRes 4444 .mov with alpha, ready to place over screen capture. Use when the user wants the background removed from a clip, a talking-head cut-out with alpha, a ProRes 4444 with transparency, or a matted range of a clip. Trigger phrases - "scoate fundalul", "decupează persoana", "matte", "remove the background", "cut out the subject", "alpha video", "ProRes 4444 cu alpha". Not for still photos (that is `thumbnail`) and not for placing the clip on a timeline (the editor's job).
-compatibility: Run from the repository root. Needs the repo .venv with torch + torchvision (CPU is fine) and ffmpeg/ffprobe on PATH. The first run downloads the RVM code and the rvm_resnet50.pth weights through torch.hub into ~/.cache/torch/hub/ (never into the repository). Makes no LLM calls, so the run costs 0 USD.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with torch + torchvision (CPU is fine) and ffmpeg/ffprobe on PATH. The first run downloads the RVM code and the rvm_resnet50.pth weights through torch.hub into ~/.cache/torch/hub/ (never into the repository). Makes no LLM calls, so the run costs 0 USD.
 ---
 
 # yt-matte
@@ -15,8 +15,8 @@ editor's job — this tool only produces the file.
 ## Step 1: write the matte
 
 ```bash
-.venv/bin/python scripts/matte.py /path/to/clip.mp4 --json
-.venv/bin/python scripts/matte.py /path/to/clip.mp4 --start 10 --end 40 --ratio 0.25 --out /tmp/clip_matte.mov
+yt matte /path/to/clip.mp4 --json
+yt matte /path/to/clip.mp4 --start 10 --end 40 --ratio 0.25 --out /tmp/clip_matte.mov
 ```
 
 - `VIDEO` is the input clip (`.mp4`/`.mov`) and is read-only.

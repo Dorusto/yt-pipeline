@@ -1,7 +1,7 @@
 ---
 name: yt-rough-cut
 description: Assemble a rough-cut Kdenlive project from raw footage and a list of chosen fragments, retime the subtitles to match, and summarise raw transcripts day by day. Use when the user has a lot of uncut footage (multi-day trips, vlogs) with raw .srt transcripts and wants a .kdenlive timeline, a subtitle file for it, or a per-day summary of what was said. Trigger phrases - "fă rough-cut din footage brut", "generează proiectul Kdenlive din fragmente", "rezumat pe zile din transcripturi", "subtitrare pentru rough-cut", "build a rough cut from these fragments". Not for editing a finished video or for Shorts.
-compatibility: Run from the repository root. Needs the repo .venv, ffprobe, and melt (MLT). The day summary also needs OPENROUTER_API_KEY. Footage is assumed to be 25 fps with video stream 0 and audio stream 1. The fragments YAML is validated against schemas/fragments.schema.json before anything is generated.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv, ffprobe, and melt (MLT). The day summary also needs OPENROUTER_API_KEY. Footage is assumed to be 25 fps with video stream 0 and audio stream 1. The fragments YAML is validated against schemas/fragments.schema.json before anything is generated.
 ---
 
 # yt-rough-cut
@@ -19,7 +19,7 @@ Turn raw footage plus a list of chosen moments into an editable Kdenlive timelin
 Useful when there is a lot of raw footage and the user needs a map of what was said when.
 
 ```bash
-.venv/bin/python scripts/daily_summary_srt.py /path/to/transcripts_raw/ /path/to/summary.md
+yt daily_summary_srt /path/to/transcripts_raw/ /path/to/summary.md
 ```
 
 With `--json` it prints one JSON summary (`ok`, `output`, `days`, `skipped`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
@@ -60,7 +60,7 @@ fragments:
 ## Step 4: generate the project
 
 ```bash
-.venv/bin/python scripts/kdenlive_from_fragments.py fragments.yaml
+yt kdenlive_from_fragments fragments.yaml
 ```
 
 - Every fragment becomes a video entry and an audio entry on separate tracks, linked as one group so moving or trimming one moves the other.
@@ -74,7 +74,7 @@ Before regenerating over an existing project, ask: "Have you edited this project
 ## Step 5: generate the retimed subtitles
 
 ```bash
-.venv/bin/python scripts/srt_from_fragments.py fragments.yaml /path/to/transcripts_raw/ /path/to/output.srt
+yt srt_from_fragments fragments.yaml /path/to/transcripts_raw/ /path/to/output.srt
 ```
 
 - For each fragment it takes the raw subtitle lines that overlap it, clips them to the fragment and moves them to the fragment's place on the new timeline. Lines outside every fragment are dropped.

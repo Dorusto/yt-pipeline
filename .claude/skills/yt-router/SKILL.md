@@ -1,7 +1,7 @@
 ---
 name: yt-router
 description: Read a brief in plain language and the workspace and write route.json — the detected content type (vacation, tutorial, presentation, talking-head) and every pipeline station in run order with enabled, settings and reason. Deterministic, no model. Use when the user asks which stations should run for a project, what kind of video a brief describes, how to route a brief, or wants a route.json / edit plan front door. Trigger phrases - "rutează brief-ul", "ce stații rulează", "fă route.json", "ce tip de video e", "route the brief", "which stations run", "detect the content type". Not for running any station, choosing the cut (that is `director`), analysing footage (`ingest`/`motion`/`quality`/`describe`) or rendering (that is `render`).
-compatibility: Run from the repository root. Pure Python, no model and no GPU; needs only the repo .venv. Writes route.json to the workspace or the given --out path; source footage is never touched.
+compatibility: Run with the `yt` entry point on PATH. Pure Python, no model and no GPU; needs only the repo .venv. Writes route.json to the workspace or the given --out path; source footage is never touched.
 ---
 
 # yt-router
@@ -11,9 +11,9 @@ The front door of the AI Director pipeline. It reads a brief in plain language p
 ## Step 1: route a brief
 
 ```bash
-.venv/bin/python scripts/router.py --brief "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only"
-.venv/bin/python scripts/router.py --brief-file brief.txt --workspace /path/to/workspace --json
-.venv/bin/python scripts/router.py --workspace /path/to/workspace --content-type tutorial --out route.json
+yt router --brief "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only"
+yt router --brief-file brief.txt --workspace /path/to/workspace --json
+yt router --workspace /path/to/workspace --content-type tutorial --out route.json
 ```
 
 - Give exactly one of `--brief` (inline text) or `--brief-file` (path). Neither exits 2 with one `[error] ...` line on stderr.

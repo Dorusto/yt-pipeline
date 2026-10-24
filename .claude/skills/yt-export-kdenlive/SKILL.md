@@ -1,7 +1,7 @@
 ---
 name: yt-export-kdenlive
 description: Export an edit.json edit list to the fragments.yaml that kdenlive_from_fragments.py reads, then build a .kdenlive project in one more command. One fragment per video slot, in timeline order, carrying the slot id, score and reason; optional --source-dir points the project at the full-quality originals and --kdenlive-out names the project path. Use when the user asks to open the edit in Kdenlive, export the edit list for Kdenlive, turn edit.json into fragments.yaml, or build a rough cut in Kdenlive from the director's edit. Trigger phrases - "exportă editul în Kdenlive", "fă fragments.yaml din edit.json", "deschide montajul în Kdenlive", "export the edit for Kdenlive", "edit.json to fragments.yaml", "build the Kdenlive project from the edit". Not for selecting the cut windows (that is `director`/`llm_director`), rendering an MP4 (that is `render`), or analysing footage (`ingest`/`motion`/`quality`/`describe`).
-compatibility: Run from the repository root. Needs the repo .venv and PyYAML. Reads edit.json read-only and writes fragments.yaml; the optional Kdenlive project is written by kdenlive_from_fragments.py. Kdenlive itself need not be installed to export.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and PyYAML. Reads edit.json read-only and writes fragments.yaml; the optional Kdenlive project is written by kdenlive_from_fragments.py. Kdenlive itself need not be installed to export.
 ---
 
 # yt-export-kdenlive
@@ -14,7 +14,7 @@ only reads it. No model is called and Kdenlive need not be installed.
 ## Step 1: export the edit list
 
 ```bash
-.venv/bin/python scripts/edit_to_fragments.py --edit /path/to/workspace/edit.json \
+yt edit_to_fragments --edit /path/to/workspace/edit.json \
   --out /path/to/workspace/fragments.yaml
 ```
 
@@ -35,12 +35,12 @@ Each fragment carries `file` (the slot's `clip`), `in`, `out`, and the extra fie
 ## Step 2: build the Kdenlive project
 
 ```bash
-.venv/bin/python scripts/edit_to_fragments.py --edit /path/to/workspace/edit.json \
+yt edit_to_fragments --edit /path/to/workspace/edit.json \
   --out /path/to/workspace/fragments.yaml \
   --source-dir <source-folder> \
   --kdenlive-out <workspace>/recap.kdenlive
 
-.venv/bin/python scripts/kdenlive_from_fragments.py /path/to/workspace/fragments.yaml
+yt kdenlive_from_fragments /path/to/workspace/fragments.yaml
 ```
 
 The generator probes each source clip, writes the `.kdenlive` project named in `output:` and (unless `--skip-melt`) validates it with `melt`. Kdenlive opens the project with one AV-linked clip per fragment.
@@ -48,7 +48,7 @@ The generator probes each source clip, writes the `.kdenlive` project named in `
 ## Step 3: read the result
 
 ```bash
-.venv/bin/python scripts/edit_to_fragments.py --edit /path/to/workspace/edit.json \
+yt edit_to_fragments --edit /path/to/workspace/edit.json \
   --out /path/to/workspace/fragments.yaml --json
 ```
 

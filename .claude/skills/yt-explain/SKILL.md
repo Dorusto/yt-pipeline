@@ -1,7 +1,7 @@
 ---
 name: yt-explain
-description: Write explain.html in a workspace — a short plain-language summary at the top and collapsed sections: the brief, the screenwriter plan in words (logline, structure beats, slot plan), the shots in the edit with a base64 thumbnail per slot showing the cut in/out seconds versus the candidate window, the slot score and the slot's reason, what was left out and why grouped by reason from edit.json decisions[], and the technical notes, with short ids like 0071/s2. Self-contained HTML (base64 thumbnails, no external assets), no model calls, re-run safe. Use when the user asks why the edit looks the way it does, wants the edit explained or audited, wants to see which candidates were rejected and why, or wants explain.html. Trigger phrases - "de ce arată așa", "explică montajul", "why does the edit look like this", "explain the edit", "unde e explicatia", "fă explain.html". Not for building the edit (that is `director`/`llm_director`), rendering the MP4 (that is `render`), indexing the shotlog (that is `index`) or the web app (a later task).
-compatibility: Run from the repository root. Needs the repo .venv; CPU only, no network, no model call and no spend. Reads edit.json (required), shot_plan.json and shotlog.json (optional) and the source files in edit.json sources[] read-only, writes explain.html (or --out) atomically. Safe to re-run; an up-to-date output is skipped unless --force.
+description: Write explain.html in a workspace — a short plain-language summary at the top and collapsed sections: the brief, the screenwriter plan in words (logline, structure beats, slot plan), the shots in the edit with a base64 thumbnail per slot showing the cut in/out seconds versus the candidate window, the slot score and the slot's reason, what was left out and why grouped by reason from edit.json decisions[], and the technical notes. Self-contained HTML (base64 thumbnails, no external assets), no model calls, re-run safe. Use when the user asks why the edit looks the way it does, wants the edit explained or audited, wants to see which candidates were rejected and why, or wants explain.html. Trigger phrases - "de ce arată așa", "explică montajul", "why does the edit look like this", "explain the edit", "unde e explicatia", "fă explain.html". Not for building the edit (that is `director`/`llm_director`), rendering the MP4 (that is `render`), indexing the shotlog (that is `index`) or the web app (a later task).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv; CPU only, no network, no model call and no spend. Reads edit.json (required), shot_plan.json and shotlog.json (optional) and the source files in edit.json sources[] read-only, writes explain.html (or --out) atomically. Safe to re-run; an up-to-date output is skipped unless --force.
 ---
 
 # yt-explain
@@ -11,7 +11,7 @@ Explain an edit: turn `WORKSPACE/edit.json` — the single source of truth — i
 ## Step 1: write the explanation
 
 ```bash
-.venv/bin/python scripts/explain.py --workspace /path/to/workspace
+yt explain --workspace /path/to/workspace
 ```
 
 - `--workspace` is required and must hold `edit.json` (validated against `schemas/edit.schema.json`); `shot_plan.json` and `shotlog.json` are optional. `DIR/explain.html` is written there, created if missing. The sources in `edit.json` `sources[]` are never written to; `--out` that would overwrite a source file or land inside a sources folder is refused.
@@ -23,7 +23,7 @@ Explain an edit: turn `WORKSPACE/edit.json` — the single source of truth — i
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/explain.py --workspace /path/to/workspace --json
+yt explain --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"status": "written", "out": "/abs/workspace/explain.html", "slots": 3, "candidates": 12, "used": 3, "rejected": 9, "wall_time_s": 0.4, "llm_cost_usd": 0.0}`. `status` is `"written"` or `"skipped"`; the counts come from the loaded `edit.json` either way; `llm_cost_usd` is always `0.0` — this tool calls no model service.

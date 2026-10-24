@@ -1,7 +1,7 @@
 ---
 name: yt-shorts
-description: Generate vertical 9:16 Shorts / Reels (608x1080) with burnt-in karaoke-style subtitles from segments of a finished 1920x1080 video and its corrected Romanian .srt, using the real word times of a timeline `_words.json` when given (brand font and colours, phrase-based line breaks). Also ranks Shorts candidates from a rough cut (`shorts_rank.py` → `shorts_candidates.json`) and cuts them with `shorts_generator.py --candidates`. Use when the user wants to cut Shorts or Reels, make vertical clips, turn moments of a finished video into Shorts, or rank the best Shorts spans of an edit. Trigger phrases - "generează shorts pentru clipul X", "taie Shorts din video", "fă reels verticale cu subtitrări", "generate shorts from this video", "care sunt cele mai bune momente de Shorts", "rankează candidații de Shorts", "rank the Shorts candidates". Short titles and descriptions come from `shorts_rank.py` (`shorts_candidates.json`); the transcript-based metadata generator (`yt-transcript` step 5) is the deprecated path that asks first.
-compatibility: Run from the repository root. Needs ffmpeg; uses h264_nvenc with an NVIDIA GPU, h264_videotoolbox on macOS, otherwise falls back to libx264 (works on CPU). Needs the repo .venv with requirements.txt installed. torch and whisperx are no longer needed (lazy import, only for the unused forced-alignment path).
+description: Generate vertical 9:16 Shorts / Reels (608x1080) with burnt-in karaoke-style subtitles from segments of a finished 1920x1080 video and its corrected Romanian .srt, using the real word times of a timeline `_words.json` when given. Also ranks Shorts candidates from a rough cut (`shorts_rank.py` → `shorts_candidates.json`) and cuts them with `shorts_generator.py --candidates`. Use when the user wants to cut Shorts or Reels, make vertical clips, turn moments of a finished video into Shorts, or rank the best Shorts spans of an edit. Trigger phrases - "generează shorts pentru clipul X", "taie Shorts din video", "fă reels verticale cu subtitrări", "generate shorts from this video", "care sunt cele mai bune momente de Shorts", "rankează candidații de Shorts", "rank the Shorts candidates".
+compatibility: Run with the `yt` entry point on PATH. Needs ffmpeg; uses h264_nvenc with an NVIDIA GPU, h264_videotoolbox on macOS, otherwise falls back to libx264 (works on CPU). Needs the repo .venv with requirements.txt installed. torch and whisperx are no longer needed (lazy import, only for the unused forced-alignment path).
 ---
 
 # yt-shorts
@@ -67,10 +67,10 @@ segments:
 Instead of writing the segments by hand, `scripts/shorts_rank.py` ranks Shorts candidates from a rough cut or a final edit and writes `shorts_candidates.json`:
 
 ```bash
-.venv/bin/python scripts/shorts_rank.py edit.json words/ --chapters chapters.json --json
-.venv/bin/python scripts/shorts_rank.py --fcproj project.fcproj --sequence Main \
+yt shorts_rank edit.json words/ --chapters chapters.json --json
+yt shorts_rank --fcproj project.fcproj --sequence Main \
   --words-dir words/ --chapters chapters.json --json
-.venv/bin/python scripts/shorts_rank.py --timeline-words edit_words.json --json
+yt shorts_rank --timeline-words edit_words.json --json
 ```
 
 - Three mutually exclusive input modes: the rough cut (`EDIT` + `WORDS`), the final FilmCraft project (`--fcproj PROJ --sequence NAME --words-dir DIR`, with optional `--track`, default `Audio 1` — the same inputs as `subs_from_edit.py --fcproj`), or the timeline `_words.json` that `subs_from_edit.py` already writes (`--timeline-words FILE`). All three use the same mapping from `scripts/common/timeline_words.py`.
@@ -86,7 +86,7 @@ Instead of writing the segments by hand, `scripts/shorts_rank.py` ranks Shorts c
 Then cut the ranked candidates with `--candidates`:
 
 ```bash
-.venv/bin/python scripts/shorts_generator.py --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt \
+yt shorts_generator --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt \
   --candidates shorts_candidates.json --yes
 ```
 
@@ -97,7 +97,7 @@ Then cut the ranked candidates with `--candidates`:
 ## Step 2: run
 
 ```bash
-.venv/bin/python scripts/shorts_generator.py --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt --yes
+yt shorts_generator --video /abs/path/Clip.mp4 --srt /abs/path/Clip_RO.srt --yes
 ```
 
 - Always pass both `--video` and `--srt`. Without `--video` the script asks for the path with `input()`; without `--srt` (or `--audio` when the config names one) it looks in the video folder, `../subtitles/`/`../audio/` and `..`, and asks interactively if it finds nothing. A prompt needs a TTY: without one the run is a usage error (exit 2) naming the flag that replaces the prompt (`--video`, `--audio`, `--srt`) instead of blocking. `--yes` never prompts; a missing or incomplete config, or a missing input file, then exits with code 2.

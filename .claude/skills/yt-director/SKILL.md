@@ -1,7 +1,7 @@
 ---
 name: yt-director
-description: Turn the workspace shotlog and the motion/ and quality/ labels into an edit list (edit.json) with a rule-based, deterministic director — no LLM and no vision model. It ranks candidates by the shotlog's fused content score, refuses near-duplicate shots (never two similar segments, never back to back), gives every slot a target length from the brief's pacing with a min/max, keeps hero and complete semantic-move slots whole up to a cap, cuts inside the steady range, treats eligible still photos as first-class candidates (2-4 s photo slots with a deterministic Ken Burns move), lays the slots on a chronological or score-ordered timeline (photos mixed with clips by capture time) and writes edit.json validated against schemas/edit.schema.json. Use when the user asks to build an edit, a rough cut or a recap from analysed footage, wants an edit.json, or asks which moments the director would pick. Trigger phrases - "fă edit.json", "construiește montajul din footage", "directorul alege cadrele", "build an edit from the analysis", "pick the cut windows", "generează lista de montaj". Not for analysing footage (that is `ingest`/`motion`/`quality`), describing content (that is `describe`), indexing the shotlog (that is `index`) or rendering the MP4 (that is `render`).
-compatibility: Run from the repository root. Needs the repo .venv; CPU only, no GPU and no network. Reads ingest.json, shotlog.json, motion/<stem>.json and quality/<stem>.json from the workspace read-only and writes edit.json (or --out) atomically. Deterministic: the same inputs and flags always produce the same edit.
+description: Turn the workspace shotlog and the motion/ and quality/ labels into an edit list (edit.json) with a rule-based, deterministic director — no LLM and no vision model. It ranks candidates by the shotlog's fused content score, refuses near-duplicate shots (never two similar segments, never back to back), keeps hero and complete semantic-move slots whole up to a cap and treats eligible still photos as first-class candidates (2-4 s photo slots with a deterministic Ken Burns move). Use when the user asks to build an edit, a rough cut or a recap from analysed footage, wants an edit.json, or asks which moments the director would pick. Trigger phrases - "fă edit.json", "construiește montajul din footage", "directorul alege cadrele", "build an edit from the analysis", "pick the cut windows", "generează lista de montaj". Not for analysing footage (that is `ingest`/`motion`/`quality`), describing content (that is `describe`), indexing the shotlog (that is `index`) or rendering the MP4 (that is `render`).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv; CPU only, no GPU and no network. Reads ingest.json, shotlog.json, motion/<stem>.json and quality/<stem>.json from the workspace read-only and writes edit.json (or --out) atomically. Deterministic: the same inputs and flags always produce the same edit.
 ---
 
 # yt-director
@@ -11,7 +11,7 @@ Pick the cut windows of an edit from the shotlog and the labels the analysis too
 ## Step 1: direct an edit
 
 ```bash
-.venv/bin/python scripts/director.py --workspace /path/to/workspace \
+yt director --workspace /path/to/workspace \
   --brief "about 90 seconds, calm start, more energy towards the end" \
   --target-duration-s 90 --order chronological --pacing calm-to-energy --json
 ```
@@ -29,7 +29,7 @@ Pick the cut windows of an edit from the shotlog and the labels the analysis too
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/director.py --workspace /path/to/workspace --json
+yt director --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"status": "written", "out": "/abs/workspace/edit.json", "slots": 12, "total_duration_s": 87.4, "target_duration_s": 90.0, "warnings": [], "wall_time_s": 0.51, "llm_cost_usd": 0.0, "beat_snap": null}`. `status` is `"written"` or `"skipped"`; `wall_time_s` is the seconds the run took and `llm_cost_usd` is always `0.0` (this tool never calls a model); `beat_snap` is the `--beats` snap tally (`{"beats", "snapped", "unsnapped", "downbeats", "half_bar"}`) or null without a grid; the rule-based director never prefers downbeats, so `downbeats` and `half_bar` are 0. Without `--json` it prints one line per slot (`v1  clip.mp4  12.50-21.00  0.72  interest 60 · travel_backward by verdict · move · clean · calm opening`; a photo prints `p1  photo_01.jpg  photo  3.00s  0.77  lighthouse · calm opening`), then `total X.Xs of target Y.Ys`, then the warnings.

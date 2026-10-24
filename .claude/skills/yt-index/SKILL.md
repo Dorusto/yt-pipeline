@@ -1,7 +1,7 @@
 ---
 name: yt-index
-description: Join a workspace's quality, motion, describe and similarity analyses into one shotlog.json — every quality segment as a scored candidate (one candidate per content beat when describe split a long segment) plus every described still photo (media_type photo), with score, hook, reason, a one-line summary and tags, the effective role and motion label (the vision verdict wins on uncertain segments), the fixed clean-still label prior for photos, photo-burst suppression (the best of a similar burst captured within 30 s stays eligible), the near-duplicate links for the director's diversity rule and an eligibility flag — and write a self-contained shotlog.html contact sheet next to it for phone review. Use when the user wants the analysed workspaces scored and ranked, asks which shots are worth using, wants the vision and label scores fused, needs the file the director ranks by, or wants a visual contact sheet of the shots. Trigger phrases - "fă shotlog-ul", "indexează workspace-ul", "scorează cadrele", "care cadre merită", "rank the shots", "build the shotlog", "contact sheet", "fișă vizuală cu cadre". Not for choosing the final edit (that is `director`), for the raw analyses (`motion`, `quality`, `describe`, `similarity`) or for generating clips.
-compatibility: Run from the repository root. No dependencies beyond the standard library, OpenCV and the repo .venv; CPU only, no model call and no spend. Reads quality/<stem>.json (required unless the workspace has described photos), motion/<stem>.json, describe/<stem>.json (video records and photo records with media_type photo) and similarity.json (all optional) read-only, writes shotlog.json and shotlog.html into the workspace. Safe to re-run; an up-to-date output is skipped unless --force.
+description: Join a workspace's quality, motion, describe and similarity analyses into one shotlog.json — every quality segment as a scored candidate (one candidate per content beat when describe split a long segment) plus every described still photo (media_type photo), with score, hook, reason, a one-line summary and tags, the effective role and motion label (the vision verdict wins on uncertain segments) and a self-contained shotlog.html contact sheet. Use when the user wants the analysed workspaces scored and ranked, asks which shots are worth using, wants the vision and label scores fused, needs the file the director ranks by, or wants a visual contact sheet of the shots. Trigger phrases - "fă shotlog-ul", "indexează workspace-ul", "scorează cadrele", "care cadre merită", "rank the shots", "build the shotlog", "contact sheet", "fișă vizuală cu cadre". Not for choosing the final edit (that is `director`), for the raw analyses (`motion`, `quality`, `describe`, `similarity`) or for generating clips.
+compatibility: Run with the `yt` entry point on PATH. No dependencies beyond the standard library, OpenCV and the repo .venv; CPU only, no model call and no spend. Reads quality/<stem>.json (required unless the workspace has described photos), motion/<stem>.json, describe/<stem>.json (video records and photo records with media_type photo) and similarity.json (all optional) read-only, writes shotlog.json and shotlog.html into the workspace. Safe to re-run; an up-to-date output is skipped unless --force.
 ---
 
 # yt-index
@@ -11,7 +11,7 @@ Join the per-clip analyses of a workspace into **one `WORKSPACE/shotlog.json`**:
 ## Step 1: build the shotlog
 
 ```bash
-.venv/bin/python scripts/index.py --workspace /path/to/workspace
+yt index --workspace /path/to/workspace
 ```
 
 - `--workspace` is required. It must hold `quality/` **or** a set of described photos (`ingest.json` plus `describe/<stem>.json` records with `media_type: "photo"`); a photo-only workspace builds a photo-only shotlog without erroring. `DIR/shotlog.json` and `DIR/shotlog.html` are written there, created if missing. The source analyses, clips and photos are never written to.
@@ -24,7 +24,7 @@ Join the per-clip analyses of a workspace into **one `WORKSPACE/shotlog.json`**:
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/index.py --workspace /path/to/workspace --json
+yt index --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"shots": 39, "eligible": 32, "with_vision": 18, "suppressed": 0, "weights": {"vision": 0.55, "labels": 0.45, "audio_energy": 0.0, "text": 0.0}, "wall_time_s": 0.05, "llm_cost_usd": 0.0, "output": ".../shotlog.json", "html": ".../shotlog.html", "skipped": false}`. `html` is the absolute contact sheet path, or `null` with `--no-html`. Read `DIR/shotlog.json` for the full records; it is validated against `schemas/shotlog.schema.json` and written atomically, so a run leaves a complete valid file or none. `llm_cost_usd` is always `0.0` — this tool calls no model service.

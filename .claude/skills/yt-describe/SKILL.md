@@ -1,7 +1,7 @@
 ---
 name: yt-describe
-description: Describe every kept quality segment of a clip with the vision model — frames chosen at OpenCV scene changes and motion phase boundaries, tiled 6-9 per mosaic image with their timestamps burned in (one mosaic image per group, more mosaics on a long segment) plus the motion label, one structured answer per segment (description, summary of at most 12 words, tag list, subject, scenery, semantic motion, interest 0-100, hero flag), content beats that split a long segment at its scene changes (approach / inside / exit) and a verdict for every uncertain segment whose label wins in the shotlog (except a geometry `accidental`, whose role is final). Still photos listed in ingest.json are described with one frame as pseudo-segment p1 plus the main subject centre (`subject_position`) for the Ken Burns move. Use when the user asks what is actually on screen in a clip, wants descriptions or content scores for the kept segments, wants a long take split into its moments, wants the uncertain motion labels adjudicated, wants hero shots and semantic moves (orbit, tracking, reveal, travel) marked, or wants the still photos described. Trigger phrases - "descrie clipurile", "ce se vede în cadre", "describe the segments", "etichetează segmentele cu viziune", "care e mișcarea semantică", "care sunt cadrele hero", "rezolvă etichetele incerte", "împarte clipul lung în momente", "descrie pozele", "describe the photos", "unde e subiectul în poză". Not for camera-motion geometry (that is `motion`), quality defects and roles (that is `quality`) or generating clips.
-compatibility: Run from the repository root. Needs the repo .venv with opencv-python-headless and Pillow; CPU only. Reads quality/<stem>.json and the clip read-only, writes describe/<stem>.json into the workspace; still photos come from ingest.json and are read-only too. Frames are held in memory only and never written to disk. The default backend is llm_backend from config.yaml; use --backend mock for an offline run with no network and no spend.
+description: Describe every kept quality segment of a clip — one structured answer per segment, content beats that split a long segment at its scene changes and a verdict for every uncertain segment whose label wins in the shotlog. Use when the user asks what is actually on screen in a clip, wants descriptions or content scores for the kept segments, wants a long take split into its moments, wants the uncertain motion labels adjudicated, wants hero shots and semantic moves (orbit, tracking, reveal, travel) marked, or wants the still photos described. Trigger phrases - "descrie clipurile", "ce se vede în cadre", "describe the segments", "etichetează segmentele cu viziune", "care e mișcarea semantică", "care sunt cadrele hero", "rezolvă etichetele incerte", "împarte clipul lung în momente", "descrie pozele", "describe the photos", "unde e subiectul în poză". Not for camera-motion geometry (that is `motion`), quality defects and roles (that is `quality`) or generating clips.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with opencv-python-headless and Pillow; CPU only. Reads quality/<stem>.json and the clip read-only, writes describe/<stem>.json into the workspace; still photos come from ingest.json and are read-only too. Frames are held in memory only and never written to disk. The default backend is llm_backend from config.yaml; use --backend mock for an offline run with no network and no spend.
 ---
 
 # yt-describe
@@ -11,7 +11,7 @@ Describe every kept quality segment with the vision model before any editing dec
 ## Step 1: describe a workspace
 
 ```bash
-.venv/bin/python scripts/describe.py --workspace /path/to/workspace
+yt describe --workspace /path/to/workspace
 ```
 
 - `--workspace` is required and must hold `quality/`. `DIR/describe/<stem>.json` is written per clip, created if missing. The source clips are never written to.
@@ -25,7 +25,7 @@ Describe every kept quality segment with the vision model before any editing dec
 ## Step 2: describe the still photos
 
 ```bash
-.venv/bin/python scripts/describe.py --workspace /path/to/workspace --backend mock --photos-only
+yt describe --workspace /path/to/workspace --backend mock --photos-only
 ```
 
 - Photo coverage is automatic: when `ingest.json` in the workspace has a non-empty `photos[]`, every photo is described in the same run as the clips. `--photos-only` skips the video segments and describes only the photos (useful when there is no `quality/` yet).
@@ -36,7 +36,7 @@ Describe every kept quality segment with the vision model before any editing dec
 ## Step 3: read the result
 
 ```bash
-.venv/bin/python scripts/describe.py --workspace /path/to/workspace --json
+yt describe --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"clips": 4, "described": 4, "skipped": 0, "segments_described": 23, "segments_skipped": 0, "beats": 5, "photos": 3, "model": "deepseek/deepseek-v4.1-flash", "frame_mode": "mosaic", "frames_sampled": 141, "mosaics_sent": 21, "wall_time_s": 13.49, "llm_cost_usd": 0.0}`. `photos` is the number of photo records written this run; `frames_sampled` counts the tiles and `mosaics_sent` the model images (equal in `legacy` mode). Read `DIR/describe/<stem>.json` for the per-clip or per-photo detail; it is validated against `schemas/describe.schema.json` and written atomically, so a run leaves a complete valid file or none.

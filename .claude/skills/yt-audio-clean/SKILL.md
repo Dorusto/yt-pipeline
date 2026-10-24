@@ -1,7 +1,7 @@
 ---
 name: yt-audio-clean
 description: Measure a clip's ambient sound — per-2-second RMS, wind and broadband noise per clip — and clean the audio with ffmpeg (wind high-pass, RNNoise/afftdn noise reduction, loudnorm loudness) without touching the video. Use when the user asks how noisy or windy a clip is, wants the wind rumble or hiss removed, wants the ambient sound louder/quieter or normalised to a loudness target, or wants a cleaned audio file next to the footage. Trigger phrases - "curăță sunetul", "scoate vântul din audio", "cât de zgomotos e clipul", "normalizează volumul", "clean the audio", "remove wind noise", "denoise this clip", "loudness normalize". Not for choosing music or SFX (that is the render's audio mix), not for transcript/whisper and not for video quality (that is `quality`).
-compatibility: Run from the repository root. Needs the repo .venv with numpy and ffmpeg/ffprobe on the PATH; CPU only, no GPU and no network. Reads the input read-only and writes only --out and --report. RNNoise (`arnndn`) needs a local .rnnn model; without one it uses `afftdn`. It never re-encodes video and never calls a model service.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with numpy and ffmpeg/ffprobe on the PATH; CPU only, no GPU and no network. Reads the input read-only and writes only --out and --report. RNNoise (`arnndn`) needs a local .rnnn model; without one it uses `afftdn`. It never re-encodes video and never calls a model service.
 ---
 
 # yt-audio-clean
@@ -11,7 +11,7 @@ The D2 audio station. It measures the ambient sound of a clip and, unless `--ana
 ## Step 1: measure
 
 ```bash
-.venv/bin/python scripts/audio_clean.py /path/to/clip.mp4 \
+yt audio_clean /path/to/clip.mp4 \
   --report /path/to/workspace/audio_report.json --analyse-only --json
 ```
 
@@ -23,7 +23,7 @@ The D2 audio station. It measures the ambient sound of a clip and, unless `--ana
 ## Step 2: clean
 
 ```bash
-.venv/bin/python scripts/audio_clean.py /path/to/clip.mp4 \
+yt audio_clean /path/to/clip.mp4 \
   --out /path/to/workspace/clip_clean.m4a \
   --report /path/to/workspace/audio_report.json --json
 ```
