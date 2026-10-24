@@ -75,8 +75,9 @@ llm_backend: openrouter
 #   library: <music-library>
 
 # Whisper model for scripts/transcribe.py and the publish chain's --media step.
-# There is a default: turbo with a CUDA GPU, else medium for a non-English
-# language and small for English. Set it here, in the
+# There is a default: turbo with a CUDA GPU, else medium on CPU for a
+# non-English language (including auto or no language), small only for an
+# explicit en. Set it here, in the
 # YT_PIPELINE_WHISPER_MODEL environment variable, or pass --model /
 # --whisper-model. Docs and examples write <whisper-model>.
 # transcribe:
