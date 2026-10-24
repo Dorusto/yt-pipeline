@@ -3095,3 +3095,35 @@ removed on uninstall.
 **Consequence:** `claude plugin validate .` is Doru's manual check (the build
 host has no `claude` CLI); the plugin `version` is bumped with the release; no
 tool, schema or route changes.
+
+## [2026-10-24] yt dispatcher, structured errors and plugin descriptions (V030 lot c2b)
+
+**Context:** review of the v0.3.0 plan and lots c2, c3 and c4. `yt` was a
+dispatcher with its own `--list` flag and duplicated root/venv resolution in
+`bin/yt`; a `--json` failure printed only the human `[error]` line; the five
+plugins shared one marketplace description; and the c3 entry claimed "no tool,
+schema or route changes" although `scripts/yt.py` had changed.
+
+**Options:** (A) keep `--list` and the duplicated resolution in `bin/yt`; (B)
+make `yt` the single named dispatcher, move all root/venv resolution into
+`scripts/yt.py`, make `bin/yt` a thin launcher, print the structured error
+object on every `--json` failure, drop `--list`, and give each plugin its own
+description.
+
+**Decision:** B. `yt <tool> [args...]` runs `scripts/<tool>.py` and propagates
+the child's exit code unchanged; `yt --help` lists the tools and `yt --json` /
+`yt --help --json` print the same JSON. `bin/yt` only finds a Python and execs
+`scripts/yt.py`; all root and interpreter resolution (including the plugin venv
+under `CLAUDE_PLUGIN_DATA` and the `~/.claude/plugins/data/*/yt-pipeline-venv`
+marker) lives in `scripts/yt.py`. Every failure with `--json` in the arguments
+prints one `{"ok": false, "error": ..., "exit_code": N}` object on stdout via
+`report_error(..., json_out=True)`. `--list` is dropped. Each of the five
+plugins gets its own one-line factual description.
+
+**Why not A:** two sources of root/venv resolution drift apart, and a machine
+reading `--json` needs the same error shape from every tool.
+
+**Consequence:** the c3 entry's "no tool, schema or route changes" line was
+inaccurate — `scripts/yt.py` changed; the guide, the tools reference, the
+README and the 20 skills that said "from the repository root" are updated in the
+same commit.

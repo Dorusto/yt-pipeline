@@ -33,6 +33,16 @@ shell). Python 3.11+ and `uv` everywhere (`pip install uv`). On Windows run the
 commands from PowerShell with `.venv\Scripts\python.exe` and
 `$env:OPENROUTER_API_KEY=...`.
 
+## Install as a Claude Code plugin
+
+```
+/plugin install yt-director --marketplace Dorusto/yt-pipeline
+/plugin install yt-publish --marketplace Dorusto/yt-pipeline
+/plugin install yt-shorts --marketplace Dorusto/yt-pipeline
+/plugin install yt-editor --marketplace Dorusto/yt-pipeline
+/plugin install yt-admin --marketplace Dorusto/yt-pipeline
+```
+
 ## Where to go next
 
 - Step by step, with the web app and the phone flow: [docs/guides/user-guide.md](docs/guides/user-guide.md)

@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs ffmpeg and ffprobe o
 
 # yt-thumbs
 
-Write the **poster** and the **per-shot thumbnails** of a recap workspace: `WORKSPACE/thumbs/poster.jpg` is the frame at **30 % of the recap** and `WORKSPACE/thumbs/shot-N.jpg` is the frame at the **middle of timeline slot N**, each scaled to `--width` pixels wide (320 by default). The Projects page shows the poster on each card and the shot strip under the player shows each shot's thumbnail. No model is called. All commands run from the repository root.
+Write the **poster** and the **per-shot thumbnails** of a recap workspace: `WORKSPACE/thumbs/poster.jpg` is the frame at **30 % of the recap** and `WORKSPACE/thumbs/shot-N.jpg` is the frame at the **middle of timeline slot N**, each scaled to `--width` pixels wide (320 by default). The Projects page shows the poster on each card and the shot strip under the player shows each shot's thumbnail. No model is called. All commands run through `yt <tool>`.
 
 ## Step 1: write the thumbnails
 

@@ -12,7 +12,7 @@ shot tags and the target duration. The winner is written to
 `music_choice.json`; with `--workspace` the chosen track's beat grid is also
 written to `workspace/beats.json`, which is what the directors read for the
 beat snap. `recap.py --music auto` runs this as one station. All commands run
-from the repository root.
+through `yt <tool>`.
 
 ## Step 1: pick the track
 

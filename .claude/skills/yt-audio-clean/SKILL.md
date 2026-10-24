@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 # yt-audio-clean
 
-The D2 audio station. It measures the ambient sound of a clip and, unless `--analyse-only` is given, cleans it in one ffmpeg pass. On action footage the ambient sound is part of the shot, so this tool measures and cleans it, it never mutes it. All commands run from the repository root.
+The D2 audio station. It measures the ambient sound of a clip and, unless `--analyse-only` is given, cleans it in one ffmpeg pass. On action footage the ambient sound is part of the shot, so this tool measures and cleans it, it never mutes it. All commands run through `yt <tool>`.
 
 ## Step 1: measure
 

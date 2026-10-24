@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and f
 
 # yt-ingest
 
-Build a machine-readable inventory of a folder of raw clips and still photos before any analysis. One `ffprobe` pass per video records duration, fps, resolution, every stream, the creation time and whether the clip still carries DJI gyro/IMU telemetry; one Pillow pass per photo records its size, orientation, format and EXIF capture time. All commands run from the repository root.
+Build a machine-readable inventory of a folder of raw clips and still photos before any analysis. One `ffprobe` pass per video records duration, fps, resolution, every stream, the creation time and whether the clip still carries DJI gyro/IMU telemetry; one Pillow pass per photo records its size, orientation, format and EXIF capture time. All commands run through `yt <tool>`.
 
 ## Step 1: scan the folder
 

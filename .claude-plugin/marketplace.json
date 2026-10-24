@@ -9,7 +9,7 @@
     {
       "name": "yt-director",
       "source": "./",
-      "description": "Director tools for holiday recaps and YouTube clips.",
+      "description": "The holiday/edit director: recap, director, llm-director, beats, music-pick, edit-drop, render, thumbs, explain, ingest, index, describe, quality, similarity, eval-edit, mode-b, rough-cut, router.",
       "author": {
         "name": "Dorusto",
         "url": "https://github.com/Dorusto"
@@ -41,7 +41,7 @@
     {
       "name": "yt-publish",
       "source": "./",
-      "description": "Director tools for holiday recaps and YouTube clips.",
+      "description": "Publish tools: transcript, publish, recap-meta, thumbnail, audio-clean.",
       "author": {
         "name": "Dorusto",
         "url": "https://github.com/Dorusto"
@@ -60,7 +60,7 @@
     {
       "name": "yt-shorts",
       "source": "./",
-      "description": "Director tools for holiday recaps and YouTube clips.",
+      "description": "Vertical Shorts tools: shorts, reframe.",
       "author": {
         "name": "Dorusto",
         "url": "https://github.com/Dorusto"
@@ -76,7 +76,7 @@
     {
       "name": "yt-editor",
       "source": "./",
-      "description": "Director tools for holiday recaps and YouTube clips.",
+      "description": "Editor tools: filmcraft, export-kdenlive, finish-pip, graphics, matte, motion.",
       "author": {
         "name": "Dorusto",
         "url": "https://github.com/Dorusto"
@@ -96,7 +96,7 @@
     {
       "name": "yt-admin",
       "source": "./",
-      "description": "Director tools for holiday recaps and YouTube clips.",
+      "description": "Admin tools: costs, watchdog, eval.",
       "author": {
         "name": "Dorusto",
         "url": "https://github.com/Dorusto"

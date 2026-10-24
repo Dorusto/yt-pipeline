@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv; CPU 
 
 # yt-director
 
-Pick the cut windows of an edit from the shotlog and the labels the analysis tools already wrote. Rule-based and deterministic, no model is called. It reads the workspace only and writes `edit.json`, the single source of truth every output adapter reads. All commands run from the repository root.
+Pick the cut windows of an edit from the shotlog and the labels the analysis tools already wrote. Rule-based and deterministic, no model is called. It reads the workspace only and writes `edit.json`, the single source of truth every output adapter reads. All commands run through `yt <tool>`.
 
 ## Step 1: direct an edit
 

@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and t
 
 # yt-recap-meta
 
-Write the upload text for a recap: turn `WORKSPACE/edit.json` into one **`WORKSPACE/recap_meta.json`** holding the YouTube **title**, a 2-3 sentence **description** and 5-10 **hashtags**. The tool builds the deterministic facts itself (the brief text, the four facts place/when/who/occasion from `brief_facts.json`, with the ingest date for `when`, the deduplicated shot descriptions), asks the `metadata` text model role and lists the fact fields the brief and `brief_facts.json` did not carry by field name in `missing`. All commands run from the repository root.
+Write the upload text for a recap: turn `WORKSPACE/edit.json` into one **`WORKSPACE/recap_meta.json`** holding the YouTube **title**, a 2-3 sentence **description** and 5-10 **hashtags**. The tool builds the deterministic facts itself (the brief text, the four facts place/when/who/occasion from `brief_facts.json`, with the ingest date for `when`, the deduplicated shot descriptions), asks the `metadata` text model role and lists the fact fields the brief and `brief_facts.json` did not carry by field name in `missing`. All commands run through `yt <tool>`.
 
 ## Step 1: write the metadata
 

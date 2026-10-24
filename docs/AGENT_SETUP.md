@@ -60,12 +60,13 @@ yt doctor --source <folder>
 yt recap --source <folder> --brief <brief>
 ```
 
-`yt --help` lists the tools, `yt --list` prints their names, one per line, and
-`yt --json` prints the resolved root, Python and tool list as JSON. The entry
-point resolves the repository root from `YT_PIPELINE_HOME` (else by walking up
-from the script to the folder holding `scripts/` and `requirements.txt`) and the
-interpreter from `YT_PIPELINE_VENV` (else `<root>/.venv/bin/python`, else the
-plugin's own virtual environment, else `python3`).
+`yt --help` lists the tools; `yt --json` and `yt --help --json` print the same
+JSON (the resolved root, Python and tool list). The entry point resolves the
+repository root from `YT_PIPELINE_HOME` (else by walking up from the script to
+the folder holding `scripts/` and `requirements.txt`) and the interpreter for
+the tools from `YT_PIPELINE_VENV`, else `<root>/.venv/bin/python`, else the
+plugin's own virtual environment under `~/.claude/plugins/data/`, else `python3`.
+`bin/yt` is a thin launcher that finds a Python and runs `scripts/yt.py`.
 
 Put `bin/yt` on `PATH` once, for example with a symlink:
 
@@ -117,11 +118,13 @@ manual step for Doru: the build host has no `claude` CLI.
 
 ## 7. opencode
 
-Run `opencode` in the repo root. It reads `.claude/skills/` (project
-Claude-compatible) and `AGENTS.md` as project instructions; `CLAUDE.md` points to
-`AGENTS.md` for Claude Code. It also reads the Claude plugin cache through the
-agent-skills plugin, so a plugin installed for Claude Code is visible to opencode
-too.
+Run `opencode` in the repo root. It reads `.claude/skills/<name>/SKILL.md`
+(project Claude-compatible) and `~/.claude/skills/<name>/SKILL.md` (global
+Claude-compatible), and `AGENTS.md` as project instructions; `CLAUDE.md` points
+to `AGENTS.md` for Claude Code. It does not read the Claude Code plugin cache, so
+a plugin installed for Claude Code is not visible to opencode — install the
+skills for opencode by copying them into `.claude/skills/` or
+`~/.claude/skills/` (section 8).
 
 Ask the agent to list its skills. You should see all 34.
 
@@ -155,6 +158,13 @@ every skill calls tools through `yt <tool>`).
 No plugin ships another's skills and no `dependencies` field is set: the pointers
 are "see also" notes, and a dependency would create the cycles `yt-director` ↔
 `yt-editor` and `yt-publish` ↔ `yt-shorts`.
+
+Tool-level dependencies are separate from the skill pointers: a skill can call a
+tool whose own skill lives in another plugin, for example `yt-render` (plugin
+`yt-director`) runs `render.py`, which calls `reframe.py`, whose skill
+`yt-reframe` is in `yt-shorts`. Every plugin ships the whole `scripts/` folder,
+so the tools are present even when the other plugin is not installed; the pointer
+only tells the reader where the tool's skill is.
 
 ## 10. Smoke test
 

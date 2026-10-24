@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs Python 3, the repo .
 
 # yt-transcript
 
-Fix and translate subtitle files (.srt) for a YouTube clip. All commands run from the repository root.
+Fix and translate subtitle files (.srt) for a YouTube clip. All commands run through `yt <tool>`.
 
 ## Before you start
 

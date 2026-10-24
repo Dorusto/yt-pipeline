@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 # yt-quality
 
-Measure the quality of a clip and label every segment with a role before any editing decision. Sampled frames are measured for blur, exposure, obstruction, frame difference and horizon; a matching `motion/<stem>.json` drives segmentation and carries the camera label and shake. Each segment gets a role with a confidence and the measured defects. **Labels only — nothing is ever deleted, cut or trimmed here.** All commands run from the repository root.
+Measure the quality of a clip and label every segment with a role before any editing decision. Sampled frames are measured for blur, exposure, obstruction, frame difference and horizon; a matching `motion/<stem>.json` drives segmentation and carries the camera label and shake. Each segment gets a role with a confidence and the measured defects. **Labels only — nothing is ever deleted, cut or trimmed here.** All commands run through `yt <tool>`.
 
 ## Step 1: analyse one clip or a folder
 

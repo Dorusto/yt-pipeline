@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv (stdl
 
 # yt-costs
 
-The costs ledger tool. It keeps one SQLite file of what the project costs and earns and answers with a `totals` view. All commands run from the repository root.
+The costs ledger tool. It keeps one SQLite file of what the project costs and earns and answers with a `totals` view. All commands run through `yt <tool>`.
 
 ## The ledger path (three ways)
 

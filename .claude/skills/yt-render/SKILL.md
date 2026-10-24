@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and f
 
 # yt-render
 
-The output adapter: turn an `edit.json` edit list into an MP4, either a preview-quality 720p cut from the proxy clips in `sources[]` or a full-resolution final from the originals when `--originals-dir` is given. It cuts each video slot, scales and pads it to the requested frame, renders each photo slot as a still with a Ken Burns move, joins the slots in timeline order with crossfades or hard cuts and keeps each slot's own ambient audio. All commands run from the repository root.
+The output adapter: turn an `edit.json` edit list into an MP4, either a preview-quality 720p cut from the proxy clips in `sources[]` or a full-resolution final from the originals when `--originals-dir` is given. It cuts each video slot, scales and pads it to the requested frame, renders each photo slot as a still with a Ken Burns move, joins the slots in timeline order with crossfades or hard cuts and keeps each slot's own ambient audio. All commands run through `yt <tool>`.
 
 ## Step 1: render
 

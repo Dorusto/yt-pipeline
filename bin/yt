@@ -1,5 +1,5 @@
 #!/bin/sh
-# yt entry point: run any yt-pipeline tool from any folder.
+# yt entry point: a thin launcher that finds a Python and runs scripts/yt.py.
 
 script=$0
 while [ -L "$script" ]; do
@@ -11,26 +11,4 @@ while [ -L "$script" ]; do
 done
 root=$(cd "$(dirname "$script")/.." && pwd)
 
-if [ -n "$YT_PIPELINE_HOME" ]; then
-    root=$YT_PIPELINE_HOME
-fi
-
-if [ -n "$YT_PIPELINE_VENV" ] && [ -x "$YT_PIPELINE_VENV/bin/python" ]; then
-    python=$YT_PIPELINE_VENV/bin/python
-elif [ -x "$root/.venv/bin/python" ]; then
-    python=$root/.venv/bin/python
-elif [ -n "$CLAUDE_PLUGIN_DATA" ] && [ -x "$CLAUDE_PLUGIN_DATA/venv/bin/python" ]; then
-    python=$CLAUDE_PLUGIN_DATA/venv/bin/python
-else
-    python=python3
-    for marker in "$HOME"/.claude/plugins/data/*/yt-pipeline-venv; do
-        [ -f "$marker" ] || continue
-        venv=$(cat "$marker")
-        if [ -n "$venv" ] && [ -x "$venv/bin/python" ]; then
-            python=$venv/bin/python
-            break
-        fi
-    done
-fi
-
-exec "$python" "$root/scripts/yt.py" "$@"
+exec python3 "$root/scripts/yt.py" "$@"

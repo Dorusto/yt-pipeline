@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 # yt-beats
 
-The D2 `beats` station. It reads a music file and reports its tempo, beat and downbeat times and energy curve, and — when asked — a **cut grid** an edit can cut on. There is no music generation in D2; this tool only measures a track the brief already names. All commands run from the repository root.
+The D2 `beats` station. It reads a music file and reports its tempo, beat and downbeat times and energy curve, and — when asked — a **cut grid** an edit can cut on. There is no music generation in D2; this tool only measures a track the brief already names. All commands run through `yt <tool>`.
 
 ## Step 1: measure a track
 

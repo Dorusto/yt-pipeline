@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 # yt-motion
 
-Measure how the camera moved in a clip before any editing decision. A Lucas-Kanade optical-flow pass with a partial-affine RANSAC fit per sampled frame pair builds a camera trajectory; the take is split into motion phases and each steady span becomes a labelled move with a steady range and cut handles. Labels use the CameraBench geometric vocabulary; the meaning of the motion (orbit, tracking, reveal) is left to `describe`. All commands run from the repository root.
+Measure how the camera moved in a clip before any editing decision. A Lucas-Kanade optical-flow pass with a partial-affine RANSAC fit per sampled frame pair builds a camera trajectory; the take is split into motion phases and each steady span becomes a labelled move with a steady range and cut handles. Labels use the CameraBench geometric vocabulary; the meaning of the motion (orbit, tracking, reveal) is left to `describe`. All commands run through `yt <tool>`.
 
 ## Step 1: analyse one clip or a folder
 

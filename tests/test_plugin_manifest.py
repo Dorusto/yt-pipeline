@@ -90,6 +90,13 @@ def test_every_skill_in_exactly_one_plugin():
     assert mapping == PLUGIN_SKILLS
 
 
+def test_plugin_descriptions_are_distinct():
+    marketplace = load(MARKETPLACE)
+    descriptions = [entry["description"] for entry in marketplace["plugins"]]
+    assert all(descriptions)
+    assert len(descriptions) == len(set(descriptions))
+
+
 def test_no_root_plugin_manifest():
     assert not (ROOT / ".claude-plugin" / "plugin.json").exists()
 

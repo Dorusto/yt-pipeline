@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv; CPU 
 
 # yt-explain
 
-Explain an edit: turn `WORKSPACE/edit.json` — the single source of truth — into one self-contained **`WORKSPACE/explain.html`** that answers *why does the edit look like this*: what was asked (the brief), what the screenwriter planned (when the LLM director wrote a plan), what ended up on the timeline (one thumbnail row per slot, the cut versus the candidate window it came from, the reason) and what was left out (every candidate used or rejected, with the reason the director recorded). No model is called. All commands run from the repository root.
+Explain an edit: turn `WORKSPACE/edit.json` — the single source of truth — into one self-contained **`WORKSPACE/explain.html`** that answers *why does the edit look like this*: what was asked (the brief), what the screenwriter planned (when the LLM director wrote a plan), what ended up on the timeline (one thumbnail row per slot, the cut versus the candidate window it came from, the reason) and what was left out (every candidate used or rejected, with the reason the director recorded). No model is called. All commands run through `yt <tool>`.
 
 ## Step 1: write the explanation
 

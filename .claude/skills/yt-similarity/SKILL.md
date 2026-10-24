@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 # yt-similarity
 
-Embed every quality segment and still photo of a workspace and list the visually similar pairs before any editing decision. The director uses the pairs to refuse near-duplicate shots ("no two similar segments in the edit unless the brief asks for it, never back to back") and the index uses them to suppress photo bursts. The output is **one file per workspace** (`WORKSPACE/similarity.json`), not per clip, because pairs cross clips and photos. **Frames are never written to disk** — the repo is public. All commands run from the repository root.
+Embed every quality segment and still photo of a workspace and list the visually similar pairs before any editing decision. The director uses the pairs to refuse near-duplicate shots ("no two similar segments in the edit unless the brief asks for it, never back to back") and the index uses them to suppress photo bursts. The output is **one file per workspace** (`WORKSPACE/similarity.json`), not per clip, because pairs cross clips and photos. **Frames are never written to disk** — the repo is public. All commands run through `yt <tool>`.
 
 ## Step 1: embed a workspace
 

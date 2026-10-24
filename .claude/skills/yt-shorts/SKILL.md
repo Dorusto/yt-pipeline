@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs ffmpeg; uses h264_nv
 
 # yt-shorts
 
-Cut segments of a finished 1920x1080 video into vertical 608x1080 clips with burnt-in subtitles. All commands run from the repository root.
+Cut segments of a finished 1920x1080 video into vertical 608x1080 clips with burnt-in subtitles. All commands run through `yt <tool>`.
 
 ## Prerequisites
 

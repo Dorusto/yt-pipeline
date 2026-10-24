@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv, ffpr
 
 # yt-rough-cut
 
-Turn raw footage plus a list of chosen moments into an editable Kdenlive timeline, so nobody scrubs through every source file by hand. The result is a starting point: trimming, reordering and adding material continue by hand in Kdenlive. All commands run from the repository root.
+Turn raw footage plus a list of chosen moments into an editable Kdenlive timeline, so nobody scrubs through every source file by hand. The result is a starting point: trimming, reordering and adding material continue by hand in Kdenlive. All commands run through `yt <tool>`.
 
 ## Prerequisites
 

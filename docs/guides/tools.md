@@ -16,9 +16,12 @@ yt recap --source <folder> --brief <brief>
 `yt <tool> [args...]` resolves the repository root (`YT_PIPELINE_HOME` first,
 else walking up from the script to the folder holding `scripts/` and
 `requirements.txt`) and the Python (`YT_PIPELINE_VENV`, else
-`<root>/.venv/bin/python`, else `python3`), then runs `scripts/<tool>.py` with
-the remaining arguments. `yt --help` lists the tools, `yt --list` prints their
-names and `yt --json` prints the resolved root, Python and tool list.
+`<root>/.venv/bin/python`, else the plugin's own virtual environment under
+`~/.claude/plugins/data/`, else `python3`), then runs `scripts/<tool>.py` with
+the remaining arguments and propagates its exit code unchanged. `yt --help`
+lists the tools; `yt --json` and `yt --help --json` print the same JSON (the
+resolved root, Python and tool list). `bin/yt` is a thin launcher that finds a
+Python and runs `scripts/yt.py`.
 
 ---
 

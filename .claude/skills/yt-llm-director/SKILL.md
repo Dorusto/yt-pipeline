@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and, 
 
 # yt-llm-director
 
-Direct an edit with a model in three roles instead of the fixed rules. The screenwriter reads the brief and the shotlog and writes `shot_plan.json` (structure, beats, which shot goes where and roughly how long). The editor turns the plan into exact source timecodes. The reviewer checks the draft against the brief and the editing rules and sends fixes back for at most three rounds. When the loop cannot finish, the rule-based `scripts/director.py` takes over. All commands run from the repository root.
+Direct an edit with a model in three roles instead of the fixed rules. The screenwriter reads the brief and the shotlog and writes `shot_plan.json` (structure, beats, which shot goes where and roughly how long). The editor turns the plan into exact source timecodes. The reviewer checks the draft against the brief and the editing rules and sends fixes back for at most three rounds. When the loop cannot finish, the rule-based `scripts/director.py` takes over. All commands run through `yt <tool>`.
 
 ## Step 1: direct an edit with the loop
 

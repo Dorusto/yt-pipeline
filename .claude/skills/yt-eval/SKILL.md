@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 # yt-eval
 
-Turn "the labels look plausible" into a number. The ground-truth YAML holds the move, role, horizon and event labels a human wrote from what they filmed; this tool matches every ground-truth clip to the workspace `motion/<stem>.json` and `quality/<stem>.json` by the 4-digit counter in the file name and scores interval overlap, horizon false positives and event precision/recall. `--labels` chooses which labels are scored: `geometry` (the motion/quality documents, the D1a-2 baseline) or `shotlog` (the effective labels of `WORKSPACE/shotlog.json`, where the vision verdict wins on uncertain segments — the pipeline number). It baselines the current tools: every later D1a-2 fix must move the score up. All commands run from the repository root.
+Turn "the labels look plausible" into a number. The ground-truth YAML holds the move, role, horizon and event labels a human wrote from what they filmed; this tool matches every ground-truth clip to the workspace `motion/<stem>.json` and `quality/<stem>.json` by the 4-digit counter in the file name and scores interval overlap, horizon false positives and event precision/recall. `--labels` chooses which labels are scored: `geometry` (the motion/quality documents, the D1a-2 baseline) or `shotlog` (the effective labels of `WORKSPACE/shotlog.json`, where the vision verdict wins on uncertain segments — the pipeline number). It baselines the current tools: every later D1a-2 fix must move the score up. All commands run through `yt <tool>`.
 
 ## Step 1: score a ground-truth file against a workspace
 
