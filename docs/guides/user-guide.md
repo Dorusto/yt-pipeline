@@ -221,10 +221,7 @@ finished recap, the explanation and the contact sheet.
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
   It re-runs only the edit and the render — the analysis is reused. The
   feedback is appended to `feedback.jsonl` in the workspace.
-- **Reviewer and Ask the director.** The project page shows, per version,
-  `Reviewer: approved` / `Reviewer: not approved` and the reviewer's
-  objections (an objection that names a shot shows the same number as the
-  strip). The Re-edit box has an **Ask the director** button that asks how the
+- **Ask the director.** The Re-edit box has an **Ask the director** button that asks how the
   director reads the request — one cheap model call, no new version — and
   shows the reply with a cost/time estimate and two buttons: **Make the new
   version** (starts the re-edit with the feedback plus the reply as a hint) and

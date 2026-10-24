@@ -1772,6 +1772,8 @@ def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_
 
 def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False):
     """Length policy, then grow back to the brief length, then police the added slots."""
+    if enforce_chronological_order(record, plan, facts_by_key, warnings):
+        drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings)
     beat_snap = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
     fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [])
     for note in fill_notes:
@@ -2106,6 +2108,42 @@ def edit_order_key(fact):
     return (counter, float(fact.get("window_in_s") or 0.0))
 
 
+def is_chronological(plan):
+    """True when the plan's brief asks for chronological order."""
+    brief = plan.get("brief") if isinstance(plan, dict) else None
+    return isinstance(brief, dict) and brief.get("order") == "chronological"
+
+
+def slot_order_key(slot, plan_by_id, facts_by_key):
+    """The chronological sort key of a record slot, from its shot fact."""
+    fact = facts_by_key.get((plan_by_id.get(slot.get("id")) or {}).get("shot_key")) or {}
+    return edit_order_key(fact)
+
+
+def enforce_chronological_order(record, plan, facts_by_key, notes):
+    """Re-sort a chronological edit (and its plan) by capture/source time; return True when it changed.
+
+    A repair (a swapped-in top star, a rebuilt cut) can put a late shot in an
+    early slot; for a chronological brief the edit must stay in time order.
+    """
+    if not is_chronological(plan):
+        return False
+    video = record.get("video") or []
+    if len(video) < 2:
+        return False
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    keys = {slot.get("id"): slot_order_key(slot, plan_by_id, facts_by_key) for slot in video}
+    ordered = sorted(video, key=lambda slot: keys.get(slot.get("id"), ("", 0.0)))
+    if [slot.get("id") for slot in ordered] == [slot.get("id") for slot in video]:
+        return False
+    record["video"] = ordered
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    plan["slot_plan"] = [plan_by_id[slot["id"]] for slot in ordered if slot.get("id") in plan_by_id]
+    record["video"][0]["transition"] = {"type": "cut", "duration_s": 0}
+    notes.append("repaired: re-sorted the edit into chronological order")
+    return True
+
+
 def next_slot_id(plan):
     """A free plan slot id like ``v13``."""
     used = {row.get("id") for row in plan.get("slot_plan") or []}
@@ -2298,6 +2336,8 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
     drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    if enforce_chronological_order(record, plan, facts_by_key, notes):
+        drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     return notes
 
 

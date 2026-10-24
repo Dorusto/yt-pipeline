@@ -3111,7 +3111,7 @@ def test_project_page_has_the_delete_bin(tmp_path):
         server.server_close()
 
 
-def test_project_page_shows_the_reviewer_line(tmp_path):
+def test_project_page_hides_the_reviewer_box(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     edit = {
@@ -3132,9 +3132,10 @@ def test_project_page_shows_the_reviewer_line(tmp_path):
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
         page = body.decode()
-        assert "Reviewer: not approved" in page
-        assert "Shot 2" in page
-        assert "too long — shorten to about 2.5 s" in page
+        assert "Reviewer:" not in page
+        assert "too long — shorten to about 2.5 s" not in page
+        saved = json.loads((project / "edit.json").read_text(encoding="utf-8"))
+        assert saved["meta"]["director"]["review"]["approved"] is False
     finally:
         server.shutdown()
         server.server_close()

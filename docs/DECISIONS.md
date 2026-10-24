@@ -2990,3 +2990,15 @@ used.
 **Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
 four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
 level of each agent and when `coder-max` is used.
+
+## [2026-10-24] Chronological order survives the director's repairs, the reviewer box leaves the project page (V020N lot n25)
+
+**Context:** Issue #95/#93 follow-up. On a real holiday test with the brief "about 60 seconds, chronological" the final edit was not in time order (0003, 0072, 0081, 0072, ...): the top-star repair in `llm_director.py` puts the swapped-in star in the slot of the shot it replaces, so a late shot lands early. Separately, the owner decided the project page no longer shows the director reviewer box.
+
+**Options:** (A) make the repair pick a victim near the star in time; (B) let the repair swap in place and re-sort the edit (and its plan) by capture/source time afterwards, before the beat snap.
+
+**Decision:** B. `llm_director.enforce_chronological_order` re-sorts the record and the plan by `edit_order_key` when the brief's order is chronological; it runs at the end of `repair_draft` and at the start of `finish_record` (before the beat snap, so the snapped lengths stay valid), and a same-take jump cut it creates is dropped again. The project page (`serve.py`) no longer renders the reviewer box; the verdict stays in `edit.json meta.director.review` and issue #96 (v0.3.0) brings it back in plain words.
+
+**Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
+
+**Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.

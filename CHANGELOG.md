@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Beats: `beats.py` places the beat grid by dynamic-programming beat tracking (Ellis 2007) after a fine best-phase refinement of the coarse period, so the grid follows a drifting tempo instead of a rigid period; the `beats.json` shape and the CLI are unchanged.
 - Web app: the Watch tab no longer shows the "Compare with v1 v2 …" row (the `?with=` side-by-side view stays), and the text after Yes reads "Shot N is getting X s longer/shorter, new version in about 15 s...".
+- Director: for a chronological brief the repairs no longer break the time order — after a repair the edit and its plan are re-sorted by capture/source time before the beat snap, so a swapped-in top star lands at its place in the day.
+- Web app: the project page no longer shows the director reviewer box; the verdict stays in `edit.json`.
 
 ## [0.2.0] - 2026-10-24
 

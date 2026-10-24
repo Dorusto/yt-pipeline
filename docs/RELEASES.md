@@ -87,7 +87,7 @@ Released on 2026-10-23 after the owner's real test on phone and laptop.
 - The brief hint chips and the multi-line example placeholder.
 - Pilot host install, update and rollback (`deploy/update.sh`, `deploy/yt-pipeline-web.service`, `docs/guides/pilot-host.md`).
 - Instance limits (storage cap, model-credit read) and the shared project-costs view (`GET /costs.json`).
-- The director's reviewer verdict on the project page and the "Ask the director" reply before a new version (llm_director.py --interpret-feedback, POST /<project>/feedback-reply).
+- The "Ask the director" reply before a new version (llm_director.py --interpret-feedback, POST /<project>/feedback-reply).
 - The Why? and Shots pages open with a summary and collapsed sections, and the two tabs sit under a Details group.
 - The Files tab (see, add and leave out the files of a project, `excluded.json`).
 - The web app's visual design (the "editing room" look: a warm charcoal base, an amber accent for primary actions, teal only for clip blocks, one token set in `scripts/common/theme.py` with a light and dark theme).

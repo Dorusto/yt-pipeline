@@ -301,13 +301,6 @@ background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:poi
 .fact-hint{color:var(--muted);font-size:.8rem}
 """
 
-REVIEW_STYLE = """
-.review{border:1px solid var(--line);border-radius:var(--radius-l);padding:10px 14px;margin:0 0 14px;background:var(--surface)}
-.review-line{margin:0;font-weight:600}
-.objections{margin:6px 0 0;padding-left:1.2em}
-.obj-shot{font-weight:700;margin-right:.3em}
-"""
-
 
 def is_mode_b(directory):
     """True when the workspace is a Mode B project: sessions.yaml or a rough_cut edit.json."""
@@ -1871,37 +1864,6 @@ def _meta_field(label, value):
     )
 
 
-def render_review(edit_path):
-    """The reviewer verdict of an edit, or "" when the edit carries no review."""
-    data = load_json(edit_path)
-    if not isinstance(data, dict):
-        return ""
-    meta = data.get("meta")
-    director = meta.get("director") if isinstance(meta, dict) else None
-    review = director.get("review") if isinstance(director, dict) else None
-    if not isinstance(review, dict):
-        return ""
-    line = "Reviewer: approved" if review.get("approved") else "Reviewer: not approved"
-    items = []
-    objections = review.get("objections")
-    for objection in objections if isinstance(objections, list) else []:
-        if not isinstance(objection, dict):
-            continue
-        text = html_escape(str(objection.get("text") or ""))
-        shot = objection.get("shot")
-        if isinstance(shot, int) and not isinstance(shot, bool):
-            items.append(f'<li><span class="obj-shot">Shot {shot}</span> {text}</li>')
-        else:
-            items.append(f"<li>{text}</li>")
-    listing = f'<ul class="objections">{"".join(items)}</ul>' if items else ""
-    return (
-        '<div class="review">'
-        f'<p class="review-line">{line}</p>'
-        f"{listing}"
-        "</div>"
-    )
-
-
 def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None,
                        meta_cost=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
@@ -1912,7 +1874,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     has_previous = any(has_video(version) for version in versions) or (
         (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
     )
-    parts = [f"<style>{REVIEW_STYLE}</style>", render_run_notice(status, report, has_previous=has_previous)]
+    parts = [render_run_notice(status, report, has_previous=has_previous)]
     shown = pick_version(versions, wanted)
     if shown is None:
         has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
@@ -1925,7 +1887,6 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
-        parts.append(render_review(directory / "edit.json"))
         parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
@@ -1945,7 +1906,6 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             trust_edit=True,
         )
     )
-    parts.append(render_review(Path(shown["path"]) / "edit.json"))
     parts.append(render_meta_box(directory, shown["path"], name=name, version=shown["name"],
                                  meta_cost=meta_cost))
     if compare is not None:
@@ -1959,7 +1919,6 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                 trust_edit=True,
             )
         )
-        parts.append(render_review(Path(compare["path"]) / "edit.json"))
     return "\n".join(part for part in parts if part)
 
 
