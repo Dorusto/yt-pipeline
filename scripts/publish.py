@@ -71,6 +71,7 @@ class Context:
         repo_url=None,
         chapters=None,
         transcribe_backend="whisper",
+        whisper_model=None,
         kit=False,
         final_video=None,
         kit_loudness=False,
@@ -100,6 +101,7 @@ class Context:
         self.repo_url = repo_url
         self.chapters = chapters
         self.transcribe_backend = transcribe_backend
+        self.whisper_model = whisper_model
         self.kit = kit
         self.final_video = final_video
         self.kit_loudness = kit_loudness
@@ -118,7 +120,7 @@ def build_parser():
             " [--words-dir DIR] [--name NAME]"
             " [--photo FILE --title T --keyword K --theme {tech,creator} [--kicker K]]"
             " [--previous-url URL] [--repo-url URL] [--chapters FILE]"
-            " [--transcribe-backend {whisper,mock}] [--resume] [--force] [--json]"
+            " [--transcribe-backend {whisper,mock}] [--whisper-model MODEL] [--resume] [--force] [--json]"
             " [--kit [--final-video FILE] [--kit-loudness] [--kit-title TITLE]]"
         ),
         description=(
@@ -193,6 +195,15 @@ def build_parser():
         choices=("whisper", "mock"),
         default="whisper",
         help="backend for transcribe.py (default: whisper)",
+    )
+    parser.add_argument(
+        "--whisper-model",
+        dest="whisper_model",
+        default=None,
+        help=(
+            "Whisper model id passed to transcribe.py as --model in the --media step "
+            "(default: transcribe.py resolves it)"
+        ),
     )
     parser.add_argument(
         "--kit",
@@ -307,6 +318,7 @@ def build_context(args):
         repo_url=args.repo_url,
         chapters=Path(args.chapters).expanduser().resolve() if args.chapters else None,
         transcribe_backend=args.transcribe_backend,
+        whisper_model=args.whisper_model,
         kit=args.kit,
         final_video=Path(args.final_video).expanduser().resolve() if args.final_video else None,
         kit_loudness=args.kit_loudness,
@@ -330,8 +342,10 @@ def build_subtitles_step(ctx):
             ctx.name,
             "--backend",
             ctx.transcribe_backend,
-            "--json",
         ]
+        if ctx.whisper_model:
+            argv += ["--model", ctx.whisper_model]
+        argv.append("--json")
     elif ctx.source_kind == "fcproj":
         argv = [
             ctx.python,
@@ -591,6 +605,7 @@ def build_options(ctx):
         "previous_url": ctx.previous_url,
         "repo_url": ctx.repo_url,
         "chapters": str(ctx.chapters) if ctx.chapters else None,
+        "whisper_model": ctx.whisper_model,
         "kit": ctx.kit,
         "final_video": str(ctx.final_video) if ctx.final_video else None,
         "kit_loudness": ctx.kit_loudness,

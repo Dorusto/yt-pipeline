@@ -1534,6 +1534,22 @@ def test_beat_snap_photo_duration_lands_on_a_whole_beat():
     assert not [warning for warning in warnings if "not snapped" in warning]
 
 
+def test_snap_slots_returns_the_beat_snap_shape():
+    grid = {"beat_s": [0.0, 0.5, 1.0], "downbeat_s": [0.0, 1.0], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.0,
+        "out_s": 1.0,
+        "window_in_s": 0.0,
+        "window_out_s": 1.0,
+        "landing_floor_s": None,
+        "important": False,
+    }
+    warnings = []
+    stats = director.snap_slots([video], grid, [False], warnings)
+    assert set(stats) == {"beats", "snapped", "unsnapped", "downbeats", "half_bar"}
+
+
 def test_beat_snap_photo_slots_stay_on_beats_in_an_edit(tmp_path):
     photo = write_photo(tmp_path / "media" / "photo_01.jpg")
     clips = [

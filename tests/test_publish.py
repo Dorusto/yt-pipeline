@@ -192,6 +192,8 @@ def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
         str(media),
         "--transcribe-backend",
         "mock",
+        "--whisper-model",
+        "medium",
         "--resume",
         "--json",
     ]
@@ -200,6 +202,7 @@ def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
     assert subs[1] == "scripts/transcribe.py"
     assert str(media) in subs
     assert "--backend" in subs and "mock" in subs
+    assert "--model" in subs and "medium" in subs
     assert "--words-dir" not in subs
 
 

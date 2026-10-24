@@ -49,7 +49,7 @@ Run one Whisper pass over a media file and write a raw `.srt` plus the per-sourc
 - `INPUT` is an audio (wav/mp3/…) or video file. For video, the audio track is extracted with ffmpeg to a temporary 16 kHz mono wav that is deleted afterwards.
 - `--out-dir` is the output folder (default: the input file's parent; created if missing). `--name` is the output stem (default: the input file stem). It writes `<name>.srt` and `<name>_words.json`.
 - `--backend whisper` (default) runs `openai-whisper`; `--backend mock` is deterministic and offline (no torch/whisper needed) and always returns `Bună ziua. Aceasta este o înregistrare de test.` with eight words.
-- `--model` is the Whisper model id (default: `turbo` with a CUDA GPU, else `tiny`). `--language` is a Whisper code, default `ro`; `auto` lets Whisper detect.
+- `--model` is the Whisper model id (default: `turbo` with a CUDA GPU, else `medium` for a non-English language and `small` for English; or `YT_PIPELINE_WHISPER_MODEL`, or `transcribe.model` in the config). `--language` is a Whisper code, default `ro`; `auto` lets Whisper detect.
 - The `<name>_words.json` is the Whisper result shape (`text`, `language`, `segments[].words[]` with `word`, `start`, `end`, `probability`). Name it after the source stem (`camera A.json` for `camera A.mp4`) and step 1 picks it up.
 - `--json` prints a summary: `outputs` (`srt`, `words_json`), `backend`, `model`, `device` (`cuda`/`cpu` for whisper, `mock` for mock), `language`, `segments`, `words`, `wall_time_s` and `llm_cost_usd` (always 0.0 — a local model, not an LLM call).
 - Errors exit 2 with a message on stderr and write nothing: missing or unreadable input or an unknown `--backend`. An ffmpeg extraction failure (names the input and the stderr tail), `whisper` not installed (`openai-whisper is not installed (pip install openai-whisper); use --backend mock for offline runs`) or a model load failure exit 3 (runtime failure after work started).
@@ -103,7 +103,7 @@ One command runs the whole publish kit for a finished edit: subtitles (from the 
   [--words-dir DIR] [--name NAME] \
   [--photo FILE --title T --keyword K --theme tech|creator [--kicker K]] \
   [--previous-url URL] [--repo-url URL] [--chapters FILE] \
-  [--transcribe-backend whisper|mock] [--resume] [--force] [--json] \
+  [--transcribe-backend whisper|mock] [--whisper-model MODEL] [--resume] [--force] [--json] \
   [--kit [--final-video FILE] [--kit-loudness] [--kit-title TITLE]]
 ```
 
@@ -111,7 +111,7 @@ One command runs the whole publish kit for a finished edit: subtitles (from the 
 - Source, exactly one of: `--fcproj PROJ --sequence NAME [--track T]` (+ `--words-dir DIR`, required) → `subs_from_edit.py`; `--from-edit EDIT.json` (+ `--words-dir DIR`, required) → `subs_from_edit.py`; `--media FILE` → `transcribe.py` (`--words-dir` not allowed with it).
 - `--name` is the artifact stem (default: the project folder's name).
 - `--photo` + `--title` + `--keyword` + `--theme` (+ optional `--kicker`) run the `thumbnail.py` step; without `--photo` the step is skipped and `--title`/`--keyword`/`--theme` must not be given.
-- `--previous-url`/`--repo-url` are passed to `metadata.py`. `--transcribe-backend` is passed to `transcribe.py` (`whisper` default, `mock` for offline runs).
+- `--previous-url`/`--repo-url` are passed to `metadata.py`. `--transcribe-backend` is passed to `transcribe.py` (`whisper` default, `mock` for offline runs); `--whisper-model` is passed to `transcribe.py` as `--model` in the `--media` step (without it `transcribe.py` resolves the default itself).
 - `--chapters FILE` is forwarded to `metadata.py` as `--chapters FILE`, so the metadata draft takes its chapters from that `chapters.json` instead of the model. It is a metadata-step input, allowed with or without `--kit`.
 - Steps, each a subprocess of the station CLI: subtitles → correct → verify → review → translate → thumbnail → metadata → kit (only with `--kit`). The working raw SRT is `PROJECT/<name>.srt`; `subs_from_edit.py` writes `<name>_RO.srt`, which the chain renames to `<name>.srt` before `correct_srt.py` produces the canonical `<name>_RO.srt`. Words stay at `PROJECT/<name>_words.json`.
 - The `verify` step compares the corrected `PROJECT/<name>_RO.srt` with the final video already known to the run (`--final-video`, or the `--media` file): the last cue's end time must be within 2 s of the video duration and the SRT must not be older than the video. A mismatch exits 2 with one `[error]` line naming both times (or saying the subtitles are older) and aborts the chain before translation, metadata and the kit, so a cut removed or added after the subtitles were exported is caught. With no final video (`--fcproj`/`--from-edit` without `--final-video`) the step is skipped with reason `no final video`.

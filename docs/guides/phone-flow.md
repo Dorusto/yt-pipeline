@@ -48,7 +48,9 @@ project appears on **Projects** with a `running` badge and turns `done` when
 the recap is ready. The project page's tabs are **Recap**, **Files**, **Cuts**
 and **Shorts**; **Re-edit**
 re-runs only the edit with your options and a feedback note, and keeps the
-earlier versions (chips v1, v2, …).
+earlier versions (chips v1, v2, …). A version that is neither the latest nor
+the first can be deleted from the **Recap** tab (its folder is removed for
+good).
 
 ## 1. (Optional) Phone: install Syncthing
 

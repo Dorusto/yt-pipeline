@@ -180,6 +180,17 @@ def test_music_section_validated():
             config._validate(with_value("music", bad))
 
 
+def test_transcribe_section_validated():
+    assert config._validate(with_value("transcribe", {"model": "medium"}))["transcribe"]["model"] == "medium"
+    assert config._validate(with_value("transcribe", {}))["transcribe"] == {}
+    with pytest.raises(config.ConfigError):
+        config._validate(with_value("transcribe", "nope"))
+    for bad in ("", 5):
+        with pytest.raises(config.ConfigError) as exc:
+            config._validate(with_value("transcribe", {"model": bad}))
+        assert "transcribe.model" in str(exc.value)
+
+
 def test_no_music_library_message_names_the_flag():
     for flag in ("--library", "--music-dir"):
         message = config.no_music_library_message(flag)

@@ -4174,7 +4174,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "cut-audio":
             self.handle_cut_audio(segments[0], send_body)
             return
-        if len(segments) == 2 and segments[1] == "delete":
+        if len(segments) == 2 and segments[1] in ("delete", "delete-version"):
             self._method_not_allowed()
             return
         if len(segments) == 2:

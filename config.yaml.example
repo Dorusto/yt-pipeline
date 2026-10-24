@@ -72,6 +72,14 @@ llm_backend: openrouter
 # music:
 #   library: <music-library>
 
+# Whisper model for scripts/transcribe.py and the publish chain's --media step.
+# There is a default: turbo with a CUDA GPU, else medium for a non-English
+# language and small for English. Set it here, in the
+# YT_PIPELINE_WHISPER_MODEL environment variable, or pass --model /
+# --whisper-model. Docs and examples write <whisper-model>.
+# transcribe:
+#   model: <whisper-model>
+
 # Inbox folder for serve.py uploads and the phone flow. There is no personal
 # default in code: set the folder here, in the YT_PIPELINE_INBOX environment
 # variable, or pass --inbox. Docs and examples write <inbox>.

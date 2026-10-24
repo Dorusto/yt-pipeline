@@ -119,6 +119,14 @@ def _validate(data):
         if library is not None and (not isinstance(library, str) or not library):
             raise ConfigError("music.library must be a non-empty string")
 
+    transcribe = data.get("transcribe")
+    if transcribe is not None:
+        if not isinstance(transcribe, dict):
+            raise ConfigError("transcribe must be a mapping")
+        model = transcribe.get("model")
+        if model is not None and (not isinstance(model, str) or not model):
+            raise ConfigError("transcribe.model must be a non-empty string")
+
     inbox = data.get("inbox")
     if inbox is not None:
         if not isinstance(inbox, dict):

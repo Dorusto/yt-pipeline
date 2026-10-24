@@ -1141,6 +1141,8 @@ def snap_slots(slots, beat_grid, downbeat_at, warnings):
     tolerance = BEAT_SNAP_FRACTION * beat_grid["beat_period_s"]
     snapped = 0
     unsnapped = 0
+    downbeats = 0
+    half_bar = 0
     start = 0.0
     for index, slot in enumerate(slots):
         length = timeline_length(slot)
@@ -1165,28 +1167,42 @@ def snap_slots(slots, beat_grid, downbeat_at, warnings):
                 unsnapped += 1
                 start = end
                 continue
+            if downbeat_at[index]:
+                downbeats += 1
             snapped += 1
             start = start + timeline_length(slot)
             continue
         delta = target - end
         if abs(delta) < 1e-9 or absorb_out(slot, delta, tolerance):
+            if downbeat_at[index]:
+                downbeats += 1
             snapped += 1
             start = start + timeline_length(slot)
             continue
         right = slots[index + 1] if index + 1 < len(slots) else None
         if right is None:
             if absorb_length(slot, delta, tolerance):
+                if downbeat_at[index]:
+                    downbeats += 1
                 snapped += 1
                 start = start + timeline_length(slot)
                 continue
         elif absorb_pair(slot, right, delta, tolerance):
+            if downbeat_at[index]:
+                downbeats += 1
             snapped += 1
             start = start + timeline_length(slot)
             continue
         warnings.append(snap_warning(index + 1, end, target))
         unsnapped += 1
         start = end
-    return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
+    return {
+        "beats": len(beat_s),
+        "snapped": snapped,
+        "unsnapped": unsnapped,
+        "downbeats": downbeats,
+        "half_bar": half_bar,
+    }
 
 
 def pacing_part(slot):

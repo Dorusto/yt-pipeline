@@ -2998,6 +2998,17 @@ def test_delete_project_get_is_405(tmp_path):
         server.server_close()
 
 
+def test_delete_version_get_is_405(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, _ = request(server, "GET", "/2026-10-14/delete-version")
+        assert status == 405
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_delete_version_removes_the_folder(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"

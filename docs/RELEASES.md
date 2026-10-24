@@ -5,7 +5,8 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 ## v0.2.0 (2026-10-24)
 
 The holiday flow from the phone is easier: on the project page you can make a shot
-a second longer or shorter, and the director cuts on the beat of the music. The
+a second longer or shorter, delete a single version you no longer want, and the
+director cuts on the beat of the music. The
 publish flow is ready for a real upload: the publish kit is its own step (change
 only the thumbnail and re-run just that), the metadata prompt writes better titles
 and descriptions, and the subtitles fix the capitalised variants. The Costs page
