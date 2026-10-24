@@ -7,9 +7,16 @@ language code to string. The wording is the channel owner's, so it lives in the
 config and never in code or prompts. A missing part, a missing language or an
 empty string means the part is left out of the output — never replaced by
 built-in text.
+
+``channel.style`` maps a part name (``title_style``, ``description_order``,
+``pinned_comment_voice`` — the names in ``CHANNEL_STYLE_PARTS``) to a non-empty
+string instruction. The writing tools hand the present parts to the model in a
+``## Style`` section; a missing part is left out, never replaced by built-in
+text.
 """
 
 CHANNEL_FIXED_PARTS = ("members_sentence", "closing", "thumbnail_formula")
+CHANNEL_STYLE_PARTS = ("title_style", "description_order", "pinned_comment_voice")
 
 
 def fixed_strings(config):
@@ -46,3 +53,38 @@ def members_placeholder_used(fixed):
     if not isinstance(sentence, dict):
         return False
     return any(isinstance(text, str) and "{members}" in text for text in sentence.values())
+
+
+def style_strings(config):
+    """Return the channel's style mapping (``channel.style``), or {} when unset."""
+    if not isinstance(config, dict):
+        return {}
+    channel = config.get("channel")
+    if not isinstance(channel, dict):
+        return {}
+    style = channel.get("style")
+    if not isinstance(style, dict):
+        return {}
+    return style
+
+
+def style_string(style, part):
+    """Return ``style[part]`` when it is a non-empty string, else None."""
+    if not isinstance(style, dict):
+        return None
+    value = style.get(part)
+    if not isinstance(value, str) or not value:
+        return None
+    return value
+
+
+def style_section(style):
+    """Return the ``## Style`` section text for the present parts, or None when none are set."""
+    lines = [
+        f"{part}: {value}"
+        for part in CHANNEL_STYLE_PARTS
+        if (value := style_string(style, part)) is not None
+    ]
+    if not lines:
+        return None
+    return "## Style\n" + "\n".join(lines)

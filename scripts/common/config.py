@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from common.channel import CHANNEL_FIXED_PARTS
+from common.channel import CHANNEL_FIXED_PARTS, CHANNEL_STYLE_PARTS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = REPO_ROOT / "config.yaml"
@@ -264,6 +264,18 @@ def _validate(data):
                             f"channel.fixed.{part} must map non-empty language codes "
                             "to non-empty strings"
                         )
+        style = channel.get("style")
+        if style is not None:
+            if not isinstance(style, dict):
+                raise ConfigError("channel.style must be a mapping")
+            for part, text in style.items():
+                if part not in CHANNEL_STYLE_PARTS:
+                    raise ConfigError(
+                        f"channel.style.{part} is not a known part; valid parts: "
+                        f"{', '.join(CHANNEL_STYLE_PARTS)}"
+                    )
+                if not isinstance(text, str) or not text:
+                    raise ConfigError(f"channel.style.{part} must be a non-empty string")
 
     return data
 

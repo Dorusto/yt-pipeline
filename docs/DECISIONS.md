@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Per-instance style settings (V030 lot c9)
+
+**Context:** Issue #106 point 2. The writing tools carried one channel's choices in code and prompts: how the titles should read, the order of the description parts and the voice of the pinned comment. `channel.fixed` already moved the channel's fixed wording into the config, but the style instructions had no home, so a second instance could not change them without editing the tools.
+
+**Options:** (A) keep the style choices in the prompts and code; (B) add a `channel.style` mapping to the instance config and hand the present parts to the model in a `## Style` section.
+
+**Decision:** B. `channel.style` is an optional mapping of part name (`title_style`, `description_order`, `pinned_comment_voice`) to a non-empty string. The parts are plain strings, not language-keyed, because the style is an instruction and `recap_meta.py` writes in the brief's language. `scripts/common/channel.py` gains `CHANNEL_STYLE_PARTS`, `style_strings`, `style_string` and `style_section`; `scripts/common/config.py` validates the mapping (a non-mapping, an unknown part or an empty/non-string value is a `ConfigError` naming the key); `metadata.py` and `recap_meta.py` read it and insert the `## Style` section immediately after the prompt text (before `## Context` and `## Brief` respectively) when at least one part is set. A missing part is left out, never replaced by built-in text. `thumbnail_formula` stays in `channel.fixed`. `recap_meta.py` now loads the config once in `run()` (so `--dry-run` also loads it) and `effective_config` takes the config as its first argument.
+
+**Why not A:** the style is the channel owner's, like the fixed wording; keeping it in code and prompts makes every instance share one channel's choices and breaks the no-personal-setup rule.
+
+**Consequence:** Files touched: `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/metadata.py`, `scripts/recap_meta.py`, `prompts/metadata.md`, `prompts/recap_meta.md`, `config.yaml.example`, `docs/RULES.md`, `docs/guides/tools.md`, `docs/DECISIONS.md`, `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_recap_meta.py`. No schema change, no new tool, no new CLI flag; `thumbnail_concepts.py` and `channel.fixed.thumbnail_formula` are untouched, and the metadata prompt's field rules and `build_description`'s assembly order are unchanged (the style is an instruction to the model, not a new deterministic order).
+
+---
+
 ## [2026-10-24] Director honest about its tools and the missing-tool log (V030 lot c8)
 
 **Context:** The chat with the director answered every request as if it could be done, even when the request asked for something none of the director's tools can do (for example adding subtitles to the recap). The owner had no signal of which tools the director needs next. The interpret prompt already carries the capability list (`prompts/tools.md`) from lot c5b, and `llm_director.interpret_feedback()` already makes one cheap model call and appends an `action: "reply"` line to `feedback.jsonl`.

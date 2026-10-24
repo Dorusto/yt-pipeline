@@ -338,6 +338,38 @@ def test_title_flag_puts_chosen_title_in_message(tmp_path, monkeypatch):
     )
 
 
+def test_style_section_from_config(tmp_path, monkeypatch):
+    config = copy.deepcopy(CONFIG)
+    config["channel"]["style"] = {
+        "title_style": "short and concrete",
+        "pinned_comment_voice": "plain first person",
+    }
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=config)
+    patch(monkeypatch, client, config=config)
+    code = metadata.main(
+        [str(srt), "--context", str(context), "--out-dir", str(tmp_path / "out")]
+    )
+    assert code == 0
+    message = client.messages[0][0]["content"]
+    assert "\n\n## Style\n" in message
+    assert "title_style: short and concrete" in message
+    assert "pinned_comment_voice: plain first person" in message
+    assert "description_order:" not in message
+
+
+def test_style_section_omitted_when_unset(tmp_path, monkeypatch):
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=CONFIG)
+    patch(monkeypatch, client)
+    code = metadata.main(
+        [str(srt), "--context", str(context), "--out-dir", str(tmp_path / "out")]
+    )
+    assert code == 0
+    message = client.messages[0][0]["content"]
+    assert "\n\n## Style\n" not in message
+
+
 def test_missing_json_key_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     del data["subscribe_line"]

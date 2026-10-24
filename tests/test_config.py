@@ -461,3 +461,29 @@ def test_channel_fixed_unknown_key_raises(tmp_path):
     with pytest.raises(config.ConfigError) as exc:
         config.load_config(write_config(tmp_path, data))
     assert "nope" in str(exc.value)
+
+
+def test_channel_style_loads(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {
+        "style": {
+            "title_style": "short and concrete",
+            "pinned_comment_voice": "plain first person",
+        },
+    }
+    loaded = config.load_config(write_config(tmp_path, data))
+    assert loaded["channel"]["style"]["title_style"] == "short and concrete"
+    assert loaded["channel"]["style"]["pinned_comment_voice"] == "plain first person"
+
+
+def test_channel_style_invalid_raises(tmp_path):
+    for bad in (
+        "nope",
+        {"title_style": ""},
+        {"title_style": 5},
+        {"nope": "x"},
+    ):
+        data = copy.deepcopy(VALID)
+        data["channel"] = {"style": bad}
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, data))

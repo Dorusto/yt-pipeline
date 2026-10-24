@@ -23,7 +23,13 @@ import sys
 import time
 from pathlib import Path
 
-from common.channel import fixed_string, fixed_strings, members_placeholder_used
+from common.channel import (
+    fixed_string,
+    fixed_strings,
+    members_placeholder_used,
+    style_section,
+    style_strings,
+)
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
@@ -52,9 +58,20 @@ def get_client():
 
 
 def build_message(
-    prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url, chosen_title=None
+    prompt_text,
+    context_text,
+    transcript_text,
+    channel_url,
+    previous_url,
+    repo_url,
+    chosen_title=None,
+    style=None,
 ):
-    parts = [prompt_text, "## Context", context_text]
+    parts = [prompt_text]
+    section = style_section(style)
+    if section is not None:
+        parts.append(section)
+    parts.extend(["## Context", context_text])
     if chosen_title is not None:
         parts.extend(["## Chosen title", chosen_title])
     parts.extend(["## Transcript", transcript_text])
@@ -317,6 +334,7 @@ def run(
 
     config = load_config()
     fixed = fixed_strings(config)
+    style = style_strings(config)
     channel_url = (config.get("channel") or {}).get("github_url")
     if not isinstance(channel_url, str) or not channel_url.strip():
         raise MetadataError("config is missing channel.github_url (a non-empty string)")
@@ -336,7 +354,14 @@ def run(
     file_chapters = load_chapters_file(chapters_path) if chapters_path else None
 
     message = build_message(
-        prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url, title
+        prompt_text,
+        context_text,
+        transcript_text,
+        channel_url,
+        previous_url,
+        repo_url,
+        title,
+        style=style,
     )
     answer = get_client().complete_json(
         "metadata",

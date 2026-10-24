@@ -8,6 +8,7 @@ Write in natural Romanian (and natural English for the EN parts). No hype that t
 
 The tool appends these after this prompt:
 
+- `## Style` — the channel's own style instructions (`title_style`, `description_order`, `pinned_comment_voice`), handed by the tool when the config sets them; a missing part is left out.
 - `## Context` — the clip's angle and what the viewer leaves with (from `--context`).
 - `## Chosen title` — the title the human already picked (from `--title`), when the caller gave one. Use it verbatim as the first title.
 - `## Transcript` — the corrected Romanian transcript as `[HH:MM:SS] text` lines (timeline time).

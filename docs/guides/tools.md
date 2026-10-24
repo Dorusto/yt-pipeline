@@ -85,6 +85,8 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed or a shot made longer/shorter (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
 
+`recap_meta.py` also hands the channel's `channel.style` parts (`title_style`, `description_order`, `pinned_comment_voice`) to the model in a `## Style` section, one line per part; a missing part is left out.
+
 Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
 
 **Exit codes** (every tool, constants in `scripts/common/exit_codes.py`): `0` success, `1` finished but something needs a human look (check-type tools, suspect results), `2` usage/input/config error and nothing ran, `3` runtime failure after work started (external program, model call, disk). `scripts/mode_b.py` is the one exception and keeps its own documented `0`/`1`/`2`/`3` meanings (all clear / suspect / incomplete / error).
@@ -442,6 +444,7 @@ The `verify` step compares the corrected `<name>_RO.srt` with the final video al
 - `--title` is the chosen title the human already picked; the model gets it in a `## Chosen title` section and uses it verbatim as the first title.
 - `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's.
 - The channel's fixed wording comes from `channel.fixed` in the config, one string per language: `members_sentence` (with `{members}` filled from `channel.members`) and `closing` are inserted verbatim, the RO description getting the RO string and the EN description the EN one. A missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. `channel.members` is required only when a `members_sentence` string contains the `{members}` placeholder; a channel that does not thank members in the description runs without it.
+- The channel's own style instructions come from `channel.style` in the config, one non-empty string per part (`title_style`, `description_order`, `pinned_comment_voice`). The tool hands the present parts to the model in a `## Style` section, one line per part; a missing part is left out — never replaced by built-in text. `thumbnail_formula` stays in `channel.fixed`.
 - A chapter may carry `title_en`; when at least one does, the draft adds a `## Chapters (EN)` section and `metadata.json` keeps `title_en` per chapter.
 
 ### Thumbnail concepts (thumbnail_concepts.py)

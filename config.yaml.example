@@ -40,6 +40,16 @@ channel:
     thumbnail_formula:
       ro: "Formula canalului: subiectul, o emoție reală și text scurt."
       en: "Channel formula: the subject, a real emotion and short text."
+  # style is optional: the channel's own style instructions, one non-empty
+  # string per part (not per language — the style is an instruction and the
+  # model writes in the language it is already writing in). The writing tools
+  # hand the present parts to the model in a ## Style section, one line per
+  # part; a missing part is left out, never replaced by built-in text.
+  # thumbnail_formula stays in fixed.
+  style:
+    title_style: "<how the titles should read>"
+    description_order: "<the order the description parts should follow>"
+    pinned_comment_voice: "<the voice of the pinned comment>"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
