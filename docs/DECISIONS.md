@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Style review fixes (V030 lot c9b)
+
+**Context:** The review of lot c9 (`e35ed6a`) found three problems. The metadata prompt still prescribed a built-in pinned comment voice ("in the creator's own plain first-person Romanian"), so the voice did not come only from `channel.style.pinned_comment_voice`. `channel.style.description_order` was handed to the model as an instruction but `build_description` still assembled the parts in a fixed order, so the setting did not actually change the description. And `docs/agents/rules-checked.md` had no row for the `channel.style` rule.
+
+**Options:** (A) leave the prompt voice in place and treat `description_order` as a model instruction only; (B) make the config the single source: the prompt prescribes no pinned comment voice and `description_order` is applied in code.
+
+**Decision:** B. `prompts/metadata.md` drops the built-in pinned comment voice and says the voice comes from `pinned_comment_voice` in the `## Style` section, with none prescribed when that part is missing; the CTA intro notes the `description_order` override. `scripts/common/channel.py` gains `DESCRIPTION_PARTS`, `parse_description_order(value)` and `description_order(style)`; `scripts/common/config.py` validates the `description_order` string at load (an unknown part name is a `ConfigError` naming the key and the offending part); `scripts/metadata.py`'s `build_description` takes an `order` and assembles the parts in it, and `run()` passes `description_order(style)` to both the RO and EN calls. `docs/agents/rules-checked.md` gains the `channel.style` row.
+
+**Why not A:** the review's point is that the channel's own settings must be the single source; a prompt that still prescribes a voice overrides the config, and a `description_order` that only reaches the model does not change the deterministic assembly the tool owns.
+
+**Consequence:** Files touched: `prompts/metadata.md`, `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/metadata.py`, `docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/guides/tools.md`, `.claude/skills/yt-publish/SKILL.md`, `config.yaml.example`, `docs/DECISIONS.md`, `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_docs_in_step.py`. No new tool, no new CLI flag, no schema change; `recap_meta.py` is untouched and the default order is unchanged.
+
+---
+
 ## [2026-10-24] Per-instance style settings (V030 lot c9)
 
 **Context:** Issue #106 point 2. The writing tools carried one channel's choices in code and prompts: how the titles should read, the order of the description parts and the voice of the pinned comment. `channel.fixed` already moved the channel's fixed wording into the config, but the style instructions had no home, so a second instance could not change them without editing the tools.

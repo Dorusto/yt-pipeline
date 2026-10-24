@@ -45,10 +45,13 @@ channel:
   # model writes in the language it is already writing in). The writing tools
   # hand the present parts to the model in a ## Style section, one line per
   # part; a missing part is left out, never replaced by built-in text.
+  # description_order is a comma-separated list of the description part names
+  # (intro, github, members, previous, subscribe, promo, closing); unset keeps
+  # the default order.
   # thumbnail_formula stays in fixed.
   style:
     title_style: "<how the titles should read>"
-    description_order: "<the order the description parts should follow>"
+    description_order: "intro, github, members, previous, subscribe, promo, closing"
     pinned_comment_voice: "<the voice of the pinned comment>"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM

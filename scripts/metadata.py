@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 
 from common.channel import (
+    DESCRIPTION_PARTS,
+    description_order,
     fixed_string,
     fixed_strings,
     members_placeholder_used,
@@ -255,21 +257,32 @@ def fill_members(fixed, members):
     return filled
 
 
-def build_description(fields, lang, fixed, previous_url):
-    paragraphs = [fields["intro"][lang]]
-    if fields["github_line"] is not None:
-        paragraphs.append(fields["github_line"][lang])
-    members_sentence = fixed_string(fixed, "members_sentence", lang)
-    if members_sentence is not None:
-        paragraphs.append(members_sentence)
-    if previous_url and fields["previous_line"] is not None:
-        paragraphs.append(fields["previous_line"][lang])
-    paragraphs.append(fields["subscribe_line"][lang])
-    for promo in fields["promo_lines"]:
-        paragraphs.append(f"[{promo['label']}] {promo[lang]}")
-    closing = fixed_string(fixed, "closing", lang)
-    if closing is not None:
-        paragraphs.append(closing)
+def build_description(fields, lang, fixed, previous_url, order=None):
+    if order is None:
+        order = DESCRIPTION_PARTS
+    paragraphs = []
+    for part in order:
+        if part == "intro":
+            paragraphs.append(fields["intro"][lang])
+        elif part == "github":
+            if fields["github_line"] is not None:
+                paragraphs.append(fields["github_line"][lang])
+        elif part == "members":
+            members_sentence = fixed_string(fixed, "members_sentence", lang)
+            if members_sentence is not None:
+                paragraphs.append(members_sentence)
+        elif part == "previous":
+            if previous_url and fields["previous_line"] is not None:
+                paragraphs.append(fields["previous_line"][lang])
+        elif part == "subscribe":
+            paragraphs.append(fields["subscribe_line"][lang])
+        elif part == "promo":
+            for promo in fields["promo_lines"]:
+                paragraphs.append(f"[{promo['label']}] {promo[lang]}")
+        elif part == "closing":
+            closing = fixed_string(fixed, "closing", lang)
+            if closing is not None:
+                paragraphs.append(closing)
     return "\n\n".join(paragraphs)
 
 
@@ -335,6 +348,7 @@ def run(
     config = load_config()
     fixed = fixed_strings(config)
     style = style_strings(config)
+    order = description_order(style)
     channel_url = (config.get("channel") or {}).get("github_url")
     if not isinstance(channel_url, str) or not channel_url.strip():
         raise MetadataError("config is missing channel.github_url (a non-empty string)")
@@ -374,8 +388,8 @@ def run(
         file_chapters if file_chapters is not None else fields["chapters"], srt_end
     )
 
-    ro_description = build_description(fields, "ro", fixed, previous_url)
-    en_description = build_description(fields, "en", fixed, previous_url)
+    ro_description = build_description(fields, "ro", fixed, previous_url, order)
+    en_description = build_description(fields, "en", fixed, previous_url, order)
 
     output_name = name or srt_path.stem
     out_path = Path(out_dir).expanduser() if out_dir else srt_path.parent

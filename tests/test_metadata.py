@@ -370,6 +370,48 @@ def test_style_section_omitted_when_unset(tmp_path, monkeypatch):
     assert "\n\n## Style\n" not in message
 
 
+def test_description_order_from_config(tmp_path, monkeypatch):
+    config = copy.deepcopy(CONFIG)
+    config["channel"]["style"] = {"description_order": "closing, intro, subscribe"}
+    code, out = run_main(
+        tmp_path,
+        monkeypatch,
+        FULL,
+        extra=["--previous-url", "https://prev", "--repo-url", "https://repo"],
+        config=config,
+    )
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    ro_start = text.index("## Description RO")
+    en_start = text.index("## Description EN")
+    ro_block = text[ro_start:en_start]
+    order = [
+        ro_block.index(CLOSING_RO),
+        ro_block.index("Intro RO"),
+        ro_block.index("Subscribe RO"),
+    ]
+    assert order == sorted(order)
+    assert ro_block.index(CLOSING_RO) < ro_block.index("Intro RO")
+
+
+def test_description_order_omits_parts_not_listed(tmp_path, monkeypatch):
+    config = copy.deepcopy(CONFIG)
+    config["channel"]["style"] = {"description_order": "intro, subscribe"}
+    code, out = run_main(
+        tmp_path,
+        monkeypatch,
+        FULL,
+        extra=["--previous-url", "https://prev", "--repo-url", "https://repo"],
+        config=config,
+    )
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    assert "GitHub RO" not in text
+    assert "GitHub EN" not in text
+    assert MEMBERS_RO not in text
+    assert MEMBERS_EN not in text
+
+
 def test_missing_json_key_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     del data["subscribe_line"]

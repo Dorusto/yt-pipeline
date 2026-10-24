@@ -12,11 +12,13 @@ built-in text.
 ``pinned_comment_voice`` — the names in ``CHANNEL_STYLE_PARTS``) to a non-empty
 string instruction. The writing tools hand the present parts to the model in a
 ``## Style`` section; a missing part is left out, never replaced by built-in
-text.
+text. ``description_order`` also carries the order of the description parts
+applied in code (``DESCRIPTION_PARTS``).
 """
 
 CHANNEL_FIXED_PARTS = ("members_sentence", "closing", "thumbnail_formula")
 CHANNEL_STYLE_PARTS = ("title_style", "description_order", "pinned_comment_voice")
+DESCRIPTION_PARTS = ("intro", "github", "members", "previous", "subscribe", "promo", "closing")
 
 
 def fixed_strings(config):
@@ -76,6 +78,25 @@ def style_string(style, part):
     if not isinstance(value, str) or not value:
         return None
     return value
+
+
+def parse_description_order(value):
+    """Split a ``description_order`` string into part names; raise ValueError on an unknown name."""
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    for name in names:
+        if name not in DESCRIPTION_PARTS:
+            raise ValueError(
+                f"unknown description part '{name}'; valid parts: {', '.join(DESCRIPTION_PARTS)}"
+            )
+    return tuple(names)
+
+
+def description_order(style):
+    """Return the description part names in the configured order, or the default order."""
+    value = style_string(style, "description_order")
+    if value is None:
+        return DESCRIPTION_PARTS
+    return parse_description_order(value)
 
 
 def style_section(style):

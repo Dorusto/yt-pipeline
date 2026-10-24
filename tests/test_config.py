@@ -487,3 +487,18 @@ def test_channel_style_invalid_raises(tmp_path):
         data["channel"] = {"style": bad}
         with pytest.raises(config.ConfigError):
             config.load_config(write_config(tmp_path, data))
+
+
+def test_channel_style_description_order_loads(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"style": {"description_order": "closing, intro, subscribe"}}
+    loaded = config.load_config(write_config(tmp_path, data))
+    assert loaded["channel"]["style"]["description_order"] == "closing, intro, subscribe"
+
+
+def test_channel_style_description_order_unknown_part_raises(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"style": {"description_order": "intro, nope"}}
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_config(write_config(tmp_path, data))
+    assert "nope" in str(exc.value)
