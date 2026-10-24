@@ -707,6 +707,30 @@ def test_repair_keeps_chronological_order():
     assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
 
 
+def test_resort_resets_transitions_without_beat_grid():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.4),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 20.0, score=0.35),
+    }
+    plan = star_plan(["0003/s1", "0001/s1", "0002/s1"])
+    plan["brief"]["order"] = "chronological"
+    record = star_record([
+        ("v1", "clip_0003_x.mp4"),
+        ("v2", "clip_0001_x.mp4"),
+        ("v3", "clip_0002_x.mp4"),
+    ])
+    record["video"][0]["transition"] = {"type": "cut", "duration_s": 0}
+    record["video"][1]["transition"] = {"type": "crossfade", "duration_s": 0.3}
+    record["video"][2]["transition"] = {"type": "crossfade", "duration_s": 0.3}
+    notes = []
+    assert llm_director.enforce_chronological_order(record, plan, facts, notes) is True
+    clips = [slot["clip"] for slot in record["video"]]
+    assert clips == sorted(clips)
+    assert record["video"][0]["transition"] == {"type": "cut", "duration_s": 0}
+    assert all(slot["transition"] == {"type": "crossfade", "duration_s": 0.3} for slot in record["video"][1:])
+
+
 def test_synthesised_slot_keeps_shot_key():
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3)}
     plan = star_plan(["0001/s1"])

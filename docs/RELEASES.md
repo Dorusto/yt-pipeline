@@ -12,7 +12,8 @@ and descriptions, and the subtitles fix the capitalised variants. The Costs page
 shows donations and warns before a run that would pass your model credit, and the
 app can run on a friend's own instance. The rendered cuts now stay on the beat:
 the cut positions are rounded on the timeline, so a cut no longer drifts later
-and later across the edit.
+and later across the edit. The director's reviewer box is hidden from the project
+page for now; it comes back in plain words with the director chat (#96).
 
 **Stable candidate** — the holiday flow in the web app (as in v0.1.0), plus making
 a shot longer or shorter on the project page (the "− 1 s" / "+ 1 s" buttons add up
@@ -87,7 +88,7 @@ Released on 2026-10-23 after the owner's real test on phone and laptop.
 - The brief hint chips and the multi-line example placeholder.
 - Pilot host install, update and rollback (`deploy/update.sh`, `deploy/yt-pipeline-web.service`, `docs/guides/pilot-host.md`).
 - Instance limits (storage cap, model-credit read) and the shared project-costs view (`GET /costs.json`).
-- The "Ask the director" reply before a new version (llm_director.py --interpret-feedback, POST /<project>/feedback-reply).
+- The director's reviewer verdict on the project page and the "Ask the director" reply before a new version (llm_director.py --interpret-feedback, POST /<project>/feedback-reply).
 - The Why? and Shots pages open with a summary and collapsed sections, and the two tabs sit under a Details group.
 - The Files tab (see, add and leave out the files of a project, `excluded.json`).
 - The web app's visual design (the "editing room" look: a warm charcoal base, an amber accent for primary actions, teal only for clip blocks, one token set in `scripts/common/theme.py` with a light and dark theme).

@@ -1772,7 +1772,7 @@ def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_
 
 def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False):
     """Length policy, then grow back to the brief length, then police the added slots."""
-    if enforce_chronological_order(record, plan, facts_by_key, warnings):
+    if enforce_chronological_order(record, plan, facts_by_key, warnings, beat_grid):
         drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings)
     beat_snap = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
     fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [])
@@ -2120,11 +2120,22 @@ def slot_order_key(slot, plan_by_id, facts_by_key):
     return edit_order_key(fact)
 
 
-def enforce_chronological_order(record, plan, facts_by_key, notes):
+def reset_transitions(record, beat_grid=None):
+    """Set every slot's transition: first cut, the rest crossfade, or hard cuts with a beat grid."""
+    for index, slot in enumerate(record.get("video") or []):
+        if index == 0 or beat_grid is not None:
+            slot["transition"] = {"type": "cut", "duration_s": 0}
+        else:
+            slot["transition"] = {"type": "crossfade", "duration_s": XFADE_S}
+
+
+def enforce_chronological_order(record, plan, facts_by_key, notes, beat_grid=None):
     """Re-sort a chronological edit (and its plan) by capture/source time; return True when it changed.
 
     A repair (a swapped-in top star, a rebuilt cut) can put a late shot in an
     early slot; for a chronological brief the edit must stay in time order.
+    After a re-sort every slot's transition is set again by the same rule
+    ``build_edit_record`` uses.
     """
     if not is_chronological(plan):
         return False
@@ -2139,7 +2150,7 @@ def enforce_chronological_order(record, plan, facts_by_key, notes):
     record["video"] = ordered
     plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
     plan["slot_plan"] = [plan_by_id[slot["id"]] for slot in ordered if slot.get("id") in plan_by_id]
-    record["video"][0]["transition"] = {"type": "cut", "duration_s": 0}
+    reset_transitions(record, beat_grid)
     notes.append("repaired: re-sorted the edit into chronological order")
     return True
 

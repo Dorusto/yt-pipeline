@@ -76,9 +76,6 @@ background:var(--surface);border-radius:var(--radius-l);width:fit-content;max-wi
 .tabs a{min-height:var(--tap);display:inline-flex;align-items:center;padding:0 var(--sp-4);
 border-radius:10px;color:var(--muted);text-decoration:none;white-space:nowrap}
 .tabs a.active{background:var(--text);color:var(--bg)}
-.tabs .tab-group{display:inline-flex;align-items:center;gap:var(--sp-1);border-left:1px solid var(--line);
-padding-left:6px;margin-left:2px}
-.tabs .tab-group-label{color:var(--muted);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;padding:0 6px}
 video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-l)}
 video.vertical{aspect-ratio:9/16;max-width:360px;margin-top:var(--sp-3)}
 .strip{margin:var(--sp-3) 0 var(--sp-1)}
@@ -234,8 +231,6 @@ text-align:center;transition:border-color .15s}
 cursor:pointer;font-weight:650}
 .options-state{color:var(--muted);font-weight:400;font-size:var(--fs-s)}
 .upload-form button.start{justify-self:stretch;min-height:52px;font-size:var(--fs-m)}
-.tabs .tab-group-label{display:none}
-.tabs .tab-group a{font-size:var(--fs-s)}
 .project-del{background:transparent;border:1px solid var(--line)}
 .project-del svg{fill:var(--muted)}
 .project-del:hover{border-color:var(--danger)}
