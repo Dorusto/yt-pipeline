@@ -3,6 +3,7 @@ import json
 import pytest
 
 import llm_director
+from common.pacing import estimate_all_good
 from common.schema import validate
 from test_llm_director import (
     BRIEF,
@@ -88,6 +89,43 @@ def test_apply_skips_when_already_applied(tmp_path):
     second, code = llm_director.apply_agent_answer(workspace, brief=BRIEF)
     assert code == 0
     assert second["status"] == "skipped"
+
+
+def test_apply_force_reapplies_a_complete_edit(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    (workspace / "shot_plan.json").write_text(plan_answer(), encoding="utf-8")
+    (workspace / "edit.json").write_text(editor_answer(), encoding="utf-8")
+    first, code = llm_director.apply_agent_answer(workspace, brief=BRIEF)
+    assert code == 0
+    assert first["status"] == "written"
+    second, code = llm_director.apply_agent_answer(workspace, brief=BRIEF)
+    assert code == 0
+    assert second["status"] == "skipped"
+    third, code = llm_director.apply_agent_answer(workspace, brief=BRIEF, force=True)
+    assert code == 0
+    assert third["status"] == "written"
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert validate(edit, "edit") == []
+    assert edit["meta"]["director"]["by"] == "agent"
+
+
+def test_prepare_and_apply_use_all_good_estimate(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    raw = json.loads((workspace / "shotlog.json").read_text(encoding="utf-8"))
+    expected = max(20.0, estimate_all_good(raw)["seconds"])
+    long_cut = llm_director.pacing_table(llm_director.LONG_CUT_PACING_S)
+    summary, code = llm_director.prepare_agent_inputs(workspace, brief=BRIEF, target_duration_s=0)
+    assert code == 0
+    text = (workspace / "director" / "inputs.md").read_text(encoding="utf-8")
+    assert f"target_duration_s: {expected}" in text
+    assert f"slot_min: {long_cut['slot_min']}" in text
+    assert f"slot_max: {long_cut['slot_max']}" in text
+    (workspace / "shot_plan.json").write_text(plan_answer(), encoding="utf-8")
+    (workspace / "edit.json").write_text(editor_answer(), encoding="utf-8")
+    summary, code = llm_director.apply_agent_answer(workspace, brief=BRIEF, target_duration_s=0)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    assert edit["brief"]["target_duration_s"] == expected
 
 
 def test_apply_missing_plan_is_usage_error(tmp_path, capsys):

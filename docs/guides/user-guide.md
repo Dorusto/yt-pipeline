@@ -361,6 +361,22 @@ The AI models do not change. What improves is data and rules on disk, all plain 
 
 Sizes stay small: a correction is ~200 bytes, so 10 000 corrections are about 2 MB. No footage or frames are stored, only clip names and timecodes. See `docs/DECISIONS.md`, 2026-10-14, *Feedback storage and the rules digest*, for limits and compaction.
 
+## From a coding agent
+
+A host coding agent (Claude Code, opencode, any Agent Skills tool) can direct the
+edit on its own subscription, with no OpenRouter key:
+
+1. `yt llm_director --workspace <ws> --brief "..." --prepare` writes
+   `<ws>/director/inputs.md` — the brief, the settings, the editing techniques,
+   the eligible shots and the shapes to write.
+2. The agent reads it and writes `<ws>/shot_plan.json` and `<ws>/edit.json` (the
+   editor answer shape).
+3. `yt llm_director --workspace <ws> --brief "..." --apply` validates both,
+   repairs mechanical faults and writes the final `edit.json` with
+   `meta.director.by = "agent"`.
+
+The web app keeps the OpenRouter three-role loop.
+
 ## Pilot host
 
 A pilot host runs one small container per person, all on the same released tag;

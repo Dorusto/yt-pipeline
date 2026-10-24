@@ -3127,3 +3127,23 @@ reading `--json` needs the same error shape from every tool.
 inaccurate — `scripts/yt.py` changed; the guide, the tools reference, the
 README and the 20 skills that said "from the repository root" are updated in the
 same commit.
+
+## [2026-10-24] Director agent mode: prepare and apply without an OpenRouter key (V030 lot c5b)
+
+**Context:** the plugin lets a host coding agent direct the edit on its own
+subscription. The director needs a way to hand the agent the inputs and to take
+the agent's plan and answer back, with no OpenRouter call.
+
+**Decision:** `llm_director.py --prepare --workspace W` writes
+`<workspace>/director/inputs.md` (the brief, the brief settings, the editing
+techniques, the eligible shots and their shot facts, the beat grid and music
+facts when given, and the two output shapes) and makes no model call; the host
+agent writes `shot_plan.json` and `edit.json` (the editor answer shape);
+`llm_director.py --apply --workspace W` validates both against the schemas and
+the editing grammar, repairs mechanical faults with the same machinery the loop
+uses and writes the final `edit.json` with `meta.director.by = "agent"`.
+`--target-duration-s 0` ("All good shots") works in agent mode exactly as in the
+loop. `--apply --force` re-applies from the plan and the existing edit's slots
+when `edit.json` is already a complete edit. The OpenRouter three-role loop
+stays the default for the web app. The shared setup (`_resolve_workspace_brief`,
+`_agent_context`) is one place used by both the loop and the agent mode.

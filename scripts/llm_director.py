@@ -845,6 +845,11 @@ def read_role_prompt(name):
     return read_prompt("playbook.md").rstrip() + "\n\n" + read_prompt(name)
 
 
+def read_chat_prompt():
+    """Return the capability list followed by the interpret-feedback prompt."""
+    return read_prompt("tools.md").rstrip() + "\n\n" + read_prompt("interpret_feedback.md")
+
+
 def call_client(client, messages, state, role="director"):
     response = client.complete(role, messages)
     state.calls += 1
@@ -957,7 +962,7 @@ def interpret_feedback(workspace, text, version=None, model=None, budget_usd=Non
         if budget_usd is not None:
             effective["llm_budget_usd"] = budget_usd
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
-    prompt = read_prompt("interpret_feedback.md")
+    prompt = read_chat_prompt()
     state = LoopState()
     reply = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
     estimate_usd, estimate_s = last_director_estimate(workspace_path)
@@ -2800,21 +2805,7 @@ def _run_loop(
 ):
     """Run the three-role loop body; ``run`` adds the ``feedback`` summary key."""
     started = time.monotonic()
-    workspace_path = Path(workspace).expanduser().resolve()
-    if not workspace_path.is_dir():
-        raise LLMDirectorError(f"workspace not found: {workspace_path}")
-    if brief is None and brief_file is None:
-        raise LLMDirectorError("provide --brief or --brief-file")
-    if brief is not None and brief_file is not None:
-        raise LLMDirectorError("give either --brief or --brief-file, not both")
-    if brief_file is not None:
-        brief_path = Path(brief_file).expanduser().resolve()
-        if not brief_path.is_file():
-            raise LLMDirectorError(f"brief file not found: {brief_path}")
-        brief_text = brief_path.read_text(encoding="utf-8")
-    else:
-        brief_path = None
-        brief_text = brief
+    workspace_path, brief_text, brief_path = _resolve_workspace_brief(workspace, brief, brief_file)
     if rounds < 1:
         raise LLMDirectorError("--rounds must be at least 1")
     rounds = min(rounds, MAX_ROUNDS)
@@ -2833,22 +2824,6 @@ def _run_loop(
         music = str(music_path)
     beat_grid = load_beats(beats_path) if beats_path is not None else None
 
-    hints = parse_brief(brief_text)
-    facts_block_text = facts_block(load_brief_facts(workspace_path))
-    prompt_brief = brief_text
-    if facts_block_text:
-        prompt_brief = brief_text.rstrip() + "\n\n" + facts_block_text
-    all_good = target_duration_s is not None and target_duration_s <= 0
-    if all_good:
-        estimate = estimate_all_good(load_json(workspace_path / "shotlog.json"))
-        target_duration_s = max(20.0, estimate["seconds"])
-    if target_duration_s is not None:
-        hints["target_duration_s"] = target_duration_s
-    if order is not None:
-        hints["order"] = order
-    if pacing is not None:
-        hints["pacing"] = pacing
-
     if not force and not dry_run and not feedback and is_up_to_date(out_path, workspace_path, brief_path, plan_path, beats_path, speed_ramp):
         existing = load_json(out_path) or {}
         slots = existing.get("video") or []
@@ -2860,35 +2835,37 @@ def _run_loop(
     shotlog = load_shotlog(workspace_path)
     if shotlog is None:
         warnings.append("no shotlog.json in the workspace; using the rule-based director")
+        hints = parse_brief(brief_text)
+        if target_duration_s is not None:
+            hints["target_duration_s"] = target_duration_s
+        if order is not None:
+            hints["order"] = order
+        if pacing is not None:
+            hints["pacing"] = pacing
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
 
-    drop_reasons = {}
-    pacing = run_pacing(LONG_CUT_PACING_S if all_good else hints.get("target_duration_s"))
-    effective_important_max_s = important_max_s if important_max_s is not None else pacing["hero_max"]
-    facts, clips, fact_warnings = build_shot_facts(
-        workspace_path, shotlog, effective_important_max_s, drop_reasons, pacing["slot_min"], pacing["slot_max"],
-    )
+    context = _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_duration_s, order, pacing)
+    hints = context["hints"]
+    prompt_brief = context["prompt_brief"]
+    content_type = context["content_type"]
+    pacing = context["pacing"]
+    effective_important_max_s = context["effective_important_max_s"]
+    facts = context["facts"]
+    clips = context["clips"]
+    fact_warnings = context["fact_warnings"]
+    sources = context["sources"]
+    shotlog_rows = context["shotlog_rows"]
+    brief_obj = context["brief_obj"]
+    drop_reasons = context["drop_reasons"]
     warnings.extend(fact_warnings)
     if not facts:
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
         if fallback_rules:
             return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
         return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
-
-    sources = [
-        {"file": clip["file"], "path": clip.get("path") or clip["file"], "duration_s": clip.get("duration_s")}
-        for clip, _ in clips
-    ]
-    shotlog_rows = [shot for key, shot in shotlog.items() if key in facts]
     candidates = len(shotlog_rows)
-    brief_obj = {
-        "text": brief_text,
-        "target_duration_s": hints.get("target_duration_s"),
-        "order": hints.get("order"),
-        "pacing": hints.get("pacing"),
-    }
 
     if client is None:
         if config is None:
@@ -3026,7 +3003,7 @@ def _run_loop(
 
 
 def _resolve_workspace_brief(workspace, brief, brief_file):
-    """Resolve the workspace dir and the brief text the way the loop does."""
+    """Resolve the workspace dir, the brief text and the brief path the way the loop does."""
     workspace_path = Path(workspace).expanduser().resolve()
     if not workspace_path.is_dir():
         raise LLMDirectorError(f"workspace not found: {workspace_path}")
@@ -3038,8 +3015,8 @@ def _resolve_workspace_brief(workspace, brief, brief_file):
         brief_path = Path(brief_file).expanduser().resolve()
         if not brief_path.is_file():
             raise LLMDirectorError(f"brief file not found: {brief_path}")
-        return workspace_path, brief_path.read_text(encoding="utf-8")
-    return workspace_path, brief
+        return workspace_path, brief_path.read_text(encoding="utf-8"), brief_path
+    return workspace_path, brief, None
 
 
 def _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_duration_s, order, pacing):
@@ -3049,6 +3026,10 @@ def _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_
     prompt_brief = brief_text
     if facts_block_text:
         prompt_brief = brief_text.rstrip() + "\n\n" + facts_block_text
+    all_good = target_duration_s is not None and target_duration_s <= 0
+    if all_good:
+        estimate = estimate_all_good(load_json(workspace_path / "shotlog.json"))
+        target_duration_s = max(20.0, estimate["seconds"])
     if target_duration_s is not None:
         hints["target_duration_s"] = target_duration_s
     if order is not None:
@@ -3056,7 +3037,7 @@ def _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_
     if pacing is not None:
         hints["pacing"] = pacing
     content_type = detect_content_type(prompt_brief, workspace_path)
-    pacing_row = run_pacing(hints.get("target_duration_s"))
+    pacing_row = run_pacing(LONG_CUT_PACING_S if all_good else hints.get("target_duration_s"))
     effective_important_max_s = important_max_s if important_max_s is not None else pacing_row["hero_max"]
     drop_reasons = {}
     facts, clips, fact_warnings = build_shot_facts(
@@ -3106,7 +3087,17 @@ def _prompt_section(name, heading):
     return "\n".join(collected).strip()
 
 
-def _agent_inputs_text(workspace_path, brief_text, context, out_path, plan_path):
+def _agent_inputs_text(
+    workspace_path,
+    brief_text,
+    context,
+    out_path,
+    plan_path,
+    beat_grid=None,
+    music=None,
+    ambient_under_music_db=None,
+    speed_ramp=False,
+):
     """The ``inputs.md`` the host agent reads: brief, settings, rules, shots and shapes."""
     hints = context["hints"]
     pacing = context["pacing"]
@@ -3134,6 +3125,21 @@ def _agent_inputs_text(workspace_path, brief_text, context, out_path, plan_path)
             ]
         )
     )
+    if beat_grid is not None:
+        parts.append("## The beat grid\n\n```json\n" + json.dumps(beat_grid, indent=2) + "\n```")
+    else:
+        parts.append("## The beat grid\n\nnone given")
+    parts.append(
+        "\n".join(
+            [
+                "## The music",
+                "",
+                f"- music: {music if music is not None else 'none'}",
+                f"- ambient_under_music_db: {ambient_under_music_db}",
+                f"- speed_ramp: {speed_ramp}",
+            ]
+        )
+    )
     parts.append(
         "\n".join(
             [
@@ -3147,6 +3153,18 @@ def _agent_inputs_text(workspace_path, brief_text, context, out_path, plan_path)
     )
     parts.append("## The eligible shots\n\n```json\n" + json.dumps(context["shotlog_rows"], indent=2) + "\n```")
     parts.append("## The shot facts\n\n```json\n" + json.dumps(context["facts"], indent=2) + "\n```")
+    apply_flags = []
+    if beat_grid is not None:
+        apply_flags += ["--beats", "<path>"]
+    if music is not None:
+        apply_flags += ["--music", "<path>"]
+    if ambient_under_music_db is not None:
+        apply_flags += ["--ambient-under-music-db", "<db>"]
+    if speed_ramp:
+        apply_flags.append("--speed-ramp")
+    run_line = f'    yt llm_director --workspace {workspace_path} --brief "..." --apply'
+    if apply_flags:
+        run_line += " " + " ".join(apply_flags)
     parts.append(
         "\n".join(
             [
@@ -3164,7 +3182,7 @@ def _agent_inputs_text(workspace_path, brief_text, context, out_path, plan_path)
                 "",
                 "Then run:",
                 "",
-                f'    yt llm_director --workspace {workspace_path} --brief "..." --apply',
+                run_line,
             ]
         )
     )
@@ -3188,7 +3206,7 @@ def prepare_agent_inputs(
 ):
     """Write WORKSPACE/director/inputs.md for the host agent; no model call."""
     started = time.monotonic()
-    workspace_path, brief_text = _resolve_workspace_brief(workspace, brief, brief_file)
+    workspace_path, brief_text, brief_path = _resolve_workspace_brief(workspace, brief, brief_file)
     shotlog = load_shotlog(workspace_path)
     if shotlog is None:
         raise LLMDirectorError(f"missing shotlog.json in {workspace_path}")
@@ -3197,8 +3215,26 @@ def prepare_agent_inputs(
     plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
     inputs_path = workspace_path / "director" / "inputs.md"
     inputs_path.parent.mkdir(parents=True, exist_ok=True)
+    beats_path = Path(beats).expanduser().resolve() if beats else None
+    beat_grid = load_beats(beats_path) if beats_path is not None else None
+    if music:
+        music_path = Path(music).expanduser().resolve()
+        if not music_path.is_file():
+            raise LLMDirectorError(f"music file not found: {music}")
+        music = str(music_path)
     inputs_path.write_text(
-        _agent_inputs_text(workspace_path, brief_text, context, out_path, plan_path), encoding="utf-8"
+        _agent_inputs_text(
+            workspace_path,
+            brief_text,
+            context,
+            out_path,
+            plan_path,
+            beat_grid=beat_grid,
+            music=music,
+            ambient_under_music_db=ambient_under_music_db,
+            speed_ramp=speed_ramp,
+        ),
+        encoding="utf-8",
     )
     summary = {
         "status": "prepared",
@@ -3229,7 +3265,7 @@ def apply_agent_answer(
 ):
     """Validate, repair and write the host agent's plan and editor answer as edit.json."""
     started = time.monotonic()
-    workspace_path, brief_text = _resolve_workspace_brief(workspace, brief, brief_file)
+    workspace_path, brief_text, brief_path = _resolve_workspace_brief(workspace, brief, brief_file)
     shotlog = load_shotlog(workspace_path)
     if shotlog is None:
         raise LLMDirectorError(f"missing shotlog.json in {workspace_path}")
@@ -3263,9 +3299,26 @@ def apply_agent_answer(
             "llm_cost_usd": 0.0,
         }
         return summary, EXIT_OK
-    if not isinstance(raw_answer.get("slots"), list):
+    if isinstance(raw_answer.get("video"), list):
+        answer = {
+            "slots": [
+                {
+                    "id": slot.get("id"),
+                    "shot_key": slot.get("shot_key"),
+                    "in_s": slot.get("in_s"),
+                    "out_s": slot.get("out_s"),
+                    "duration_s": slot.get("duration_s"),
+                    "transition": (slot.get("transition") or {}).get("type")
+                    if isinstance(slot.get("transition"), dict)
+                    else slot.get("transition"),
+                }
+                for slot in raw_answer.get("video") or []
+            ]
+        }
+    elif isinstance(raw_answer.get("slots"), list):
+        answer = raw_answer
+    else:
         raise LLMDirectorError(f"agent answer must be a JSON object with a slots list: {out_path}")
-    answer = raw_answer
     beats_path = Path(beats).expanduser().resolve() if beats else None
     beat_grid = load_beats(beats_path) if beats_path is not None else None
     if music:

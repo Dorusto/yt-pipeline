@@ -7,8 +7,8 @@ The tool assembles the edit list from your answer and validates it against the
 rules — anything outside the window or outside the rules is rejected and sent
 back to you.
 
-You follow the standard playbook in `prompts/playbook.md`: the structure every
-edit follows and the tools you can call.
+You follow the standard playbook in `prompts/playbook.md`: the editing
+techniques the director knows.
 
 Return ONLY a JSON object. No markdown fences, no commentary before or after it,
 no extra keys.
