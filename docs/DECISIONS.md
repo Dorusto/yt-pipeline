@@ -2945,3 +2945,28 @@ README short and its links resolving.
 **Context:** issue #95 — in the first holiday-flow pilot most cuts missed the beat; the director notes carried `cut k: not snapped to a beat (nearest X s away)` for 4 of the cuts. Reproduced on the first holiday pilot: the cuts that start a new `shot_plan` structure beat snap to the nearest **downbeat**, and the downbeat grid is sparse (every 4 beats ≈ 2.1 s), so the nearest downbeat is often farther than the half-beat snap window and the cut is left unsnapped even though a beat is ~0.2 s away.
 
 **Decision:** in `llm_director.snap_slots` a structure-beat cut prefers the nearest downbeat only when it lies inside the small window (`BEAT_SNAP_FRACTION × beat_period_s`); otherwise it lands on the nearest beat of the dense grid. Every cut is then on a beat. The rule-based `director.py` never passes downbeats, so it is unchanged. Measured on the first holiday pilot: 9/9 cuts snapped (was 7/9).
+
+## [2026-10-24] One model for every agent, reasoning level per agent (V020N lot n21)
+
+**Context:** the build agents ran on three OpenRouter models (`xiaomi/mimo-v2.6-pro`
+for the architect, `deepseek/deepseek-v4.1-flash` for the coder, `z-ai/glm-5.3-flash`
+as a fallback), so a lot's quality depended on which model happened to be picked
+and the fallback was easy to leave behind.
+
+**Options:** (A) keep the per-agent models and only document them; (B) one model
+for every agent, with the reasoning level set per agent.
+
+**Decision:** B. Every agent runs on `openrouter/deepseek/deepseek-v4.1-flash`;
+`xiaomi/mimo-v2.6-pro` and `z-ai/glm-5.3-flash` are dropped from `opencode.json`.
+The reasoning level is a `reasoning:` block in the agent file (`effort: high` for
+architect, coder and specwriter; `effort: xhigh` for the new `coder-max`), which
+opencode passes to OpenRouter. The architect hands a brief to `coder-max` only
+when the lot says "hard"; every other lot goes to `coder`.
+
+**Why not A:** the owner decided one model; a per-agent model split makes the
+output depend on the agent rather than the task, and the GLM fallback was never
+used.
+
+**Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
+four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
+level of each agent and when `coder-max` is used.

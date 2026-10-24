@@ -110,16 +110,30 @@ Two common paths. In both, you make the creative decisions and the agent runs th
 
 ## 8. opencode agents
 
-Two project agents ship in `.opencode/agents/`, used to build the AI Director (see `docs/VISION.md`), not to run the pipeline:
+Four project agents ship in `.opencode/agents/`, used to build the AI Director
+(see `docs/VISION.md`), not to run the pipeline. Every agent runs on the same
+model, `deepseek/deepseek-v4.1-flash`; the reasoning level is set per agent with
+a `reasoning:` block in the agent file (`effort: high` for the planning and
+writing agents, `effort: xhigh` for `coder-max`).
 
-| Agent | Mode | Model (OpenRouter) | Role |
-|:---|:---|:---|:---|
-| `architect` | primary (Tab to select) | `xiaomi/mimo-v2.6-pro` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
-| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | implements one brief, never commits |
+| Agent | Mode | Model (OpenRouter) | Reasoning | Role |
+|:---|:---|:---|:---|:---|
+| `architect` | primary (Tab to select) | `deepseek/deepseek-v4.1-flash` | `high` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
+| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | `high` | implements one brief, never commits |
+| `coder-max` | subagent | `deepseek/deepseek-v4.1-flash` | `xhigh` | implements one brief for a hard lot, with the deepest reasoning; slower and costlier than `coder` |
+| `specwriter` | primary | `deepseek/deepseek-v4.1-flash` | `high` | writes and maintains `docs/SPEC.md`, never code |
 
-`opencode.json` in the repo root registers the three OpenRouter models and the shared permissions. Loop guards (D2-16): `steps: 150` for the architect and `steps: 80` for the coder (at the limit opencode makes the agent stop and summarise what is left), `doom_loop: deny` (an unattended run cannot answer an "agent seems stuck" prompt, so the repeat is refused instead of hanging), and the watchdog's hard stops below. To swap a model, change the `model:` line in the agent file. `z-ai/glm-5.3-flash` is the fallback coder.
+`opencode.json` in the repo root registers the OpenRouter model and the shared
+permissions. The architect hands a brief to `coder-max` only when the lot says
+"hard"; every other lot goes to `coder`. Loop guards (D2-16): `steps: 150` for
+the architect and `steps: 80` for the coder (at the limit opencode makes the
+agent stop and summarise what is left), `doom_loop: deny` (an unattended run
+cannot answer an "agent seems stuck" prompt, so the repeat is refused instead of
+hanging), and the watchdog's hard stops below. To change the reasoning level,
+edit the `reasoning:` block in the agent file.
 
-To run the pipeline itself, the default `build` agent is enough: it already loads the skills.
+To run the pipeline itself, the default `build` agent is enough: it already
+loads the skills.
 
 ## 9. Files that stay local
 

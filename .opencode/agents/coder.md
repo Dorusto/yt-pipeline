@@ -2,6 +2,8 @@
 description: Implements exactly one task brief written by the architect in yt-pipeline. Use only with a complete written brief.
 mode: subagent
 model: openrouter/deepseek/deepseek-v4.1-flash
+reasoning:
+  effort: high
 temperature: 0.1
 steps: 80
 permission:
