@@ -205,7 +205,37 @@ The AI Director foundation (phase D0) has an offline suite that runs on a CPU-on
 
 Expected: all tests pass, including notifications, encoder selection, schema validation and the rough-cut retiming.
 
-## 11. opencode build agents
+## 11. Fresh-container smoke test
+
+A repeatable check that the plugin installs in a fresh container with no personal
+setup and turns a folder of clips into a recap. The build host has no container
+runtime, so run this by hand in a fresh container. `scripts/smoke_plugin.sh`
+automates steps 2-5 below; the checklist is the manual version.
+
+1. Start a fresh container with no personal setup: no `~/.claude`, no
+   `YT_PIPELINE_*` variables and no config file. Expected: a clean shell where
+   `yt` is not found and no yt-pipeline config exists.
+2. Install from the README alone (section 3): clone, `uv venv`,
+   `uv pip install -r requirements.txt`. Expected: the install finishes with no
+   error.
+3. Put `yt` on `PATH` (section 5). Expected: `yt --help` lists the tools.
+4. Install the plugin (section 6). Expected: `claude plugin validate .` passes
+   and the skills load as `/yt-director:yt-recap` and so on.
+5. Run the script:
+   `scripts/smoke_plugin.sh --source <clips-folder> --brief "<brief>"`.
+   Expected: the recap MP4 is written under the workspace and the script prints
+   its path.
+6. Confirm no personal setup was needed: every setting came from a flag, an
+   environment variable or the config file.
+
+The script clones the repository, builds the virtual environment, links `yt`
+into `~/.local/bin`, checks the entry point, installs the plugin when `claude` is
+on `PATH` and runs `yt recap`. `--dry-run` prints the steps and changes nothing;
+`--skip-plugin` tests the `yt` entry point alone. Exit codes: `0` success, `2` a
+usage error (a bad flag or a missing `--source`/`--brief`), `3` a step failed
+after work started.
+
+## 12. opencode build agents
 
 Four project agents ship in `.opencode/agents/`, used to build the AI Director
 (see `docs/VISION.md`), not to run the pipeline. Every agent runs on the same
@@ -232,19 +262,19 @@ edit the `reasoning:` block in the agent file.
 To run the pipeline itself, the default `build` agent is enough: it already
 loads the skills.
 
-## 12. Files that stay local
+## 13. Files that stay local
 
 These are git-ignored and never appear on a fresh clone: `scripts/corrections.txt` (copy it from `scripts/corrections_example.txt`), `scripts/shorts_config.yaml` (created from a template on the first Shorts run), `.env`, and media and generated files (`*.mp4`, `*.mp3`, `*.wav`, `*.json`, `*.ass`).
 
-## 13. Keeping skills in sync
+## 14. Keeping skills in sync
 
 When a script's arguments, outputs or behavior change, update the matching skill in `.claude/skills/` in the same change. See `AGENTS.md`, Working rules.
 
-## 14. Public-repo guard
+## 15. Public-repo guard
 
 The repo is public. Once per clone run `git config core.hooksPath .githooks`: every commit then runs `scripts/check_public.py`, which refuses footage, images, subtitles, model weights, files over 1 MB, API keys and embedded base64 images. `python3 scripts/check_public.py --all` scans everything tracked.
 
-## 15. Notifications (ntfy)
+## 16. Notifications (ntfy)
 
 Agents (and humans) can post a short status message to the project's ntfy topic when a phase report is ready or when blocked.
 
