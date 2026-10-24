@@ -2998,6 +2998,133 @@ def test_delete_project_get_is_405(tmp_path):
         server.server_close()
 
 
+def test_delete_version_removes_the_folder(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    server = start_server(root)
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v002"}),
+        )
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert not (project / "versions" / "v002").exists()
+        assert (project / "versions" / "v001").is_dir()
+        assert (project / "versions" / "v003").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_refuses_latest_and_first(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v003"}),
+        )
+        assert status == 409
+        assert b"cannot delete the latest version" in body
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v001"}),
+        )
+        assert status == 409
+        assert b"cannot delete the first version" in body
+        assert (project / "versions" / "v001").is_dir()
+        assert (project / "versions" / "v003").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_refused_while_running(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    monkeypatch.setattr(serve, "project_status", lambda directory: "running")
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v002"}),
+        )
+        assert status == 409
+        assert b"already running" in body
+        assert (project / "versions" / "v002").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_rejects_a_crafted_name(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "../v001"}),
+        )
+        assert status == 400
+        assert b"invalid version" in body
+        assert (project / "versions" / "v001").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_recap_panel_shows_the_delete_version_button(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    page = serve.render_recap_panel(project, wanted=2)
+    assert 'action="/2026-10-14/delete-version"' in page
+    assert 'value="v002"' in page
+    assert "Delete version 2? Its video and files are removed for good." in page
+    assert "delete-version" not in serve.render_recap_panel(project, wanted=3)
+    assert "delete-version" not in serve.render_recap_panel(project, wanted=1)
+
+
+def test_delete_version_script():
+    script = serve.DELETE_VERSION_SCRIPT
+    assert "askYesNo(" in script
+    assert "form.delete-version" in script
+    assert "data-question" in script
+    assert "f.submit()" in script
+
+
 def test_features_off_refuse_the_routes(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root, features=("upload",))

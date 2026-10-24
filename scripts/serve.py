@@ -1892,6 +1892,8 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     if compare is not None and compare["number"] == shown["number"]:
         compare = None
     parts.append(render_version_links(name or directory.name, versions, shown))
+    if status != "running" and shown is not versions[-1] and shown is not versions[0]:
+        parts.append(render_delete_version_form(name or directory.name, shown))
     if status != "running" and has_video(shown):
         parts.append(render_drop_form(name or directory.name, shown))
         parts.append(render_trim_form(name or directory.name, shown))
@@ -2299,7 +2301,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     )
     script_parts = []
     if tab == "recap":
-        script_parts += [STRIP_SCRIPT, TICK_SCRIPT, PICK_SCRIPT, COPY_SCRIPT]
+        script_parts += [STRIP_SCRIPT, TICK_SCRIPT, PICK_SCRIPT, COPY_SCRIPT, DELETE_VERSION_SCRIPT]
     script_parts += [LENGTH_SCRIPT, DELETE_SCRIPT, BRIEF_HINTS_SCRIPT]
     if tab == "cuts":
         script_parts.append(CUTS_SCRIPT)
@@ -2460,12 +2462,31 @@ def render_delete_form(name):
     return f'<form class="delete-project" method="post" action="/{html_escape(name)}/delete"></form>'
 
 
+def render_delete_version_form(name, version):
+    """A small form that deletes one version (never the latest or the first)."""
+    number = version["number"]
+    question = f"Delete version {number}? Its video and files are removed for good."
+    return (
+        f'<form class="delete-version" method="post" action="/{html_escape(name)}/delete-version">'
+        f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
+        f'<button type="button" class="version-del" data-question="{html_escape(question)}">'
+        "Delete this version</button></form>"
+    )
+
+
 DELETE_SCRIPT = """
 (function(){var f=document.querySelector('form.delete-project');if(!f)return;
 var h=document.querySelector('h1');if(!h)return;
 var b=document.createElement('button');b.type='button';b.className='project-del';
 b.setAttribute('aria-label','Delete this project');b.innerHTML='__BIN__';h.appendChild(b);
 b.addEventListener('click',function(){askYesNo(h.parentNode,'Delete this project?',function(ask){ask.innerHTML='<span>Deleting, about 5 s...</span>';f.submit();});});})();
+"""
+
+DELETE_VERSION_SCRIPT = """
+(function(){var f=document.querySelector('form.delete-version');if(!f)return;
+var b=f.querySelector('button.version-del');if(!b)return;
+b.addEventListener('click',function(){var q=b.getAttribute('data-question')||'Delete this version?';
+askYesNo(f,q,function(ask){ask.innerHTML='<span>Deleting the version...</span>';f.submit();});});})();
 """
 
 BRIEF_HINTS_SCRIPT = """
@@ -3403,6 +3424,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "delete":
             self.handle_delete_project(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "delete-version":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_delete_version(segments[0])
+            return
         if segments == ["costs", "request"]:
             if not feature_on(features, "requests"):
                 self.send_not_found()
@@ -3761,6 +3788,46 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(500, f"could not delete the project: {exc}")
             return
         self.send_redirect("/")
+
+    def handle_delete_version(self, project):
+        """Delete one version folder; refuse the latest, the first and while a run is going."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        version = (fields.get("version") or "").strip()
+        if not VERSION_RE.fullmatch(version):
+            self.send_error_text(400, "invalid version")
+            return
+        versions = list_versions(workspace)
+        if not versions:
+            self.send_error_text(404, "unknown version")
+            return
+        if version == versions[-1]["name"]:
+            self.send_error_text(409, "cannot delete the latest version")
+            return
+        if version == versions[0]["name"]:
+            self.send_error_text(409, "cannot delete the first version")
+            return
+        root = (workspace / "versions").resolve()
+        target = (workspace / "versions" / version).resolve()
+        if target.parent != root or not target.is_dir():
+            self.send_error_text(404, "unknown version")
+            return
+        try:
+            shutil.rmtree(target)
+        except OSError as exc:
+            self.send_error_text(500, f"could not delete the version: {exc}")
+            return
+        self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_expectations(self, project):
         """Append one phone-review expectation to the workspace's expectations.yaml."""

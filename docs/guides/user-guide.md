@@ -231,7 +231,11 @@ finished recap, the explanation and the contact sheet.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
   (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is
   going the page shows the last finished version, the step it is on, and
-  refreshes by itself; a failed run says where it failed and why.
+  refreshes by itself; a failed run says where it failed and why. A version that
+  is neither the latest nor the first shows a **Delete this version** button; it
+  asks once ("Delete version N? Its video and files are removed for good."),
+  removes that version's folder for good and returns to the latest version. The
+  latest, the first and a version while a run is going cannot be deleted.
 - **Title, description and hashtags.** The Recap tab shows a box with the
   YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
   version, each with a **Copy** button. A **Rewrite** button opens the four
@@ -273,7 +277,8 @@ finished recap, the explanation and the contact sheet.
   checkbox and refuses an upload without it.
 - **Delete.** A project page has a bin icon next to the title; it asks once,
   then deletes the workspace and its inbox source. It is refused while a run
-  is going.
+  is going. A single version can be deleted from the Recap tab the same way
+  (never the latest or the first).
 - **Feature switches.** `--features` (comma-separated), else
   `YT_PIPELINE_FEATURES`, else `web.features` lists the parts this instance
   shows (`upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`);

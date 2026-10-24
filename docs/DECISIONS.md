@@ -3024,3 +3024,27 @@ level of each agent and when `coder-max` is used.
 **Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
 
 **Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.
+
+## [2026-10-24] Delete one version from the web app (V020N lot n29)
+
+**Context:** issue #109 — a project can be deleted from the web app, but a
+single version cannot, so old versions fill the disk of an instance.
+
+**Options:** (A) delete the version folder from the command line only; (B) a
+"Delete this version" action on the Recap tab, with an inline confirmation.
+
+**Decision:** B. `serve.py` gains `POST /<project>/delete-version` (urlencoded
+`version`, e.g. `v002`): it removes that version's folder under `versions/` and
+redirects to the latest version. The latest version, the first version (v001,
+the director's original) and a version while a run is going are refused; a name
+that is not `vNNN` (a crafted `../`) is a usage error, and the resolved target
+must sit directly under the project's `versions/` folder. The action shows only
+for a version that is neither the latest nor the first.
+
+**Why not A:** the owner asked for it in the phone flow; the version list and
+the disk are managed from the web app, and the confirmation matches the shot
+buttons.
+
+**Consequence:** RULES gains the route and the versions rule; the user guide
+and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
+the commit carries `Stable-change: approved`.

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Director: after a chronological re-sort every slot's transition is set again (first cut, the rest crossfade, hard cuts with a beat grid), so a re-sorted edit no longer keeps a cut in the middle.
 - Web app: the project page no longer shows the director reviewer box; the verdict stays in `edit.json`.
 - Web app: the Watch tab no longer links the Why?/Shots pages (they stay reachable by URL) and drops the clip/photo colour legend; `config.yaml.example` uses neutral `channel.fixed` placeholders.
+- Web app: the Recap tab can delete a single version (never the latest or the first) with an inline confirmation; its folder is removed for good.
 
 ## [0.2.0] - 2026-10-24
 
