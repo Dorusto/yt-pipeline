@@ -54,5 +54,6 @@ commands from PowerShell with `.venv\Scripts\python.exe` and
 - Work on the code with an AI agent: [AGENTS.md](AGENTS.md) (shared by Claude Code, opencode and DeepSeek).
 - What it can and cannot do yet: [docs/ROADMAP.md](docs/ROADMAP.md)
 
-Licensed under [AGPL-3.0-or-later](LICENSE); external contributions need a signed
-CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Licensed under [AGPL-3.0-or-later](LICENSE); third-party licences are listed in
+[docs/licences.md](docs/licences.md) and [NOTICE.md](NOTICE.md). External
+contributions need a signed CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).
