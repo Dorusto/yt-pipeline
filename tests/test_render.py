@@ -1233,3 +1233,74 @@ def test_ken_burns_works_on_an_enlarged_frame_with_eased_motion():
     assert chain.startswith("scale=iw*4:ih*4")
     assert "(3-2*(on/99))" in chain
     assert render.zoompan_upscale(3840) == 2
+
+
+def test_cut_positions_do_not_drift_across_many_clips(tmp_path, capsys):
+    import cv2
+
+    colors = ["blue", "red", "green", "yellow", "magenta", "cyan", "white", "orange"]
+    out_s = [1.03, 0.97, 1.11, 0.89, 1.07, 0.93, 1.13, 0.91]
+    clips = []
+    for index, color in enumerate(colors):
+        clip = tmp_path / f"c{index}.mp4"
+        make_clip(clip, duration=1.5, color=color, freq=300 + index * 40)
+        clips.append(clip)
+    sources = [{"file": clip.name, "path": str(clip)} for clip in clips]
+    video = []
+    for index, (clip, length) in enumerate(zip(clips, out_s)):
+        video.append(
+            {
+                "id": f"v{index}",
+                "clip": clip.name,
+                "in_s": 0.0,
+                "out_s": length,
+                "score": 0.5,
+                "reason": "test",
+                "transition": {"type": "cut", "duration_s": 0},
+            }
+        )
+    edit = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-13T19:43:17+00:00",
+        "brief": {"text": "test"},
+        "sources": sources,
+        "video": video,
+        "audio": {"ambience": {"enabled": True, "source": "slot"}},
+        "captions": [],
+        "graphics": [],
+    }
+    edit_path = tmp_path / "drift_edit.json"
+    edit_path.write_text(json.dumps(edit), encoding="utf-8")
+    out = tmp_path / "drift.mp4"
+    assert (
+        render.main(["--edit", str(edit_path), "--out", str(out), "--no-audio-clean", "--json"])
+        == 0
+    )
+    capsys.readouterr()
+
+    known = np.array(
+        [
+            [255, 0, 0],
+            [0, 0, 255],
+            [0, 255, 0],
+            [0, 255, 255],
+            [255, 0, 255],
+            [255, 255, 0],
+            [255, 255, 255],
+            [0, 165, 255],
+        ],
+        dtype=float,
+    )
+    capture = cv2.VideoCapture(str(out))
+    labels = []
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        mean = frame.reshape(-1, 3).mean(axis=0)
+        labels.append(int(np.argmin(np.linalg.norm(known - mean, axis=1))))
+    capture.release()
+
+    detected = [index for index in range(1, len(labels)) if labels[index] != labels[index - 1]]
+    planned = [round(sum(out_s[:k]) * 25) for k in range(1, len(out_s))]
+    assert detected == planned

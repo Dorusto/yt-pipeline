@@ -2354,6 +2354,8 @@ def test_strip_script_handles_the_trim_form():
     assert "Math.abs(trimTotal)" in serve.PICK_SCRIPT
     assert "tdelta.value=String(trimTotal)" in serve.PICK_SCRIPT
     assert "trimTotal=0" in serve.PICK_SCRIPT
+    assert "'<span>Shot '+(i+1)+': '" in serve.PICK_SCRIPT
+    assert "'lengthening':'shortening'" in serve.PICK_SCRIPT
 
 
 def make_ledger(path):

@@ -1220,10 +1220,10 @@ function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.quer
 var a=p.querySelector('.strip .shot-ask');if(a)a.remove();var r=p.querySelector('.strip .shot-edit');if(r)r.remove();trimTotal=0;}
 function trimAsk(host,i){var old=host.querySelector('.shot-ask');if(old)old.remove();if(!trimTotal)return;
 var ask=document.createElement('div');ask.className='shot-ask';
-ask.innerHTML='<span>Make shot '+(i+1)+' '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
+ask.innerHTML='<span>Shot '+(i+1)+': '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
 host.appendChild(ask);
 ask.querySelector('.no').onclick=function(){ask.remove();trimTotal=0;};
-ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>'+(trimTotal>0?'Lengthening':'Shortening')+' shot '+(i+1)+', about 15 s...</span>';trim.submit();};}
+ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>Shot '+(i+1)+': '+(trimTotal>0?'lengthening':'shortening')+', about 15 s...</span>';trim.submit();};}
 function trimRow(host,i){var r=document.createElement('div');r.className='shot-edit';
 r.innerHTML='<span>Shot '+(i+1)+'</span><button type="button" class="minus">-1 s</button><button type="button" class="plus">+1 s</button>';
 host.appendChild(r);

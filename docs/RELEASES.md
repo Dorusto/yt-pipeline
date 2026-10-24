@@ -10,7 +10,9 @@ publish flow is ready for a real upload: the publish kit is its own step (change
 only the thumbnail and re-run just that), the metadata prompt writes better titles
 and descriptions, and the subtitles fix the capitalised variants. The Costs page
 shows donations and warns before a run that would pass your model credit, and the
-app can run on a friend's own instance.
+app can run on a friend's own instance. The rendered cuts now stay on the beat:
+the cut positions are rounded on the timeline, so a cut no longer drifts later
+and later across the edit.
 
 **Stable candidate** — the holiday flow in the web app (as in v0.1.0), plus making
 a shot longer or shorter on the project page (the "− 1 s" / "+ 1 s" buttons add up

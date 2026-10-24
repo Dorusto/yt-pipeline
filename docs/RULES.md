@@ -54,7 +54,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 
 ## Model routing
 
-- Architect: MiMo V2.6 Pro via OpenRouter; coder: DeepSeek V4.1 Flash (fallback GLM 5.3 Flash). Do not switch coder models mid-task. — 2026-10-12
+- One model for every agent: `openrouter/deepseek/deepseek-v4.1-flash`; the reasoning level is set per agent file (`reasoning: effort: high` for architect, coder and specwriter, `xhigh` for `coder-max`), and the architect hands a brief to `coder-max` only when the lot says "hard". Do not switch coder models mid-task. — 2026-10-24 (V020N lot n21)
 - Vision default: GLM 5.3 Flash (fallback DeepSeek V4.1 Flash); the backend is a config value, never code. — 2026-10-13
 - Local Qwen3.8 27B (4-bit, RTX 3090, vLLM) takes over for private footage. — 2026-10-12
 - Every LLM call goes through `scripts/common/llm.py`: `usage.cost` charged per call (missing cost raises), a per-project spend ledger caps the whole job; stop and report at the budget cap; a model answer that is empty or not valid JSON is retried once, both attempts charged to the budget. — 2026-10-12 / 2026-10-23
