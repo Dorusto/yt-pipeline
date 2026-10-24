@@ -66,6 +66,36 @@ def test_chat_panel_shows_the_conversation(tmp_path, monkeypatch):
         server.server_close()
 
 
+def test_chat_approve_carries_the_reedit_options(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(
+        json.dumps(
+            {"options": {"length": "90s", "order": "chronological", "music": "track.mp3"}}
+        ),
+        encoding="utf-8",
+    )
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "drop 0071/s2",
+        "reply": "I read this as: drop 0071/s2.",
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        page = body.decode()
+        form = page.split('class="chat-approve"', 1)[1].split("</form>", 1)[0]
+        assert 'name="length" value="90s"' in form
+        assert 'name="order" value="chronological"' in form
+        assert 'name="music" value="track.mp3"' in form
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     calls = stub_recap(monkeypatch, tmp_path)

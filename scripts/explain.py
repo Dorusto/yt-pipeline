@@ -26,6 +26,7 @@ from html import escape
 from pathlib import Path
 
 from common.decisions import REASON_GROUPS
+from common.director import director_review
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
@@ -249,7 +250,7 @@ def _summary_sentences(edit, plan, slots, decisions):
     else:
         sentences.append("No shot plan was used for this edit.")
     director = (edit.get("meta") or {}).get("director") or {}
-    review = director.get("review")
+    review = director_review(edit)
     if isinstance(review, dict):
         if review.get("approved"):
             sentences.append("The reviewer approved the edit.")

@@ -79,7 +79,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the shotlog page's expectations buttons (reachable by URL only), the Mode B Cuts-tab cut review, the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete and per-version delete, per-instance feature switches, the upload consent checkbox, the tab bar Recap / Files / Cuts / Shorts (the explain and shotlog pages stay reachable by URL only), the poster cards and the shot-strip thumbnails |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the shotlog page's expectations buttons (reachable by URL only), the Mode B Cuts-tab cut review, the Recap tab's chat with the director, the read-only Costs page, the feedback/requests form, per-project delete and per-version delete, per-instance feature switches, the upload consent checkbox, the tab bar Recap / Files / Cuts / Shorts (the explain and shotlog pages stay reachable by URL only), the poster cards and the shot-strip thumbnails |
 | `thumbs.py` | workspace with `edit.json` + recap | `thumbs/poster.jpg` + `thumbs/shot-N.jpg` (320 px); skill `yt-thumbs` |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed or a shot made longer/shorter (no model call) |

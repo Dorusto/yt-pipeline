@@ -74,6 +74,7 @@ from common.config import (
 from common.costs import compute_totals, connect as connect_ledger, list_entries
 from common.brief_facts import FACT_LABELS, load_brief_facts, write_brief_facts
 from common.decisions import used_shot_keys
+from common.director import director_review
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
 from common.feedback import append_feedback
 from common.jsonio import load_json, write_json
@@ -195,6 +196,11 @@ CUT_PREVIEW_DIR = "cut_previews"
 CUT_ACTIONS = ("keep", "cut")
 CUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
 MODE_B_TOOL = "scripts/rough_cut.py"
+REEDIT_FIELDS = (
+    "brief", "length", "length_s", "order", "audio_clean", "format",
+    "speed_ramp", "shorts_layout", "music", "ambient_under_music_db",
+    "fact_place", "fact_when", "fact_who", "fact_occasion",
+)
 REQUESTS_MAX_CHARS = 2000
 CONTACT_MAX_CHARS = 200
 REQUEST_TYPES = ("Feedback", "Feature request")
@@ -1914,19 +1920,30 @@ def _meta_field(label, value):
     )
 
 
+def reedit_hidden_fields(options):
+    """Hidden inputs carrying the current Re-edit options into the chat's approve form."""
+    return "".join(
+        f'<input type="hidden" name="{field}" value="{html_escape(options.get(field) or "")}">'
+        for field in REEDIT_FIELDS
+    )
+
+
+def last_run_options(directory):
+    """The form options of the workspace's last run (``.run.json`` ``options``), or {}."""
+    data = load_json(Path(directory) / ".run.json")
+    if not isinstance(data, dict):
+        return {}
+    options = data.get("options")
+    return options if isinstance(options, dict) else {}
+
+
 def render_chat_panel(directory, name, version_path=None, version_name=""):
     """The chat with the director: the reviewer's objections and the conversation."""
     directory = Path(directory)
     base = Path(version_path) if version_path else directory
     parts = ['<section class="chat" id="chat"><h2>Chat with the director</h2>']
     edit = load_json(base / "edit.json")
-    review = None
-    if isinstance(edit, dict):
-        meta = edit.get("meta")
-        if isinstance(meta, dict):
-            director = meta.get("director")
-            if isinstance(director, dict):
-                review = director.get("review")
+    review = director_review(edit)
     if isinstance(review, dict):
         for objection in review.get("objections") or []:
             if not isinstance(objection, dict):
@@ -1982,6 +1999,7 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
             f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
             '<input type="hidden" name="approved" value="1">'
             '<input type="hidden" name="submit" value="reedit">'
+            f"{reedit_hidden_fields(last_run_options(directory))}"
             '<button class="go" type="submit">Make the new version</button>'
             "</form>"
         )
@@ -3676,7 +3694,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         self._start_for(fields, source, project, reedit=True)
 
     def handle_feedback_reply(self, project):
-        """Ask the director how it reads a feedback request; start no run."""
+        """The chat with the director: how it reads a feedback request; start no run."""
         workspace = self.server.root / project
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")

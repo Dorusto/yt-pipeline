@@ -2453,6 +2453,33 @@ def test_old_edit_without_review_still_validates(tmp_path):
     assert validate(edit, "edit") == []
 
 
+def test_build_interpret_user_carries_the_reviewer_verdict(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    write_json(
+        workspace / "edit.json",
+        {
+            "meta": {
+                "director": {
+                    "review": {
+                        "approved": False,
+                        "objections": [
+                            {"slot": "v2", "shot": 2, "text": "shot 2 is too long"}
+                        ],
+                    }
+                }
+            }
+        },
+    )
+    user = llm_director.build_interpret_user("x", workspace)
+    assert "shot 2 is too long" in user
+
+
+def test_build_interpret_user_without_a_review(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    user = llm_director.build_interpret_user("x", workspace)
+    assert "reviewer's last verdict" not in user
+
+
 def test_interpret_feedback_returns_a_reply(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(
