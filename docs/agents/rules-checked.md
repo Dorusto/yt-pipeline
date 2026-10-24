@@ -88,7 +88,7 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — tool-to-tool subprocess calls limited | review |
 | Safety rules — no tool depends on one person's setup | `tests/test_no_personal_setup.py` |
 | Safety rules — metadata prompt fixed | `tests/test_metadata.py` |
-| Safety rules — channel.fixed mapping | `tests/test_config.py` |
+| Safety rules — channel.fixed mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_doctor.py` |
 | Safety rules — --skip-alignment only when the JSON is correct | review |
 | Safety rules — recap.py is the single entry point | `tests/test_recap.py` |
 | Safety rules — recap skip rule | `tests/test_recap.py` |

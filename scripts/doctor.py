@@ -11,7 +11,8 @@ The tool runs thirteen setup checks in a fixed order: python dependencies,
 calls, the OpenRouter API key, free disk space, write access to the workspace,
 that the workspace is outside the originals, that the originals folder is
 read-only, that the publish CLIs answer ``--help``, that the whisper package is
-present and that the config carries the publish roles and ``channel.members``.
+present and that the config carries the publish roles and, when a
+``members_sentence`` uses ``{members}``, ``channel.members``.
 It calls no model and never prints a secret. It reads paths and writes only a
 tiny probe file inside the workspace, removed right after; it never writes
 under ``--source``.
@@ -28,6 +29,7 @@ import sys
 import time
 from pathlib import Path
 
+from common.channel import fixed_strings, members_placeholder_used
 from common.config import ConfigError
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
@@ -273,13 +275,16 @@ def check_publish_config(config):
     for role in PUBLISH_ROLES:
         if not models.get(role):
             missing.append(f"models.{role}")
+    members_required = members_placeholder_used(fixed_strings(config))
     members = channel.get("members")
-    if not (isinstance(members, str) and members.strip()):
+    if members_required and not (isinstance(members, str) and members.strip()):
         missing.append("channel.members")
     if missing:
         detail = "missing: " + ", ".join(missing)
         return result("publish_config", "warn", detail, PUBLISH_CONFIG_FIX)
-    return result("publish_config", "ok", "publish roles and channel.members set")
+    if members_required:
+        return result("publish_config", "ok", "publish roles and channel.members set")
+    return result("publish_config", "ok", "publish roles set")
 
 
 def run_checks(source, workspace):
