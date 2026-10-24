@@ -3297,7 +3297,6 @@ def test_project_page_hides_the_reviewer_box(tmp_path):
         assert status == 200
         page = body.decode()
         assert "Reviewer:" not in page
-        assert "too long — shorten to about 2.5 s" not in page
         saved = json.loads((project / "edit.json").read_text(encoding="utf-8"))
         assert saved["meta"]["director"]["review"]["approved"] is False
     finally:
@@ -3312,44 +3311,6 @@ def test_project_page_without_review_shows_nothing(tmp_path):
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
         assert b"Reviewer:" not in body
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_feedback_reply_page_shows_the_reply_and_estimate(tmp_path, monkeypatch):
-    root = make_root(tmp_path)
-    calls = stub_recap(monkeypatch, tmp_path)
-    stdout = json.dumps(
-        {
-            "reply": "I will drop 0071/s2.",
-            "estimate_usd": 0.05,
-            "estimate_s": 12.3,
-            "wall_time_s": 1.0,
-            "llm_cost_usd": 0.0003,
-        }
-    )
-    monkeypatch.setattr(
-        serve.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
-    )
-    server = start_server(root)
-    try:
-        status, _, body = request(
-            server,
-            "POST",
-            "/2026-10-14/feedback-reply",
-            headers=multipart_headers(),
-            body=multipart_body([("feedback", None, "drop 0071/s2")]),
-        )
-        assert status == 200, body
-        page = body.decode()
-        assert "I will drop 0071/s2." in page
-        assert "about $0,05 and 12 s" in page
-        assert "Make the new version" in page
-        assert "Change my request" in page
-        assert calls == []
     finally:
         server.shutdown()
         server.server_close()
@@ -3437,12 +3398,6 @@ def test_reedit_without_approve_records_no_approved_line(tmp_path, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
-
-
-def test_reedit_form_has_the_ask_button():
-    page = serve.render_reedit("2026-10-14", [])
-    assert "feedback-reply" in page
-    assert "Ask the director" in page
 
 
 def test_reedit_form_prefills_the_feedback():

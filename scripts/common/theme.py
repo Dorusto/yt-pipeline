@@ -248,6 +248,17 @@ form label.check{display:flex;align-items:center;gap:var(--sp-2)}
 form label.check input{width:20px;height:20px;min-height:0;accent-color:var(--accent)}
 .mark,.bar a.nav{white-space:nowrap}
 @media (max-width:440px){.bar{gap:var(--sp-3)}.bar a.nav{font-size:var(--fs-s)}.mark{font-size:var(--fs-m)}}
+.chat{margin:var(--sp-5) 0;border:1px solid var(--line);border-radius:var(--radius-l);background:var(--surface);padding:var(--sp-4)}
+.chat h2{margin-top:0}
+.chat-msg{display:flex;gap:var(--sp-2);align-items:flex-start;margin:var(--sp-2) 0}
+.chat-msg p{margin:0}
+.chat-msg.user{justify-content:flex-end}
+.chat-msg.user p{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-l);padding:var(--sp-2) var(--sp-3);max-width:80%}
+.chat-msg.director p{background:var(--deck);border:1px solid var(--line);border-radius:var(--radius-l);padding:var(--sp-2) var(--sp-3);max-width:80%}
+.chat-shot{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--muted);border:1px solid var(--line);border-radius:var(--radius-pill);padding:0 var(--sp-2);min-width:var(--tap);text-align:center}
+.chat-estimate{color:var(--muted);font-size:var(--fs-xs)}
+.chat-form,.chat-approve{display:flex;gap:var(--sp-2);align-items:flex-end;margin-top:var(--sp-3)}
+.chat-form textarea{flex:1}
 """
 
 PROGRESS_CSS = (

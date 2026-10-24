@@ -905,9 +905,30 @@ def last_director_estimate(workspace):
     return estimate_usd, estimate_s
 
 
+def reviewer_review(workspace, edit_path=None):
+    """``meta.director.review`` from the edit, or None when it is absent."""
+    path = Path(edit_path) if edit_path is not None else Path(workspace) / "edit.json"
+    data = load_json(path)
+    if not isinstance(data, dict):
+        return None
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    director = meta.get("director")
+    if not isinstance(director, dict):
+        return None
+    review = director.get("review")
+    return review if isinstance(review, dict) else None
+
+
 def build_interpret_user(text, workspace, edit_path=None):
     """The user message for the interpret call: the feedback plus the previous edit context."""
-    return build_feedback_block([text], workspace, edit_path)
+    lines = [build_feedback_block([text], workspace, edit_path)]
+    review = reviewer_review(workspace, edit_path)
+    if review is not None:
+        lines += ["", "The reviewer's last verdict on this edit (plain words):",
+                  json.dumps(review, indent=2, ensure_ascii=False)]
+    return "\n".join(lines)
 
 
 def request_reply(client, prompt, user, state):

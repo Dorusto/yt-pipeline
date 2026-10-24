@@ -1537,6 +1537,25 @@ def append_feedback_action(workspace, action, **fields):
     append_feedback(workspace, action, text=fields.get("feedback") or "", tool=TOOL)
 
 
+def read_feedback_lines(directory):
+    """The workspace's feedback.jsonl rows, oldest first; [] when absent or unreadable."""
+    try:
+        text = (Path(directory) / "feedback.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
 def render_strip(summary, prefix="", thumbs=()):
     """The edit as a proportional strip under the player; tap a block to jump there."""
     if not summary:
@@ -1693,6 +1712,17 @@ def format_duration(seconds):
         return f"{minutes} min {rest:02d} s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours} h {minutes:02d} min"
+
+
+def format_estimate(usd, seconds):
+    """The plain-word cost/time estimate, or "" when neither is known."""
+    if usd is not None and seconds is not None:
+        return f"about {format_cost(usd)} and {format_duration(seconds)}"
+    if usd is not None:
+        return f"about {format_cost(usd)}"
+    if seconds is not None:
+        return f"about {format_duration(seconds)}"
+    return ""
 
 
 def live_time(since, seconds):
@@ -1863,6 +1893,81 @@ def _meta_field(label, value):
     )
 
 
+def render_chat_panel(directory, name, version_path=None, version_name=""):
+    """The chat with the director: the reviewer's objections and the conversation."""
+    directory = Path(directory)
+    base = Path(version_path) if version_path else directory
+    parts = ['<section class="chat" id="chat"><h2>Chat with the director</h2>']
+    edit = load_json(base / "edit.json")
+    review = None
+    if isinstance(edit, dict):
+        meta = edit.get("meta")
+        if isinstance(meta, dict):
+            director = meta.get("director")
+            if isinstance(director, dict):
+                review = director.get("review")
+    if isinstance(review, dict):
+        for objection in review.get("objections") or []:
+            if not isinstance(objection, dict):
+                continue
+            text = objection.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            shot = objection.get("shot")
+            shot_html = ""
+            if isinstance(shot, int) and not isinstance(shot, bool) and shot > 0:
+                shot_html = f'<span class="chat-shot">{shot}</span>'
+            parts.append(
+                f'<div class="chat-msg director">{shot_html}<p>{html_escape(text)}</p></div>'
+            )
+    replies = [row for row in read_feedback_lines(directory) if row.get("action") == "reply"]
+    for row in replies:
+        text = row.get("text")
+        reply = row.get("reply")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if not isinstance(reply, str) or not reply.strip():
+            continue
+        parts.append(f'<div class="chat-msg user"><p>{html_escape(text)}</p></div>')
+        estimate = row.get("estimate")
+        estimate_html = ""
+        if isinstance(estimate, dict):
+            estimate_text = format_estimate(estimate.get("usd"), estimate.get("s"))
+            if estimate_text:
+                estimate_html = f'<p class="chat-estimate">{html_escape(estimate_text)}</p>'
+        parts.append(
+            f'<div class="chat-msg director"><p>{html_escape(reply)}</p>{estimate_html}</div>'
+        )
+    version_field = (
+        f'<input type="hidden" name="version" value="{html_escape(version_name)}">'
+        if version_name
+        else ""
+    )
+    parts.append(
+        f'<form class="chat-form" method="post" action="/{html_escape(name)}/feedback-reply" '
+        'enctype="multipart/form-data">'
+        f"{version_field}"
+        '<textarea name="feedback" rows="2" required '
+        'placeholder="drop 0071/s2, tunnel longer"></textarea>'
+        '<button class="go" type="submit">Send</button>'
+        "</form>"
+    )
+    if replies:
+        last = replies[-1]
+        hint = last["text"] + "\n\nDirector's reading: " + last["reply"]
+        parts.append(
+            f'<form class="chat-approve" method="post" action="/{html_escape(name)}/re-edit" '
+            'enctype="multipart/form-data">'
+            f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
+            '<input type="hidden" name="approved" value="1">'
+            '<input type="hidden" name="submit" value="reedit">'
+            '<button class="go" type="submit">Make the new version</button>'
+            "</form>"
+        )
+    parts.append("</section>")
+    return "".join(parts)
+
+
 def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None,
                        meta_cost=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
@@ -1886,6 +1991,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
+        parts.append(render_chat_panel(directory, name or directory.name))
         parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
@@ -1905,6 +2011,14 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             heading=f"Version {heading}" + (" (latest)" if shown is versions[-1] else ""),
             meta_line=version_meta_line(shown),
             trust_edit=True,
+        )
+    )
+    parts.append(
+        render_chat_panel(
+            directory,
+            name or directory.name,
+            version_path=shown["path"],
+            version_name=shown["name"],
         )
     )
     parts.append(render_meta_box(directory, shown["path"], name=name, version=shown["name"],
@@ -2598,50 +2712,7 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
         '<button class="go" type="submit" name="submit" value="reedit">Re-edit</button>'
-        f'<button class="ask" type="submit" name="submit" value="ask" '
-        f'formaction="/{html_escape(name)}/feedback-reply">Ask the director</button>'
         "</form></details>"
-    )
-
-
-REEDIT_FIELDS = (
-    "brief", "length", "length_s", "order", "audio_clean", "format",
-    "speed_ramp", "shorts_layout", "music", "ambient_under_music_db",
-    "fact_place", "fact_when", "fact_who", "fact_occasion",
-)
-
-
-def render_feedback_reply(name, fields, feedback, summary):
-    """The reply page: the director's reading, the estimate and the approve button."""
-    reply = summary["reply"]
-    estimate_usd = summary.get("estimate_usd")
-    estimate_s = summary.get("estimate_s")
-    if estimate_usd is not None and estimate_s is not None:
-        estimate = f"about {format_cost(estimate_usd)} and {format_duration(estimate_s)}"
-    elif estimate_usd is not None:
-        estimate = f"about {format_cost(estimate_usd)}"
-    elif estimate_s is not None:
-        estimate = f"about {format_duration(estimate_s)}"
-    else:
-        estimate = "the estimate is not available yet"
-    hidden = "".join(
-        f'<input type="hidden" name="{html_escape(field)}" '
-        f'value="{html_escape(fields.get(field) or "")}">'
-        for field in REEDIT_FIELDS
-    )
-    hint = feedback + "\n\nDirector's reading: " + reply
-    change_link = f'/{html_escape(name)}/?tab=recap&feedback={urllib.parse.quote(feedback)}'
-    return (
-        "<h1>Ask the director</h1>"
-        f'<p class="reply">{html_escape(reply)}</p>'
-        f'<p class="estimate">{html_escape(estimate)}</p>'
-        f'<form method="post" action="/{html_escape(name)}/re-edit" enctype="multipart/form-data">'
-        f"{hidden}"
-        '<input type="hidden" name="approved" value="1">'
-        f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
-        '<button class="go" type="submit" name="submit" value="reedit">Make the new version</button>'
-        "</form>"
-        f'<p><a href="{change_link}">Change my request</a></p>'
     )
 
 
@@ -3590,12 +3661,10 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(reply, str) or not reply.strip():
             self.send_error_text(500, "the director gave no answer")
             return
-        body = render_feedback_reply(project, fields, feedback, summary)
-        self.send_html(
-            render_page("Ask the director", body, active="projects", features=self.server.features,
-                        brand_logo=self.server.brand_logo),
-            True,
-        )
+        location = f"/{project}/?tab=recap"
+        if VERSION_RE.match(version):
+            location += f"&v={int(version.lstrip('v'))}"
+        self.send_redirect(location + "#chat")
 
     def handle_rewrite_meta(self, project):
         """Save the four facts and rewrite the shown version's title and description."""
