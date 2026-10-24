@@ -397,3 +397,25 @@ def test_out_equal_to_input(tmp_path, capsys, monkeypatch):
     rc = colour.main(["--fcproj", str(project), "--out", str(project), "--json"])
     assert rc == EXIT_USAGE
     assert "refusing to overwrite" in capsys.readouterr().err
+
+
+def test_target_luma_out_of_range_is_usage_error(tmp_path, capsys):
+    for value in ("0", "1.5"):
+        rc = colour.main(
+            ["--fcproj", str(tmp_path / "proj.fcproj"), "--target-luma", value, "--json"]
+        )
+        assert rc == EXIT_USAGE
+        err = capsys.readouterr().err
+        assert "target-luma" in err
+        assert "Traceback" not in err
+
+
+def test_target_contrast_out_of_range_is_usage_error(tmp_path, capsys):
+    for value in ("0", "2"):
+        rc = colour.main(
+            ["--fcproj", str(tmp_path / "proj.fcproj"), "--target-contrast", value, "--json"]
+        )
+        assert rc == EXIT_USAGE
+        err = capsys.readouterr().err
+        assert "target-contrast" in err
+        assert "Traceback" not in err

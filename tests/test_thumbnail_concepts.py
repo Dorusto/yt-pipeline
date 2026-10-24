@@ -92,28 +92,28 @@ def test_end_to_end(tmp_path, monkeypatch):
     assert "thumbnail.py --concepts thumbnail_concepts.json --pick 2" in text
 
 
-def test_timecode_beyond_transcript_exits_2(tmp_path, monkeypatch, capsys):
+def test_timecode_beyond_transcript_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     data["concepts"] = [
         dict(FULL["concepts"][0], source={"kind": "clip_frame", "timecode": "00:00:12"}),
         FULL["concepts"][1],
     ]
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == EXIT_USAGE
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "Bucurie" in err
     assert "beyond the transcript end" in err
     assert "Traceback" not in err
 
 
-def test_bad_theme_exits_2(tmp_path, monkeypatch, capsys):
+def test_bad_theme_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     data["concepts"] = [
         dict(FULL["concepts"][0], theme="dark"),
         FULL["concepts"][1],
     ]
     code, _ = run_main(tmp_path, monkeypatch, data)
-    assert code == EXIT_USAGE
+    assert code == EXIT_RUNTIME
     err = capsys.readouterr().err
     assert "theme" in err
     assert "Traceback" not in err

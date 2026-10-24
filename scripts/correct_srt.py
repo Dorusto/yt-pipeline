@@ -28,6 +28,7 @@ from common.corrections import (
     CORRECTIONS_FILE,
     CorrectionsError,
     apply_corrections,
+    count_changes,
     load_corrections,
     resolve_corrections_file,
 )
@@ -73,7 +74,7 @@ def run(json_out=False, started=None):
 
     corrected = apply_corrections(content, corrections, capitalised=capitalised)
 
-    changes = sum(1 for c in corrections if c.wrong in content)
+    changes = count_changes(content, corrections, capitalised=capitalised)
     print(f"Termeni înlocuiți: {changes}", file=stream)
 
     with open(output_file, "w", encoding="utf-8") as f:

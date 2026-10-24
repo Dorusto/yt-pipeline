@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from common.channel import CHANNEL_FIXED_PARTS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = REPO_ROOT / "config.yaml"
 EXAMPLE_PATH = REPO_ROOT / "config.yaml.example"
@@ -234,6 +236,11 @@ def _validate(data):
             if not isinstance(fixed, dict):
                 raise ConfigError("channel.fixed must be a mapping")
             for part, languages in fixed.items():
+                if part not in CHANNEL_FIXED_PARTS:
+                    raise ConfigError(
+                        f"channel.fixed.{part} is not a known part; valid parts: "
+                        f"{', '.join(CHANNEL_FIXED_PARTS)}"
+                    )
                 if not isinstance(languages, dict):
                     raise ConfigError(
                         f"channel.fixed.{part} must be a mapping of language codes to strings"

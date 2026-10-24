@@ -30,7 +30,7 @@ With none set the tool stops with a usage error naming those three ways. Docs an
 .venv/bin/python scripts/costs.py --ledger <costs.db> list --kind model_job
 ```
 
-- `add --kind K --amount USD [--date D] [--note TEXT]` appends one manual entry. `--kind` is one of the five kinds, `--amount` is a finite number `> 0`, `--date` defaults to today and must match `YYYY-MM-DD`. `source` is `null`.
+- `add --kind K --amount USD [--date D] [--note TEXT]` appends one manual entry. `--kind` is one of the five kinds, `--amount` is a finite number `> 0` (a decimal comma, a thousands dot and a leading `$`/`€` are accepted), `--date` defaults to today and must match `YYYY-MM-DD`. `source` is `null`.
 - `import-jobs --workspaces DIR` reads every immediate subdirectory's `llm_spend.json` (through `common.llm.read_ledger`) and writes one `model_job` entry per project; `source` is the project directory name, `date` the file's modification date. An unreadable ledger is skipped with a warning on stderr and does not fail the run.
 - `import-dev --from FILE` reads the build agents' run-spend JSON through the shared `scripts/common/spend.py` `read_spend_ledger` (a list, or an object with an `entries` list) and sums `cost_usd` per calendar day; one `dev_spend` entry per day, `source` the date.
 - `import-opencode --db <opencode.db> --match <folder-part>` reads opencode's session database read-only and imports build-agent spend per day, only for this project's folders: `--match` is a folder-name part that marks the project's sessions and is repeatable (a session is kept when any part appears in its directory). `source` is the date, so re-running is idempotent.

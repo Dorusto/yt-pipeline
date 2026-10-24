@@ -54,6 +54,29 @@ class CostsRuntimeError(CostsError):
     """Raised when SQLite or the filesystem fails after the run started."""
 
 
+def parse_amount(raw):
+    """Parse a money string: optional leading $/€, decimal comma or dot, thousands
+    separators, a leading BOM. Returns a finite float > 0; raises ValueError otherwise."""
+    text = str(raw).strip().lstrip("\ufeff").strip()
+    text = text.lstrip("$\u20ac").strip()
+    if not text:
+        raise ValueError("empty amount")
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        amount = float(text)
+    except ValueError:
+        raise ValueError(f"could not parse amount '{raw}'") from None
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError(f"amount must be a finite number greater than 0, got '{raw}'")
+    return amount
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="costs.py",
@@ -86,7 +109,7 @@ def build_parser():
 
     add = subparsers.add_parser("add", help="append one manual entry")
     add.add_argument("--kind", required=True, help=f"one of: {', '.join(KINDS)}")
-    add.add_argument("--amount", type=float, required=True, help="amount in USD, greater than 0")
+    add.add_argument("--amount", type=str, required=True, help="amount in USD, greater than 0")
     add.add_argument("--date", default=None, help="entry date YYYY-MM-DD (default: today)")
     add.add_argument("--note", default="", help="free-text note")
     add.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
@@ -140,9 +163,10 @@ def command_add(connection, args, started):
         raise CostsUsageError(
             f"unknown kind '{args.kind}'; valid kinds: {', '.join(KINDS)}"
         )
-    amount = args.amount
-    if amount is None or not math.isfinite(amount) or amount <= 0:
-        raise CostsUsageError("--amount must be a finite number greater than 0")
+    try:
+        amount = parse_amount(args.amount)
+    except ValueError as exc:
+        raise CostsUsageError(str(exc)) from None
     entry_date = args.date if args.date is not None else date.today().isoformat()
     if not DATE_RE.match(entry_date):
         raise CostsUsageError(f"--date must match YYYY-MM-DD, got '{entry_date}'")
@@ -269,7 +293,7 @@ def command_import_donations(connection, args, started):
     imported = []
     skipped = 0
     try:
-        with source_file.open(newline="", encoding="utf-8") as handle:
+        with source_file.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.reader(handle)
             try:
                 header = next(reader)
@@ -298,10 +322,10 @@ def command_import_donations(connection, args, started):
                     skipped += 1
                     continue
                 try:
-                    amount = float(raw_amount.lstrip("$\u20ac").replace(",", ""))
+                    amount = parse_amount(raw_amount)
                 except ValueError:
                     amount = None
-                if amount is None or not math.isfinite(amount) or amount <= 0:
+                if amount is None:
                     print(
                         f"[warn] skipping row {reader.line_num}: bad amount '{raw_amount}'",
                         file=sys.stderr,

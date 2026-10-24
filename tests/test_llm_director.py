@@ -1803,6 +1803,20 @@ def test_beat_snap_cut_beyond_the_slack_warns():
     assert any("not snapped" in warning for warning in warnings)
 
 
+def test_beat_snap_downbeat_over_cap_falls_back_to_a_beat():
+    beat_s = [round(0.5 * index, 4) for index in range(20)]
+    grid = {"beat_s": beat_s, "downbeat_s": [2.0, 4.0, 6.0, 8.0], "beat_period_s": 0.5}
+    slots = [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 1.9}]
+    bounds = [
+        {"photo": False, "important": False, "low": 0.5, "high": 2.0, "window_in": 0.0, "cap": 1.5}
+    ]
+    warnings = []
+    stats = llm_director.snap_slots(slots, bounds, grid, [True], warnings)
+    assert slots[0]["out_s"] == 1.5
+    assert stats["unsnapped"] == 0
+    assert not [warning for warning in warnings if "not snapped" in warning]
+
+
 def test_run_with_beats_writes_cut_transitions(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     beats_path = tmp_path / "beats.json"

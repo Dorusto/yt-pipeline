@@ -28,7 +28,7 @@ def load_corrections(path):
     corrections = []
     try:
         with open(path, encoding="utf-8") as handle:
-            for line in handle:
+            for lineno, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
@@ -38,6 +38,10 @@ def load_corrections(path):
                     capitalised = wrong.startswith("*")
                     if capitalised:
                         wrong = wrong[1:]
+                    if wrong == "":
+                        raise CorrectionsError(
+                            f"corrections line {lineno}: the wrong part is empty"
+                        )
                     corrections.append(Correction(wrong, correct, capitalised))
     except FileNotFoundError:
         raise CorrectionsError(f"cannot read corrections '{path}': file not found")
@@ -71,3 +75,17 @@ def apply_corrections(text, corrections, capitalised=False):
             cap_correct = correction.correct[:1].upper() + correction.correct[1:]
             text = text.replace(cap_wrong, cap_correct)
     return text
+
+
+def count_changes(text, corrections, capitalised=False):
+    """Count the corrections that change something, including the capitalised variant."""
+    count = 0
+    for correction in corrections:
+        if correction.wrong and correction.wrong in text:
+            count += 1
+            continue
+        if (capitalised or correction.capitalised) and correction.wrong[:1].islower():
+            cap_wrong = correction.wrong[0].upper() + correction.wrong[1:]
+            if cap_wrong in text:
+                count += 1
+    return count

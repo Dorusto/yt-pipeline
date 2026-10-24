@@ -327,7 +327,7 @@ def build_markdown(name, fields, chapters, ro_description, en_description):
     if any("title_en" in chapter for chapter in chapters):
         lines.extend(["", "## Chapters (EN)"])
         for chapter in chapters:
-            lines.append(f"{chapter['timestamp']} {chapter.get('title_en', '')}")
+            lines.append(f"{chapter['timestamp']} {chapter.get('title_en') or chapter['title']}")
     lines.extend([
         "",
         "## Tags",
@@ -358,6 +358,9 @@ def run(
     context_path = Path(context_path).expanduser()
     srt_text = read_text(srt_path, "SRT")
     context_text = read_text(context_path, "context")
+
+    if title is not None and not title.strip():
+        raise MetadataError("--title must be a non-empty string")
 
     config = load_config()
     members = (config.get("channel") or {}).get("members")

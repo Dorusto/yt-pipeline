@@ -442,3 +442,11 @@ def test_channel_invalid_raises(tmp_path):
         data["channel"] = bad
         with pytest.raises(config.ConfigError):
             config.load_config(write_config(tmp_path, data))
+
+
+def test_channel_fixed_unknown_key_raises(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"fixed": {"nope": {"ro": "x"}}}
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_config(write_config(tmp_path, data))
+    assert "nope" in str(exc.value)

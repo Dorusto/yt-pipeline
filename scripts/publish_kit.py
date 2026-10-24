@@ -384,11 +384,7 @@ def main(argv=None):
 
     checks, errors = collect_kit_checks(project, name, final_video, args.kit_title)
     if errors:
-        for error in errors:
-            report_error(error, EXIT_USAGE, False)
-        if args.json:
-            print(json.dumps({"ok": False, "error": "; ".join(errors), "exit_code": EXIT_USAGE}))
-        return EXIT_USAGE
+        return report_error("; ".join(errors), EXIT_USAGE, args.json)
 
     metadata, _ = load_metadata_json(project)
     titles = (metadata or {}).get("titles") or []
@@ -414,7 +410,7 @@ def main(argv=None):
         return report_error(f"could not write the kit: {exc}", EXIT_RUNTIME, args.json)
 
     summary = {
-        "output": KIT_DIR_NAME,
+        "output": f"{KIT_DIR_NAME}/studio.md",
         "video": video_source.name,
         "video_link": video_link or "path",
         "title": title,

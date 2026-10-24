@@ -150,31 +150,31 @@ def validate_concept(concept, index):
     """Validate one concept shape (its timecode is checked later, against the transcript)."""
     label = f"model JSON key 'concepts[{index}]'"
     if not isinstance(concept, dict):
-        raise ThumbnailConceptsError(f"{label} must be an object")
+        raise ThumbnailConceptsRuntimeError(f"{label} must be an object")
     for field in ("name", "pose", "emotion"):
         if not isinstance(concept.get(field), str) or not concept[field].strip():
-            raise ThumbnailConceptsError(f"{label}.{field} must be a non-empty string")
+            raise ThumbnailConceptsRuntimeError(f"{label}.{field} must be a non-empty string")
     text = concept.get("text")
     if not isinstance(text, dict):
-        raise ThumbnailConceptsError(f"{label}.text must be an object with 'title', 'keyword' and 'kicker'")
+        raise ThumbnailConceptsRuntimeError(f"{label}.text must be an object with 'title', 'keyword' and 'kicker'")
     for field in ("title", "keyword", "kicker"):
         if not isinstance(text.get(field), str):
-            raise ThumbnailConceptsError(f"{label}.text.{field} must be a string")
+            raise ThumbnailConceptsRuntimeError(f"{label}.text.{field} must be a string")
     if not text["title"].strip() or not text["keyword"].strip():
-        raise ThumbnailConceptsError(f"{label}.text needs a non-empty title and keyword")
+        raise ThumbnailConceptsRuntimeError(f"{label}.text needs a non-empty title and keyword")
     if concept.get("theme") not in ("tech", "creator"):
-        raise ThumbnailConceptsError(f"{label}.theme must be 'tech' or 'creator'")
+        raise ThumbnailConceptsRuntimeError(f"{label}.theme must be 'tech' or 'creator'")
     source = concept.get("source")
     if not isinstance(source, dict):
-        raise ThumbnailConceptsError(f"{label}.source must be an object with 'kind'")
+        raise ThumbnailConceptsRuntimeError(f"{label}.source must be an object with 'kind'")
     kind = source.get("kind")
     if kind == "clip_frame":
         if not isinstance(source.get("timecode"), str):
-            raise ThumbnailConceptsError(
+            raise ThumbnailConceptsRuntimeError(
                 f"{label}.source.timecode must be a string for kind 'clip_frame'"
             )
     elif kind != "new_photo":
-        raise ThumbnailConceptsError(f"{label}.source.kind must be 'clip_frame' or 'new_photo'")
+        raise ThumbnailConceptsRuntimeError(f"{label}.source.kind must be 'clip_frame' or 'new_photo'")
 
 
 def validate_concepts(concepts, srt_end):
@@ -187,12 +187,12 @@ def validate_concepts(concepts, srt_end):
             raw = source["timecode"]
             stamp = normalize_timestamp(raw)
             if stamp is None:
-                raise ThumbnailConceptsError(
+                raise ThumbnailConceptsRuntimeError(
                     f"concept {index + 1} ('{concept['name']}') has an invalid timecode "
                     f"('{raw}'); use HH:MM:SS or MM:SS"
                 )
             if timestamp_seconds(stamp) > srt_end:
-                raise ThumbnailConceptsError(
+                raise ThumbnailConceptsRuntimeError(
                     f"concept {index + 1} ('{concept['name']}') timecode is beyond the "
                     f"transcript end ({format_clock(srt_end)})"
                 )

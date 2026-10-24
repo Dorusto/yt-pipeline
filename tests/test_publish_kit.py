@@ -210,13 +210,26 @@ def test_json_summary_fields(tmp_path, capsys):
     project, clip = build_project(tmp_path)
     assert run_kit(project, clip) == EXIT_OK
     summary = json.loads(capsys.readouterr().out)
-    assert summary["output"] == "publish-kit"
+    assert summary["output"] == "publish-kit/studio.md"
     assert summary["video"] == "final.mp4"
     assert summary["video_link"] in {"hardlink", "symlink", "path"}
     assert summary["title"] == "Title one"
     assert summary["checks"]
     assert isinstance(summary["wall_time_s"], (int, float))
     assert summary["llm_cost_usd"] == 0.0
+
+
+def test_json_failure_is_one_object(tmp_path, capsys):
+    project, clip = build_project(tmp_path)
+    (project / f"{project.name}_EN.srt").unlink()
+    assert run_kit(project, clip) == EXIT_USAGE
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == EXIT_USAGE
+    assert len(captured.out.strip().splitlines()) == 1
+    error_lines = [line for line in captured.err.splitlines() if line.startswith("[error]")]
+    assert len(error_lines) == 1
 
 
 def test_chapter_lines_en_uses_title_en_when_present():

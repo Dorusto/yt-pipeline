@@ -459,6 +459,10 @@ def main(argv=None):
     try:
         if args.out and args.in_place:
             raise ColourError("--out and --in-place are mutually exclusive")
+        if not (0 < args.target_luma <= 1):
+            raise ColourError("--target-luma must be in (0, 1]")
+        if not (0 < args.target_contrast <= 1):
+            raise ColourError("--target-contrast must be in (0, 1]")
         summary = run_fcproj(
             args.fcproj,
             args.sequence,

@@ -197,6 +197,29 @@ def test_missing_channel_members_exits_2(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in err
 
 
+def test_empty_title_exits_2(tmp_path, monkeypatch, capsys):
+    code, _ = run_main(tmp_path, monkeypatch, FULL, extra=["--title", ""])
+    assert code == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "--title" in err
+    assert "Traceback" not in err
+
+
+def test_en_chapters_fall_back_to_ro_title(tmp_path, monkeypatch):
+    data = dict(
+        FULL,
+        chapters=[
+            {"timestamp": "00:00:00", "title": "Intro", "title_en": "Intro"},
+            {"timestamp": "00:00:02", "title": "Lume"},
+        ],
+    )
+    code, out = run_main(tmp_path, monkeypatch, data)
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    en_section = text.split("## Chapters (EN)", 1)[1]
+    assert "00:00:02 Lume" in en_section
+
+
 def test_missing_channel_github_url_exits_2(tmp_path, monkeypatch, capsys):
     config = {
         "models": {"metadata": "deepseek/deepseek-v4.1-flash"},

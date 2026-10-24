@@ -810,7 +810,7 @@ def run(ctx):
             write_state(ctx.project, state)
             entries.append({"name": name, "status": "skipped", "outputs": outputs})
             if name == "kit":
-                kit_result = {"output": KIT_DIR_NAME, "video": None, "title": None, "checks": []}
+                kit_result = {"output": f"{KIT_DIR_NAME}/studio.md", "video": None, "title": None, "checks": []}
             print_progress(ctx, index, total, name, "skipped", 0.0, "output exists")
             continue
         if step.get("fail"):

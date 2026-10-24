@@ -693,7 +693,7 @@ def test_kit_builds_the_folder(tmp_path, capsys):
     en_block = studio.split("## Description (EN)\n\n```\n", 1)[1].split("\n```", 1)[0]
     assert ro_block.endswith("00:00 Intro")
     assert en_block.endswith("00:00 Intro")
-    assert summary["kit"]["output"] == "publish-kit"
+    assert summary["kit"]["output"] == "publish-kit/studio.md"
     assert summary["kit"]["video"] == "final.mp4"
     assert summary["kit"]["title"] == "Title one"
     assert summary["kit"]["checks"]

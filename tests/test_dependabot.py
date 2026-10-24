@@ -20,13 +20,11 @@ def test_dependabot_covers_pip_and_github_actions():
     assert ecosystems == {"pip", "github-actions"}
 
 
-def test_dependabot_is_weekly_grouped_and_in_working_hours():
+def test_dependabot_is_weekly_grouped():
     for update in load()["updates"]:
         schedule = update["schedule"]
         assert schedule["interval"] == "weekly"
         assert schedule["day"] == "monday"
-        assert schedule["time"] == "09:00"
-        assert schedule["timezone"] == "Europe/Bucharest"
         assert update["directory"] == "/"
         groups = update["groups"]
         assert groups, "each ecosystem needs one group"

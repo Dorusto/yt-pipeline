@@ -159,6 +159,51 @@ def test_import_donations_missing_columns_usage_error(tmp_path, capsys):
     assert "amount" in captured.err
 
 
+def test_import_donations_decimal_comma_and_thousands(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    donations = tmp_path / "donations.csv"
+    donations.write_text(
+        "date,amount\n"
+        '2026-10-01,"10,00"\n'
+        '2026-10-02,"€10,00"\n'
+        '2026-10-03,"1.000,50"\n',
+        encoding="utf-8",
+    )
+    summary = run_json(
+        capsys, "--ledger", str(ledger), "import-donations", "--from", str(donations), "--json"
+    )
+    assert summary["count"] == 3
+    assert [row["amount_usd"] for row in summary["imported"]] == [10.0, 10.0, 1000.5]
+
+
+def test_import_donations_utf8_bom_header(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    donations = tmp_path / "donations.csv"
+    text = "date,amount\n2026-10-01,10.00\n"
+    donations.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+    summary = run_json(
+        capsys, "--ledger", str(ledger), "import-donations", "--from", str(donations), "--json"
+    )
+    assert summary["count"] == 1
+    assert summary["imported"][0]["amount_usd"] == 10.0
+
+
+def test_add_accepts_decimal_comma(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    summary = run_json(
+        capsys,
+        "--ledger",
+        str(ledger),
+        "add",
+        "--kind",
+        "donation",
+        "--amount",
+        "10,00",
+        "--json",
+    )
+    assert summary["entry"]["amount_usd"] == 10.0
+
+
 def test_totals_balance_math(tmp_path, capsys):
     ledger = tmp_path / "costs.db"
     add(capsys, ledger, "fixed_monthly", 3.0, day="2026-10-01")
