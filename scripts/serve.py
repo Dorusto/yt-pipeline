@@ -1216,7 +1216,7 @@ var ask=document.createElement('div');ask.className='shot-ask';
 ask.innerHTML='<span>Shot '+(i+1)+': '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
 host.appendChild(ask);
 ask.querySelector('.no').onclick=function(){ask.remove();trimTotal=0;};
-ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>Shot '+(i+1)+' is getting '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+', new version in about 15 s...</span>';trim.submit();};}
+ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>Shot '+(i+1)+' will be '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'. Making the new version, ready in about 15 s...</span>';trim.submit();};}
 function trimRow(host,i){var r=document.createElement('div');r.className='shot-edit';
 r.innerHTML='<span>Shot '+(i+1)+'</span><button type="button" class="minus">-1 s</button><button type="button" class="plus">+1 s</button>';
 host.appendChild(r);

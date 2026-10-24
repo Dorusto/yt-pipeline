@@ -4,6 +4,16 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Cuts land on the strong beat; the wait message (V020N lot n28)
+
+**Context:** Issue #95, measured on a real holiday edit: the cuts sat 0.03-0.04 s after the strongest hit and only 5 of 14 landed on a downbeat. The onset envelope's flux peak is late by the STFT window-centre latency, so the whole grid was systematically late, and the director only preferred a downbeat when the plan's structure beat changed. Issue #93: the text after Yes on the Watch tab read "Shot N is getting X s longer/shorter, new version in about 15 s...".
+
+**Decision:** `beats.py` gains `ONSET_LATENCY_S = (STFT_WINDOW / 2 - STFT_HOP / 2) / ANALYSIS_RATE` (≈ `0.0174 s`); `track_beats` and `pick_onsets` subtract it from their times (clamped at `0`), so the reported beat time is the start of the hit and the grid is not late. The `beats.json` shape, the CLI, the exit codes and the `--json` keys are unchanged. `llm_director.snap_slots` drops the `downbeat_at` parameter: every cut tries the nearest downbeat, then a half-bar beat (`downbeat + 2 * beat_period_s`, so the bar count stays even), then the nearest beat, and the first candidate whose snap fits the slot's allowed length range wins; the slot records the grid it used in `beat_grid` (`downbeat`/`half_bar`/`beat`, or `null` when unsnapped) and the `beat_snap` summary gains `downbeats` and `half_bar` counts. The downbeat-over-cap fallback stays. The after-Yes text becomes "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
+
+**Consequence:** Files touched: `scripts/beats.py`, `tests/test_beats.py`, `scripts/llm_director.py`, `schemas/edit.schema.json`, `tests/test_llm_director.py`, `scripts/serve.py`, `tests/test_serve.py`, `docs/guides/tools.md`, `.claude/skills/yt-beats/SKILL.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-render/SKILL.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. No new dependency, no new CLI flag, no change to the `beats.json` shape or the `beats.py` `--json` keys; `scripts/director.py` (the rule-based fallback) is unchanged and never passes downbeats.
+
+---
+
 ## [2026-10-24] Beats that follow the music; the Watch-tab wording (V020N lot n24)
 
 **Context:** Issue #95: `beats.py` fitted one rigid period grid to the onsets with a least-squares line, so on a track whose tempo drifts the grid ran in and out of phase against the onset envelope and the cut grid drifted off the music. Issue #93: the owner asked for two wording changes on the Watch tab — the "Compare with v1 v2 …" row removed, and the text after Yes reworded.

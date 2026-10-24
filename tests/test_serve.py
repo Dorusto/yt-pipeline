@@ -2381,8 +2381,8 @@ def test_strip_script_handles_the_trim_form():
     assert "tdelta.value=String(trimTotal)" in serve.PICK_SCRIPT
     assert "trimTotal=0" in serve.PICK_SCRIPT
     assert "'<span>Shot '+(i+1)+': '" in serve.PICK_SCRIPT
-    assert "is getting" in serve.PICK_SCRIPT
-    assert "new version in about 15 s" in serve.PICK_SCRIPT
+    assert "will be" in serve.PICK_SCRIPT
+    assert "Making the new version, ready in about 15 s" in serve.PICK_SCRIPT
 
 
 def make_ledger(path):

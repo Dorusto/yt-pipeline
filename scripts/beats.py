@@ -37,6 +37,8 @@ from common.ffmpeg_tools import ffmpeg_path
 ANALYSIS_RATE = 22050
 STFT_WINDOW = 1024
 STFT_HOP = 256
+# The flux at envelope index j compares frames j and j+1, so its natural time is the midpoint of the two window centres, half a window minus half a hop before the current frame time.
+ONSET_LATENCY_S = (STFT_WINDOW / 2 - STFT_HOP / 2) / ANALYSIS_RATE
 PEAK_HALF_WINDOW = 10
 DOWNBEAT_HALF_WINDOW = 3
 ENERGY_WINDOW_S = 0.5
@@ -212,7 +214,8 @@ def pick_onsets(envelope, rate=ANALYSIS_RATE, hop=STFT_HOP, min_beat_s=0.25, hal
         if all(abs(index - other) >= min_gap for other in selected):
             selected.append(index)
     selected.sort()
-    return np.array([(index + 1) * hop / rate for index in selected])
+    times = np.array([(index + 1) * hop / rate for index in selected]) - ONSET_LATENCY_S
+    return np.maximum(times, 0.0)
 
 
 def _is_local_max(values, index, half):
@@ -332,7 +335,8 @@ def track_beats(envelope, period, duration_s, rate=ANALYSIS_RATE, hop=STFT_HOP):
         path.append(index)
         index = backlink[index]
     path.reverse()
-    times = np.array([frame * hop / rate for frame in path], dtype=float)
+    times = np.array([frame * hop / rate for frame in path], dtype=float) - ONSET_LATENCY_S
+    times = np.maximum(times, 0.0)
     times = times[(times >= 0.0) & (times <= duration_s)]
     return times, period
 

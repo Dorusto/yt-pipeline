@@ -1625,65 +1625,92 @@ def snap_photo(slot, start, times, cap=None):
     return True
 
 
-def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
-    """Snap every timeline cut to the nearest beat, in place; return the summary counts."""
+def _cap_target(grid_name, times, end, start, cap, tolerance, beat_s):
+    """The candidate target for one grid after the slot-cap fallback; returns grid, times, target, reach."""
+    target = nearest_beat(end, times)
+    reach = tolerance
+    if target is not None and cap is not None and target - start > float(cap) + 1e-9:
+        within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
+        if not within and times is not beat_s:
+            grid_name = "beat"
+            times = beat_s
+            within = [moment for moment in beat_s if moment - start <= float(cap) + 1e-9]
+        target = max(within) if within else None
+        reach = 2 * tolerance
+    return grid_name, times, target, reach
+
+
+def snap_slots(slots, bounds, beat_grid, warnings, slot_min_s=None):
+    """Snap every timeline cut to a beat, preferring downbeats; return the summary counts.
+
+    A downbeat or half-bar cut snaps when the target keeps the slot at least
+    ``slot_min_s`` long (the pacing min); the slot's allowed length range is the
+    reach, and the window and cap helpers still bound the move. The plain beat
+    candidate keeps the half-beat tolerance.
+    """
     beat_s = beat_grid["beat_s"]
     downbeat_s = beat_grid["downbeat_s"] or beat_s
-    tolerance = BEAT_SNAP_FRACTION * beat_grid["beat_period_s"]
+    period = beat_grid["beat_period_s"]
+    half_bar_s = [round(d + 2 * period, 4) for d in downbeat_s]
+    tolerance = BEAT_SNAP_FRACTION * period
     snapped = 0
     unsnapped = 0
+    downbeats = 0
+    half_bar = 0
     start = 0.0
     for index, slot in enumerate(slots):
         if index > 0:
             slot["transition"] = {"type": "cut", "duration_s": 0}
         end = start + slot_duration(slot)
-        times = downbeat_s if downbeat_at[index] else beat_s
-        target = nearest_beat(end, times)
-        reach = tolerance
-        if target is None or abs(end - target) > reach:
-            beat_target = nearest_beat(end, beat_s)
-            if beat_target is not None and abs(end - beat_target) <= reach:
-                times = beat_s
-                target = beat_target
         cap = bounds[index].get("cap")
-        if target is not None and cap is not None and target - start > float(cap) + 1e-9:
-            within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
-            if not within and times is not beat_s:
-                times = beat_s
-                within = [moment for moment in beat_s if moment - start <= float(cap) + 1e-9]
-            target = max(within) if within else None
-            reach = 2 * tolerance
-        if target is None or abs(end - target) > reach:
-            warnings.append(snap_warning(index + 1, end, target))
+        chosen = None
+        last_target = None
+        for grid_name, times in (("downbeat", downbeat_s), ("half_bar", half_bar_s), ("beat", beat_s)):
+            used_grid, times, target, reach = _cap_target(grid_name, times, end, start, cap, tolerance, beat_s)
+            last_target = target
+            if target is None:
+                continue
+            if grid_name in ("downbeat", "half_bar"):
+                if not bounds[index].get("photo") and slot_min_s is not None and target - start < slot_min_s - 1e-9:
+                    continue
+            elif abs(end - target) > reach:
+                continue
+            if bounds[index].get("photo"):
+                if snap_photo(slot, start, times, cap):
+                    chosen = used_grid
+                    break
+                continue
+            delta = target - end
+            if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta, tolerance):
+                chosen = used_grid
+                break
+            if index + 1 < len(slots):
+                moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta, tolerance)
+            else:
+                moved = absorb_length(slot, bounds[index], delta, tolerance)
+            if moved:
+                chosen = used_grid
+                break
+        if chosen is None:
+            warnings.append(snap_warning(index + 1, end, last_target))
             unsnapped += 1
+            slot["beat_grid"] = None
             start = end
             continue
-        if bounds[index].get("photo"):
-            if not snap_photo(slot, start, times, bounds[index].get("cap")):
-                warnings.append(snap_warning(index + 1, end, target))
-                unsnapped += 1
-                start = end
-                continue
-            snapped += 1
-            start += slot_duration(slot)
-            continue
-        delta = target - end
-        if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta, tolerance):
-            snapped += 1
-            start += slot_duration(slot)
-            continue
-        if index + 1 < len(slots):
-            moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta, tolerance)
-        else:
-            moved = absorb_length(slot, bounds[index], delta, tolerance)
-        if moved:
-            snapped += 1
-            start += slot_duration(slot)
-            continue
-        warnings.append(snap_warning(index + 1, end, target))
-        unsnapped += 1
-        start = end
-    return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
+        slot["beat_grid"] = chosen
+        if chosen == "downbeat":
+            downbeats += 1
+        elif chosen == "half_bar":
+            half_bar += 1
+        snapped += 1
+        start += slot_duration(slot)
+    return {
+        "beats": len(beat_s),
+        "snapped": snapped,
+        "unsnapped": unsnapped,
+        "downbeats": downbeats,
+        "half_bar": half_bar,
+    }
 
 
 def apply_length_policy(record, plan, facts_by_key, pacing, important_max_s, warnings, speed_ramp=False):
@@ -1785,23 +1812,15 @@ def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warning
 
 
 def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings, caps=None):
-    """Snap a record's cuts to the grid; a cut that starts a new plan beat snaps to a downbeat."""
+    """Snap a record's cuts to the grid, preferring downbeats."""
     slots = record.get("video") or []
     plan_by_id = {slot.get("id"): slot for slot in plan.get("slot_plan") or []}
-    plan_beat = {slot_id: entry.get("beat") for slot_id, entry in plan_by_id.items()}
-    downbeat_at = []
-    for index, slot in enumerate(slots):
-        current = plan_beat.get(slot.get("id"))
-        following = plan_beat.get(slots[index + 1].get("id")) if index + 1 < len(slots) else None
-        downbeat_at.append(
-            bool(index + 1 < len(slots) and following is not None and current is not None and following != current)
-        )
     bounds = []
     for slot in slots:
         plan_slot = plan_by_id.get(slot.get("id")) or {}
         fact = facts_by_key.get(plan_slot.get("shot_key"))
         bounds.append(slot_bounds(slot, fact, (caps or {}).get(slot.get("id"))))
-    return snap_slots(slots, bounds, beat_grid, downbeat_at, warnings)
+    return snap_slots(slots, bounds, beat_grid, warnings, plan_pacing(plan)["slot_min"])
 
 
 def default_window(fact, plan_slot, important_max_s, slot_min_s, slot_max_s):

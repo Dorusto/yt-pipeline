@@ -163,6 +163,19 @@
             "null"
           ],
           "description": "short candidate id in the shotlog, e.g. 0071/s2; the id feedback and explain.html refer to"
+        },
+        "beat_grid": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "downbeat",
+            "half_bar",
+            "beat",
+            null
+          ],
+          "description": "which beat grid the cut at this slot's end used: a downbeat, a half-bar beat (keeps the bar count even), or the nearest beat; null when the cut was not snapped"
         }
       }
     },
@@ -340,6 +353,19 @@
             "null"
           ],
           "description": "short candidate id in the shotlog, e.g. 0072/p1; the id feedback and explain.html refer to"
+        },
+        "beat_grid": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "downbeat",
+            "half_bar",
+            "beat",
+            null
+          ],
+          "description": "which beat grid the cut at this slot's end used: a downbeat, a half-bar beat (keeps the bar count even), or the nearest beat; null when the cut was not snapped"
         }
       }
     },

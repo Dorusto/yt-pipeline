@@ -51,7 +51,7 @@ HEIC photos are converted once to JPEG under `<workspace>/photos/` with `common.
 
 ## Music
 
-A music track mixes **under the cleaned ambient bus** — ambient speech and sound always win. The track comes from `--music FILE` or, when the flag is absent, from `edit.json` `audio.music` (`{path, gain_db, fade_in_s, fade_out_s, start_s}`, all optional but `path`). `--music` overrides `audio.music.path`; `--music-gain-db` overrides `audio.music.gain_db`. Defaults: gain `-12.0` dB, fade-out `2.0` s at the very end, no fade-in, start at `0`. A relative `path` is resolved against the edit file's folder.
+A music track mixes **under the cleaned ambient bus** — ambient speech and sound always win. The track comes from `--music FILE` or, when the flag is absent, from `edit.json` `audio.music` (`{path, gain_db, fade_in_s, fade_out_s, start_s}`, all optional but `path`). `--music` overrides `audio.music.path`; `--music-gain-db` overrides `audio.music.gain_db`. Defaults: gain `-12.0` dB, fade-out `2.0` s at the very end, no fade-in, start at `0`. A relative `path` is resolved against the edit file's folder. The edit's cuts land on the beat grid (the directors snap them to the onset-aligned beats of `beats.py`), so the rendered cuts stay on the hit.
 
 The mix graph, in one ffmpeg run:
 

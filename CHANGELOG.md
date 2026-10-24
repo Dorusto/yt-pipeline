@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Beats: `beats.py` compensates the STFT window-centre latency (`ONSET_LATENCY_S`, ≈ 0.0174 s) in the onset and beat times, so the reported beat time is the start of the hit and the grid is no longer systematically late; the `beats.json` shape and the CLI are unchanged.
+- Director: every timeline cut now prefers the nearest downbeat when it lies inside the slot's allowed length range, otherwise a half-bar beat (keeps the bar count even), otherwise the nearest beat; the slot records which grid it used in `beat_grid` and the `beat_snap` summary gains `downbeats`/`half_bar` counts.
+- Web app: the text after Yes on the Watch tab reads "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
 - Beats: `beats.py` places the beat grid by dynamic-programming beat tracking (Ellis 2007) after a fine best-phase refinement of the coarse period, so the grid follows a drifting tempo instead of a rigid period; the `beats.json` shape and the CLI are unchanged.
 - Web app: the Watch tab no longer shows the "Compare with v1 v2 …" row (the `?with=` side-by-side view stays), and the text after Yes reads "Shot N is getting X s longer/shorter, new version in about 15 s...".
 - Director: for a chronological brief the repairs no longer break the time order — after a repair the edit and its plan are re-sorted by capture/source time before the beat snap, so a swapped-in top star lands at its place in the day.

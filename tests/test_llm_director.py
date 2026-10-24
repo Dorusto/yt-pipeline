@@ -1711,7 +1711,7 @@ def test_load_beats_accepts_both_shapes(tmp_path):
         assert grid["downbeat_s"]
 
 
-def test_beat_snap_uses_downbeats_at_structure_boundaries():
+def test_beat_snap_uses_downbeats_when_in_reach():
     beat_s = [round(0.5 * index, 4) for index in range(60)]
     grid = {"beat_s": beat_s, "downbeat_s": [0.0, 4.75, 9.5, 14.25], "beat_period_s": 0.5}
     record = {
@@ -1735,14 +1735,14 @@ def test_beat_snap_uses_downbeats_at_structure_boundaries():
     }
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
-    assert stats == {"beats": 60, "snapped": 3, "unsnapped": 0}
-    assert record_cuts(record) == [2.5, 4.75, 7.0]
+    assert stats == {"beats": 60, "snapped": 3, "unsnapped": 0, "downbeats": 3, "half_bar": 0}
+    assert record_cuts(record) == [4.75, 9.5, 14.25]
     assert all(slot["transition"] == {"type": "cut", "duration_s": 0} for slot in record["video"][1:])
 
 
 def test_beat_snap_structure_cut_falls_back_to_the_nearest_beat():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
-    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    grid = {"beat_s": beat_s, "downbeat_s": [10.0, 20.0, 30.0], "beat_period_s": 0.5}
     record = {
         "video": [
             {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "cut", "duration_s": 0}},
@@ -1799,7 +1799,7 @@ def test_beat_snap_click_track_every_cut_on_a_beat(tmp_path):
 
 def test_beat_snap_video_window_exhausted_moves_within_the_slack():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
-    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    grid = {"beat_s": beat_s, "downbeat_s": [10.0, 20.0, 30.0], "beat_period_s": 0.5}
     record = {
         "video": [
             {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.4, "transition": {"type": "cut", "duration_s": 0}},
@@ -1814,7 +1814,7 @@ def test_beat_snap_video_window_exhausted_moves_within_the_slack():
 
 
 def test_beat_snap_cut_beyond_the_slack_warns():
-    grid = {"beat_s": [0.0, 5.0, 10.0], "downbeat_s": [0.0, 5.0, 10.0], "beat_period_s": 0.5}
+    grid = {"beat_s": [3.0, 8.0, 13.0], "downbeat_s": [3.0, 8.0, 13.0], "beat_period_s": 0.5}
     record = {
         "video": [
             {"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 2.3, "transition": {"type": "cut", "duration_s": 0}},
@@ -1837,10 +1837,48 @@ def test_beat_snap_downbeat_over_cap_falls_back_to_a_beat():
         {"photo": False, "important": False, "low": 0.5, "high": 2.0, "window_in": 0.0, "cap": 1.5}
     ]
     warnings = []
-    stats = llm_director.snap_slots(slots, bounds, grid, [True], warnings)
+    stats = llm_director.snap_slots(slots, bounds, grid, warnings)
     assert slots[0]["out_s"] == 1.5
+    assert slots[0]["beat_grid"] == "beat"
     assert stats["unsnapped"] == 0
     assert not [warning for warning in warnings if "not snapped" in warning]
+
+
+def test_beat_snap_prefers_downbeats():
+    beat_s = [round(0.5 * index, 4) for index in range(140)]
+    downbeat_s = beat_s[::4]
+    grid = {"beat_s": beat_s, "downbeat_s": downbeat_s, "beat_period_s": 0.5}
+    record = {
+        "video": [
+            {
+                "id": f"v{index}",
+                "clip": f"c{index}.mp4",
+                "in_s": 0.0,
+                "out_s": 3.0,
+                "transition": {"type": "cut", "duration_s": 0},
+            }
+            for index in range(15)
+        ]
+    }
+    plan = {
+        "brief": {"target_duration_s": 60},
+        "slot_plan": [
+            {"id": f"v{index}", "beat": "b1", "shot_key": f"c{index}/s1"} for index in range(15)
+        ],
+    }
+    facts = {
+        f"c{index}/s1": video_bound_fact(f"c{index}/s1", f"c{index}.mp4", 0.0, 5.0)
+        for index in range(15)
+    }
+    caps = {f"v{index}": llm_director.plan_pacing(plan)["slot_max"] for index in range(15)}
+    warnings = []
+    stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings, caps)
+    assert stats["snapped"] >= 10
+    downbeat_cuts = [slot for slot in record["video"] if slot.get("beat_grid") == "downbeat"]
+    assert len(downbeat_cuts) >= stats["snapped"] / 2
+    for slot, cut in zip(record["video"], record_cuts(record)):
+        if slot.get("beat_grid") == "downbeat":
+            assert min(abs(cut - downbeat) for downbeat in downbeat_s) <= 0.02
 
 
 def test_run_with_beats_writes_cut_transitions(tmp_path):
@@ -1877,7 +1915,7 @@ def test_help_lists_beats():
 
 def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
-    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    grid = {"beat_s": beat_s, "downbeat_s": [10.0, 20.0, 30.0], "beat_period_s": 0.5}
     record = {
         "video": [
             {"id": "v1", "clip": "a.mp4", "in_s": 0.5, "out_s": 2.9, "transition": {"type": "cut", "duration_s": 0}},
