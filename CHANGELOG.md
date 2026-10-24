@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Beats: `beats.py` places the beat grid by dynamic-programming beat tracking (Ellis 2007) after a fine best-phase refinement of the coarse period, so the grid follows a drifting tempo instead of a rigid period; the `beats.json` shape and the CLI are unchanged.
+- Web app: the Watch tab no longer shows the "Compare with v1 v2 …" row (the `?with=` side-by-side view stays), and the text after Yes reads "Shot N is getting X s longer/shorter, new version in about 15 s...".
+
 ## [0.2.0] - 2026-10-24
 
 yt-pipeline v0.2.0 is the first release with the publish flow and the phone editing

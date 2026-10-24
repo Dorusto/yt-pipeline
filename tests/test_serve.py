@@ -944,7 +944,7 @@ def test_project_page_lists_versions_and_compares_two(tmp_path):
         page = body.decode()
         assert 'src="versions/v002/recap_720p.mp4"' in page
         assert "tunnel longer" in page
-        assert "Compare with" in page
+        assert "Compare with" not in page
         _, _, body = request(server, "GET", "/2026-10-14/?tab=recap&v=2&with=1")
         page = body.decode()
         assert 'src="versions/v002/recap_720p.mp4"' in page
@@ -2355,7 +2355,8 @@ def test_strip_script_handles_the_trim_form():
     assert "tdelta.value=String(trimTotal)" in serve.PICK_SCRIPT
     assert "trimTotal=0" in serve.PICK_SCRIPT
     assert "'<span>Shot '+(i+1)+': '" in serve.PICK_SCRIPT
-    assert "'lengthening':'shortening'" in serve.PICK_SCRIPT
+    assert "is getting" in serve.PICK_SCRIPT
+    assert "new version in about 15 s" in serve.PICK_SCRIPT
 
 
 def make_ledger(path):

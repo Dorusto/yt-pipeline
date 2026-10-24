@@ -1223,7 +1223,7 @@ var ask=document.createElement('div');ask.className='shot-ask';
 ask.innerHTML='<span>Shot '+(i+1)+': '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
 host.appendChild(ask);
 ask.querySelector('.no').onclick=function(){ask.remove();trimTotal=0;};
-ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>Shot '+(i+1)+': '+(trimTotal>0?'lengthening':'shortening')+', about 15 s...</span>';trim.submit();};}
+ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>Shot '+(i+1)+' is getting '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+', new version in about 15 s...</span>';trim.submit();};}
 function trimRow(host,i){var r=document.createElement('div');r.className='shot-edit';
 r.innerHTML='<span>Shot '+(i+1)+'</span><button type="button" class="minus">-1 s</button><button type="button" class="plus">+1 s</button>';
 host.appendChild(r);
@@ -1788,8 +1788,8 @@ def render_trim_form(name, version):
     )
 
 
-def render_version_links(name, versions, shown, compare=None):
-    """The row of version chips, plus compare links for the other versions."""
+def render_version_links(name, versions, shown):
+    """The row of version chips."""
     if len(versions) < 2:
         return ""
     base = f"/{html_escape(name)}/?tab=recap"
@@ -1805,17 +1805,7 @@ def render_version_links(name, versions, shown, compare=None):
             f'<a class="{" ".join(classes)}" href="{base}&amp;v={version["number"]}" '
             f'title="{html_escape(version_meta_line(version))}">v{label}</a>'
         )
-    others = [
-        f'<a class="{"on" if compare and compare["number"] == version["number"] else ""}" '
-        f'href="{base}&amp;v={shown["number"]}&amp;with={version["number"]}">'
-        f'v{version["name"].lstrip("v").lstrip("0") or "0"}</a>'
-        for version in versions
-        if version["number"] != shown["number"] and has_video(version)
-    ]
-    row = f'<div class="versions"><span>Version</span>{"".join(chips)}</div>'
-    if others:
-        row += f'<div class="versions"><span>Compare with</span>{"".join(others)}</div>'
-    return row
+    return f'<div class="versions"><span>Version</span>{"".join(chips)}</div>'
 
 
 def render_meta_box(directory, version_path=None, name=None, version=None, meta_cost=None):
@@ -1941,7 +1931,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     compare = pick_version(versions, compare_with) if compare_with is not None else None
     if compare is not None and compare["number"] == shown["number"]:
         compare = None
-    parts.append(render_version_links(name or directory.name, versions, shown, compare))
+    parts.append(render_version_links(name or directory.name, versions, shown))
     if status != "running" and has_video(shown):
         parts.append(render_drop_form(name or directory.name, shown))
         parts.append(render_trim_form(name or directory.name, shown))

@@ -4,6 +4,16 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Beats that follow the music; the Watch-tab wording (V020N lot n24)
+
+**Context:** Issue #95: `beats.py` fitted one rigid period grid to the onsets with a least-squares line, so on a track whose tempo drifts the grid ran in and out of phase against the onset envelope and the cut grid drifted off the music. Issue #93: the owner asked for two wording changes on the Watch tab — the "Compare with v1 v2 …" row removed, and the text after Yes reworded.
+
+**Decision:** Replace the least-squares grid fit with dynamic-programming beat tracking (Ellis 2007). The coarse period from the autocorrelation is first refined finely by a best-phase comb over a `±5 %` period grid in `0.1 %` steps (`refine_period`), then `track_beats` places each beat to maximise the normalised onset strength plus a quadratic-in-log penalty for deviating from the refined period, backtracking from the highest cumulative score. `DP_TIGHTNESS` is `100.0` (librosa's value; the tests pass with it and it was not tuned). The `beats.json` shape, the CLI, the exit codes and the `--json` keys are unchanged; numpy only, no new dependency. On the Watch tab the "Compare with" row is removed (`render_version_links` loses its `compare` parameter) while the `?with=` side-by-side view stays, and the after-Yes text becomes "Shot N is getting X s longer/shorter, new version in about 15 s...".
+
+**Consequence:** Files touched: `scripts/beats.py`, `tests/test_beats.py`, `scripts/serve.py`, `tests/test_serve.py`, `.claude/skills/yt-beats/SKILL.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. The skill describes the fine period refinement and the DP tracking. No format change, no new dependency, no new CLI flag; the directors' beat snap, `music_pick.py`, `render.py` and the `beats.json` schema are untouched.
+
+---
+
 ## [2026-10-24] Cuts stay on the beat after rendering; the shot question wording (V020N lot n22)
 
 **Context:** Issue #95, measured on a real holiday edit (v008 of a test project): in `edit.json` every cut sits exactly on a music beat (offset 0.00 s), but the rendered file cut later and later — planned 2.79 / 15.61 / 30.10 / 42.92 / 54.62 s, rendered 2.80 / 15.64 / 30.16 / 43.04 / 54.80 s (ffmpeg scene detection). Each clip was rounded up to whole frames on its own and the error added up (about +0.013 s per cut, 0.18 s by the end). Issue #93: the question under the shot buttons became "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?" (and the matching in-progress text), replacing the n19 wording "Make shot 2 3 s longer?".
