@@ -828,6 +828,11 @@ def read_prompt(name):
     return path.read_text(encoding="utf-8")
 
 
+def read_role_prompt(name):
+    """Return the shared playbook followed by the role prompt."""
+    return read_prompt("playbook.md").rstrip() + "\n\n" + read_prompt(name)
+
+
 def call_client(client, messages, state, role="director"):
     response = client.complete(role, messages)
     state.calls += 1
@@ -2886,9 +2891,9 @@ def _run_loop(
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
 
     content_type = detect_content_type(prompt_brief, workspace_path)
-    screenwriter_prompt = read_prompt("screenwriter.md")
-    editor_prompt = read_prompt("editor.md")
-    reviewer_prompt = read_prompt("reviewer.md")
+    screenwriter_prompt = read_role_prompt("screenwriter.md")
+    editor_prompt = read_role_prompt("editor.md")
+    reviewer_prompt = read_role_prompt("reviewer.md")
 
     rounds_used = 0
     approved = None

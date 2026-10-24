@@ -164,7 +164,7 @@ Skill: `yt-director`.
 |:---|:---|:---|
 | `director.py` | `ws/ingest.json` + `ws/motion/*.json` + `ws/quality/*.json` | `ws/edit.json` — video slots (clip, in/out, score, reason) + audio/captions/graphics plan |
 
-The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate.
+The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate. The three role prompts (screenwriter, editor, reviewer) share the standard playbook in `prompts/playbook.md` — the structure every edit follows and the tools the director can call.
 
 ---
 

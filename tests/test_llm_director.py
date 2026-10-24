@@ -447,7 +447,7 @@ def reviewer_not_approved():
 
 
 def calls_for(client, marker):
-    return [call for call in client.calls if call["messages"][0]["content"].startswith(marker)]
+    return [call for call in client.calls if marker in call["messages"][0]["content"]]
 
 
 def test_happy_path(tmp_path):
