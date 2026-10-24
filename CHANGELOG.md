@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agent entry point: `yt <tool> [args]` runs any tool from any folder, and `yt --help --json` lists the tools as JSON.
+- Claude Code plugin: five plugins in one marketplace `yt-pipeline` (`yt-director`, `yt-publish`, `yt-shorts`, `yt-editor`, `yt-admin`), each installable alone; every skill works on its own through `yt <tool>`.
+- Typed tools (MCP): each plugin ships `scripts/yt_mcp.py` with `yt_list`, `yt_describe`, `yt_run` and `yt_preview`.
+- Director agent mode: `llm_director.py --prepare` writes the inputs and `--apply` validates and writes the edit with `meta.director.by = "agent"`, so a host agent can direct the edit on its own subscription with no OpenRouter key.
+- Director chat in the Recap tab: the reviewer's objections in plain words, a message in and a reply out with a cost/time estimate, and a Make-the-new-version button.
+- The director is honest about its tools: when it cannot do something it says what it can do instead and the request is logged as a missing tool.
+- Per-instance style settings: `channel.style` (`title_style`, `description_order`, `pinned_comment_voice`).
+- Learning notebook: a per-instance file of at most 40 lessons, shown at the bottom of the project page; after each new version one cheap model call writes at most 3 lessons.
+- Starting playbook: `prompts/playbook.md` holds the editing techniques and the director-facing tool list.
+- Fresh-container smoke test: `deploy/smoke_plugin.sh` and a checklist in `docs/AGENT_SETUP.md`.
+- Third-party licences: `NOTICE.md` and `docs/licences.md`.
+
+### Changed
+
+- The project page's reviewer box is replaced by the chat in the Recap tab.
+- The metadata prompt no longer carries a built-in pinned-comment voice; it comes from `channel.style.pinned_comment_voice`.
+- `description_order` assembles the description in the configured order.
+
+### Fixed
+
+- `llm_director.py --prepare` together with `--force` is a usage error.
+- `notebook.py --merge` with a repeated id is a usage error.
+
 ## [0.2.0] - 2026-10-24
 
 yt-pipeline v0.2.0 is the first release with the publish flow and the phone

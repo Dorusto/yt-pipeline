@@ -2,6 +2,26 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
+## v0.3.0 (candidate)
+
+v0.3.0 makes the director usable as an extension of any coding agent. One `yt`
+command runs every tool from any folder, and the pipeline ships as five Claude
+Code plugins in one marketplace (`yt-director`, `yt-publish`, `yt-shorts`,
+`yt-editor`, `yt-admin`), each installable alone; every plugin also brings typed
+MCP tools. A host agent can direct the edit on its own subscription with no
+OpenRouter key (`--prepare` and `--apply`). In the web app the director now has a
+chat in the Recap tab, where the reviewer's objections appear in plain words; the
+director says honestly what it can and cannot do and logs the tools it is
+missing. The channel's wording and style come from the instance's own settings,
+and the director keeps a small notebook of lessons (at most 40) that it reads
+before every edit and updates after each new version. Third-party licences are
+listed in `NOTICE.md` and `docs/licences.md`.
+
+**Stable candidate** — the holiday flow in the web app (as in v0.2.0).
+
+**Experimental** — everything else, as in v0.2.0, plus the plugin, the `yt`
+command, the agent mode, the chat and the notebook.
+
 ## v0.2.0 (2026-10-24)
 
 The holiday flow from the phone is easier: on the project page you can make a

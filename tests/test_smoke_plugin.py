@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "smoke_plugin.sh"
+SCRIPT = ROOT / "deploy" / "smoke_plugin.sh"
 GUIDE = ROOT / "docs" / "AGENT_SETUP.md"
 
 
@@ -40,4 +40,4 @@ def test_missing_source_is_usage_error():
 def test_guide_has_smoke_section():
     text = GUIDE.read_text(encoding="utf-8")
     assert "Fresh-container smoke test" in text
-    assert "scripts/smoke_plugin.sh" in text
+    assert "deploy/smoke_plugin.sh" in text

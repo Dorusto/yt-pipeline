@@ -138,10 +138,11 @@ a code change.
 Run `opencode` in the repo root. It reads `.claude/skills/<name>/SKILL.md`
 (project Claude-compatible) and `~/.claude/skills/<name>/SKILL.md` (global
 Claude-compatible), and `AGENTS.md` as project instructions; `CLAUDE.md` points
-to `AGENTS.md` for Claude Code. It does not read the Claude Code plugin cache, so
-a plugin installed for Claude Code is not visible to opencode — install the
-skills for opencode by copying them into `.claude/skills/` or
-`~/.claude/skills/` (section 8).
+to `AGENTS.md` for Claude Code. Whether opencode also reads the Claude Code
+plugin cache is not verified on this host (no agent-skills plugin is installed),
+so this guide makes no claim either way; install the skills for opencode by
+copying them into `.claude/skills/` or `~/.claude/skills/` (section 8). See the
+opencode skills doc: https://opencode.ai/docs/skills/.
 
 Ask the agent to list its skills. You should see all 35.
 
@@ -226,20 +227,20 @@ Expected: all tests pass, including notifications, encoder selection, schema val
 
 A repeatable check that the plugin installs in a fresh container with no personal
 setup and turns a folder of clips into a recap. The build host has no container
-runtime, so run this by hand in a fresh container. `scripts/smoke_plugin.sh`
+runtime, so run this by hand in a fresh container. `deploy/smoke_plugin.sh`
 automates steps 2-5 below; the checklist is the manual version.
 
 1. Start a fresh container with no personal setup: no `~/.claude`, no
    `YT_PIPELINE_*` variables and no config file. Expected: a clean shell where
    `yt` is not found and no yt-pipeline config exists.
-2. Install from the README alone (section 3): clone, `uv venv`,
+2. Install from the install steps (section 3): clone, `uv venv`,
    `uv pip install -r requirements.txt`. Expected: the install finishes with no
    error.
 3. Put `yt` on `PATH` (section 5). Expected: `yt --help` lists the tools.
 4. Install the plugin (section 6). Expected: `claude plugin validate .` passes
    and the skills load as `/yt-director:yt-recap` and so on.
 5. Run the script:
-   `scripts/smoke_plugin.sh --source <clips-folder> --brief "<brief>"`.
+   `deploy/smoke_plugin.sh --source <clips-folder> --brief "<brief>"`.
    Expected: the recap MP4 is written under the workspace and the script prints
    its path.
 6. Confirm no personal setup was needed: every setting came from a flag, an

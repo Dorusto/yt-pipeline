@@ -152,6 +152,16 @@ def test_prepare_apply_roundtrip_via_cli(tmp_path, capsys):
     assert written["status"] == "written"
 
 
+def test_prepare_with_force_is_usage_error(tmp_path, capsys):
+    workspace = build_workspace(tmp_path / "ws")
+    code = llm_director.main(
+        ["--workspace", str(workspace), "--brief", BRIEF, "--prepare", "--force", "--json"]
+    )
+    assert code == 2
+    captured = capsys.readouterr()
+    assert "--force" in captured.err
+
+
 def test_apply_agent_answer_has_no_notebook_parameter():
     parameters = inspect.signature(llm_director.apply_agent_answer).parameters
     assert "notebook" not in parameters

@@ -3452,6 +3452,8 @@ def _check_agent_mode_conflict(args):
         modes.append("--dry-run")
     if len(modes) > 1:
         raise LLMDirectorError("give only one of " + ", ".join(modes))
+    if args.prepare and args.force:
+        raise LLMDirectorError("--prepare does not accept --force")
 
 
 def print_human(summary, record):

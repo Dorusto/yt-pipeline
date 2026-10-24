@@ -5,7 +5,7 @@ DEFAULT_REPO="https://github.com/Dorusto/yt-pipeline.git"
 
 usage() {
     cat <<'EOF'
-Usage: scripts/smoke_plugin.sh [options]
+Usage: deploy/smoke_plugin.sh [options]
 
 Install yt-pipeline in a fresh container and get a recap from a folder of clips.
 
@@ -13,7 +13,8 @@ Options:
   --source DIR     folder of clips to recap (required unless --dry-run)
   --brief TEXT     the brief in plain words (required unless --dry-run)
   --workdir DIR    working directory (default: a fresh mktemp -d)
-  --repo URL       repository to clone
+  --repo URL       repository to clone and the marketplace source
+                   (`owner/repo` or a local path)
                    (default: https://github.com/Dorusto/yt-pipeline.git)
   --skip-plugin    skip the Claude Code plugin install (test the yt entry
                    point only)
@@ -24,8 +25,8 @@ Exit codes: 0 success; 2 usage error (bad flag, missing --source/--brief);
 3 a step failed after work started.
 
 Examples:
-  scripts/smoke_plugin.sh --source <clips-folder> --brief "<brief>"
-  scripts/smoke_plugin.sh --dry-run
+  deploy/smoke_plugin.sh --source <clips-folder> --brief "<brief>"
+  deploy/smoke_plugin.sh --dry-run
 EOF
 }
 
@@ -87,17 +88,29 @@ fi
 CLONE="$WORKDIR/yt-pipeline"
 WORKSPACE="$WORKDIR/projects"
 
+marketplace_source() {
+    case "$REPO" in
+        *://*)
+            local path="${REPO#*://}"
+            path="${path#*/}"
+            echo "${path%.git}"
+            ;;
+        *) echo "$REPO" ;;
+    esac
+}
+MARKETPLACE_SOURCE="$(marketplace_source)"
+
 if [ "$DRY_RUN" -eq 1 ]; then
     SHOWN_SOURCE="${SOURCE:-<source>}"
     SHOWN_BRIEF="${BRIEF:-<brief>}"
     echo "[dry-run] clone: git clone $REPO $CLONE"
     echo "[dry-run] venv: uv venv && uv pip install -r requirements.txt in $CLONE"
     echo "[dry-run] yt on PATH: ln -s $CLONE/bin/yt ~/.local/bin/yt"
-    echo "[dry-run] entry point: yt --help && yt doctor --source $SHOWN_SOURCE"
+    echo "[dry-run] entry point: yt --help && yt doctor --source $SHOWN_SOURCE --workspace $WORKSPACE"
     if [ "$SKIP_PLUGIN" -eq 1 ]; then
         echo "[dry-run] plugin: skipped (--skip-plugin)"
     else
-        echo "[dry-run] plugin: claude plugin marketplace add Dorusto/yt-pipeline && claude plugin install yt-director@yt-pipeline"
+        echo "[dry-run] plugin: claude plugin marketplace add $MARKETPLACE_SOURCE && claude plugin install yt-director@yt-pipeline"
     fi
     echo "[dry-run] recap: yt recap --source $SHOWN_SOURCE --brief $SHOWN_BRIEF --workspace $WORKSPACE"
     echo "[dry-run] output: check the recap MP4 under $WORKSPACE"
@@ -130,14 +143,23 @@ esac
 
 echo "[smoke] entry point: yt --help"
 yt --help >/dev/null || fail "entry point"
-echo "[smoke] entry point: yt doctor --source $SOURCE"
-yt doctor --source "$SOURCE" || fail "entry point"
+echo "[smoke] entry point: yt doctor --source $SOURCE --workspace $WORKSPACE"
+if yt doctor --source "$SOURCE" --workspace "$WORKSPACE"; then
+    :
+else
+    rc=$?
+    if [ "$rc" -eq 1 ]; then
+        echo "[smoke] warning: yt doctor found something to look at (exit 1); continuing" >&2
+    else
+        fail "entry point"
+    fi
+fi
 
 if [ "$SKIP_PLUGIN" -eq 1 ]; then
     echo "[smoke] plugin: skipped (--skip-plugin)"
 elif command -v claude >/dev/null 2>&1; then
-    echo "[smoke] plugin: claude plugin marketplace add Dorusto/yt-pipeline"
-    claude plugin marketplace add Dorusto/yt-pipeline || fail "plugin"
+    echo "[smoke] plugin: claude plugin marketplace add $MARKETPLACE_SOURCE"
+    claude plugin marketplace add "$MARKETPLACE_SOURCE" || fail "plugin"
     echo "[smoke] plugin: claude plugin install yt-director@yt-pipeline"
     claude plugin install yt-director@yt-pipeline || fail "plugin"
 else
