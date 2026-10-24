@@ -241,3 +241,25 @@ def test_edit_middle_speed_is_optional_and_bounded():
     assert any("middle_speed" in e or "video/0" in e for e in schema.validate(data, "edit"))
     video["middle_speed"] = 0.9
     assert any("middle_speed" in e or "video/0" in e for e in schema.validate(data, "edit"))
+
+
+def test_edit_director_by_accepts_agent():
+    data = load("edit_valid.json")
+    data["meta"] = {
+        "tool": "scripts/llm_director.py",
+        "wall_time_s": 1.0,
+        "llm_cost_usd": 0.0,
+        "director": {"by": "agent", "approved": True, "notes": []},
+    }
+    assert schema.validate(data, "edit") == []
+
+
+def test_edit_director_by_rejects_unknown():
+    data = load("edit_valid.json")
+    data["meta"] = {
+        "tool": "scripts/llm_director.py",
+        "wall_time_s": 1.0,
+        "llm_cost_usd": 0.0,
+        "director": {"by": "robot", "approved": True, "notes": []},
+    }
+    assert schema.validate(data, "edit")

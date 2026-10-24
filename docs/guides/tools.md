@@ -166,6 +166,15 @@ Skill: `yt-director`.
 
 The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate. The three role prompts (screenwriter, editor, reviewer) share the standard playbook in `prompts/playbook.md` — the structure every edit follows and the tools the director can call.
 
+The agent mode splits the loop in two so a host coding agent can direct the edit without an OpenRouter key. `--prepare` writes `<workspace>/director/inputs.md` — the brief, the brief settings, the editing rules, the eligible shots and their shot facts, plus the two output shapes — and makes no model call. The host agent writes `<workspace>/shot_plan.json` and `<workspace>/edit.json` (the editor answer shape), then `--apply` validates both against the schemas and the editing grammar, repairs mechanical faults with the same machinery the loop uses and writes the final `edit.json` with `meta.director.by = "agent"`. `--prepare` and `--apply` are mutually exclusive with each other, `--interpret-feedback` and `--dry-run`; the OpenRouter three-role loop stays the default.
+
+```bash
+.venv/bin/python scripts/llm_director.py --workspace /path/to/ws \
+  --brief "about 90 seconds, chronological" --prepare --json
+.venv/bin/python scripts/llm_director.py --workspace /path/to/ws \
+  --brief "about 90 seconds, chronological" --apply --json
+```
+
 ---
 
 ## Render and output

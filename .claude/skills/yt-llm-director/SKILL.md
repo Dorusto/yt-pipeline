@@ -1,6 +1,6 @@
 ---
 name: yt-llm-director
-description: Turn a brief and a workspace shotlog into edit.json with a three-role LLM loop — screenwriter (writes shot_plan.json), editor (picks the exact cut windows) and reviewer (checks the result against the brief and the editing rules and sends fixes back, max 3 rounds). The rule-based scripts/director.py is the fallback when the loop fails and the --dry-run baseline. Use when the user asks for an LLM-directed edit, a shot plan, a story-driven cut, or wants the screenwriter/editor/reviewer loop. Trigger phrases - "fă editul cu LLM", "planul de cadre", "screenwriter editor reviewer", "directorul LLM", "llm director", "shot_plan.json", "build the edit with the model", "cum citește directorul cererea", "ask the director", "interpret feedback". Not for the deterministic rule-based cut (that is `director`), analysing footage (`ingest`/`motion`/`quality`/`describe`/`similarity`), indexing the shotlog (that is `index`) or rendering the MP4 (that is `render`).
+description: Turn a brief and a workspace shotlog into edit.json with a three-role LLM loop — screenwriter (writes shot_plan.json), editor (picks the exact cut windows) and reviewer (checks the result against the brief and the editing rules and sends fixes back, max 3 rounds). The rule-based scripts/director.py is the fallback when the loop fails and the --dry-run baseline. Use when the user asks for an LLM-directed edit, a shot plan, a story-driven cut, or wants the screenwriter/editor/reviewer loop. Trigger phrases - "fă editul cu LLM", "planul de cadre", "screenwriter editor reviewer", "directorul LLM", "llm director", "shot_plan.json", "build the edit with the model", "cum citește directorul cererea", "ask the director", "interpret feedback", "agent mode", "prepare and apply", "directorul agent". Not for the deterministic rule-based cut (that is `director`), analysing footage (`ingest`/`motion`/`quality`/`describe`/`similarity`), indexing the shotlog (that is `index`) or rendering the MP4 (that is `render`).
 compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and, for the real loop, an OpenRouter key and models.director in config.yaml; works offline with llm_backend mock (it then falls back to the rules). Reads shotlog.json, ingest.json, motion/<stem>.json and quality/<stem>.json from the workspace read-only and writes shot_plan.json and edit.json atomically. Spend goes to WORKSPACE/llm_spend.json and is capped by llm_budget_usd.
 ---
 
@@ -30,7 +30,21 @@ yt llm_director --workspace /path/to/workspace --brief "..." --rounds 2 --out my
 - `--interpret-feedback TEXT` (with `--version vNNN` to read a version's edit) makes one cheap `metadata`-role call that says how the director reads a feedback request, writes no edit, prints `reply`, `estimate_usd`, `estimate_s`, `wall_time_s` and `llm_cost_usd`, and appends one `action: "reply"` line to `WORKSPACE/feedback.jsonl`. Exit `2` on a usage or config error, `3` on a runtime failure.
 - `--force` rewrites even when the output is up to date. `--json` prints the machine-readable summary. It never asks questions.
 
-## Step 2: dry run and the rule-based baseline
+## Step 2: agent mode (prepare and apply)
+
+A host coding agent can direct the edit without an OpenRouter key. `--prepare` writes `<workspace>/director/inputs.md` — the brief, the brief settings, the editing rules, the eligible shots and their shot facts, plus the two output shapes — and makes no model call. The agent writes `<workspace>/shot_plan.json` (schema `schemas/shot_plan.schema.json`) and `<workspace>/edit.json` (the editor answer shape `{"slots": [...], "notes": [...]}`), then `--apply` validates both against the schemas and the editing grammar, repairs mechanical faults with the same machinery the loop uses and writes the final `edit.json` with `meta.director.by = "agent"`.
+
+```bash
+yt llm_director --workspace /path/to/workspace --brief "..." --prepare --json
+yt llm_director --workspace /path/to/workspace --brief "..." --apply --json
+```
+
+- Both require `--workspace` and exactly one of `--brief` / `--brief-file`, and accept `--out`, `--plan-out`, `--important-max-s`, `--target-duration-s`, `--order`, `--pacing`, `--beats`, `--music`, `--ambient-under-music-db`, `--speed-ramp`, `--force` and `--json`.
+- `--prepare` and `--apply` are mutually exclusive with each other, `--interpret-feedback` and `--dry-run`; more than one is a usage error naming the conflict.
+- `--prepare` needs `shotlog.json` (no fallback) and writes no `edit.json`; the `--json` summary is `{"status": "prepared", "inputs", "candidates", "warnings", "wall_time_s", "llm_cost_usd": 0.0}`.
+- `--apply` reads the plan and the answer, rejects an unrepairable edit with a usage error naming the first blocking rule, and writes the final edit; the `--json` summary is `{"status": "written", "out", "plan", "slots", "total_duration_s", "validator_violations", "warnings", "wall_time_s", "llm_cost_usd": 0.0}`. When `edit.json` is already a full edit (a `video` list) and `--force` is not given, it writes nothing and reports `status: "skipped"`.
+
+## Step 3: dry run and the rule-based baseline
 
 ```bash
 yt llm_director --workspace /path/to/workspace --brief "..." --dry-run --json
@@ -38,7 +52,7 @@ yt llm_director --workspace /path/to/workspace --brief "..." --dry-run --json
 
 `--dry-run` runs **only** the screenwriter: it writes `shot_plan.json`, calls no editor and no reviewer, and writes no `edit.json`. It also runs `scripts/director.py` as a subprocess with a throwaway `--out` and reports the rule-based baseline — the slot count, the total duration and the top reasons — so the LLM edit can be compared against the deterministic one. The `--json` summary carries a `baseline` object with `slots`, `total_duration_s` and `reasons`.
 
-## Step 3: read the result
+## Step 4: read the result
 
 `shot_plan.json` is validated against `schemas/shot_plan.schema.json` and `edit.json` against `schemas/edit.schema.json` before they are written, so a run either leaves complete, valid files or none.
 
