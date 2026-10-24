@@ -1,4 +1,6 @@
-"""Shared FilmCraft helpers: the ``filmcraft-cli`` lookup and the sequence frame rate."""
+"""Shared FilmCraft helpers: the ``filmcraft-cli`` lookup and resolution, the
+project/sequence/track readers, the frame-rate helpers, the command runner and
+the reply parsers used by the FilmCraft tools."""
 
 import json
 import os

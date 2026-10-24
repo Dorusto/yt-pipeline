@@ -483,6 +483,12 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
 
 def main():
     started = time.monotonic()
+    if "--help" in sys.argv[1:]:
+        print(
+            "Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] "
+            "[--shorts-config config.yaml] [--select 1,3,5|all|none] [--json]"
+        )
+        sys.exit(EXIT_OK)
     positionals, shorts_config_path, select, json_out = parse_args(sys.argv[1:])
     if len(positionals) < 2:
         print(

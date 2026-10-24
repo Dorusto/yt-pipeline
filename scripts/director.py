@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from common.constants import SNAP_MIN_SLOT_S
 from common.decisions import build_decisions
 from common.moves import (
     STAR_MIN_SCORE,
@@ -82,7 +83,6 @@ PHOTO_MIN_S = 2.0
 PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
 BEAT_SNAP_FRACTION = 0.5
-SNAP_MIN_SLOT_S = 0.5
 DEFAULT_IMPORTANT_MAX_S = 6.0
 LONG_CUT_PACING_S = 180.0
 

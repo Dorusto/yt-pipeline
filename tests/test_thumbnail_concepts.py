@@ -106,6 +106,19 @@ def test_timecode_beyond_transcript_exits_3(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in err
 
 
+def test_extra_key_exits_3(tmp_path, monkeypatch, capsys):
+    data = dict(FULL)
+    data["concepts"] = [
+        dict(FULL["concepts"][0], extra="x"),
+        FULL["concepts"][1],
+    ]
+    code, _ = run_main(tmp_path, monkeypatch, data)
+    assert code == EXIT_RUNTIME
+    err = capsys.readouterr().err
+    assert "schema" in err
+    assert "Traceback" not in err
+
+
 def test_bad_theme_exits_3(tmp_path, monkeypatch, capsys):
     data = dict(FULL)
     data["concepts"] = [

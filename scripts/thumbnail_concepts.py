@@ -230,7 +230,7 @@ def run(srt_path, context_path, title, out_dir=None, name=None, prompt_path=None
     try:
         validate_or_raise(document, "thumbnail_concepts")
     except SchemaError as exc:
-        raise ThumbnailConceptsError(f"thumbnail concepts do not match the schema: {exc}")
+        raise ThumbnailConceptsRuntimeError(f"thumbnail concepts do not match the schema: {exc}")
 
     json_file = out_path / "thumbnail_concepts.json"
     json_file.write_text(

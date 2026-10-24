@@ -39,6 +39,10 @@ from common.errors import report_error
 
 def main():
     started = time.monotonic()
+    if "--help" in sys.argv[1:]:
+        print("Utilizare: python3 correct_srt.py input.srt [output.srt] [--capitalised] [--json]")
+        print("Exemplu: python3 correct_srt.py raw.srt Clip_RO.srt --capitalised")
+        sys.exit(EXIT_OK)
     json_out = "--json" in sys.argv[1:]
     try:
         run(json_out, started)

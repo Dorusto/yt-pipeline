@@ -405,8 +405,8 @@ def run(words_path, markers_path=None, context_path=None, out_path=None, max_ent
     words, shape = load_words(words_file)
     span = max(word["end"] for word in words)
     candidates = load_markers(markers_path) if markers_path else []
-    context_text = read_text(context_path, "context", GraphicsPlanError) if context_path else None
-    prompt_text = read_text(DEFAULT_PROMPT, "prompt", GraphicsPlanError)
+    context_text = read_text(context_path, "context", GraphicsPlanError, quote=False) if context_path else None
+    prompt_text = read_text(DEFAULT_PROMPT, "prompt", GraphicsPlanError, quote=False)
     transcript = build_transcript(words)
     message = build_message(prompt_text, transcript, candidates, context_text, max_entries)
     config = load_config()

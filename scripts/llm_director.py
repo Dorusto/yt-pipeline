@@ -38,7 +38,7 @@ from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
 from common import runlog
-from common.constants import MIN_SHOT_LENGTH_S
+from common.constants import MIN_SHOT_LENGTH_S, SNAP_MIN_SLOT_S
 from common.moves import (
     EXCEPTION_SHARE,
     SAME_TAKE_MIN_GAP_S,
@@ -76,7 +76,6 @@ PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
 PHOTO_TOLERANCE_S = 0.01
 BEAT_SNAP_FRACTION = 0.5
-SNAP_MIN_SLOT_S = 0.5
 LANDING_FLOOR_S = 0.75
 CENTRE_TOLERANCE_S = 0.3
 

@@ -3,7 +3,7 @@
 """Render branded graphic overlays (lower third, counter, callout) as ProRes 4444 .mov with alpha.
 
 Usage:
-    python3 scripts/graphics.py --template lower_third --props '{"name":"Doru","role":"creator"}' --out lt.mov
+    python3 scripts/graphics.py --template lower_third --props '{"name":"<name>","role":"creator"}' --out lt.mov
     python3 scripts/graphics.py --plan graphics_plan.json --out-dir overlays/
 
 The engine is HyperFrames (Apache-2.0): a composition HTML per template in
@@ -71,7 +71,7 @@ def build_parser():
         epilog=(
             "examples:\n"
             "  python3 scripts/graphics.py --template lower_third "
-            "--props '{\"name\":\"Doru\",\"role\":\"creator\"}' --out lt.mov\n"
+            "--props '{\"name\":\"<name>\",\"role\":\"creator\"}' --out lt.mov\n"
             "  python3 scripts/graphics.py --template counter "
             "--props '{\"number\":\"42\",\"label\":\"clips\"}' --out counter.mov --duration 3 --json\n"
             "  python3 scripts/graphics.py --plan graphics_plan.json --out-dir overlays/\n"

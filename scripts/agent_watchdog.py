@@ -230,7 +230,7 @@ def active_task_label(repo, tasks_dir=DEFAULT_TASKS_DIR):
     """Return the stem of the newest task brief in the repo, or None.
 
     The active brief is the most recently modified ``.md`` file in
-    ``<repo>/.opencode/tasks/``; review and audit notes are skipped.
+    ``<repo>/.opencode/tasks/``; review, audit and README notes are skipped.
     """
     folder = Path(repo).expanduser() / tasks_dir
     try:

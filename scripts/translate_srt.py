@@ -102,6 +102,9 @@ def spent_usd():
 
 def main():
     started = time.monotonic()
+    if "--help" in sys.argv[1:]:
+        print("Utilizare: python3 translate_srt.py input.srt [video.mp4 | output_EN.srt] [--json]")
+        sys.exit(EXIT_OK)
     json_out = "--json" in sys.argv[1:]
     stream = sys.stderr if json_out else sys.stdout
     positionals = [a for a in sys.argv[1:] if not a.startswith("--")]

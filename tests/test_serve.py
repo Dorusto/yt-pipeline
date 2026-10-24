@@ -3828,3 +3828,26 @@ def test_instance_paid_sums_the_local_donations(tmp_path):
     connection.commit()
     connection.close()
     assert serve.instance_paid(ledger) == 4.0
+
+
+def test_render_file_row_shows_short_sizes():
+    clip = {
+        "name": "clip.mp4",
+        "kind": "clip",
+        "size_bytes": 45 * 1024 * 1024,
+        "length_s": 12.0,
+        "excluded": False,
+        "new": False,
+        "in_edit": True,
+    }
+    assert "45 MB" in serve._render_file_row("2026-10-14", clip)
+    photo = {
+        "name": "photo.jpg",
+        "kind": "photo",
+        "size_bytes": 500 * 1024,
+        "length_s": None,
+        "excluded": False,
+        "new": False,
+        "in_edit": False,
+    }
+    assert "0 MB" in serve._render_file_row("2026-10-14", photo)

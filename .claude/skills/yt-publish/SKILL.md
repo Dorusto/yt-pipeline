@@ -91,7 +91,7 @@ Turn the confirmed title, the context note and the corrected `.srt` into 2-3 Rom
 - The channel's thumbnail formula comes from `channel.fixed.thumbnail_formula` (RO, else EN) and is handed to the model in a `## Channel` section (after `## Title`); with none set the section is omitted.
 - The concepts carry `name`, `pose`, `emotion`, `text{title,keyword,kicker}`, `theme` and `source` (`clip_frame` with a timecode inside the transcript, or `new_photo`). A `clip_frame` timecode is normalized to `HH:MM:SS` and must be inside the transcript.
 - `--json` prints `ok`, `outputs` (`json`, `markdown`), `title`, `concepts`, `wall_time_s` and `llm_cost_usd`.
-- Errors exit 2 for a missing/unreadable SRT, context or prompt file, a missing config or a bad `--title`; a model answer that cannot be parsed or does not match the shape exits 3.
+- Errors exit 2 for a missing/unreadable SRT, context or prompt file, a missing config or a bad `--title`; a model answer that cannot be parsed or does not match the shape (including an extra key the schema forbids) exits 3.
 
 ## Step 4: the publish chain
 

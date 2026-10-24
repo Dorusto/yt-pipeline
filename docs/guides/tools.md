@@ -467,6 +467,13 @@ The app logo is one of three flat SVG marks in `assets/brand/` (`option-1` clapp
 
 ---
 
+## Repo checks
+
+- `check_public.py` — the pre-commit hook and CI check that fails on footage, frames, transcripts, keys or private IP addresses in tracked files.
+- `check_stable.py` — the CI check that fails when a diff touches a file in the `stable-files` block of `docs/RELEASES.md` without a `Stable-change: approved` trailer.
+
+---
+
 ## Setup
 
 ### Installation

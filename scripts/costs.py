@@ -68,6 +68,8 @@ def parse_amount(raw):
             text = text.replace(",", "")
     elif "," in text:
         text = text.replace(",", ".")
+    elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+        text = text.replace(".", "")
     try:
         amount = float(text)
     except ValueError:

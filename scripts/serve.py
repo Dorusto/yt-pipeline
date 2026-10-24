@@ -80,7 +80,7 @@ from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
 from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, spend_between
-from common.sizes import BYTES_PER_GB, format_gb, format_size
+from common.sizes import BYTES_PER_GB, format_gb, format_size_short
 from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
 from common.versions import list_versions
@@ -2155,7 +2155,7 @@ def project_files(directory):
 
 def _render_file_row(name, row):
     if row["kind"] == "photo":
-        meta = f"photo · {format_size(row['size_bytes'])}"
+        meta = f"photo · {format_size_short(row['size_bytes'])}"
     else:
         length = row["length_s"]
         length_text = (
@@ -2163,7 +2163,7 @@ def _render_file_row(name, row):
             if isinstance(length, (int, float)) and not isinstance(length, bool)
             else "clip"
         )
-        meta = f"{length_text} · {format_size(row['size_bytes'])}"
+        meta = f"{length_text} · {format_size_short(row['size_bytes'])}"
     if row["excluded"]:
         state = "left out"
     elif row["new"]:

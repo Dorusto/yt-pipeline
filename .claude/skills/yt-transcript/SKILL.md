@@ -12,6 +12,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 
 - Input: a Romanian .srt, usually raw Whisper output. Transcription itself is not done by these scripts; see README.md, Workflow, step 2.
 - Never overwrite the input. Give every step its own output path. If an output file already exists, ask before replacing it.
+- Every tool here (`correct_srt.py`, `translate_srt.py`, `analyze_srt.py`, `daily_summary_srt.py`) answers `--help` with its usage text and exit 0.
 
 ## Step 1: correct recurring transcription errors
 

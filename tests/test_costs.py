@@ -188,6 +188,23 @@ def test_import_donations_utf8_bom_header(tmp_path, capsys):
     assert summary["imported"][0]["amount_usd"] == 10.0
 
 
+def test_parse_amount_lone_thousands_dot():
+    assert costs.parse_amount("1.000") == 1000.0
+    assert costs.parse_amount("1.000.000") == 1000000.0
+    assert costs.parse_amount("10.50") == 10.5
+
+
+def test_import_donations_lone_thousands_dot(tmp_path, capsys):
+    ledger = tmp_path / "costs.db"
+    donations = tmp_path / "donations.csv"
+    donations.write_text("date,amount\n2026-10-01,1.000\n", encoding="utf-8")
+    summary = run_json(
+        capsys, "--ledger", str(ledger), "import-donations", "--from", str(donations), "--json"
+    )
+    assert summary["count"] == 1
+    assert summary["imported"][0]["amount_usd"] == 1000.0
+
+
 def test_add_accepts_decimal_comma(tmp_path, capsys):
     ledger = tmp_path / "costs.db"
     summary = run_json(

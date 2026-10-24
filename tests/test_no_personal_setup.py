@@ -12,6 +12,8 @@ BANNED = (
     "~/yt-watchdog",
     "Dorusto/resurse",
     "~/ws",
+    '"name": "Doru"',
+    '"name":"Doru"',
 )
 
 SCAN_DIRS = ("scripts", "prompts", ".claude/skills", "docs/guides", "docs/agents")

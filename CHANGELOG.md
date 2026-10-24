@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: a shot on the strip can be made 1 s longer or shorter (a "− 1 s" / "+ 1 s" control next to the bin icon), rendered as a new version with `edit_drop.py --trim` and no model call.
 - Publish: `metadata.py` gains `--title` — the chosen title is handed to the model in a `## Chosen title` section and used verbatim as the first title.
 - FilmCraft: `colour.py` applies a basic colour recipe to the camera clips of a project — one Lumetri Basic Correction per recording session (white balance, exposure, contrast), measured on a few frames, on a copy unless `--in-place`.
+- Repo checks: `tests/test_no_duplicate_helpers.py`, `tests/test_tool_contract.py` and `tests/test_docs_in_step.py` make the rules a program can check fail in the suite before review (no new duplicated helper, every tool answers `--help` and reports its summary fields, every skill names an existing tool and every tool is named), and `docs/agents/rules-checked.md` records which rules a test checks and which depend on review alone.
 
 ### Changed
 
@@ -32,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reviewer fixes (V020N lot n16): `thumbnail_concepts.py` reports a model answer with an extra key as `EXIT_RUNTIME` (3) instead of a usage error; `costs.py` reads a lone thousands dot (`1.000` → 1000); `graphics_plan.py` keeps its unquoted context-file message; the Files tab uses the shared `format_size_short`; the four legacy SRT tools (`analyze_srt.py`, `correct_srt.py`, `daily_summary_srt.py`, `translate_srt.py`) answer `--help` with exit 0; the owner's name in the graphics examples becomes a placeholder.
 - Reviewer fixes (V020N lot n14): `costs.py` accepts a decimal comma, a thousands dot and a UTF-8 BOM on a donations CSV header; `correct_srt.py` counts the capitalised variant in `Termeni înlocuiți` and a correction line with an empty wrong part is a usage error; `metadata.py` rejects an empty `--title` and the EN chapters section falls back to the RO title when `title_en` is missing; an unknown `channel.fixed` part name is a config error naming the key; `thumbnail_concepts.py` reports a wrong-shape model answer as `EXIT_RUNTIME`; `publish_kit.py` reports a failure as one `{"ok": false, ...}` object and its `--json` `output` is `publish-kit/studio.md`; `colour.py` rejects `--target-luma`/`--target-contrast` outside `(0, 1]` as usage errors; `llm_director.py` falls back to the nearest beat under the slot cap when the downbeat is over it; `.github/dependabot.yml` drops the `time`/`timezone` the default schedule does not need.
 - The LLM client retries once when a model answer is empty or not valid JSON, charging both attempts to the budget; `metadata.py` uses it.
 - Music: in the holiday flow a cut that starts a new structure beat now falls back to the nearest beat when the nearest downbeat is outside the snap window, so every cut lands on a beat.
