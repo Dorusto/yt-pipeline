@@ -2,6 +2,37 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
+## v0.2.0 (2026-10-24)
+
+The holiday flow from the phone is easier: on the project page you can make a shot
+a second longer or shorter, and the director cuts on the beat of the music. The
+publish flow is ready for a real upload: the publish kit is its own step (change
+only the thumbnail and re-run just that), the metadata prompt writes better titles
+and descriptions, and the subtitles fix the capitalised variants. The Costs page
+shows donations and warns before a run that would pass your model credit, and the
+app can run on a friend's own instance.
+
+**Stable candidate** — the holiday flow in the web app (as in v0.1.0), plus making
+a shot longer or shorter on the project page.
+
+**Experimental** — everything else, as in v0.1.0, plus:
+
+- The publish kit as its own step, the thumbnail concepts and the metadata prompt fixes.
+- The colour recipe (`colour.py`) — not tested on a real project.
+- The donations import and the low-credit warning on the Upload page.
+- The repo checks that make the rules fail in the test suite.
+
+**Stable files** — the files behind the stable candidate above. A change to one
+needs the `Stable-change: approved` trailer on a commit in the range (see
+[`RELEASING.md`](RELEASING.md)); the check is `scripts/check_stable.py`:
+
+```stable-files
+scripts/serve.py
+scripts/recap.py
+scripts/common/versions.py
+scripts/quality.py
+```
+
 ## v0.1.2 (2026-10-23)
 
 A patch for the Costs page: no "Paid" before any spend, and the credit line in the page currency. Stable and experimental lists as in v0.1.0.

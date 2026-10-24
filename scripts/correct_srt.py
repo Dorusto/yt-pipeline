@@ -23,6 +23,7 @@ import json
 import sys
 import time
 
+from common.cli import handle_help
 from common.corrections import (
     CORRECTIONS_EXAMPLE_FILE,
     CORRECTIONS_FILE,
@@ -33,16 +34,16 @@ from common.corrections import (
     resolve_corrections_file,
 )
 from common.summary import summary_fields
-from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.exit_codes import EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
 
 def main():
     started = time.monotonic()
-    if "--help" in sys.argv[1:]:
-        print("Utilizare: python3 correct_srt.py input.srt [output.srt] [--capitalised] [--json]")
-        print("Exemplu: python3 correct_srt.py raw.srt Clip_RO.srt --capitalised")
-        sys.exit(EXIT_OK)
+    handle_help([
+        "Utilizare: python3 correct_srt.py input.srt [output.srt] [--capitalised] [--json]",
+        "Exemplu: python3 correct_srt.py raw.srt Clip_RO.srt --capitalised",
+    ])
     json_out = "--json" in sys.argv[1:]
     try:
         run(json_out, started)

@@ -8,6 +8,18 @@ Prior art and reasoning: [`research/prior-art.md`](research/prior-art.md), [`res
 
 ---
 
+## 0. Goal and focus (read first)
+
+**Goal:** a director that helps the owner publish holiday recaps and YouTube clips.
+
+**Focus rule:** a change goes in only if it helps publish the next clip with the director. Everything else becomes an issue with no milestone and waits.
+
+**Versions:** the GitHub milestones are the source of truth. The current version is the lowest open milestone; a lot works only on that milestone's issues and adds nothing outside it.
+
+**Review:** a change outside the current milestone is a finding (docs/REVIEW_CHECKLIST.md, question 10).
+
+---
+
 ## 1. Two modes, one engine
 
 | Mode | Input | Output | Competes with |

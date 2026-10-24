@@ -5,7 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-24
+
+yt-pipeline v0.2.0 is the first release with the publish flow and the phone editing
+controls. On the project page you can now make a shot a second longer or shorter,
+and the director cuts on the beat of the music. The publish kit is its own step, so
+changing only the thumbnail no longer re-runs the whole chain, and the metadata
+prompt writes better titles and descriptions. The Costs page shows donations and
+warns before a run that would pass your model credit, and the app can run on a
+friend's own instance.
 
 ### Added
 
@@ -30,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cleanup lot (V020N lot n1): a failed ffprobe is `EXIT_RUNTIME` in `kdenlive_from_fragments.py` and `render.py`; `serve.py` and `recap_meta.py` share `earliest_creation_date`, `serve.py` writes feedback through `common.feedback`, `costs.py totals` and the Costs page share one `compute_totals` call, `upkeep_percent()`/`usd_to_eur()` raise a clear `ConfigError`, `common.openrouter` no longer pulls `openai`/`filelock`, `pytest-timeout` (120 s per test) is in the test requirements and CI, and `release.yml` starts `deploy.yml` after it creates the release.
 - Docs: the README is now a one-screen front door (what it is, who it is for, a quickstart, where to go next); the tool-by-tool reference moved to `docs/guides/tools.md`, and the pilot host and costs sections link to their guides.
 - Cleanup lot (V020N lot n15): the duplicated helpers moved into scripts/common/ (SRT parsing, read_text, now_iso, parse_child_json, format_size, the FilmCraft sequence/track/cli helpers, the minimum shot length, KIT_DIR_NAME, the credit helper and the drop/trim route body), and the docs drift fixed.
+- Cleanup: the `--help` guard copied in the four legacy SRT tools moved into one helper in `scripts/common/cli.py`.
 
 ### Fixed
 
