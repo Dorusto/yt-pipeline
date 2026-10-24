@@ -1,0 +1,26 @@
+#!/bin/sh
+# yt entry point: run any yt-pipeline tool from any folder.
+
+script=$0
+while [ -L "$script" ]; do
+    target=$(readlink "$script")
+    case $target in
+        /*) script=$target ;;
+        *) script=$(dirname "$script")/$target ;;
+    esac
+done
+root=$(cd "$(dirname "$script")/.." && pwd)
+
+if [ -n "$YT_PIPELINE_HOME" ]; then
+    root=$YT_PIPELINE_HOME
+fi
+
+if [ -n "$YT_PIPELINE_VENV" ] && [ -x "$YT_PIPELINE_VENV/bin/python" ]; then
+    python=$YT_PIPELINE_VENV/bin/python
+elif [ -x "$root/.venv/bin/python" ]; then
+    python=$root/.venv/bin/python
+else
+    python=python3
+fi
+
+exec "$python" "$root/scripts/yt.py" "$@"

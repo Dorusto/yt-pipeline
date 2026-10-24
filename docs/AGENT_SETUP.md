@@ -49,6 +49,14 @@ Skills are discovered from the folder you start the agent in, upward to the repo
 
 Ask the agent to list its skills. You should see `yt-transcript`, `yt-shorts` and `yt-rough-cut`.
 
+## 5b. The yt entry point
+
+`bin/yt` puts `yt` on PATH. `yt <tool> [args]` runs any tool from any folder, for example:
+
+```bash
+yt doctor --source <folder>
+```
+
 ## 6. Smoke test
 
 This checks the setup end to end without any video or GPU. It uses `examples/sample_RO.srt`, a ten-line fake subtitle file that contains the word "chezve" twice.

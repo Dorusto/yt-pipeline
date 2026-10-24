@@ -4,6 +4,22 @@ Every tool, grouped. The [README](../../README.md) is the front door; this is th
 reference. Each tool is a standalone script in `scripts/` with `--help`, `--json`
 and re-run safety; shared code lives in `scripts/common/`.
 
+## The yt entry point
+
+`scripts/yt.py` (launched by `bin/yt`) runs any tool from any folder:
+
+```bash
+yt doctor --source <folder>
+yt recap --source <folder> --brief <brief>
+```
+
+`yt <tool> [args...]` resolves the repository root (`YT_PIPELINE_HOME` first,
+else walking up from the script to the folder holding `scripts/` and
+`requirements.txt`) and the Python (`YT_PIPELINE_VENV`, else
+`<root>/.venv/bin/python`, else `python3`), then runs `scripts/<tool>.py` with
+the remaining arguments. `yt --help` lists the tools, `yt --list` prints their
+names and `yt --json` prints the resolved root, Python and tool list.
+
 ---
 
 ## The finished-clip pipeline
