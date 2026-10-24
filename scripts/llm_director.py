@@ -932,7 +932,7 @@ def build_interpret_user(text, workspace, edit_path=None):
 
 
 def request_reply(client, prompt, user, state):
-    """One cheap model call returning the reply, retried once, then a runtime error."""
+    """One cheap model call returning the parsed answer, retried once, then a runtime error."""
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": user},
@@ -940,14 +940,22 @@ def request_reply(client, prompt, user, state):
     for _ in range(2):
         response = call_client(client, messages, state, role="metadata")
         answer = parse_json(response.text)
-        if isinstance(answer, dict):
-            reply = answer.get("reply")
-            if isinstance(reply, str) and reply.strip():
-                return reply.strip()
+        if not isinstance(answer, dict):
+            continue
+        reply = answer.get("reply")
+        if not isinstance(reply, str) or not reply.strip():
+            continue
+        if not isinstance(answer.get("can_do"), bool):
+            continue
+        return {
+            "reply": reply.strip(),
+            "can_do": answer["can_do"],
+            "missing_tool": answer.get("missing_tool"),
+        }
     raise LLMDirectorRuntimeError("model produced no usable reply after one retry")
 
 
-def append_reply_line(workspace, text, reply, estimate_usd, estimate_s):
+def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do=True, missing_tool=None):
     """Append one ``action: reply`` line to WORKSPACE/feedback.jsonl (append-only)."""
     append_feedback(
         workspace,
@@ -955,6 +963,8 @@ def append_reply_line(workspace, text, reply, estimate_usd, estimate_s):
         text=text,
         reply=reply,
         estimate={"usd": estimate_usd, "s": estimate_s},
+        can_do=can_do,
+        missing_tool=missing_tool,
         tool=TOOL,
     )
 
@@ -985,11 +995,22 @@ def interpret_feedback(workspace, text, version=None, model=None, budget_usd=Non
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
     prompt = read_chat_prompt()
     state = LoopState()
-    reply = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
+    answer = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
+    can_do = answer["can_do"]
+    missing_tool = answer.get("missing_tool")
+    if can_do is False and isinstance(missing_tool, str) and missing_tool.strip():
+        missing_tool = missing_tool.strip()
+    else:
+        missing_tool = None
     estimate_usd, estimate_s = last_director_estimate(workspace_path)
-    append_reply_line(workspace_path, text, reply, estimate_usd, estimate_s)
+    append_reply_line(
+        workspace_path, text, answer["reply"], estimate_usd, estimate_s,
+        can_do=can_do, missing_tool=missing_tool,
+    )
     return {
-        "reply": reply,
+        "reply": answer["reply"],
+        "can_do": can_do,
+        "missing_tool": missing_tool,
         "estimate_usd": estimate_usd,
         "estimate_s": estimate_s,
         "wall_time_s": round(time.monotonic() - started, 2),
@@ -3446,6 +3467,8 @@ def print_human(summary, record):
 
 def print_interpret(summary):
     print(summary["reply"])
+    if summary.get("can_do") is False and summary.get("missing_tool"):
+        print(f"missing tool: {summary['missing_tool']}")
     estimate = []
     if summary["estimate_usd"] is not None:
         estimate.append(f"${summary['estimate_usd']:.4f}")

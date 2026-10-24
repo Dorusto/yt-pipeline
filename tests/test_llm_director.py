@@ -2455,12 +2455,16 @@ def test_old_edit_without_review_still_validates(tmp_path):
 
 def test_interpret_feedback_returns_a_reply(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
-    client = StubClient([json.dumps({"reply": "I will drop 0071/s2 and make the tunnel longer."})])
+    client = StubClient(
+        [json.dumps({"reply": "I will drop 0071/s2 and make the tunnel longer.", "can_do": True, "missing_tool": None})]
+    )
     summary, code = llm_director.interpret_feedback(
         workspace, "drop 0071/s2, tunnel longer", client=client
     )
     assert code == 0
     assert summary["reply"] == "I will drop 0071/s2 and make the tunnel longer."
+    assert summary["can_do"] is True
+    assert summary["missing_tool"] is None
     assert summary["estimate_usd"] is None
     assert summary["estimate_s"] is None
     assert "wall_time_s" in summary
@@ -2471,8 +2475,34 @@ def test_interpret_feedback_returns_a_reply(tmp_path):
     assert rows[0]["action"] == "reply"
     assert rows[0]["text"] == "drop 0071/s2, tunnel longer"
     assert rows[0]["reply"] == "I will drop 0071/s2 and make the tunnel longer."
+    assert rows[0]["can_do"] is True
+    assert rows[0]["missing_tool"] is None
     assert rows[0]["estimate"] == {"usd": None, "s": None}
     assert rows[0]["tool"] == "scripts/llm_director.py"
+
+
+def test_interpret_feedback_reports_a_missing_tool(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            json.dumps(
+                {
+                    "reply": "I cannot add subtitles; I can drop or trim shots. Noted.",
+                    "can_do": False,
+                    "missing_tool": "add subtitles",
+                }
+            )
+        ]
+    )
+    summary, code = llm_director.interpret_feedback(workspace, "add subtitles", client=client)
+    assert code == 0
+    assert summary["can_do"] is False
+    assert summary["missing_tool"] == "add subtitles"
+    rows = feedback_jsonl_rows(workspace)
+    assert len(rows) == 1
+    assert rows[0]["action"] == "reply"
+    assert rows[0]["can_do"] is False
+    assert rows[0]["missing_tool"] == "add subtitles"
 
 
 def test_interpret_feedback_retries_then_errors(tmp_path):
@@ -2514,10 +2544,10 @@ def test_last_director_estimate_reads_run_log_and_spend(tmp_path):
 
 def test_cli_interpret_feedback_json(tmp_path, monkeypatch, capsys):
     workspace = build_workspace(tmp_path / "ws")
-    client = StubClient([json.dumps({"reply": "ok"})])
+    client = StubClient([json.dumps({"reply": "ok", "can_do": True, "missing_tool": None})])
     monkeypatch.setattr(llm_director, "make_client", lambda **kwargs: client)
     code = llm_director.main(["--workspace", str(workspace), "--interpret-feedback", "x", "--json"])
     assert code == 0
     out = json.loads(capsys.readouterr().out)
-    for key in ("reply", "estimate_usd", "estimate_s", "wall_time_s", "llm_cost_usd"):
+    for key in ("reply", "can_do", "missing_tool", "estimate_usd", "estimate_s", "wall_time_s", "llm_cost_usd"):
         assert key in out

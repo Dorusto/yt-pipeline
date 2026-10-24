@@ -3661,6 +3661,24 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(reply, str) or not reply.strip():
             self.send_error_text(500, "the director gave no answer")
             return
+        can_do = summary.get("can_do")
+        can_do = can_do is not False
+        missing_tool = summary.get("missing_tool")
+        missing_tool = missing_tool if isinstance(missing_tool, str) and missing_tool.strip() else None
+        if can_do is False and missing_tool is not None and self.server.requests is not None:
+            try:
+                append_request(
+                    self.server.requests,
+                    {
+                        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        "type": "missing_tool",
+                        "text": f"{missing_tool}: {feedback}",
+                        "contact": "",
+                        "backed": False,
+                    },
+                )
+            except OSError:
+                pass
         location = f"/{project}/?tab=recap"
         if VERSION_RE.match(version):
             location += f"&v={int(version.lstrip('v'))}"

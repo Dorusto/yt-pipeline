@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Director honest about its tools and the missing-tool log (V030 lot c8)
+
+**Context:** The chat with the director answered every request as if it could be done, even when the request asked for something none of the director's tools can do (for example adding subtitles to the recap). The owner had no signal of which tools the director needs next. The interpret prompt already carries the capability list (`prompts/tools.md`) from lot c5b, and `llm_director.interpret_feedback()` already makes one cheap model call and appends an `action: "reply"` line to `feedback.jsonl`.
+
+**Options:** (A) keep the free-text reply and let the model say it cannot do something in prose; (B) make the interpret answer structured (`reply`, `can_do`, `missing_tool`) and have the web app log one `missing_tool` line to the requests file when `can_do` is false.
+
+**Decision:** B. `prompts/interpret_feedback.md` returns exactly three keys: `reply` (1-3 sentences in the feedback's language), `can_do` (a bool) and `missing_tool` (a few words naming the missing capability when `can_do` is false, else `null`). `llm_director.request_reply()` returns the parsed answer dict and retries once when the answer is not a dict, `reply` is not a non-empty string or `can_do` is not a bool, then raises the existing runtime error. `interpret_feedback()` gains `can_do` and `missing_tool` in its summary and records both in the `action: "reply"` line through `append_reply_line()`. `print_interpret()` prints a second `missing tool: <missing_tool>` line when `can_do` is false. In `serve.py` `handle_feedback_reply`, anything that is not `False` counts as `True` (an older answer without the key still works); when `can_do` is false and `missing_tool` is set and a requests file is configured, one line `{date, type: "missing_tool", text: "<missing_tool>: <feedback>", contact: "", backed: false}` is appended, wrapped in `try/except OSError` so the reply never fails because of it. `REQUEST_TYPES` is unchanged, so the Costs form still offers only `Feedback` and `Feature request`.
+
+**Why not A:** the owner cannot see a missing tool in a free-text reply, and the web app cannot tell a "cannot do" answer from a normal one; a structured answer is what the requests log needs.
+
+**Consequence:** Files touched: `prompts/interpret_feedback.md`, `scripts/llm_director.py`, `scripts/serve.py`, `docs/guides/user-guide.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `tests/test_llm_director.py`, `tests/test_serve_chat.py`. No new tool, no schema change, no change to `REQUEST_TYPES` or the Costs form; the exact user-facing sentence stays the model's, in the user's language.
+
+---
+
 ## [2026-10-24] Members only when thanked; the kit without a thumbnail (V020N lot n31)
 
 **Context:** The publish test found two blockers. `metadata.py` required `channel.members` unconditionally, so a channel whose `members_sentence` does not use `{members}` (or has none) could not run. `publish.py --kit` without `--photo` failed at the kit step with "thumbnail not found", because `publish_kit.py` treated a missing `thumbnail.jpg` as a failing check.

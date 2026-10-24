@@ -100,6 +100,87 @@ def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatc
         server.server_close()
 
 
+def test_chat_missing_tool_is_logged(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+    stdout = json.dumps(
+        {
+            "reply": "I cannot add subtitles; I can drop or trim shots. Noted.",
+            "can_do": False,
+            "missing_tool": "add subtitles",
+            "estimate_usd": None,
+            "estimate_s": None,
+            "wall_time_s": 1.0,
+            "llm_cost_usd": 0.0003,
+        }
+    )
+    monkeypatch.setattr(
+        serve.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
+    )
+    requests_path = tmp_path / "requests.jsonl"
+    server = start_server(root, requests=requests_path)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "add subtitles")]),
+        )
+        assert status == 303, body
+        lines = [
+            json.loads(line)
+            for line in requests_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(lines) == 1
+        assert lines[0]["type"] == "missing_tool"
+        assert lines[0]["text"] == "add subtitles: add subtitles"
+        assert lines[0]["contact"] == ""
+        assert lines[0]["backed"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_can_do_logs_nothing(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+    stdout = json.dumps(
+        {
+            "reply": "I will drop 0071/s2.",
+            "can_do": True,
+            "missing_tool": None,
+            "estimate_usd": 0.05,
+            "estimate_s": 12.3,
+            "wall_time_s": 1.0,
+            "llm_cost_usd": 0.0003,
+        }
+    )
+    monkeypatch.setattr(
+        serve.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
+    )
+    requests_path = tmp_path / "requests.jsonl"
+    server = start_server(root, requests=requests_path)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 303, body
+        assert not requests_path.exists() or not requests_path.read_text(encoding="utf-8").strip()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_chat_message_requires_text(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     stub_recap(monkeypatch, tmp_path)

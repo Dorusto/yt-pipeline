@@ -227,7 +227,10 @@ finished recap, the explanation and the contact sheet.
   and what they do not, the director answers how it reads the request with a
   cost/time estimate (one cheap model call, no new version), and **Make the new
   version** starts the re-edit with the feedback; no new version starts without
-  the click. From the command line:
+  the click. When the director cannot do what the user asked, it says so in
+  plain words (what it can do instead) and the request is noted in the requests
+  file as a missing tool (`type: missing_tool`), so the owner sees which tools
+  the director needs next. From the command line:
   `.venv/bin/python scripts/llm_director.py --workspace <workspace> --interpret-feedback "drop 0071/s2, tunnel longer" --json`.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
   (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is
