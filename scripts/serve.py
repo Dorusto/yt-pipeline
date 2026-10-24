@@ -207,7 +207,7 @@ BRIEF_PLACEHOLDER = (
     "Leave out: the parking lot shots"
 )
 FACT_FIELD_SPECS = (
-    ("place", FACT_LABELS["place"], "Monschau, Germany"),
+    ("place", FACT_LABELS["place"], "Lisbon, Portugal"),
     ("when", FACT_LABELS["when"], "April 2026"),
     ("who", FACT_LABELS["who"], "me and a friend"),
     ("occasion", FACT_LABELS["occasion"], "motorbike weekend"),

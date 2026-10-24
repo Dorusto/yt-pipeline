@@ -14,6 +14,7 @@ BANNED = (
     "~/ws",
     '"name": "Doru"',
     '"name":"Doru"',
+    "Monschau",
 )
 
 SCAN_DIRS = ("scripts", "prompts", ".claude/skills", "docs/guides", "docs/agents")
