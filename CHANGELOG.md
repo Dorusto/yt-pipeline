@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The LLM client retries once when a model answer is empty or not valid JSON, charging both attempts to the budget; `metadata.py` uses it.
 - Music: in the holiday flow a cut that starts a new structure beat now falls back to the nearest beat when the nearest downbeat is outside the snap window, so every cut lands on a beat.
 
+## [0.1.2] - 2026-10-23
+
+The Costs page no longer says "Paid" before you have made any edit: it shows 0,00 until the AI models are used. The model credit line now uses the same currency as the rest of the page.
+
+### Fixed
+
+- Web app: on a friend's instance with no model spend yet the headline shows the zero amount and "Your edits have not used any AI models yet" instead of "Paid".
+- Web app: the "Model credit" line uses the page currency (euro with the configured rate) and the decimal comma, like every other amount.
+
 ## [0.1.1] - 2026-10-23
 
 The Costs page on a friend's instance now starts with how to help cover the costs, then shows what your own edits have cost in AI models and what is still open, in red until it is paid back. The project's own costs follow, smaller and voluntary, and the donations come last.
