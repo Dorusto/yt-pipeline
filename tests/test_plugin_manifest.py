@@ -102,6 +102,19 @@ def test_no_root_plugin_manifest():
     assert not (ROOT / ".claude-plugin" / "plugin.json").exists()
 
 
+def test_every_entry_declares_one_mcp_server():
+    marketplace = load(MARKETPLACE)
+    for entry in marketplace["plugins"]:
+        servers = entry["mcpServers"]
+        assert isinstance(servers, dict)
+        assert len(servers) == 1
+        server = next(iter(servers.values()))
+        assert "${CLAUDE_PLUGIN_ROOT}" in server["command"]
+        args = server["args"]
+        assert "--plugin" in args
+        assert args[args.index("--plugin") + 1] == entry["name"]
+
+
 def test_hooks_manifest():
     hooks = load(HOOKS)
     assert "hooks" in hooks

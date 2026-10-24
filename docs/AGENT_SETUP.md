@@ -116,6 +116,23 @@ the `yt` entry point on `PATH` (section 5) and nothing else.
 `claude plugin validate .` checks the marketplace file and every entry. This is a
 manual step for Doru: the build host has no `claude` CLI.
 
+## Typed tools (MCP)
+
+Each plugin ships a small MCP server, `scripts/yt_mcp.py`, declared in its
+marketplace entry and started with the plugin's own `--plugin` value, so it only
+sees that plugin's tools. The server runs over stdio and exposes four typed
+tools: `yt_list`, `yt_describe`, `yt_run` and `yt_preview`. The plugin → tools
+grouping comes from the marketplace and the skills, so a new tool appears without
+a code change.
+
+- `yt_list` → the tools of the plugin, one line each.
+- `yt_describe` with `{"tool": "render"}` → the tool's `--help` text and whether
+  it supports `--json`.
+- `yt_run` with `{"tool": "doctor", "args": ["--source", "<folder>"]}` → the
+  tool's `--json` object, or the structured `{"ok": false, ...}` error.
+- `yt_preview` with `{"path": "<workspace>"}` → the poster or a frame as an
+  image.
+
 ## 7. opencode
 
 Run `opencode` in the repo root. It reads `.claude/skills/<name>/SKILL.md`

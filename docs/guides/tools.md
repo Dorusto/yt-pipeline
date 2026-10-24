@@ -23,6 +23,9 @@ lists the tools; `yt --json` and `yt --help --json` print the same JSON (the
 resolved root, Python and tool list). `bin/yt` is a thin launcher that finds a
 Python and runs `scripts/yt.py`.
 
+`scripts/yt_mcp.py` serves one plugin's tools over MCP (`yt yt_mcp --plugin
+<name>`), see `docs/AGENT_SETUP.md`, "Typed tools (MCP)".
+
 ---
 
 ## The finished-clip pipeline

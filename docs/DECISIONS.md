@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] A typed MCP server per plugin (V030 lot c13)
+
+**Context:** Issue #82. The pipeline's tools were reachable only through the `yt` dispatcher and the skills, so an agent had to read a skill to learn a tool's flags and could not call a tool as a typed function. The FilmCraft MCP server shows the pattern: a small stdio server that exposes a tool group directly. The five plugins already group the skills, but nothing turned that grouping into callable tools.
+
+**Options:** (A) one MCP server for the whole repository, exposing every tool; (B) one small MCP server per plugin, declared in the plugin's marketplace entry, exposing only that plugin's tools.
+
+**Decision:** B. `scripts/yt_mcp.py` is a stdio MCP server (official `mcp` Python SDK) with four typed tools: `yt_list` (the plugin's tools, one line each), `yt_describe` (a tool's `--help` text and whether it supports `--json`), `yt_run` (runs `yt <tool> <args> --json` and returns the parsed object or a structured error) and `yt_preview` (a workspace poster or a video frame as an image). It is started with the plugin's own `--plugin` value and there is no flag that exposes every tool. The plugin → tools grouping is read from the marketplace and the skills by `scripts/common/plugins.py` (one source, never a hand-written list), so a new tool appears without a code change. Each of the five marketplace entries gains an inline `mcpServers` map whose server runs `${CLAUDE_PLUGIN_ROOT}/bin/yt yt_mcp --plugin <entry name>`; there is no root `plugin.json`, so the entry is the manifest and the inline map applies. The server runs under the plugin venv because `bin/yt` → `scripts/yt.py` resolves it from `CLAUDE_PLUGIN_DATA`. The root/interpreter resolution moved out of `scripts/yt.py` into `scripts/common/entry.py` (`EntryError`, `resolve_repo_root`, `resolve_python`) so `yt_mcp.py` shares it. `yt_mcp.py` → `yt.py` joins the tool-to-tool named set. `mcp` is added to `requirements.txt` and the CI pip line.
+
+**Why not A:** one server for every tool would give each plugin every other plugin's tools, so installing `yt-shorts` alone would still expose the director and publish tools; the plugin boundary is the point of the marketplace, and the per-plugin server keeps the surface small.
+
+**Consequence:** Files touched: `scripts/common/entry.py`, `scripts/common/plugins.py`, `scripts/yt_mcp.py`, `scripts/yt.py`, `.claude-plugin/marketplace.json`, `requirements.txt`, `.github/workflows/tests.yml`, `docs/AGENT_SETUP.md`, `docs/guides/tools.md`, `docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/DECISIONS.md`, `tests/test_yt_mcp.py`, `tests/test_plugin_manifest.py`. No change to any tool's own CLI, schema or behaviour, no new skill, no root `.mcp.json`, no change to `bin/yt` or `hooks/session_start.sh`.
+
+---
+
 ## [2026-10-24] Style review fixes (V030 lot c9b)
 
 **Context:** The review of lot c9 (`e35ed6a`) found three problems. The metadata prompt still prescribed a built-in pinned comment voice ("in the creator's own plain first-person Romanian"), so the voice did not come only from `channel.style.pinned_comment_voice`. `channel.style.description_order` was handed to the model as an instruction but `build_description` still assembled the parts in a fixed order, so the setting did not actually change the description. And `docs/agents/rules-checked.md` had no row for the `channel.style` rule.

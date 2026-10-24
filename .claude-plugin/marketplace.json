@@ -37,7 +37,13 @@
         "./.claude/skills/yt-rough-cut",
         "./.claude/skills/yt-router",
         "./.claude/skills/yt-notebook"
-      ]
+      ],
+      "mcpServers": {
+        "yt": {
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/yt",
+          "args": ["yt_mcp", "--plugin", "yt-director"]
+        }
+      }
     },
     {
       "name": "yt-publish",
@@ -56,7 +62,13 @@
         "./.claude/skills/yt-recap-meta",
         "./.claude/skills/yt-thumbnail",
         "./.claude/skills/yt-audio-clean"
-      ]
+      ],
+      "mcpServers": {
+        "yt": {
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/yt",
+          "args": ["yt_mcp", "--plugin", "yt-publish"]
+        }
+      }
     },
     {
       "name": "yt-shorts",
@@ -72,7 +84,13 @@
       "skills": [
         "./.claude/skills/yt-shorts",
         "./.claude/skills/yt-reframe"
-      ]
+      ],
+      "mcpServers": {
+        "yt": {
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/yt",
+          "args": ["yt_mcp", "--plugin", "yt-shorts"]
+        }
+      }
     },
     {
       "name": "yt-editor",
@@ -92,7 +110,13 @@
         "./.claude/skills/yt-graphics",
         "./.claude/skills/yt-matte",
         "./.claude/skills/yt-motion"
-      ]
+      ],
+      "mcpServers": {
+        "yt": {
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/yt",
+          "args": ["yt_mcp", "--plugin", "yt-editor"]
+        }
+      }
     },
     {
       "name": "yt-admin",
@@ -109,7 +133,13 @@
         "./.claude/skills/yt-costs",
         "./.claude/skills/yt-watchdog",
         "./.claude/skills/yt-eval"
-      ]
+      ],
+      "mcpServers": {
+        "yt": {
+          "command": "${CLAUDE_PLUGIN_ROOT}/bin/yt",
+          "args": ["yt_mcp", "--plugin", "yt-admin"]
+        }
+      }
     }
   ]
 }

@@ -37,6 +37,7 @@ EXCLUDE = {
     "thumbnail_concepts",
     "translate_srt",
     "yt",
+    "yt_mcp",
 }
 
 

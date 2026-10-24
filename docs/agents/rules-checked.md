@@ -115,6 +115,7 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — vertical 9:16 | `tests/test_vertical.py` |
 | Safety rules — README is the front door | `tests/test_readme_layout.py` |
 | Safety rules — AGENTS.md is the shared instruction file | `tests/test_agents_md.py` |
+| Safety rules — typed MCP server per plugin | `tests/test_yt_mcp.py` |
 | Photos and music — photos are first-class candidates | `tests/test_photos.py` |
 | Photos and music — photo pseudo-segment p1 | `tests/test_describe.py` |
 | Photos and music — burst rule | `tests/test_index.py` |
