@@ -1,0 +1,15 @@
+{
+  "name": "yt-pipeline",
+  "owner": {
+    "name": "Dorusto",
+    "url": "https://github.com/Dorusto"
+  },
+  "description": "Director tools for holiday recaps and YouTube clips.",
+  "plugins": [
+    {
+      "name": "yt-pipeline",
+      "source": "./",
+      "description": "Director tools for holiday recaps and YouTube clips."
+    }
+  ]
+}

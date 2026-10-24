@@ -1,0 +1,14 @@
+{
+  "name": "yt-pipeline",
+  "version": "0.3.0",
+  "description": "Director tools for holiday recaps and YouTube clips.",
+  "author": {
+    "name": "Dorusto",
+    "url": "https://github.com/Dorusto"
+  },
+  "homepage": "https://github.com/Dorusto/yt-pipeline",
+  "repository": "https://github.com/Dorusto/yt-pipeline",
+  "license": "AGPL-3.0-or-later",
+  "keywords": ["video", "director", "recap", "shorts", "ffmpeg"],
+  "skills": ["./.claude/skills/"]
+}

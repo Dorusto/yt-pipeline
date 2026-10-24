@@ -3068,3 +3068,30 @@ buttons.
 **Consequence:** RULES gains the route and the versions rule; the user guide
 and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
 the commit carries `Stable-change: approved`.
+
+## [2026-10-24] Claude Code plugin packaging and marketplace (V030 lot c3)
+
+**Context:** Issue #82 — the 34 skills in `.claude/skills/` load only when the
+agent starts inside the repository; the repository must be installable as a
+Claude Code plugin from any folder.
+
+**Options:** (A) keep telling the user to start the agent inside the repo or pass
+`--add-dir`; (B) package the repository as a Claude Code plugin with its own
+marketplace, so the skills load from any folder and `yt` is on the Bash tool's
+`PATH`.
+
+**Decision:** B. The repository root is both the plugin root and the marketplace
+root. `.claude-plugin/plugin.json` (name `yt-pipeline`, `skills:
+["./.claude/skills/"]`) and `.claude-plugin/marketplace.json` (one entry
+`{name: yt-pipeline, source: "./"}`) package it; `bin/yt` is on the Bash tool's
+`PATH`; a `SessionStart` hook creates the plugin's virtual environment in
+`${CLAUDE_PLUGIN_DATA}` from `requirements.txt` and `bin/yt`/`scripts/yt.py` find
+it through a marker file.
+
+**Why not A:** the official Claude Code plugin format is the supported way to
+ship skills from any folder; the plugin data directory survives updates and is
+removed on uninstall.
+
+**Consequence:** `claude plugin validate .` is Doru's manual check (the build
+host has no `claude` CLI); the plugin `version` is bumped with the release; no
+tool, schema or route changes.

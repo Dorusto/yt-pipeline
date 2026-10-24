@@ -67,7 +67,12 @@ def resolve_repo_root():
 
 
 def resolve_python(root):
-    """Return the interpreter to run the tools with."""
+    """Return the interpreter to run the tools with.
+
+    After the local ``.venv`` it looks in the plugin data directory
+    (``~/.claude/plugins/data/``) for the virtual environment the plugin's
+    SessionStart hook creates.
+    """
     venv = os.environ.get("YT_PIPELINE_VENV")
     if venv:
         base = Path(venv).expanduser().resolve()
@@ -78,6 +83,25 @@ def resolve_python(root):
     local = root / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
     if local.is_file():
         return str(local)
+    plugin_data = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if plugin_data:
+        plugin_python = Path(plugin_data) / (
+            "venv/Scripts/python.exe" if os.name == "nt" else "venv/bin/python"
+        )
+        if plugin_python.is_file():
+            return str(plugin_python)
+    for marker in sorted(Path.home().glob(".claude/plugins/data/*/yt-pipeline-venv")):
+        try:
+            recorded = marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not recorded:
+            continue
+        python = Path(recorded) / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        if python.is_file():
+            return str(python)
     return "python3"
 
 

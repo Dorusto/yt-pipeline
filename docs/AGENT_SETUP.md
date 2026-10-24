@@ -57,6 +57,22 @@ Ask the agent to list its skills. You should see `yt-transcript`, `yt-shorts` an
 yt doctor --source <folder>
 ```
 
+## 5c. Claude Code plugin
+
+The repository is also a Claude Code plugin and its own marketplace. Install it
+once, from any folder:
+
+```bash
+claude plugin marketplace add Dorusto/yt-pipeline
+claude plugin install yt-pipeline@yt-pipeline
+```
+
+The skills then load from any folder as `/yt-pipeline:yt-recap`,
+`/yt-pipeline:yt-director` and so on, and `yt` is on the Bash tool's `PATH`. On the
+first session a `SessionStart` hook creates the plugin's own virtual environment
+from `requirements.txt` under `~/.claude/plugins/data/`; later sessions reuse it.
+`claude plugin validate .` checks the manifest and the marketplace file.
+
 ## 6. Smoke test
 
 This checks the setup end to end without any video or GPU. It uses `examples/sample_RO.srt`, a ten-line fake subtitle file that contains the word "chezve" twice.
