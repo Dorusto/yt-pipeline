@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from common.channel import fixed_string, fixed_strings
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
@@ -103,16 +104,12 @@ def format_transcript(cues):
     return "\n".join(f"[{format_clock(cue['start'])}] {cue['text']}" for cue in cues)
 
 
-def build_message(prompt_text, context_text, title, transcript_text):
-    return "\n\n".join([
-        prompt_text,
-        "## Context",
-        context_text,
-        "## Title",
-        title,
-        "## Transcript",
-        transcript_text,
-    ])
+def build_message(prompt_text, context_text, title, transcript_text, channel_formula=None):
+    parts = [prompt_text, "## Context", context_text, "## Title", title]
+    if channel_formula is not None:
+        parts.extend(["## Channel", channel_formula])
+    parts.extend(["## Transcript", transcript_text])
+    return "\n\n".join(parts)
 
 
 def normalize_timestamp(value):
@@ -247,7 +244,11 @@ def run(srt_path, context_path, title, out_dir=None, name=None, prompt_path=None
     if not isinstance(title, str) or not title.strip():
         raise ThumbnailConceptsError("--title must be a non-empty string")
 
-    load_config()
+    config = load_config()
+    fixed = fixed_strings(config)
+    channel_formula = fixed_string(fixed, "thumbnail_formula", "ro")
+    if channel_formula is None:
+        channel_formula = fixed_string(fixed, "thumbnail_formula", "en")
 
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
     prompt_text = read_text(prompt_file, "prompt")
@@ -256,7 +257,7 @@ def run(srt_path, context_path, title, out_dir=None, name=None, prompt_path=None
     srt_end = max((cue["end"] for cue in cues), default=0.0)
     transcript_text = format_transcript(cues)
 
-    message = build_message(prompt_text, context_text, title, transcript_text)
+    message = build_message(prompt_text, context_text, title, transcript_text, channel_formula)
     answer = get_client().complete_json(
         "metadata",
         [{"role": "user", "content": message}],

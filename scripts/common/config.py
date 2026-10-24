@@ -221,6 +221,35 @@ def _validate(data):
         logo = brand.get("logo")
         _check_brand_logo(logo)
 
+    channel = data.get("channel")
+    if channel is not None:
+        if not isinstance(channel, dict):
+            raise ConfigError("channel must be a mapping")
+        for key in ("members", "github_url"):
+            value = channel.get(key)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ConfigError(f"channel.{key} must be a non-empty string")
+        fixed = channel.get("fixed")
+        if fixed is not None:
+            if not isinstance(fixed, dict):
+                raise ConfigError("channel.fixed must be a mapping")
+            for part, languages in fixed.items():
+                if not isinstance(languages, dict):
+                    raise ConfigError(
+                        f"channel.fixed.{part} must be a mapping of language codes to strings"
+                    )
+                for lang, text in languages.items():
+                    if (
+                        not isinstance(lang, str)
+                        or not lang
+                        or not isinstance(text, str)
+                        or not text
+                    ):
+                        raise ConfigError(
+                            f"channel.fixed.{part} must map non-empty language codes "
+                            "to non-empty strings"
+                        )
+
     return data
 
 

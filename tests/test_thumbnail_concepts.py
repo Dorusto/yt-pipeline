@@ -1,3 +1,4 @@
+import copy
 import json
 
 import pytest
@@ -172,3 +173,65 @@ def test_json_summary(tmp_path, monkeypatch, capsys):
     assert summary["wall_time_s"] >= 0
     assert summary["outputs"]["json"].endswith("thumbnail_concepts.json")
     assert summary["outputs"]["markdown"].endswith("thumbnail_concepts.md")
+
+
+class RecordingClient(MockClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.messages = []
+
+    def complete(self, role, messages, model=None, **kwargs):
+        self.messages.append(messages)
+        return super().complete(role, messages, model=model, **kwargs)
+
+
+def test_channel_formula_section_from_config(tmp_path, monkeypatch):
+    config = copy.deepcopy(CONFIG)
+    config["channel"] = {
+        "members": "A",
+        "github_url": "https://example.invalid/c",
+        "fixed": {"thumbnail_formula": {"ro": "Formula RO", "en": "Formula EN"}},
+    }
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=config)
+    patch(monkeypatch, client, config=config)
+    code = thumbnail_concepts.main(
+        [
+            str(srt),
+            "--context",
+            str(context),
+            "--title",
+            TITLE,
+            "--out-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert code == EXIT_OK
+    message = client.messages[0][0]["content"]
+    assert "\n\n## Channel\n\n" in message
+    assert "Formula RO" in message
+    assert (
+        message.index("\n\n## Title\n\n")
+        < message.index("\n\n## Channel\n\n")
+        < message.index("\n\n## Transcript\n\n")
+    )
+
+
+def test_no_channel_formula_no_section(tmp_path, monkeypatch):
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=CONFIG)
+    patch(monkeypatch, client, config=CONFIG)
+    code = thumbnail_concepts.main(
+        [
+            str(srt),
+            "--context",
+            str(context),
+            "--title",
+            TITLE,
+            "--out-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert code == EXIT_OK
+    message = client.messages[0][0]["content"]
+    assert "\n\n## Channel\n\n" not in message

@@ -1,3 +1,4 @@
+import copy
 import json
 
 import pytest
@@ -18,12 +19,25 @@ CONFIG = {
     "channel": {
         "members": "Andrei, Mihai și Maria",
         "github_url": "https://example.invalid/channel",
+        "fixed": {
+            "members_sentence": {
+                "ro": "Mulțumesc {members} pentru susținere.",
+                "en": "Thank you {members} for the support.",
+            },
+            "closing": {
+                "ro": "Pe curând.",
+                "en": "See you soon.",
+            },
+        },
     },
 }
 
 CHANNEL_URL = "https://example.invalid/channel"
 
-MEMBERS = metadata.MEMBERS_SENTENCE.replace("{members}", "Andrei, Mihai și Maria")
+MEMBERS_RO = "Mulțumesc Andrei, Mihai și Maria pentru susținere."
+MEMBERS_EN = "Thank you Andrei, Mihai și Maria for the support."
+CLOSING_RO = "Pe curând."
+CLOSING_EN = "See you soon."
 
 FULL = {
     "titles": ["Titlu unu", "Titlu doi", "Titlu trei"],
@@ -74,8 +88,10 @@ def test_end_to_end(tmp_path, monkeypatch):
     assert code == 0
     text = out.read_text(encoding="utf-8")
 
-    assert text.count(MEMBERS) == 2
-    assert text.count(metadata.CLOSING) == 2
+    assert text.count(MEMBERS_RO) == 1
+    assert text.count(MEMBERS_EN) == 1
+    assert text.count(CLOSING_RO) == 1
+    assert text.count(CLOSING_EN) == 1
 
     ro_start = text.index("## Description RO")
     en_start = text.index("## Description EN")
@@ -84,17 +100,21 @@ def test_end_to_end(tmp_path, monkeypatch):
     order = [
         ro_block.index("Intro RO"),
         ro_block.index("GitHub RO"),
-        ro_block.index(MEMBERS),
+        ro_block.index(MEMBERS_RO),
         ro_block.index("Previous RO"),
         ro_block.index("Subscribe RO"),
         ro_block.index("[affiliate] Promo RO"),
-        ro_block.index(metadata.CLOSING),
+        ro_block.index(CLOSING_RO),
     ]
     assert order == sorted(order)
+    assert MEMBERS_EN not in ro_block
+    assert CLOSING_EN not in ro_block
 
     en_block = text[en_start:]
-    assert MEMBERS in en_block
-    assert metadata.CLOSING in en_block
+    assert MEMBERS_EN in en_block
+    assert CLOSING_EN in en_block
+    assert MEMBERS_RO not in en_block
+    assert CLOSING_RO not in en_block
 
     assert "1. Titlu unu" in text
     assert "2. Titlu doi" in text
@@ -120,6 +140,48 @@ def test_no_previous_url_drops_previous_line(tmp_path, monkeypatch):
     text = out.read_text(encoding="utf-8")
     assert "Previous RO" not in text
     assert "Previous EN" not in text
+
+
+def test_missing_closing_en_omits_en_closing(tmp_path, monkeypatch):
+    config = copy.deepcopy(CONFIG)
+    del config["channel"]["fixed"]["closing"]["en"]
+    code, out = run_main(tmp_path, monkeypatch, FULL, config=config)
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    ro_start = text.index("## Description RO")
+    en_start = text.index("## Description EN")
+    assert CLOSING_RO in text[ro_start:en_start]
+    assert CLOSING_EN not in text[en_start:]
+
+
+def test_missing_members_sentence_omits_paragraph(tmp_path, monkeypatch):
+    config = copy.deepcopy(CONFIG)
+    del config["channel"]["fixed"]["members_sentence"]
+    code, out = run_main(tmp_path, monkeypatch, FULL, config=config)
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    assert MEMBERS_RO not in text
+    assert MEMBERS_EN not in text
+
+
+def test_chapter_title_en_in_json_and_markdown(tmp_path, monkeypatch):
+    data = dict(
+        FULL,
+        chapters=[
+            {"timestamp": "00:00:00", "title": "Intro", "title_en": "Intro"},
+            {"timestamp": "00:00:02", "title": "Lume", "title_en": "World"},
+        ],
+    )
+    code, out = run_main(tmp_path, monkeypatch, data)
+    assert code == 0
+    payload = json.loads((tmp_path / "out" / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["chapters"] == [
+        {"timestamp": "00:00:00", "title": "Intro", "title_en": "Intro"},
+        {"timestamp": "00:00:02", "title": "Lume", "title_en": "World"},
+    ]
+    text = out.read_text(encoding="utf-8")
+    assert "## Chapters (EN)" in text
+    assert "00:00:02 World" in text
 
 
 def test_missing_channel_members_exits_2(tmp_path, monkeypatch, capsys):
@@ -170,6 +232,32 @@ def test_channel_url_sent_to_model(tmp_path, monkeypatch):
     message = client.messages[0][0]["content"]
     assert "## Links" in message
     assert f"channel_url: {CHANNEL_URL}" in message
+
+
+def test_title_flag_puts_chosen_title_in_message(tmp_path, monkeypatch):
+    srt, context = write_inputs(tmp_path)
+    client = RecordingClient(text=json.dumps(FULL), config=CONFIG)
+    patch(monkeypatch, client)
+    code = metadata.main(
+        [
+            str(srt),
+            "--context",
+            str(context),
+            "--title",
+            "Titlul ales",
+            "--out-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert code == 0
+    message = client.messages[0][0]["content"]
+    assert "## Chosen title" in message
+    assert "Titlul ales" in message
+    assert (
+        message.index("\n\n## Context\n\n")
+        < message.index("\n\n## Chosen title\n\n")
+        < message.index("\n\n## Transcript\n\n")
+    )
 
 
 def test_missing_json_key_exits_3(tmp_path, monkeypatch, capsys):

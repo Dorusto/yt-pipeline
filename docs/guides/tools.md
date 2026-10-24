@@ -387,12 +387,15 @@ The `verify` step compares the corrected `<name>_RO.srt` with the final video al
 `metadata.py` turns a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags and a pinned-comment proposal. It writes `metadata.json` next to the draft with the validated fields. Skill: `yt-publish`.
 
 ```bash
-.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--chapters chapters.json] \
-  [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--title TITLE] \
+  [--chapters chapters.json] [--previous-url URL] [--repo-url URL] \
+  [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
 ```
 
+- `--title` is the chosen title the human already picked; the model gets it in a `## Chosen title` section and uses it verbatim as the first title.
 - `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's.
-- The channel-members sentence and the closing are fixed and never taken from the model.
+- The channel's fixed wording comes from `channel.fixed` in the config, one string per language: `members_sentence` (with `{members}` filled from `channel.members`) and `closing` are inserted verbatim, the RO description getting the RO string and the EN description the EN one. A missing part, a missing language or an empty string leaves that part out — never replaced by built-in text.
+- A chapter may carry `title_en`; when at least one does, the draft adds a `## Chapters (EN)` section and `metadata.json` keeps `title_en` per chapter.
 
 ### Thumbnail concepts (thumbnail_concepts.py)
 
@@ -404,6 +407,7 @@ The `verify` step compares the corrected `<name>_RO.srt` with the final video al
 ```
 
 - The model role is `metadata` (same as `metadata.py`); the concepts start from the confirmed title and each phrases the promise its own way.
+- The channel's thumbnail formula comes from `channel.fixed.thumbnail_formula` (RO, else EN) and is handed to the model in a `## Channel` section; with none set the section is omitted.
 - A `clip_frame` timecode is normalized to `HH:MM:SS` and must be inside the transcript.
 
 ---

@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-23] Metadata prompt fixes and channel wording in the config (V020N lot n11)
+
+**Context:** Issue #76: the metadata prompt produced weak titles (the main keyword first, the "Name: subtitle" pattern), invented links and repos the Inputs never gave, a marketing-style pinned comment, one fixed members sentence and closing reused verbatim in both the RO and the EN description, and Romanian-only chapter titles. The members sentence and the closing were hardcoded in `scripts/metadata.py` (`MEMBERS_SENTENCE`, `CLOSING`) and the thumbnail formula was hardcoded in `prompts/thumbnail_concepts.md`, so one channel's wording lived in tracked code and prompts — against the rule that prompts and tracked templates carry no channel-specific value.
+
+**Options:** (A) keep the wording in code and the prompt and only fix the field rules; (B) move every channel-specific wording string to `channel.fixed` in the config (one string per language) and fix the prompt at the same time.
+
+**Decision:** B. `channel.fixed` is an optional mapping of part name (`members_sentence`, `closing`, `thumbnail_formula`) to a mapping of language code to string; `channel.members` fills `{members}` in every `members_sentence`. A missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. `scripts/common/channel.py` reads it (`fixed_strings`, `fixed_string`), `scripts/common/config.py` validates it, `metadata.py` inserts the RO string in the RO description and the EN string in the EN one, `thumbnail_concepts.py` hands `thumbnail_formula` (RO, else EN) to the model in a `## Channel` section, and `publish_kit.py` uses a chapter's `title_en` for the EN chapter lines. The prompt fixes: the chosen title first (a new `--title` input on `metadata.py`), no invented links or repos (`github_line` is `null` unless the Inputs name a repo or the context says the code is in the resources hub), a plain first-person pinned comment, each description in its own language, and English chapter titles (`title_en`).
+
+**Why not A:** the wording is the channel owner's, not the tool's; keeping it in code and prompts means every other channel edits tracked files and the rule stays broken. The config is the one place a channel's own values already live (`channel.members`, `channel.github_url`).
+
+**Consequence:** `scripts/metadata.py` loses `MEMBERS_SENTENCE` and `CLOSING`; `prompts/metadata.md` and `prompts/thumbnail_concepts.md` carry no channel wording; `config.yaml.example` shows the `channel.fixed` keys with sample wording. `metadata.json` chapters may carry `title_en`, and `metadata.md` gains a `## Chapters (EN)` section when any chapter has one. `channel.members` and `channel.github_url` stay required. `publish.py` does not forward `--title` yet (out of scope).
+
+---
+
 ## [2026-10-23] The publish kit is its own tool and links the video (V020N lot n9)
 
 **Context:** Issue #73: after changing only the thumbnail the kit could not be rebuilt — the kit step is skipped while `publish-kit/studio.md` exists, and `--force` re-runs every step including translation and metadata, which would overwrite a metadata draft chosen by hand (against VISION §2.1). `--kit` also copied the final video (about 1 GB) into `publish-kit/`, so the disk held two copies.

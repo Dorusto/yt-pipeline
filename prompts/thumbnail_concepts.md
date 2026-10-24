@@ -10,6 +10,7 @@ The tool appends these after this prompt:
 
 - `## Context` — the clip's angle and what the viewer leaves with (from `--context`).
 - `## Title` — the confirmed title the human picked (from `--title`). Every concept starts from it.
+- `## Channel` — the channel's thumbnail formula, when the tool gives one.
 - `## Transcript` — the corrected Romanian transcript as `[HH:MM:SS] text` lines (timeline time).
 
 ## Output
@@ -33,7 +34,7 @@ Return EXACTLY one JSON object and nothing else:
 
 Field rules:
 
-- `concepts` — 2-3 distinct concepts. Channel formula: the creator's own face, a real emotion (never neutral) and short text — never a generic illustration. The concepts start from the confirmed title and each phrases the promise its own way: no two share both `title` and `keyword`, and at least one has a non-empty `kicker`.
+- `concepts` — 2-3 distinct concepts. Follow the channel formula given in the `## Channel` section when the tool gives one. The concepts start from the confirmed title and each phrases the promise its own way: no two share both `title` and `keyword`, and at least one has a non-empty `kicker`.
 - `name` — short Romanian label for the concept.
 - `pose` — what the face and body do in the shot.
 - `emotion` — a real, readable emotion (bucurie, surpriză, entuziasm, uimire, concentrare…), never "neutral" and never a flat stare.

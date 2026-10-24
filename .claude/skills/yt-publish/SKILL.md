@@ -60,18 +60,20 @@ Run one Whisper pass over a media file and write a raw `.srt` plus the per-sourc
 Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags and a pinned-comment proposal. A human reviews the draft; nothing is uploaded. Thumbnail concepts are a separate step (see Step 3b).
 
 ```bash
-.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--chapters chapters.json] \
-  [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
+.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--title TITLE] \
+  [--chapters chapters.json] [--previous-url URL] [--repo-url URL] \
+  [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
 ```
 
 - `SRT` is the corrected Romanian `.srt` (timeline time). `--context` is required: a markdown note with the clip's angle and what the viewer leaves with.
+- `--title` is the chosen title the human already picked; the model gets it in a `## Chosen title` section (between `## Context` and `## Transcript`) and uses it verbatim as the first title.
 - `--previous-url` links a relevant earlier clip; `--repo-url` links the clip's own code repo. Both are optional and are passed to the model in a `## Links` section together with `channel_url`, the channel's code URL from `channel.github_url` in the config.
 - `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's: each `start_s` becomes a normalized `HH:MM:SS` timestamp and the existing chapter rules apply (first at `00:00:00`, non-decreasing, inside the transcript). The model's own `chapters` key becomes optional and is ignored when present; without the flag nothing changes. A missing or invalid file exits 2 naming the path or the offending chapter.
 - `--out-dir` is the output folder (default: the SRT's parent; created if missing). `--name` is used in the draft header and the `--json` summary (default: the SRT stem). It writes `<out-dir>/metadata.md` and, next to it, `<out-dir>/metadata.json` with the validated fields (`name`, `titles`, `description_ro`, `description_en`, `chapters`, `tags`, `pinned_comment`) so the publish kit is deterministic from the model JSON.
 - `--prompt` is an alternative prompt file (default: `prompts/metadata.md`).
-- The tool sends the prompt file text plus `## Context`, `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
-- The channel-members sentence and the closing are fixed and never taken from the model: the members sentence substitutes `channel.members` from the config, and the closing is always last. Both appear verbatim in the RO and the EN description. The description order is intro → github line (omitted when null) → members sentence → previous line (omitted when null or when `--previous-url` was not given) → subscribe line → promo lines (each prefixed with its `[label]`) → closing.
-- Chapters must be `HH:MM:SS` or `MM:SS` (normalized to `HH:MM:SS`), non-decreasing, inside the transcript, first one `00:00:00`.
+- The tool sends the prompt file text plus `## Context`, `## Chosen title` (only with `--title`), `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
+- The channel's fixed wording comes from `channel.fixed` in the config, one string per language: `members_sentence` (with `{members}` filled from `channel.members`) and `closing` are inserted verbatim and never taken from the model. The RO description gets the RO string and the EN description the EN one; a missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. The description order is intro → github line (omitted when null) → members sentence (omitted when unset) → previous line (omitted when null or when `--previous-url` was not given) → subscribe line → promo lines (each prefixed with its `[label]`) → closing (omitted when unset).
+- Chapters must be `HH:MM:SS` or `MM:SS` (normalized to `HH:MM:SS`), non-decreasing, inside the transcript, first one `00:00:00`. A chapter may carry `title_en`; when at least one does, the draft adds a `## Chapters (EN)` section and `metadata.json` keeps `title_en` per chapter.
 - `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `wall_time_s` and `llm_cost_usd`.
 - Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.members` or `channel.github_url` missing or empty in the config, a missing model role, a bad chapter (named) from `--chapters`. Budget or LLM errors, unparseable model JSON or a missing or invalid JSON key (named) exit 3 (the model call failed after work started).
 - Re-run safe: the output is a derived file and is overwritten.
@@ -86,6 +88,7 @@ Turn the confirmed title, the context note and the corrected `.srt` into 2-3 Rom
 ```
 
 - `--title` is the confirmed title the human picked from `metadata.json` `titles`; the concepts start from it.
+- The channel's thumbnail formula comes from `channel.fixed.thumbnail_formula` (RO, else EN) and is handed to the model in a `## Channel` section (after `## Title`); with none set the section is omitted.
 - The concepts carry `name`, `pose`, `emotion`, `text{title,keyword,kicker}`, `theme` and `source` (`clip_frame` with a timecode inside the transcript, or `new_photo`). A `clip_frame` timecode is normalized to `HH:MM:SS` and must be inside the transcript.
 - `--json` prints `ok`, `outputs` (`json`, `markdown`), `title`, `concepts`, `wall_time_s` and `llm_cost_usd`.
 - Errors exit 2 for a missing/unreadable SRT, context or prompt file, a missing config or a bad `--title`; a model answer that cannot be parsed or does not match the shape exits 3.

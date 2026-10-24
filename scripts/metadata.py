@@ -4,17 +4,17 @@
 
 The tool sends the prompt in ``prompts/metadata.md`` plus the context, the
 transcript and the links to the ``metadata`` model role, then assembles the
-description deterministically: the channel-members sentence and the closing are
-fixed and never taken from the model. A human reviews the draft; nothing is
-uploaded. It also writes ``metadata.json`` next to ``metadata.md`` with the
-validated fields, so the publish kit is deterministic from the model JSON.
-With ``--chapters`` the chapters come from a ``chapters.json`` (the chapter
-source of truth) instead of the model answer.
+description deterministically: the channel's fixed wording (``channel.fixed``)
+is inserted verbatim and never taken from the model. A human reviews the draft;
+nothing is uploaded. It also writes ``metadata.json`` next to ``metadata.md``
+with the validated fields, so the publish kit is deterministic from the model
+JSON. With ``--chapters`` the chapters come from a ``chapters.json`` (the
+chapter source of truth) instead of the model answer.
 
 Usage:
-    python3 metadata.py SRT --context CONTEXT.md [--chapters chapters.json]
-        [--previous-url URL] [--repo-url URL] [--out-dir DIR] [--name NAME]
-        [--prompt PATH] [--json]
+    python3 metadata.py SRT --context CONTEXT.md [--title TITLE]
+        [--chapters chapters.json] [--previous-url URL] [--repo-url URL]
+        [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
 """
 
 import argparse
@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 
+from common.channel import fixed_string, fixed_strings
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
@@ -31,12 +32,6 @@ from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
 DEFAULT_PROMPT = Path(__file__).resolve().parents[1] / "prompts" / "metadata.md"
-MEMBERS_SENTENCE = (
-    "Mulțumesc {members} pentru susținerea canalului meu de YouTube. "
-    "Dacă îți place ce fac și vrei să te alături și tu, poți folosi cu "
-    "încredere butonul de membru mai jos."
-)
-CLOSING = "Până data viitoare — nu uita să fii creativ."
 
 _client = None
 
@@ -103,8 +98,13 @@ def format_transcript(cues):
     return "\n".join(f"[{format_clock(cue['start'])}] {cue['text']}" for cue in cues)
 
 
-def build_message(prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url):
-    parts = [prompt_text, "## Context", context_text, "## Transcript", transcript_text]
+def build_message(
+    prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url, chosen_title=None
+):
+    parts = [prompt_text, "## Context", context_text]
+    if chosen_title is not None:
+        parts.extend(["## Chosen title", chosen_title])
+    parts.extend(["## Transcript", transcript_text])
     links = [f"channel_url: {channel_url}"]
     if previous_url:
         links.append(f"previous_url: {previous_url}")
@@ -176,6 +176,10 @@ def validate_model_json(data, require_chapters=True):
                 raise MetadataRuntimeError(f"model JSON key 'chapters[{index}].timestamp' must be a string")
             if not isinstance(chapter.get("title"), str):
                 raise MetadataRuntimeError(f"model JSON key 'chapters[{index}].title' must be a string")
+            if "title_en" in chapter and not isinstance(chapter["title_en"], str):
+                raise MetadataRuntimeError(
+                    f"model JSON key 'chapters[{index}].title_en' must be a string"
+                )
 
     tags = require_key(data, "tags")
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
@@ -238,7 +242,10 @@ def validate_chapters(chapters, srt_end):
             raise MetadataError(f"chapter {index + 1} ('{raw}') is before the previous chapter")
         if index == 0 and seconds != 0:
             raise MetadataError(f"chapter 1 ('{raw}') must start at 00:00:00")
-        normalized.append({"timestamp": stamp, "title": chapter["title"]})
+        normalized_chapter = {"timestamp": stamp, "title": chapter["title"]}
+        if "title_en" in chapter:
+            normalized_chapter["title_en"] = chapter["title_en"]
+        normalized.append(normalized_chapter)
         previous = seconds
     return normalized
 
@@ -266,17 +273,33 @@ def load_chapters_file(path):
     ]
 
 
-def build_description(fields, lang, members_sentence, previous_url):
+def fill_members(fixed, members):
+    """Return a copy of ``fixed`` with ``{members}`` filled in every members_sentence string."""
+    filled = dict(fixed)
+    sentence = fixed.get("members_sentence")
+    if isinstance(sentence, dict):
+        filled["members_sentence"] = {
+            lang: (text.replace("{members}", members) if isinstance(text, str) else text)
+            for lang, text in sentence.items()
+        }
+    return filled
+
+
+def build_description(fields, lang, fixed, previous_url):
     paragraphs = [fields["intro"][lang]]
     if fields["github_line"] is not None:
         paragraphs.append(fields["github_line"][lang])
-    paragraphs.append(members_sentence)
+    members_sentence = fixed_string(fixed, "members_sentence", lang)
+    if members_sentence is not None:
+        paragraphs.append(members_sentence)
     if previous_url and fields["previous_line"] is not None:
         paragraphs.append(fields["previous_line"][lang])
     paragraphs.append(fields["subscribe_line"][lang])
     for promo in fields["promo_lines"]:
         paragraphs.append(f"[{promo['label']}] {promo[lang]}")
-    paragraphs.append(CLOSING)
+    closing = fixed_string(fixed, "closing", lang)
+    if closing is not None:
+        paragraphs.append(closing)
     return "\n\n".join(paragraphs)
 
 
@@ -301,6 +324,10 @@ def build_markdown(name, fields, chapters, ro_description, en_description):
     ])
     for chapter in chapters:
         lines.append(f"{chapter['timestamp']} {chapter['title']}")
+    if any("title_en" in chapter for chapter in chapters):
+        lines.extend(["", "## Chapters (EN)"])
+        for chapter in chapters:
+            lines.append(f"{chapter['timestamp']} {chapter.get('title_en', '')}")
     lines.extend([
         "",
         "## Tags",
@@ -322,6 +349,7 @@ def run(
     name=None,
     prompt_path=None,
     chapters_path=None,
+    title=None,
 ):
     """Build the draft and return the ``--json`` summary; raise ``MetadataError`` on bad input."""
     started = time.monotonic()
@@ -335,10 +363,10 @@ def run(
     members = (config.get("channel") or {}).get("members")
     if not isinstance(members, str) or not members.strip():
         raise MetadataError("config is missing channel.members (a non-empty string)")
-    members_sentence = MEMBERS_SENTENCE.replace("{members}", members)
     channel_url = (config.get("channel") or {}).get("github_url")
     if not isinstance(channel_url, str) or not channel_url.strip():
         raise MetadataError("config is missing channel.github_url (a non-empty string)")
+    fixed = fill_members(fixed_strings(config), members)
 
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
     prompt_text = read_text(prompt_file, "prompt")
@@ -350,7 +378,7 @@ def run(
     file_chapters = load_chapters_file(chapters_path) if chapters_path else None
 
     message = build_message(
-        prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url
+        prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url, title
     )
     answer = get_client().complete_json(
         "metadata",
@@ -363,8 +391,8 @@ def run(
         file_chapters if file_chapters is not None else fields["chapters"], srt_end
     )
 
-    ro_description = build_description(fields, "ro", members_sentence, previous_url)
-    en_description = build_description(fields, "en", members_sentence, previous_url)
+    ro_description = build_description(fields, "ro", fixed, previous_url)
+    en_description = build_description(fields, "en", fixed, previous_url)
 
     output_name = name or srt_path.stem
     out_path = Path(out_dir).expanduser() if out_dir else srt_path.parent
@@ -413,11 +441,18 @@ def build_parser():
         epilog=(
             "example:\n"
             "  python3 scripts/metadata.py clip_RO.srt --context context.md --json\n"
+            "  python3 scripts/metadata.py clip_RO.srt --context context.md "
+            "--title \"Titlul ales\" --json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("srt", help="corrected Romanian .srt (timeline time)")
     parser.add_argument("--context", required=True, help="markdown note with the clip's angle")
+    parser.add_argument(
+        "--title",
+        default=None,
+        help="the chosen title the model uses verbatim as the first title",
+    )
     parser.add_argument(
         "--chapters",
         default=None,
@@ -444,6 +479,7 @@ def main(argv=None):
             name=args.name,
             prompt_path=args.prompt,
             chapters_path=args.chapters,
+            title=args.title,
         )
     except (MetadataRuntimeError, LLMError) as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)

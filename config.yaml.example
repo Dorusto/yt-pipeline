@@ -19,9 +19,25 @@ models:
 # sentence). Never commit real names; config.yaml is git-ignored.
 # github_url is the channel's code URL the metadata draft links; it is handed
 # to the model in the Inputs. Never commit the real URL here.
+# fixed is optional: the channel's own wording, one string per language. The
+# metadata draft inserts members_sentence and closing verbatim (the RO
+# description gets the RO string, the EN description the EN one) and
+# thumbnail_concepts.py hands thumbnail_formula to the model. A missing part,
+# a missing language or an empty string leaves that part out — never replaced
+# by built-in text. {members} is filled from channel.members.
 channel:
   members: "Andrei, Mihai și Maria"
   github_url: "<channel-code-url>"
+  fixed:
+    members_sentence:
+      ro: "Mulțumesc {members} pentru susținerea canalului meu de YouTube. Dacă îți place ce fac și vrei să te alături și tu, poți folosi cu încredere butonul de membru mai jos."
+      en: "Thank you {members} for supporting my YouTube channel. If you like what I do and want to join, feel free to use the join button below."
+    closing:
+      ro: "Până data viitoare — nu uita să fii creativ."
+      en: "Until next time, don't forget to be creative."
+    thumbnail_formula:
+      ro: "Formula canalului: fața creatorului, o emoție reală (niciodată neutră) și text scurt — niciodată o ilustrație generică."
+      en: "Channel formula: the creator's own face, a real emotion (never neutral) and short text — never a generic illustration."
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.

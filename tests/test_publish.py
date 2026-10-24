@@ -513,6 +513,16 @@ def write_mock_config(tmp_path):
         "channel": {
             "members": "Andrei, Mihai și Maria",
             "github_url": "https://example.invalid/channel",
+            "fixed": {
+                "members_sentence": {
+                    "ro": "Mulțumesc {members} pentru susținere.",
+                    "en": "Thank you {members} for the support.",
+                },
+                "closing": {
+                    "ro": "Pe curând.",
+                    "en": "See you soon.",
+                },
+            },
         },
     }
     path = tmp_path / "config.yaml"
@@ -570,8 +580,8 @@ def test_end_to_end_with_mock_llm(tmp_path):
     assert english.count("-->") == 3
     assert "Hello" in english and "World" in english and "End" in english
     metadata_text = (project / "metadata.md").read_text(encoding="utf-8")
-    assert "Andrei, Mihai și Maria" in metadata_text
-    assert "nu uita să fii creativ" in metadata_text
+    assert "Mulțumesc Andrei, Mihai și Maria pentru susținere." in metadata_text
+    assert "Pe curând." in metadata_text
     state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
     assert state["steps"]["translate"]["status"] == "done"
     assert state["steps"]["metadata"]["status"] == "done"

@@ -217,3 +217,12 @@ def test_json_summary_fields(tmp_path, capsys):
     assert summary["checks"]
     assert isinstance(summary["wall_time_s"], (int, float))
     assert summary["llm_cost_usd"] == 0.0
+
+
+def test_chapter_lines_en_uses_title_en_when_present():
+    chapters = [
+        {"timestamp": "00:00:00", "title": "Intro", "title_en": "Intro"},
+        {"timestamp": "00:01:00", "title": "Lume"},
+    ]
+    assert publish_kit.chapter_lines(chapters, "en") == "00:00 Intro\n01:00 Lume"
+    assert publish_kit.chapter_lines(chapters) == "00:00 Intro\n01:00 Lume"

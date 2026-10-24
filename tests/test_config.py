@@ -411,3 +411,34 @@ def test_usd_to_eur_rejects_non_numeric(monkeypatch):
     monkeypatch.delenv(config.USD_TO_EUR_ENV, raising=False)
     with pytest.raises(config.ConfigError):
         config.usd_to_eur(config={"costs": {"usd_to_eur": "abc"}})
+
+
+def test_channel_fixed_loads(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {
+        "members": "A, B",
+        "github_url": "https://example.invalid/c",
+        "fixed": {
+            "members_sentence": {"ro": "Mulțumesc {members}.", "en": "Thanks {members}."},
+            "closing": {"ro": "Pe curând.", "en": "See you."},
+        },
+    }
+    loaded = config.load_config(write_config(tmp_path, data))
+    assert loaded["channel"]["fixed"]["closing"]["ro"] == "Pe curând."
+
+
+def test_channel_invalid_raises(tmp_path):
+    for bad in (
+        "nope",
+        {"members": ""},
+        {"github_url": 5},
+        {"fixed": "nope"},
+        {"fixed": {"closing": "nope"}},
+        {"fixed": {"closing": {"ro": ""}}},
+        {"fixed": {"closing": {"": "x"}}},
+        {"fixed": {"closing": {"ro": 5}}},
+    ):
+        data = copy.deepcopy(VALID)
+        data["channel"] = bad
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, data))

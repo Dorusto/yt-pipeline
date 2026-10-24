@@ -155,11 +155,17 @@ def chapter_mmss(timestamp):
     return timestamp
 
 
-def chapter_lines(chapters):
+def chapter_lines(chapters, lang="ro"):
     """Return the YouTube chapter lines (``MM:SS Title``) for the description blocks."""
-    return "\n".join(
-        f"{chapter_mmss(chapter['timestamp'])} {chapter['title']}" for chapter in chapters
-    )
+    lines = []
+    for chapter in chapters:
+        title = chapter["title"]
+        if lang == "en":
+            title_en = chapter.get("title_en")
+            if isinstance(title_en, str) and title_en:
+                title = title_en
+        lines.append(f"{chapter_mmss(chapter['timestamp'])} {title}")
+    return "\n".join(lines)
 
 
 def collect_kit_checks(project, name, final_video, kit_title):
@@ -208,11 +214,12 @@ def collect_kit_checks(project, name, final_video, kit_title):
             checks.append(f"title {len(title)}/{TITLE_MAX}")
 
         chapters = metadata.get("chapters") or []
-        lines = chapter_lines(chapters)
+        ro_lines = chapter_lines(chapters)
+        en_lines = chapter_lines(chapters, "en")
         ro_description = metadata.get("description_ro") or ""
         en_description = metadata.get("description_en") or ""
-        ro_full = f"{ro_description}\n\n{lines}" if lines else ro_description
-        en_full = f"{en_description}\n\n{lines}" if lines else en_description
+        ro_full = f"{ro_description}\n\n{ro_lines}" if ro_lines else ro_description
+        en_full = f"{en_description}\n\n{en_lines}" if en_lines else en_description
         if len(ro_full) > DESCRIPTION_MAX:
             errors.append(f"RO description is {len(ro_full)} characters, over the {DESCRIPTION_MAX} limit")
         else:
@@ -236,11 +243,12 @@ def build_studio_md(name, metadata, title, video_display, video_linked):
     titles = metadata.get("titles") or []
     others = [option for option in titles if option != title][:2]
     chapters = metadata.get("chapters") or []
-    lines = chapter_lines(chapters)
+    ro_lines = chapter_lines(chapters)
+    en_lines = chapter_lines(chapters, "en")
     ro_description = metadata.get("description_ro") or ""
     en_description = metadata.get("description_en") or ""
-    ro_full = f"{ro_description}\n\n{lines}" if lines else ro_description
-    en_full = f"{en_description}\n\n{lines}" if lines else en_description
+    ro_full = f"{ro_description}\n\n{ro_lines}" if ro_lines else ro_description
+    en_full = f"{en_description}\n\n{en_lines}" if en_lines else en_description
     tags_line = ", ".join(metadata.get("tags") or [])
     pinned = metadata.get("pinned_comment") or ""
     if video_linked:

@@ -18,9 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: the Upload page shows a low-credit warning banner when the OpenRouter key's remaining credit is under `limits.credit_warn_usd`, before a run that would pass the key limit.
 - Repo automations: Dependabot opens one grouped weekly pull request per ecosystem (Python requirements and GitHub Actions) inside the owner's working hours, checked by CI like any pull request; `AGENTS.md` is the shared instruction file for every coding agent, pointing to `docs/RULES.md`, the skills and the topic files in `docs/agents/` (code style, testing, conventions), with `CLAUDE.md` pointing to it.
 - Web app: a shot on the strip can be made 1 s longer or shorter (a "− 1 s" / "+ 1 s" control next to the bin icon), rendered as a new version with `edit_drop.py --trim` and no model call.
+- Publish: `metadata.py` gains `--title` — the chosen title is handed to the model in a `## Chosen title` section and used verbatim as the first title.
 
 ### Changed
 
+- Publish: the metadata prompt is fixed (the chosen title first, no invented links or repos, a plain first-person pinned comment, each description in its own language, English chapter titles) and every channel-specific wording string moved out of `scripts/metadata.py` and the prompts into `channel.fixed` in the config, one string per language and omitted when missing; `thumbnail_concepts.py` hands `channel.fixed.thumbnail_formula` to the model and `publish_kit.py` uses a chapter's `title_en` for the EN chapter lines.
 - Publish: `publish.py --kit` is orchestration only — it calls `publish_kit.py` as its last step, and the kit links the final video (hard link, else symlink, else only its path in `studio.md`) instead of copying it, so the disk no longer holds two copies.
 - Publish: `metadata.py` and `prompts/metadata.md` no longer carry the thumbnail section — the concepts live in their own tool and file, and `metadata.md` keeps only what is pasted into Studio.
 - Watchdog: no per-lot flag — the alert label comes from the newest task brief in `.opencode/tasks/`, the two stop rules are no commit for N hours and one hard daily spend ceiling, and the stop notification reports the lot's cost.
