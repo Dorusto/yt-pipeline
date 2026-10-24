@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -54,7 +55,7 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
                  ledger=None, requests=None, donation_links=None,
                  features=None, consent_text=None,
                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                 brand_logo=None):
+                 brand_logo=None, notebook=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -77,6 +78,7 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         credit_warn_usd,
         project_totals_url,
         brand_logo if brand_logo is not None else serve.DEFAULT_BRAND_LOGO,
+        notebook,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -3983,3 +3985,112 @@ def test_render_file_row_shows_short_sizes():
         "in_edit": False,
     }
     assert "0 MB" in serve._render_file_row("2026-10-14", photo)
+
+
+class FakeLearnProcess:
+    pid = 4242
+
+    def wait(self):
+        return 0
+
+
+def stub_learn(monkeypatch):
+    """Record every spawned process and make the recap exit 0."""
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append(command)
+        return FakeLearnProcess()
+
+    monkeypatch.setattr(serve.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve, "project_status", lambda directory: "done")
+    return calls
+
+
+def test_drop_shot_starts_the_learn_pass(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "versions").mkdir()
+    notebook = tmp_path / "notebook.json"
+    calls = stub_learn(monkeypatch)
+    monkeypatch.setattr(
+        serve.subprocess, "run", lambda command, **kwargs: types.SimpleNamespace(returncode=0)
+    )
+    server = start_server(root, notebook=notebook)
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/2026-10-14/drop-shot",
+            headers=multipart_headers(),
+            body=multipart_body([("shots", None, "1")]),
+        )
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert len(calls) == 1
+        command = calls[0]
+        assert command[1].endswith("notebook.py")
+        assert "--learn" in command
+        assert "--workspace" in command and str(project) in command
+        assert "--notebook" in command and str(notebook) in command
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_drop_shot_without_notebook_starts_no_learn_pass(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "versions").mkdir()
+    calls = stub_learn(monkeypatch)
+    monkeypatch.setattr(
+        serve.subprocess, "run", lambda command, **kwargs: types.SimpleNamespace(returncode=0)
+    )
+    server = start_server(root)
+    try:
+        status, _, _ = request(
+            server,
+            "POST",
+            "/2026-10-14/drop-shot",
+            headers=multipart_headers(),
+            body=multipart_body([("shots", None, "1")]),
+        )
+        assert status == 303
+        assert calls == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_chains_the_learn_pass(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    source = tmp_path / "inbox" / "2026-10-14"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+    )
+    notebook = tmp_path / "notebook.json"
+    calls = stub_learn(monkeypatch)
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body([("brief", None, "about 60 seconds"), ("submit", None, "reedit")]),
+        )
+        assert status == 303, body
+        deadline = time.time() + 5
+        while len(calls) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+        assert len(calls) == 2
+        learn = calls[1]
+        assert learn[1].endswith("notebook.py")
+        assert "--learn" in learn
+        assert "--notebook" in learn and str(notebook) in learn
+    finally:
+        server.shutdown()
+        server.server_close()

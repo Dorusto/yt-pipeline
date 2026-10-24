@@ -365,6 +365,8 @@ The AI models do not change. What improves is data and rules on disk, all plain 
 
 Sizes stay small: a correction is ~200 bytes, so 10 000 corrections are about 2 MB. No footage or frames are stored, only clip names and timecodes. See `docs/DECISIONS.md`, 2026-10-14, *Feedback storage and the rules digest*, for limits and compaction.
 
+The director also keeps a small **notebook** of short lessons on this instance (the file at `notebook.path`). It reads the notebook before every edit, and after each new version the web app makes one cheap model call that writes at most 3 short lessons from the feedback since the last pass. A sentence that repeats across clips (for example the sponsor line) becomes a `proposal` lesson to move it to `channel.fixed`; it moves only after the owner says yes by editing the config. The notebook holds at most 40 lessons and is shown at the bottom of the project page, where a lesson can be deleted.
+
 ## From a coding agent
 
 A host coding agent (Claude Code, opencode, any Agent Skills tool) can direct the

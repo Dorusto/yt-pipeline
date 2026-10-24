@@ -76,7 +76,7 @@ from common.brief_facts import FACT_LABELS, load_brief_facts, write_brief_facts
 from common.decisions import used_shot_keys
 from common.director import director_review
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
-from common.feedback import append_feedback
+from common.feedback import append_feedback, read_feedback
 from common.jsonio import load_json, write_json
 from common.media import clip_kind, earliest_creation_date, video_files
 from common.notebook import notebook_lessons
@@ -1566,21 +1566,7 @@ def append_feedback_action(workspace, action, **fields):
 
 def read_feedback_lines(directory):
     """The workspace's feedback.jsonl rows, oldest first; [] when absent or unreadable."""
-    try:
-        text = (Path(directory) / "feedback.jsonl").read_text(encoding="utf-8")
-    except OSError:
-        return []
-    rows = []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
+    return read_feedback(directory)
 
 
 def render_strip(summary, prefix="", thumbs=()):
@@ -3453,7 +3439,57 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
     return command
 
 
-def start_recap(command, workspace, source, options):
+def start_learn(workspace, notebook):
+    """Spawn the notebook learning pass in the background; never raises, never blocks."""
+    if notebook is None:
+        return None
+    workspace = Path(workspace)
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve().parent / "notebook.py"),
+        "--workspace", str(workspace),
+        "--notebook", str(notebook),
+        "--learn",
+        "--json",
+    ]
+    try:
+        log = (workspace / "learn.log").open("ab")
+    except OSError as exc:
+        print(f"[warn] could not open the learn log: {exc}", file=sys.stderr)
+        return None
+    try:
+        handle = subprocess.Popen(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(REPO_ROOT),
+        )
+    except OSError as exc:
+        log.close()
+        print(f"[warn] could not start the learn pass: {exc}", file=sys.stderr)
+        return None
+    threading.Thread(target=_reap_learn, args=(handle, log), daemon=True).start()
+    return handle.pid
+
+
+def _reap_learn(handle, log):
+    try:
+        handle.wait()
+    finally:
+        try:
+            log.close()
+        except OSError:
+            pass
+
+
+def _reap_recap(handle, workspace, notebook):
+    code = handle.wait()
+    if code == 0 and notebook is not None:
+        start_learn(workspace, notebook)
+
+
+def start_recap(command, workspace, source, options, notebook=None):
     """Spawn the recap in the background, record ``.run.json`` and return the pid."""
     workspace.mkdir(parents=True, exist_ok=True)
     with (workspace / "run.log").open("ab") as log:
@@ -3475,7 +3511,9 @@ def start_recap(command, workspace, source, options):
         "command": command,
     }
     (workspace / ".run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    threading.Thread(target=handle.wait, daemon=True).start()
+    threading.Thread(
+        target=_reap_recap, args=(handle, workspace, notebook), daemon=True
+    ).start()
     return handle.pid
 
 
@@ -3828,6 +3866,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
             return
+        start_learn(workspace, self.server.notebook)
         self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_drop_shot(self, project):
@@ -4013,6 +4052,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         except OSError as exc:
             self.send_error_text(500, f"could not delete the version: {exc}")
             return
+        start_learn(workspace, self.server.notebook)
         self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_expectations(self, project):
@@ -4191,7 +4231,13 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             sys.executable, source, workspace, brief, fields, self.server.music_dir
         )
         try:
-            start_recap(command, workspace, source, fields)
+            start_recap(
+                command,
+                workspace,
+                source,
+                fields,
+                notebook=self.server.notebook if reedit else None,
+            )
         except OSError as exc:
             self.send_error_text(500, f"could not start the recap: {exc}")
             return

@@ -3234,3 +3234,48 @@ notebook rule and the `serve.py` → `notebook.py` subprocess entry. No automati
 write to `channel.fixed`, no shared notebook between instances and no new web
 feature flag.
 
+---
+
+## [2026-10-24] The notebook learns after each edit (V030 lot c10b)
+
+**Context:** Issue #106 point 4 and issue #96 point 3. The c10 notebook could be
+read and edited by hand, but nothing wrote a lesson from the feedback the person
+gave: the director kept no memory unless the owner typed a lesson himself. The
+review of `444fa92` (c10) also found four smaller faults: `--merge` with a
+repeated id crashed, `serve.py` had its own feedback reader, and
+`apply_agent_answer` carried an unused `notebook` parameter.
+
+**Options:** (A) the owner writes every lesson by hand; (B) after each new
+version the web app makes, one cheap model call reads the feedback since the last
+pass and writes at most 3 short lessons through `notebook.py`.
+
+**Decision:** B. `scripts/notebook.py` gains `--learn --workspace PATH`: it reads
+`<workspace>/feedback.jsonl` through the new shared `common.feedback.read_feedback`
+(rows strictly after the `last_learn_at` in the machine-owned marker
+`<workspace>/.learn.json`), builds a message from `prompts/notebook_learn.md`
+plus the existing lessons, the new feedback rows and the current `edit.json`
+brief, and makes one `metadata`-class call through `common/llm.py`. The answer
+`{"lessons": [...], "remove": [...]}` is applied with `next_id`/`make_lesson`;
+when the result would pass the 40-lesson limit the oldest lessons are dropped
+first, then the document is validated and written atomically. With no new
+feedback the pass is skipped, makes no model call and writes nothing. `serve.py`
+spawns the pass in the background (`start_learn`) after a re-edit, a chat
+approval, a shot removed or trimmed, and a version deleted — never on a first
+upload, never blocking the request, a failure only logs. In agent mode the
+`yt-llm-director` skill tells the host agent to run the same pass after `--apply`.
+`--merge` with a repeated id is now a usage error, `serve.py`'s
+`read_feedback_lines` delegates to the shared reader, and the unused `notebook`
+parameter of `apply_agent_answer` is removed (`--prepare` already reads the
+notebook into `director/inputs.md`).
+
+**Why not A:** the issue asks the notebook to learn from the feedback the person
+already gives; a hand-written notebook would stay empty in practice.
+
+**Consequence:** `scripts/notebook.py` gains `--learn`/`--workspace` and the
+`learn()` function, `scripts/common/feedback.py` gains `read_feedback`,
+`scripts/serve.py` gains `start_learn` and the trigger points, and
+`prompts/notebook_learn.md` is new. `docs/RULES.md` extends the notebook rule and
+the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
+`schemas/notebook.schema.json` (the marker lives in the workspace), no shared
+notebook between instances and no new web route or UI control.
+

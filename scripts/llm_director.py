@@ -3316,7 +3316,6 @@ def apply_agent_answer(
     ambient_under_music_db=None,
     speed_ramp=False,
     force=False,
-    notebook=None,
 ):
     """Validate, repair and write the host agent's plan and editor answer as edit.json."""
     started = time.monotonic()
@@ -3541,7 +3540,6 @@ def main(argv=None):
                 ambient_under_music_db=args.ambient_under_music_db,
                 speed_ramp=args.speed_ramp,
                 force=args.force,
-                notebook=args.notebook,
             )
         elif args.interpret_feedback is not None:
             summary, code = interpret_feedback(

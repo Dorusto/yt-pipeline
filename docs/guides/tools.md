@@ -190,12 +190,14 @@ The agent mode splits the loop in two so a host coding agent can direct the edit
 .venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --remove l003
 .venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --merge l001,l002 --text "..."
 .venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --propose members_sentence --text "..."
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --learn --workspace /path/to/workspace
 ```
 
 - The path comes from `--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config; it is optional, so with none of the three set the director reads nothing and the web app shows no section — there is no personal default. A missing file is an empty notebook; the first write creates it.
-- Exactly one command is required: `--list`, `--add`, `--remove`, `--merge` or `--propose`. Ids are `lNNN` (zero-padded to 3, one past the highest id in the file). `--merge IDS --text TEXT` removes the named lessons and appends one lesson; an unknown id is a usage error naming the id.
+- Exactly one command is required: `--list`, `--add`, `--remove`, `--merge`, `--propose` or `--learn`. Ids are `lNNN` (zero-padded to 3, one past the highest id in the file). `--merge IDS --text TEXT` removes the named lessons and appends one lesson; an unknown id is a usage error naming the id.
 - The 40-lesson limit is a code rule (`--limit` overrides it for tests). A write past the limit fails with `EXIT_USAGE` and the message `notebook is full (40 lessons): merge overlapping lessons or remove stale ones first, then retry`; nothing is written.
 - `--propose PART --text TEXT` records a proposal to move a repeated sentence to `channel.fixed.<part>` (`members_sentence`, `closing` or `thumbnail_formula`); the code never writes the config — the owner says yes by editing it. `llm_director.py` reads the notebook before every edit and `serve.py` shows it at the bottom of the project page with a delete form.
+- `--learn --workspace PATH` runs the learning pass: it reads the workspace's `feedback.jsonl` rows newer than the `last_learn_at` in the machine-owned marker `<workspace>/.learn.json`, makes one cheap `metadata`-class model call through `common/llm.py` (the cost is charged to the ledger) and writes at most 3 short lessons, dropping the oldest first when the 40-lesson limit would be passed. With no new feedback it is skipped, makes no model call and writes nothing. `--workspace` is required with `--learn` and only valid with it; a missing `OPENROUTER_API_KEY` is `EXIT_USAGE`, an unparseable answer is `EXIT_RUNTIME`.
 
 ---
 

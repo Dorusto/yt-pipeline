@@ -1,3 +1,4 @@
+import inspect
 import json
 
 import pytest
@@ -149,3 +150,31 @@ def test_prepare_apply_roundtrip_via_cli(tmp_path, capsys):
     assert code == 0
     written = json.loads(capsys.readouterr().out.strip())
     assert written["status"] == "written"
+
+
+def test_apply_agent_answer_has_no_notebook_parameter():
+    parameters = inspect.signature(llm_director.apply_agent_answer).parameters
+    assert "notebook" not in parameters
+
+
+def test_prepare_writes_the_notebook_block(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    notebook_file = tmp_path / "notebook.json"
+    notebook_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "generated_at": "2026-10-24T00:00:00+00:00",
+                "tool": "notebook",
+                "lessons": [{"id": "l001", "text": "keep the tunnel longer", "kind": "lesson"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary, code = llm_director.prepare_agent_inputs(
+        workspace, brief=BRIEF, notebook=str(notebook_file)
+    )
+    assert code == 0
+    text = (workspace / "director" / "inputs.md").read_text(encoding="utf-8")
+    assert "## Notebook" in text
+    assert "keep the tunnel longer" in text
