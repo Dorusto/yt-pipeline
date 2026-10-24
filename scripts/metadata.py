@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from common.channel import fixed_string, fixed_strings
+from common.channel import fixed_string, fixed_strings, members_placeholder_used
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
@@ -316,13 +316,15 @@ def run(
         raise MetadataError("--title must be a non-empty string")
 
     config = load_config()
-    members = (config.get("channel") or {}).get("members")
-    if not isinstance(members, str) or not members.strip():
-        raise MetadataError("config is missing channel.members (a non-empty string)")
+    fixed = fixed_strings(config)
     channel_url = (config.get("channel") or {}).get("github_url")
     if not isinstance(channel_url, str) or not channel_url.strip():
         raise MetadataError("config is missing channel.github_url (a non-empty string)")
-    fixed = fill_members(fixed_strings(config), members)
+    if members_placeholder_used(fixed):
+        members = (config.get("channel") or {}).get("members")
+        if not isinstance(members, str) or not members.strip():
+            raise MetadataError("config is missing channel.members (a non-empty string)")
+        fixed = fill_members(fixed, members)
 
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
     prompt_text = read_text(prompt_file, "prompt", MetadataError)

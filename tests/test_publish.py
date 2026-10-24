@@ -710,6 +710,17 @@ def test_kit_title_override(tmp_path, capsys):
     assert "Title one" in studio
 
 
+def test_kit_without_thumbnail_builds_the_kit(tmp_path, capsys):
+    project, clip = build_kit_project(tmp_path)
+    (project / "thumbnail.jpg").unlink()
+    assert run_kit(project, clip) == 0
+    kit = project / "publish-kit"
+    assert (kit / "studio.md").is_file()
+    assert not (kit / "thumbnail.jpg").exists()
+    studio = (kit / "studio.md").read_text(encoding="utf-8")
+    assert "Make and upload the thumbnail (none in the kit yet)" in studio
+
+
 def test_kit_long_title_fails(tmp_path, capsys):
     project, clip = build_kit_project(tmp_path)
     assert run_kit(project, clip, extra=["--kit-title", "x" * 101]) == 2

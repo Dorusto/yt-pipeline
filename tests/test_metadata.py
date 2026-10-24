@@ -189,12 +189,67 @@ def test_missing_channel_members_exits_2(tmp_path, monkeypatch, capsys):
         "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
         "llm_budget_usd": None,
         "llm_backend": "mock",
+        "channel": {
+            "github_url": "https://example.invalid/channel",
+            "fixed": {
+                "members_sentence": {
+                    "ro": "Mulțumesc {members} pentru susținere.",
+                    "en": "Thank you {members} for the support.",
+                },
+            },
+        },
     }
     code, _ = run_main(tmp_path, monkeypatch, FULL, config=config)
     assert code == 2
     err = capsys.readouterr().err
     assert "channel.members" in err
     assert "Traceback" not in err
+
+
+def test_no_members_placeholder_runs_without_members(tmp_path, monkeypatch):
+    config = {
+        "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
+        "llm_budget_usd": None,
+        "llm_backend": "mock",
+        "channel": {
+            "github_url": "https://example.invalid/channel",
+            "fixed": {
+                "closing": {
+                    "ro": "Pe curând.",
+                    "en": "See you soon.",
+                },
+            },
+        },
+    }
+    code, out = run_main(tmp_path, monkeypatch, FULL, config=config)
+    assert code == EXIT_OK
+    text = out.read_text(encoding="utf-8")
+    assert MEMBERS_RO not in text
+    assert MEMBERS_EN not in text
+    assert CLOSING_RO in text
+    assert CLOSING_EN in text
+
+
+def test_members_sentence_without_placeholder_runs_without_members(tmp_path, monkeypatch):
+    config = {
+        "models": {"metadata": "deepseek/deepseek-v4.1-flash"},
+        "llm_budget_usd": None,
+        "llm_backend": "mock",
+        "channel": {
+            "github_url": "https://example.invalid/channel",
+            "fixed": {
+                "members_sentence": {
+                    "ro": "Mulțumesc tuturor pentru susținere.",
+                    "en": "Thank you all for the support.",
+                },
+            },
+        },
+    }
+    code, out = run_main(tmp_path, monkeypatch, FULL, config=config)
+    assert code == EXIT_OK
+    text = out.read_text(encoding="utf-8")
+    assert "Mulțumesc tuturor pentru susținere." in text
+    assert "Thank you all for the support." in text
 
 
 def test_empty_title_exits_2(tmp_path, monkeypatch, capsys):

@@ -4,6 +4,16 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Members only when thanked; the kit without a thumbnail (V020N lot n31)
+
+**Context:** The publish test found two blockers. `metadata.py` required `channel.members` unconditionally, so a channel whose `members_sentence` does not use `{members}` (or has none) could not run. `publish.py --kit` without `--photo` failed at the kit step with "thumbnail not found", because `publish_kit.py` treated a missing `thumbnail.jpg` as a failing check.
+
+**Decision:** `scripts/common/channel.py` gains `members_placeholder_used(fixed)`, which is True only when a `members_sentence` language string contains `{members}`. `metadata.py` requires `channel.members` (same message) only when that helper is True, and fills `{members}` only then; `channel.github_url` stays required. `publish_kit.py` treats `thumbnail.jpg` as optional: a missing file adds no error and no check, `write_kit` copies it only when present and passes `has_thumbnail` to `build_studio_md`, whose checklist line becomes `- [ ] Make and upload the thumbnail (none in the kit yet)` when there is none. The `--json` summary shape and the CLI flags are unchanged.
+
+**Consequence:** Files touched: `scripts/common/channel.py`, `scripts/metadata.py`, `scripts/publish_kit.py`, `tests/test_metadata.py`, `tests/test_publish_kit.py`, `tests/test_publish.py`, `config.yaml.example`, `.claude/skills/yt-publish/SKILL.md`, `docs/guides/tools.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. No change to `publish.py`, `scripts/common/config.py`, the `--json` summary shape, any schema or any subprocess call.
+
+---
+
 ## [2026-10-24] A usable Whisper default and the beat-snap docs (V020N lot n30)
 
 **Context:** The publish flow's `--media` step ran `transcribe.py` with `tiny` on CPU, which is too weak for a real Romanian voice-over. Measured on 4 cores with CPU-only torch 2.14.1, a 60 s slice of a Romanian voice-over: `small` 34.7 s (0.58× real time), `medium` 86.7 s (1.45× real time). `medium` stays under about 3× real time, so it is usable as the CPU default for a non-English language. Separately, the beat-snap docs still described the pre-n28 rule (a structure-beat cut preferring a downbeat inside a snap window, max shift half a beat period) and `scripts/director.py`'s `snap_slots` returned a smaller `beat_snap` shape than `llm_director.snap_slots`.

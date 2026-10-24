@@ -24,7 +24,9 @@ models:
 # description gets the RO string, the EN description the EN one) and
 # thumbnail_concepts.py hands thumbnail_formula to the model. A missing part,
 # a missing language or an empty string leaves that part out — never replaced
-# by built-in text. {members} is filled from channel.members.
+# by built-in text. members is required only when a members_sentence string
+# contains the {members} placeholder; a channel that does not thank members in
+# the description runs without it.
 channel:
   members: "Andrei, Mihai și Maria"
   github_url: "<channel-code-url>"

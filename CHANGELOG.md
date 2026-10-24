@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Publish: `metadata.py` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, so a channel that does not thank members in the description runs without it.
+- Publish: `publish_kit.py` treats `thumbnail.jpg` as optional — a missing thumbnail no longer fails the kit, the kit is built without it and the `studio.md` checklist says to make and upload one.
 - Beats: `beats.py` compensates the STFT window-centre latency (`ONSET_LATENCY_S`, ≈ 0.0174 s) in the onset and beat times, so the reported beat time is the start of the hit and the grid is no longer systematically late; the `beats.json` shape and the CLI are unchanged.
 - Director: every timeline cut now prefers the nearest downbeat when it lies inside the slot's allowed length range, otherwise a half-bar beat (keeps the bar count even), otherwise the nearest beat; the slot records which grid it used in `beat_grid` and the `beat_snap` summary gains `downbeats`/`half_bar` counts.
 - Web app: the text after Yes on the Watch tab reads "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".

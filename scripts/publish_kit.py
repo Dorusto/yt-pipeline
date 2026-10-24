@@ -157,9 +157,7 @@ def collect_kit_checks(project, name, final_video, kit_title):
         checks.append(f"en_srt {en_srt}")
 
     thumbnail = Path(project) / "thumbnail.jpg"
-    if not thumbnail.is_file():
-        errors.append(f"thumbnail not found: {thumbnail}")
-    else:
+    if thumbnail.is_file():
         size = thumbnail.stat().st_size
         dimensions = image_dimensions(thumbnail)
         if size > THUMBNAIL_MAX_BYTES:
@@ -205,7 +203,7 @@ def collect_kit_checks(project, name, final_video, kit_title):
     return checks, errors
 
 
-def build_studio_md(name, metadata, title, video_display, video_linked):
+def build_studio_md(name, metadata, title, video_display, video_linked, has_thumbnail=True):
     """Render the Studio sheet with one copy-ready block per field and a Studio-order checklist."""
     titles = metadata.get("titles") or []
     others = [option for option in titles if option != title][:2]
@@ -222,6 +220,11 @@ def build_studio_md(name, metadata, title, video_display, video_linked):
         upload_line = f"Upload: `{video_display}`"
     else:
         upload_line = f"Upload: `{video_display}` (not copied into the kit)"
+    thumbnail_line = (
+        "- [ ] Upload the thumbnail"
+        if has_thumbnail
+        else "- [ ] Make and upload the thumbnail (none in the kit yet)"
+    )
     parts = [
         f"# Studio kit — {name}",
         "",
@@ -232,7 +235,7 @@ def build_studio_md(name, metadata, title, video_display, video_linked):
         "- [ ] Upload the video",
         "- [ ] Paste the title",
         "- [ ] Paste the description (RO)",
-        "- [ ] Upload the thumbnail",
+        thumbnail_line,
         "- [ ] Upload the subtitles RO + EN (as subtitles, not closed captions)",
         "- [ ] Set visibility to **private** first",
         "- [ ] Pick the playlist, category and language",
@@ -328,7 +331,10 @@ def write_kit(project, name, video_source, metadata, title):
     kit_dir.mkdir(parents=True)
     shutil.copy2(Path(project) / f"{name}_RO.srt", kit_dir / f"{name}_RO.srt")
     shutil.copy2(Path(project) / f"{name}_EN.srt", kit_dir / f"{name}_EN.srt")
-    shutil.copy2(Path(project) / "thumbnail.jpg", kit_dir / "thumbnail.jpg")
+    thumbnail = Path(project) / "thumbnail.jpg"
+    has_thumbnail = thumbnail.is_file()
+    if has_thumbnail:
+        shutil.copy2(thumbnail, kit_dir / "thumbnail.jpg")
     video_link = link_video(video_source, kit_dir / video_source.name)
     if video_link is None:
         video_display = str(video_source)
@@ -337,7 +343,8 @@ def write_kit(project, name, video_source, metadata, title):
         video_display = video_source.name
         video_linked = True
     (kit_dir / "studio.md").write_text(
-        build_studio_md(name, metadata, title, video_display, video_linked), encoding="utf-8"
+        build_studio_md(name, metadata, title, video_display, video_linked, has_thumbnail),
+        encoding="utf-8",
     )
     return kit_dir, video_link
 

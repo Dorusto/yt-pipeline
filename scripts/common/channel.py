@@ -36,3 +36,13 @@ def fixed_string(fixed, part, lang):
     if not isinstance(value, str) or not value:
         return None
     return value
+
+
+def members_placeholder_used(fixed):
+    """True when any members_sentence string contains the {members} placeholder."""
+    if not isinstance(fixed, dict):
+        return False
+    sentence = fixed.get("members_sentence")
+    if not isinstance(sentence, dict):
+        return False
+    return any(isinstance(text, str) and "{members}" in text for text in sentence.values())

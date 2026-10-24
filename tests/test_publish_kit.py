@@ -148,6 +148,16 @@ def test_bad_thumbnail_dimensions_exits_2(tmp_path, capsys):
     assert not (project / "publish-kit").exists()
 
 
+def test_no_thumbnail_builds_the_kit(tmp_path, capsys):
+    project, clip = build_project(tmp_path)
+    (project / "thumbnail.jpg").unlink()
+    assert run_kit(project, clip) == EXIT_OK
+    kit = project / "publish-kit"
+    assert not (kit / "thumbnail.jpg").exists()
+    studio = (kit / "studio.md").read_text(encoding="utf-8")
+    assert "Make and upload the thumbnail (none in the kit yet)" in studio
+
+
 def test_missing_metadata_json_exits_2(tmp_path, capsys):
     project, clip = build_project(tmp_path)
     (project / "metadata.json").unlink()
