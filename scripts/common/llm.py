@@ -24,13 +24,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from common.config import ConfigError
+from common.constants import DEFAULT_BASE_URL
+from common.jsonio import parse_model_json
 
 import openai
 from filelock import FileLock
 
 from common.config import load_config, model_for
 
-DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 LEDGER_NAME = "llm_spend.json"
 
 
@@ -46,6 +47,10 @@ class MissingUsageCost(LLMError):
     """Raised when an OpenRouter response does not report its USD cost."""
 
 
+class InvalidModelJSON(LLMError):
+    """Raised when a model answer is empty or not valid JSON after one retry."""
+
+
 @dataclass
 class LLMResponse:
     """One completion and the cost it added to the run."""
@@ -56,6 +61,18 @@ class LLMResponse:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
+
+
+@dataclass
+class JSONResponse:
+    """A parsed model answer and the cost of every attempt that produced it."""
+
+    data: object
+    text: str
+    model: str
+    role: str
+    cost_usd: float
+    attempts: int
 
 
 def resolve_ledger_path(ledger_path=None, config=None):
@@ -180,6 +197,36 @@ class LLMClient:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
+        )
+
+    def complete_json(self, role, messages, model=None, **kwargs):
+        """Run a completion and parse its answer as JSON, retrying once on empty/non-JSON.
+
+        Both attempts are charged to the budget. Returns a ``JSONResponse`` whose
+        ``cost_usd`` is the sum of the attempts and whose ``data`` is the parsed
+        answer. Raises ``InvalidModelJSON`` when the second answer is still empty
+        or not valid JSON.
+        """
+        last_error = None
+        total_cost = 0.0
+        for attempt in range(1, 3):
+            response = self.complete(role, messages, model=model, **kwargs)
+            total_cost += float(response.cost_usd)
+            try:
+                data = parse_model_json(response.text or "")
+            except ValueError as exc:
+                last_error = exc
+                continue
+            return JSONResponse(
+                data=data,
+                text=response.text,
+                model=response.model,
+                role=response.role,
+                cost_usd=round(total_cost, 8),
+                attempts=attempt,
+            )
+        raise InvalidModelJSON(
+            f"model response is empty or not valid JSON after one retry: {last_error}"
         )
 
     def _usage_of(self, response):

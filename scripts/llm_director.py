@@ -38,6 +38,7 @@ from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
 from common import runlog
+from common.constants import MIN_SHOT_LENGTH_S, SNAP_MIN_SLOT_S
 from common.moves import (
     EXCEPTION_SHARE,
     SAME_TAKE_MIN_GAP_S,
@@ -64,7 +65,6 @@ PROMPTS_DIR = REPO_ROOT / "prompts"
 DIRECTOR_SCRIPT = REPO_ROOT / "scripts" / "director.py"
 
 MAX_ROUNDS = 3
-MIN_SLOT_S = 1.0
 MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
 LONG_CUT_PACING_S = 180.0
@@ -76,7 +76,6 @@ PHOTO_MAX_S = 4.0
 PHOTO_DEFAULT_S = 3.0
 PHOTO_TOLERANCE_S = 0.01
 BEAT_SNAP_FRACTION = 0.5
-SNAP_MIN_SLOT_S = 0.5
 LANDING_FLOOR_S = 0.75
 CENTRE_TOLERANCE_S = 0.3
 
@@ -554,7 +553,7 @@ def plan_pacing(plan):
     return run_pacing(target)
 
 
-def default_target_s(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
+def default_target_s(candidate, important_max_s, slot_min_s=MIN_SHOT_LENGTH_S, slot_max_s=MAX_SLOT_S):
     window = candidate["out_s"] - candidate["in_s"]
     if is_important(candidate):
         return round(min(window, important_max_s), 3)
@@ -566,7 +565,7 @@ def keeps_whole(fact):
     return bool(fact.get("keep_whole")) and fact.get("motion_label") not in NON_MOVE_MOTION_LABELS
 
 
-def make_fact(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
+def make_fact(candidate, important_max_s, slot_min_s=MIN_SHOT_LENGTH_S, slot_max_s=MAX_SLOT_S):
     return {
         "shot_key": candidate.get("shot_key"),
         "clip": candidate["clip"],
@@ -618,7 +617,7 @@ def build_shot_facts(
     shotlog,
     important_max_s=DEFAULT_IMPORTANT_MAX_S,
     drop_reasons=None,
-    slot_min_s=MIN_SLOT_S,
+    slot_min_s=MIN_SHOT_LENGTH_S,
     slot_max_s=MAX_SLOT_S,
 ):
     clips = order_clips(load_ingest(workspace))
@@ -643,7 +642,7 @@ def build_shot_facts(
         motion = load_json(workspace / "motion" / f"{stem}.json")
         position = clip_position(moment, first_moment, span_seconds)
         candidates = build_candidates(
-            clip, moment, position, content_offset, quality, motion, MIN_SLOT_S,
+            clip, moment, position, content_offset, quality, motion, MIN_SHOT_LENGTH_S,
             beats_by_segment=beats_by_segment,
         )
         scored = []
@@ -1626,57 +1625,92 @@ def snap_photo(slot, start, times, cap=None):
     return True
 
 
-def snap_slots(slots, bounds, beat_grid, downbeat_at, warnings):
-    """Snap every timeline cut to the nearest beat, in place; return the summary counts."""
+def _cap_target(grid_name, times, end, start, cap, tolerance, beat_s):
+    """The candidate target for one grid after the slot-cap fallback; returns grid, times, target, reach."""
+    target = nearest_beat(end, times)
+    reach = tolerance
+    if target is not None and cap is not None and target - start > float(cap) + 1e-9:
+        within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
+        if not within and times is not beat_s:
+            grid_name = "beat"
+            times = beat_s
+            within = [moment for moment in beat_s if moment - start <= float(cap) + 1e-9]
+        target = max(within) if within else None
+        reach = 2 * tolerance
+    return grid_name, times, target, reach
+
+
+def snap_slots(slots, bounds, beat_grid, warnings, slot_min_s=None):
+    """Snap every timeline cut to a beat, preferring downbeats; return the summary counts.
+
+    A downbeat or half-bar cut snaps when the target keeps the slot at least
+    ``slot_min_s`` long (the pacing min); the slot's allowed length range is the
+    reach, and the window and cap helpers still bound the move. The plain beat
+    candidate keeps the half-beat tolerance.
+    """
     beat_s = beat_grid["beat_s"]
     downbeat_s = beat_grid["downbeat_s"] or beat_s
-    tolerance = BEAT_SNAP_FRACTION * beat_grid["beat_period_s"]
+    period = beat_grid["beat_period_s"]
+    half_bar_s = [round(d + 2 * period, 4) for d in downbeat_s]
+    tolerance = BEAT_SNAP_FRACTION * period
     snapped = 0
     unsnapped = 0
+    downbeats = 0
+    half_bar = 0
     start = 0.0
     for index, slot in enumerate(slots):
         if index > 0:
             slot["transition"] = {"type": "cut", "duration_s": 0}
         end = start + slot_duration(slot)
-        times = downbeat_s if downbeat_at[index] else beat_s
-        target = nearest_beat(end, times)
-        reach = tolerance
         cap = bounds[index].get("cap")
-        if target is not None and cap is not None and target - start > float(cap) + 1e-9:
-            within = [moment for moment in times if moment - start <= float(cap) + 1e-9]
-            target = max(within) if within else None
-            reach = 2 * tolerance
-        if target is None or abs(end - target) > reach:
-            warnings.append(snap_warning(index + 1, end, target))
+        chosen = None
+        last_target = None
+        for grid_name, times in (("downbeat", downbeat_s), ("half_bar", half_bar_s), ("beat", beat_s)):
+            used_grid, times, target, reach = _cap_target(grid_name, times, end, start, cap, tolerance, beat_s)
+            last_target = target
+            if target is None:
+                continue
+            if grid_name in ("downbeat", "half_bar"):
+                if not bounds[index].get("photo") and slot_min_s is not None and target - start < slot_min_s - 1e-9:
+                    continue
+            elif abs(end - target) > reach:
+                continue
+            if bounds[index].get("photo"):
+                if snap_photo(slot, start, times, cap):
+                    chosen = used_grid
+                    break
+                continue
+            delta = target - end
+            if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta, tolerance):
+                chosen = used_grid
+                break
+            if index + 1 < len(slots):
+                moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta, tolerance)
+            else:
+                moved = absorb_length(slot, bounds[index], delta, tolerance)
+            if moved:
+                chosen = used_grid
+                break
+        if chosen is None:
+            warnings.append(snap_warning(index + 1, end, last_target))
             unsnapped += 1
+            slot["beat_grid"] = None
             start = end
             continue
-        if bounds[index].get("photo"):
-            if not snap_photo(slot, start, times, bounds[index].get("cap")):
-                warnings.append(snap_warning(index + 1, end, target))
-                unsnapped += 1
-                start = end
-                continue
-            snapped += 1
-            start += slot_duration(slot)
-            continue
-        delta = target - end
-        if abs(delta) < 1e-9 or absorb_out(slot, bounds[index], delta, tolerance):
-            snapped += 1
-            start += slot_duration(slot)
-            continue
-        if index + 1 < len(slots):
-            moved = absorb_pair(slot, bounds[index], slots[index + 1], bounds[index + 1], delta, tolerance)
-        else:
-            moved = absorb_length(slot, bounds[index], delta, tolerance)
-        if moved:
-            snapped += 1
-            start += slot_duration(slot)
-            continue
-        warnings.append(snap_warning(index + 1, end, target))
-        unsnapped += 1
-        start = end
-    return {"beats": len(beat_s), "snapped": snapped, "unsnapped": unsnapped}
+        slot["beat_grid"] = chosen
+        if chosen == "downbeat":
+            downbeats += 1
+        elif chosen == "half_bar":
+            half_bar += 1
+        snapped += 1
+        start += slot_duration(slot)
+    return {
+        "beats": len(beat_s),
+        "snapped": snapped,
+        "unsnapped": unsnapped,
+        "downbeats": downbeats,
+        "half_bar": half_bar,
+    }
 
 
 def apply_length_policy(record, plan, facts_by_key, pacing, important_max_s, warnings, speed_ramp=False):
@@ -1765,6 +1799,8 @@ def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_
 
 def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False):
     """Length policy, then grow back to the brief length, then police the added slots."""
+    if enforce_chronological_order(record, plan, facts_by_key, warnings, beat_grid):
+        drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings)
     beat_snap = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
     fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [])
     for note in fill_notes:
@@ -1776,23 +1812,15 @@ def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warning
 
 
 def apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings, caps=None):
-    """Snap a record's cuts to the grid; a cut that starts a new plan beat snaps to a downbeat."""
+    """Snap a record's cuts to the grid, preferring downbeats."""
     slots = record.get("video") or []
     plan_by_id = {slot.get("id"): slot for slot in plan.get("slot_plan") or []}
-    plan_beat = {slot_id: entry.get("beat") for slot_id, entry in plan_by_id.items()}
-    downbeat_at = []
-    for index, slot in enumerate(slots):
-        current = plan_beat.get(slot.get("id"))
-        following = plan_beat.get(slots[index + 1].get("id")) if index + 1 < len(slots) else None
-        downbeat_at.append(
-            bool(index + 1 < len(slots) and following is not None and current is not None and following != current)
-        )
     bounds = []
     for slot in slots:
         plan_slot = plan_by_id.get(slot.get("id")) or {}
         fact = facts_by_key.get(plan_slot.get("shot_key"))
         bounds.append(slot_bounds(slot, fact, (caps or {}).get(slot.get("id"))))
-    return snap_slots(slots, bounds, beat_grid, downbeat_at, warnings)
+    return snap_slots(slots, bounds, beat_grid, warnings, plan_pacing(plan)["slot_min"])
 
 
 def default_window(fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
@@ -2099,6 +2127,53 @@ def edit_order_key(fact):
     return (counter, float(fact.get("window_in_s") or 0.0))
 
 
+def is_chronological(plan):
+    """True when the plan's brief asks for chronological order."""
+    brief = plan.get("brief") if isinstance(plan, dict) else None
+    return isinstance(brief, dict) and brief.get("order") == "chronological"
+
+
+def slot_order_key(slot, plan_by_id, facts_by_key):
+    """The chronological sort key of a record slot, from its shot fact."""
+    fact = facts_by_key.get((plan_by_id.get(slot.get("id")) or {}).get("shot_key")) or {}
+    return edit_order_key(fact)
+
+
+def reset_transitions(record, beat_grid=None):
+    """Set every slot's transition: first cut, the rest crossfade, or hard cuts with a beat grid."""
+    for index, slot in enumerate(record.get("video") or []):
+        if index == 0 or beat_grid is not None:
+            slot["transition"] = {"type": "cut", "duration_s": 0}
+        else:
+            slot["transition"] = {"type": "crossfade", "duration_s": XFADE_S}
+
+
+def enforce_chronological_order(record, plan, facts_by_key, notes, beat_grid=None):
+    """Re-sort a chronological edit (and its plan) by capture/source time; return True when it changed.
+
+    A repair (a swapped-in top star, a rebuilt cut) can put a late shot in an
+    early slot; for a chronological brief the edit must stay in time order.
+    After a re-sort every slot's transition is set again by the same rule
+    ``build_edit_record`` uses.
+    """
+    if not is_chronological(plan):
+        return False
+    video = record.get("video") or []
+    if len(video) < 2:
+        return False
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    keys = {slot.get("id"): slot_order_key(slot, plan_by_id, facts_by_key) for slot in video}
+    ordered = sorted(video, key=lambda slot: keys.get(slot.get("id"), ("", 0.0)))
+    if [slot.get("id") for slot in ordered] == [slot.get("id") for slot in video]:
+        return False
+    record["video"] = ordered
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    plan["slot_plan"] = [plan_by_id[slot["id"]] for slot in ordered if slot.get("id") in plan_by_id]
+    reset_transitions(record, beat_grid)
+    notes.append("repaired: re-sorted the edit into chronological order")
+    return True
+
+
 def next_slot_id(plan):
     """A free plan slot id like ``v13``."""
     used = {row.get("id") for row in plan.get("slot_plan") or []}
@@ -2291,6 +2366,8 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
     drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    if enforce_chronological_order(record, plan, facts_by_key, notes):
+        drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     return notes
 
 

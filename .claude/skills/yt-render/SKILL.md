@@ -32,7 +32,7 @@ The output adapter: turn an `edit.json` edit list into an MP4, either a preview-
 
 The directors write `middle_speed` only when run with `--speed-ramp` (D2-12); by default every slot plays at normal speed and the render is a single trim.
 
-A video slot with `middle_speed` above 1 (schema range 1.0-1.25, the directors write at most 1.2) is built from three trims of the same source window: the first quarter at real time, the middle half through `setpts=(PTS-STARTPTS)/s`, the last quarter at real time, joined with `concat`; the slot's ambient audio is cut the same way with `atempo=s` on the middle part, so it stays continuous. The on-screen length is `0.25L + 0.5L/s + 0.25L` (`common.moves.slot_screen_length`), and crossfade offsets and the music length use it. A slot without `middle_speed` (or 1.0) renders exactly as before, one trim.
+A video slot with `middle_speed` above 1 (schema range 1.0-1.25, the directors write at most 1.2) is built from three trims of the same source window: the first quarter at real time, the middle half through `setpts=(PTS-STARTPTS)/s`, the last quarter at real time, joined with `concat`; the slot's ambient audio is cut the same way with `atempo=s` on the middle part, so it stays continuous. The on-screen length is `0.25L + 0.5L/s + 0.25L` (`common.moves.slot_screen_length`), and crossfade offsets and the music length use it. A slot without `middle_speed` (or 1.0) renders as one trim; cut positions are rounded on the timeline, so a slot whose length is not a whole number of frames may move by less than one frame.
 
 ## Vertical 9:16 (`--format`)
 
@@ -51,7 +51,7 @@ HEIC photos are converted once to JPEG under `<workspace>/photos/` with `common.
 
 ## Music
 
-A music track mixes **under the cleaned ambient bus** — ambient speech and sound always win. The track comes from `--music FILE` or, when the flag is absent, from `edit.json` `audio.music` (`{path, gain_db, fade_in_s, fade_out_s, start_s}`, all optional but `path`). `--music` overrides `audio.music.path`; `--music-gain-db` overrides `audio.music.gain_db`. Defaults: gain `-12.0` dB, fade-out `2.0` s at the very end, no fade-in, start at `0`. A relative `path` is resolved against the edit file's folder.
+A music track mixes **under the cleaned ambient bus** — ambient speech and sound always win. The track comes from `--music FILE` or, when the flag is absent, from `edit.json` `audio.music` (`{path, gain_db, fade_in_s, fade_out_s, start_s}`, all optional but `path`). `--music` overrides `audio.music.path`; `--music-gain-db` overrides `audio.music.gain_db`. Defaults: gain `-12.0` dB, fade-out `2.0` s at the very end, no fade-in, start at `0`. A relative `path` is resolved against the edit file's folder. The edit's cuts land on the beat grid (the directors snap them to the onset-aligned beats of `beats.py`), so the rendered cuts stay on the hit.
 
 The mix graph, in one ffmpeg run:
 

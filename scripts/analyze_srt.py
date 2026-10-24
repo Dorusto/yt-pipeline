@@ -25,6 +25,7 @@ from pathlib import Path
 
 import yaml
 
+from common.cli import handle_help
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
@@ -483,6 +484,7 @@ def run_analysis(srt_file, video_file, youtube_url, shorts_config_path, select, 
 
 def main():
     started = time.monotonic()
+    handle_help(["Utilizare: python3 analyze_srt.py subtitles.srt video.mp4 [youtube_url] [--shorts-config config.yaml] [--select 1,3,5|all|none] [--json]"])
     positionals, shorts_config_path, select, json_out = parse_args(sys.argv[1:])
     if len(positionals) < 2:
         print(

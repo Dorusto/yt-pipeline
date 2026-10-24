@@ -6,6 +6,7 @@ Usage:
     python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
     python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
     python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+    python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>
     python scripts/costs.py --ledger <costs.db> totals --json
     python scripts/costs.py --ledger <costs.db> list --kind model_job
 
@@ -19,6 +20,7 @@ No model is called, so ``llm_cost_usd`` is always 0.0.
 """
 
 import argparse
+import csv
 import json
 import math
 import re
@@ -28,7 +30,7 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from common.config import ConfigError, costs_db, load_config, no_costs_message
+from common.config import ConfigError, costs_db, load_config, no_costs_message, upkeep_percent
 from common.costs import KINDS, compute_totals, connect, insert_entry, list_entries, upsert_by_source
 from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
@@ -52,6 +54,31 @@ class CostsRuntimeError(CostsError):
     """Raised when SQLite or the filesystem fails after the run started."""
 
 
+def parse_amount(raw):
+    """Parse a money string: optional leading $/€, decimal comma or dot, thousands
+    separators, a leading BOM. Returns a finite float > 0; raises ValueError otherwise."""
+    text = str(raw).strip().lstrip("\ufeff").strip()
+    text = text.lstrip("$\u20ac").strip()
+    if not text:
+        raise ValueError("empty amount")
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+    elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+        text = text.replace(".", "")
+    try:
+        amount = float(text)
+    except ValueError:
+        raise ValueError(f"could not parse amount '{raw}'") from None
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError(f"amount must be a finite number greater than 0, got '{raw}'")
+    return amount
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="costs.py",
@@ -65,6 +92,7 @@ def build_parser():
             "  python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>\n"
             "  python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>\n"
             "  python scripts/costs.py --ledger <costs.db> import-opencode --db <opencode.db> --match yt-pipeline\n"
+            "  python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>\n"
             "  python scripts/costs.py --ledger <costs.db> totals --json\n"
             "  python scripts/costs.py --ledger <costs.db> list --kind model_job\n"
         ),
@@ -83,7 +111,7 @@ def build_parser():
 
     add = subparsers.add_parser("add", help="append one manual entry")
     add.add_argument("--kind", required=True, help=f"one of: {', '.join(KINDS)}")
-    add.add_argument("--amount", type=float, required=True, help="amount in USD, greater than 0")
+    add.add_argument("--amount", type=str, required=True, help="amount in USD, greater than 0")
     add.add_argument("--date", default=None, help="entry date YYYY-MM-DD (default: today)")
     add.add_argument("--note", default="", help="free-text note")
     add.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
@@ -106,6 +134,12 @@ def build_parser():
         help="a folder name part that marks this project's sessions (repeatable), for example yt-pipeline",
     )
     agents.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
+    donations = subparsers.add_parser(
+        "import-donations", help="import donations from a CSV export"
+    )
+    donations.add_argument("--from", dest="from_file", required=True, help="donations CSV file")
+    donations.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
     totals = subparsers.add_parser("totals", help="sum the ledger and compute the balance")
     totals.add_argument("--month", default=None, help="limit the sums to one month YYYY-MM")
@@ -131,9 +165,10 @@ def command_add(connection, args, started):
         raise CostsUsageError(
             f"unknown kind '{args.kind}'; valid kinds: {', '.join(KINDS)}"
         )
-    amount = args.amount
-    if amount is None or not math.isfinite(amount) or amount <= 0:
-        raise CostsUsageError("--amount must be a finite number greater than 0")
+    try:
+        amount = parse_amount(args.amount)
+    except ValueError as exc:
+        raise CostsUsageError(str(exc)) from None
     entry_date = args.date if args.date is not None else date.today().isoformat()
     if not DATE_RE.match(entry_date):
         raise CostsUsageError(f"--date must match YYYY-MM-DD, got '{entry_date}'")
@@ -246,11 +281,84 @@ def command_import_opencode(connection, args, started):
     return {"ok": True, "imported": imported, "count": len(imported), **summary_fields(started)}
 
 
+def csv_cell(row, index):
+    """The trimmed cell at ``index``, or '' when the column is absent or short."""
+    if index is None or index >= len(row):
+        return ""
+    return row[index].strip()
+
+
+def command_import_donations(connection, args, started):
+    source_file = Path(args.from_file).expanduser()
+    if not source_file.is_file():
+        raise CostsUsageError(f"donations CSV not found: {source_file}")
+    imported = []
+    skipped = 0
+    try:
+        with source_file.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.reader(handle)
+            try:
+                header = next(reader)
+            except StopIteration:
+                raise CostsUsageError(f"donations CSV is empty: {source_file}") from None
+            columns = {name.strip().lower(): index for index, name in enumerate(header)}
+            for required in ("date", "amount"):
+                if required not in columns:
+                    raise CostsUsageError(
+                        f"donations CSV is missing the '{required}' column: {source_file}"
+                    )
+            date_index = columns.get("date")
+            amount_index = columns.get("amount")
+            note_index = columns.get("note")
+            id_index = columns.get("id")
+            for row in reader:
+                entry_date = csv_cell(row, date_index)
+                raw_amount = csv_cell(row, amount_index)
+                note = csv_cell(row, note_index)
+                donation_id = csv_cell(row, id_index)
+                if not DATE_RE.match(entry_date):
+                    print(
+                        f"[warn] skipping row {reader.line_num}: bad date '{entry_date}'",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                try:
+                    amount = parse_amount(raw_amount)
+                except ValueError:
+                    amount = None
+                if amount is None:
+                    print(
+                        f"[warn] skipping row {reader.line_num}: bad amount '{raw_amount}'",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                source = "donation:" + (
+                    donation_id if donation_id else f"{entry_date}:{amount:.2f}:{note}"
+                )
+                _, action = upsert_by_source(
+                    connection, "donation", source, entry_date, amount, note or "imported donation"
+                )
+                imported.append(
+                    {"date": entry_date, "amount_usd": round(amount, 2), "action": action}
+                )
+    except (OSError, csv.Error) as exc:
+        raise CostsUsageError(f"could not read donations CSV {source_file}: {exc}") from exc
+    return {
+        "ok": True,
+        "imported": imported,
+        "count": len(imported),
+        "skipped": skipped,
+        **summary_fields(started),
+    }
+
+
 def command_totals(connection, args, started):
     month = args.month
     if month is not None and not MONTH_RE.match(month):
         raise CostsUsageError(f"--month must match YYYY-MM, got '{month}'")
-    totals = compute_totals(connection, month)
+    totals = compute_totals(connection, month, upkeep_percent=upkeep_percent())
     return {"ok": True, **totals, **summary_fields(started)}
 
 
@@ -284,6 +392,10 @@ def emit(command, summary, json_mode):
         for row in summary["imported"]:
             print(f"{row['action']} {row['date']}: ${row['cost_usd']:.2f}")
         print(f"imported {summary['count']} day(s)")
+    elif command == "import-donations":
+        for row in summary["imported"]:
+            print(f"{row['action']} {row['date']}: ${row['amount_usd']:.2f}")
+        print(f"imported {summary['count']} donation(s)")
     elif command == "totals":
         print(f"month: {summary['month'] or 'all'}")
         for kind, value in summary["by_kind"].items():
@@ -324,6 +436,8 @@ def main(argv=None):
             summary = command_import_dev(connection, args, started)
         elif args.command == "import-opencode":
             summary = command_import_opencode(connection, args, started)
+        elif args.command == "import-donations":
+            summary = command_import_donations(connection, args, started)
         elif args.command == "totals":
             summary = command_totals(connection, args, started)
         else:

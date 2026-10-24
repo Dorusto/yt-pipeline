@@ -6,6 +6,11 @@ time from a rough-cut ``edit.json``, a final FilmCraft project or an already
 mapped timeline word file). The midpoint rule is the source of truth: a word
 belongs to the window that contains the middle of its source span, and its
 timeline time is the source time shifted by the window's timeline start.
+
+``load_json`` here is the strict read for word mapping: a bad words file must
+stop the run with a message naming the file, so it raises ``TimelineWordsError``.
+The tolerant counterpart is ``common.jsonio.load_json``, which returns ``None``
+for the web app and the metadata tool where a missing file is a normal state.
 """
 
 import json

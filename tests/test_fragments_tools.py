@@ -162,3 +162,22 @@ def test_kdenlive_main_json_reports_wall_time_and_cost(tmp_path, capsys, monkeyp
     assert payload["output"].endswith("Project.kdenlive")
     assert payload["wall_time_s"] >= 0.0
     assert payload["llm_cost_usd"] == 0.0
+
+
+def test_kdenlive_main_failed_probe_returns_3(tmp_path, capsys, monkeypatch):
+    cfg = tmp_path / "f.yaml"
+    cfg.write_text(
+        "source_dir: /footage/dji\n"
+        "output: " + str(tmp_path / "Project.kdenlive") + "\n"
+        "fragments:\n"
+        "  - file: DJI_20260816120000_0001_D.MP4\n"
+        "    in: '00:00:05.000'\n"
+        "    out: '00:00:12.500'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(kf, "probe_duration", lambda path: None)
+    rc = kf.main([str(cfg), "--skip-melt", "--json"])
+    assert rc == EXIT_RUNTIME
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == EXIT_RUNTIME

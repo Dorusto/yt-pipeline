@@ -2,6 +2,8 @@
 description: Reverse-engineers yt-pipeline into docs/SPEC.md, the current-state specification of every tool, read from the code and the tests. Also updates one SPEC section after a merged change. Writes documentation only, never code.
 mode: primary
 model: openrouter/deepseek/deepseek-v4.1-flash
+reasoning:
+  effort: high
 temperature: 0.1
 steps: 120
 permission:

@@ -39,9 +39,20 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
 - The cut-out uses rembg `birefnet-portrait` (first run downloads ~973 MB to `~/.rembg/models/`, older rembg to `~/.u2net/`); `--skip-cutout` uses the photo's own alpha instead (synthetic portraits, tests) and never calls rembg.
 - `--brand PATH` points at another brand kit (default `brand.json` at the repo root); a missing font file is a hard error naming the path and the brand key — never a silent fallback.
 
+## Step 4: concepts file
+
+```bash
+.venv/bin/python scripts/thumbnail.py --photo photo.jpg --concepts thumbnail_concepts.json \
+    --pick 2 --out thumb/ --skip-cutout --json
+```
+
+- `--concepts FILE` takes the title, keyword, kicker and theme from a `thumbnail_concepts.json` (written by `thumbnail_concepts.py`, validated against `schemas/thumbnail_concepts.schema.json`) instead of the flags; `--pick N` (1-based, default 1) chooses the concept.
+- With `--concepts`, `--title`, `--keyword`, `--kicker` and `--theme` must not be given (argparse error, exit 2). `--photo` and `--out` stay required.
+- A missing, unreadable or invalid concepts file, or a `--pick` outside `1..len(concepts)`, is a usage error (exit 2) naming the valid range.
+
 ## `--json` keys
 
-`generated_at`, `tool`, `photo`, `title`, `keyword`, `kicker`, `theme`, `brand`, `out_dir`, `thumbnail`, `psd` (path or null), `cutout_used`, `cutout_model`, `psd_writer` (always `psd-tools`), `font_size_title_px`, `font_size_keyword_px`, `keyword_lines`, `subject_bbox_px` (`left`/`top`/`width`/`height` of the placed portrait rect), `warnings`, `wall_time_s`, `llm_cost_usd` (always 0.0 — no model calls).
+`generated_at`, `tool`, `photo`, `title`, `keyword`, `kicker`, `theme`, `concepts_file` (path or null), `concept` (the picked 1-based index or null), `brand`, `out_dir`, `thumbnail`, `psd` (path or null), `cutout_used`, `cutout_model`, `psd_writer` (always `psd-tools`), `font_size_title_px`, `font_size_keyword_px`, `keyword_lines`, `subject_bbox_px` (`left`/`top`/`width`/`height` of the placed portrait rect), `warnings`, `wall_time_s`, `llm_cost_usd` (always 0.0 — no model calls).
 
 ## Notes
 

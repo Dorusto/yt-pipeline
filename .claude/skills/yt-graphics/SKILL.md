@@ -58,7 +58,7 @@ render; nothing is rendered by this step.
 
 ```bash
 .venv/bin/python scripts/graphics.py --template lower_third \
-  --props '{"name":"Doru","role":"creator"}' --out /tmp/lt.mov --json
+  --props '{"name":"<name>","role":"creator"}' --out /tmp/lt.mov --json
 .venv/bin/python scripts/graphics.py --template counter \
   --props '{"number":"42","label":"clips"}' --out /tmp/counter.mov --duration 3
 .venv/bin/python scripts/graphics.py --template callout \

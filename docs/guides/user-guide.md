@@ -112,6 +112,13 @@ examples below use that layout; the agent-side eval copy of the clip lives at
   --final-video final.mp4 --kit
 ```
 
+- The kit is its own tool, `publish_kit.py`, so after changing only the
+  thumbnail you can rebuild it alone without re-running the chain:
+  `.venv/bin/python scripts/publish_kit.py --project <trip-folder> \
+  --final-video final.mp4`. It links the final video into `publish-kit/`
+  (hard link, else symlink, else only its path in `studio.md`) instead of
+  copying it.
+
 - The folder is `camera/` + `ecran/` (or `screen/`), or one flat folder with
   `camera ` names. A camera pairs with the screen whose name timestamp is
   nearest (10 s tolerance); unpaired cameras run camera-only. The camera file
@@ -168,6 +175,14 @@ headless file) to run the two steps files it writes, `finish_pip.place.jsonl` an
 when the placements exist but the animate phase is missing it rewrites
 `finish_pip.animate.jsonl` instead.
 
+`scripts/colour.py` evens out the colour between recording sessions: after
+finishing the edit, `colour.py --fcproj project.fcproj` measures each session's
+average white balance, exposure and contrast on a few frames of the camera clips
+and applies one Lumetri Basic Correction per session (temperature, tint,
+exposure, contrast) to every camera clip of that session, through the headless
+`filmcraft-cli`. It writes a copy (`<stem>_colour.fcproj`) unless `--in-place` is
+given; `--dry-run` prints the commands first.
+
 ## Writing a brief
 
 Say what you want, not how to cut it. The router reads length, order, pacing, music and content type from it.
@@ -200,16 +215,13 @@ finished recap, the explanation and the contact sheet.
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
   never outside the inbox) and starts `recap.py` in the background; the status
   shows on Projects.
-- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there — and the vertical 9:16 player when the format was 9:16 or both), **Files**, then a **Details** group holding **Why?** and **Shots**, then **Cuts** and **Shorts**. **Why?** (`explain.html`) opens with a short plain-language summary and collapsed sections: the brief, the director's plan, the shots in the edit, what was left out and why grouped by reason, and the technical notes. **Shots** (`shotlog.html`) opens with a summary line and collapsed sections — used in the edit, kept but not used, not usable — grouped per clip.
+- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there and pick it; a picked block shows a bin icon (remove the shot) and a **− 1 s** / **+ 1 s** row (make it shorter or longer, within the source clip; the presses add up into one running total for the picked shot, a different shot starts a new total, and Yes submits that total) — each renders a new version from the proxies, no model call, and the old version is never edited — and the vertical 9:16 player when the format was 9:16 or both), **Files**, **Cuts** and **Shorts**.
 - **Files** lists every clip and photo of the project (from its proxies and its inbox source) with its length or "photo", its size and its state — `in the edit`, `new` (added after the last edit) or `left out`. **Add files** drops more clips and photos into the project's inbox source folder (the same consent and storage checks as the Upload page); when there are new files the tab says "N new files. They join the next edit." with a **Make a new edit** button that opens the Re-edit form. A bin icon next to a file asks "Leave out <name>?" and writes the name to `<workspace>/excluded.json`; a left-out file shows **Bring back**. Nothing is deleted from disk — every station that lists clips or photos skips the left-out names, and only a project delete removes files.
 - **Re-edit** on the project page repeats the options and adds a **feedback
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
   It re-runs only the edit and the render — the analysis is reused. The
   feedback is appended to `feedback.jsonl` in the workspace.
-- **Reviewer and Ask the director.** The project page shows, per version,
-  `Reviewer: approved` / `Reviewer: not approved` and the reviewer's
-  objections (an objection that names a shot shows the same number as the
-  strip). The Re-edit box has an **Ask the director** button that asks how the
+- **Ask the director.** The Re-edit box has an **Ask the director** button that asks how the
   director reads the request — one cheap model call, no new version — and
   shows the reply with a cost/time estimate and two buttons: **Make the new
   version** (starts the re-edit with the feedback plus the reply as a hint) and
@@ -217,10 +229,13 @@ finished recap, the explanation and the contact sheet.
   starts without the click. From the command line:
   `.venv/bin/python scripts/llm_director.py --workspace <workspace> --interpret-feedback "drop 0071/s2, tunnel longer" --json`.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
-  (v1, v2, …) and **Compare with** shows two versions one under the other,
-  each with its own strip and the feedback that asked for it. While a run is
+  (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is
   going the page shows the last finished version, the step it is on, and
-  refreshes by itself; a failed run says where it failed and why.
+  refreshes by itself; a failed run says where it failed and why. A version that
+  is neither the latest nor the first shows a **Delete this version** button; it
+  asks once ("Delete version N? Its video and files are removed for good."),
+  removes that version's folder for good and returns to the latest version. The
+  latest, the first and a version while a run is going cannot be deleted.
 - **Title, description and hashtags.** The Recap tab shows a box with the
   YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
   version, each with a **Copy** button. A **Rewrite** button opens the four
@@ -233,7 +248,10 @@ finished recap, the explanation and the contact sheet.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 - **Costs** (top bar) is a read-only page: per project the model cost and the
   number of versions, then the ledger totals (monthly running cost, development
-  total, donations and the balance) and an optional donation link. It reads the
+  total, donations and the balance) and an optional donation link. On a friend
+  instance it leads with the donation buttons, then its own model cost to cover,
+  then the owner instance's costs as voluntary project costs, then the per-clip
+  table and the donation list; the owner's page is unchanged. It reads the
   same totals object as `costs.py totals --json`. The **Feedback and requests**
   form on the same page appends one JSON line (`date`, `type`, `text`,
   `contact`, `backed`) to the requests file; with no requests file configured
@@ -245,7 +263,9 @@ finished recap, the explanation and the contact sheet.
   `limits.storage_gb` in the config; with none set no limit is shown. The same
   pages show the model credit ("Model credit: $3.20 left of $5.00") read from
   the OpenRouter key endpoint, and warn under `limits.credit_warn_usd` (default
-  1.0).
+  1.0). When the remaining credit is under that value the Upload page also shows
+  a low-credit banner above the start button, so you see it before starting a
+  run that would pass the key limit.
 - **Brief help.** The four fact fields (Place, When, Who is in it, Occasion)
   sit above the Brief field on the Upload and Re-edit forms. The Brief field
   has hint chips (The story or the best moment, Mood, What to leave out);
@@ -257,7 +277,8 @@ finished recap, the explanation and the contact sheet.
   checkbox and refuses an upload without it.
 - **Delete.** A project page has a bin icon next to the title; it asks once,
   then deletes the workspace and its inbox source. It is refused while a run
-  is going.
+  is going. A single version can be deleted from the Recap tab the same way
+  (never the latest or the first).
 - **Feature switches.** `--features` (comma-separated), else
   `YT_PIPELINE_FEATURES`, else `web.features` lists the parts this instance
   shows (`upload`, `recap`, `why`, `shots`, `shorts`, `costs`, `requests`);
@@ -299,16 +320,19 @@ stops with a usage error naming those three ways (docs write `<costs.db>`).
 .venv/bin/python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
 .venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
+.venv/bin/python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>
 .venv/bin/python scripts/costs.py --ledger <costs.db> totals --json
 ```
 
 `import-jobs` reads each workspace's `llm_spend.json` and `import-dev` the build
 agents' run-spend JSON; both are idempotent by `source`, so re-running never
-duplicates a row. `totals --json` is the object the web app's **Costs** page
-reads (through the shared `scripts/common/costs.py`): per-kind sums, the
-recurring monthly cost, the fixed total over the months since the first fixed
-entry and the balance (donations minus model + dev + investments + fixed
-monthly × months).
+duplicates a row. `import-donations --from <donations.csv>` imports donations
+from a CSV export (required `date`, `amount`; optional `note`, `id`), idempotent
+by `source` too, and skips a bad row with a warning. `totals --json` is the
+object the web app's **Costs** page reads (through the shared
+`scripts/common/costs.py`): per-kind sums, the recurring monthly cost, the fixed
+total over the months since the first fixed entry and the balance (donations
+minus model + dev + investments + fixed monthly × months).
 
 The Costs page also carries the **Feedback and requests** form. It appends one
 JSON line (`date`, `type`, `text`, `contact`, `backed`) to the requests file,
@@ -319,8 +343,10 @@ and the app never handles payments.
 
 The owner instance serves `GET /costs.json` (the totals object, no notes and no
 requests). An instance with `costs.project_totals_url` (`--project-totals-url`,
-else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it and shows
-"Project costs (everyone)" next to "This instance"; a failed fetch says the
+else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it: a friend
+instance leads with the donation buttons, then its own model cost to cover, then
+the owner instance's costs as voluntary project costs, then the per-clip table
+and the donation list; the owner's page is unchanged. A failed fetch says the
 project costs are unavailable.
 
 ## How it learns
@@ -351,3 +377,4 @@ project costs URL are in [pilot-host.md](pilot-host.md).
 - Why it works this way: `docs/VISION.md`, `docs/DECISIONS.md`
 - Filming tips that make the edit better: `docs/guides/shot-grammar.md`, section 4
 - Known risks and how they are handled: `docs/RISKS.md`
+- Every tool, grouped, with flags and examples: `docs/guides/tools.md`

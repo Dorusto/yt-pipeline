@@ -27,10 +27,10 @@ import re
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError
+from common.jsonio import now_iso
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
 from common.timeline_words import (
@@ -68,10 +68,6 @@ def get_client():
     if _client is None:
         _client = make_client()
     return _client
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def load_json(path):

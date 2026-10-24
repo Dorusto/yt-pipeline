@@ -34,7 +34,17 @@ from common.constants import TICKS_PER_SECOND
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path
-from common.filmcraft import cli_path
+from common.filmcraft import (
+    FilmCraftError,
+    find_sequences,
+    format_command,
+    load_project_json,
+    parse_reply,
+    resolve_cli,
+    run_command,
+    select_sequence,
+    select_track,
+)
 
 DEFAULT_TARGET_I = -14.0
 DEFAULT_TARGET_TP = -1.0
@@ -96,19 +106,6 @@ def format_number(value):
     """Format a float as an integer when it is whole, else as-is."""
     number = float(value)
     return str(int(number)) if number.is_integer() else str(number)
-
-
-def load_json(path):
-    """Read a UTF-8 JSON file, raising a named error when it is missing or unreadable."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except FileNotFoundError:
-        raise LoudnessError(f"cannot read '{path}': file not found")
-    except json.JSONDecodeError as exc:
-        raise LoudnessError(f"cannot read '{path}': not valid JSON ({exc})")
-    except OSError as exc:
-        raise LoudnessError(f"cannot read '{path}': {exc}")
 
 
 def parse_loudnorm_json(text):
@@ -204,57 +201,6 @@ def run_video(video_path, out_path, target_i, target_tp, target_lra):
     }
 
 
-def resolve_cli(required=True):
-    """Return the filmcraft-cli binary from ``$FILMCRAFT_CLI`` or PATH.
-
-    With ``required=False`` (``--dry-run``) a missing binary is not an error: the
-    command lines print with the plain binary name.
-    """
-    found = cli_path()
-    if found:
-        return found
-    if not required:
-        return "filmcraft-cli"
-    raise LoudnessRuntimeError("filmcraft-cli not found: set FILMCRAFT_CLI or put filmcraft-cli on PATH")
-
-
-def find_sequences(items):
-    """Return ``{name: sequence item}`` for every named sequence item."""
-    sequences = {}
-    for value in items.values():
-        kind = value.get("kind") or {}
-        if "Sequence" in kind and value.get("name"):
-            sequences[value["name"]] = value
-    return sequences
-
-
-def select_sequence(items, requested):
-    """Return ``(name, sequence item)`` for the requested or only sequence."""
-    sequences = find_sequences(items)
-    if not sequences:
-        raise LoudnessError("no sequence found in the project")
-    if requested:
-        if requested not in sequences:
-            found = ", ".join(sorted(sequences)) or "none"
-            raise LoudnessError(f"unknown sequence '{requested}' (sequences found: {found})")
-        return requested, sequences[requested]
-    if len(sequences) > 1:
-        found = ", ".join(sorted(sequences))
-        raise LoudnessError(f"the project has more than one sequence, pass --sequence (found: {found})")
-    name = next(iter(sequences))
-    return name, sequences[name]
-
-
-def select_track(sequence_item, track_name):
-    """Return the audio track named ``track_name`` of the sequence."""
-    block = (sequence_item.get("kind") or {}).get("Sequence") or {}
-    tracks = {entry.get("name"): entry for entry in block.get("audio_tracks") or []}
-    if track_name not in tracks:
-        found = ", ".join(sorted(str(name) for name in tracks)) or "none"
-        raise LoudnessError(f"unknown track '{track_name}' (tracks found: {found})")
-    return tracks[track_name]
-
-
 def voice_clip_ids(track, track_name):
     """Return the item ids of the enabled timeline clips on the track."""
     ids = []
@@ -296,43 +242,6 @@ def build_inspect_command(cli, project, clips):
     return [cli, "exec", "essentialSound.inspect", clips_argument(clips), "--project", str(project), "--save", "--compact"]
 
 
-def format_command(command):
-    return " ".join(command)
-
-
-def run_command(command, label):
-    """Run one filmcraft-cli command and return its stdout, raising on a non-zero exit."""
-    try:
-        result = subprocess.run(command, capture_output=True, text=True)
-    except OSError as exc:
-        raise LoudnessRuntimeError(f"could not run {command[0]}: {exc}")
-    if result.returncode != 0:
-        output = ((result.stdout or "") + (result.stderr or "")).strip()
-        tail = "\n".join(output.splitlines()[-5:])
-        raise LoudnessRuntimeError(f"{label} failed (exit {result.returncode}):\n{tail}")
-    return result.stdout or ""
-
-
-def parse_reply(text, label):
-    """Parse a filmcraft-cli JSON reply, raising when it reports ``ok: false``."""
-    raw = (text or "").strip()
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            raise LoudnessRuntimeError(f"{label} returned no JSON: {raw[-200:]}")
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError as exc:
-            raise LoudnessRuntimeError(f"{label} returned invalid JSON: {exc}")
-    if isinstance(data, dict) and data.get("ok") is False:
-        raise LoudnessRuntimeError(f"{label} returned ok=false: {raw[-200:]}")
-    return data
-
-
 def extract_measured(reply):
     """Pull the Loudness block fields out of an inspect reply."""
     result = reply.get("result") if isinstance(reply, dict) else None
@@ -352,12 +261,12 @@ def run_fcproj(project_path, sequence_name, track_name, target_lufs, out_path, i
     project = Path(project_path).expanduser()
     if not project.is_file():
         raise LoudnessError(f"project not found: {project}")
-    data = load_json(project)
+    data = load_project_json(project)
     items = (data.get("project") or {}).get("items")
     if not isinstance(items, dict):
         raise LoudnessError(f"'{project}' is not a FilmCraft project (no project.items)")
     name, sequence_item = select_sequence(items, sequence_name)
-    track = select_track(sequence_item, track_name)
+    track = select_track(sequence_item, track_name, "audio_tracks")
     clips = voice_clip_ids(track, track_name)
 
     if in_place:
@@ -451,7 +360,7 @@ def main(argv=None):
                 args.in_place,
                 args.dry_run,
             )
-    except LoudnessError as exc:
+    except (LoudnessError, FilmCraftError) as exc:
         return report_error(exc, exc.code, args.json)
 
     if args.json:

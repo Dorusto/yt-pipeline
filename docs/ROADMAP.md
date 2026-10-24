@@ -2,11 +2,10 @@
 
 ## Current status
 
-Pipeline fully functional for end-to-end clip processing (transcription → correction → translation → metadata → 9:16 shorts) and for the AI Director track (D0–D2 done, D3–D6 open). The S51 publish-kit sprint is done and merged (PR #53, 2026-10-21; lots 0–6: watchdog per-run cap, publish chain, `matte.py`, HyperFrames graphics, licence + docs, FilmCraft bridge, `publish.py --kit`). The S54 FilmCraft-adapter sprint is done on branch `s54-filmcraft-spike` (lot 1 export spike, lot 2 web review polish); its PR is open for Doru. The S56 Mode B sprint is done on branch `s56-mode-b` (lot 1 `rough_cut.py` + sessions schema, lot 2 `eval_rough_cut.py` + tuning, lot 3 `mode_b.py` one-command flow); its PR is open for Doru. The S57 sprint is done on branch `s57-mode-b-2` (lot 1 phone cut review `cut_review.yaml`, lot 2 `chapters.py` + section markers, lot 3 `shorts_rank.py` + Mango markers; report `docs/reports/S57-mode-b-2.md`); its PR is open for Doru. The S59 sprint is done on branch `s59-mode-b-real` (real folder layout + nearest-timestamp pairing + screen checks, chapters/Shorts from the final FilmCraft edit, karaoke Shorts with the brand look and `layout: split`; report `docs/reports/S59-mode-b-real.md`); its PR is open for Doru.
-
-**Publish gate:** D2 working on the Kotor footage → devlog clip filmed and published before D3. **Lifted by Doru on 2026-10-21** so Mode B can finish before the Second Brain release (issue #60 lot 4); the devlog clip stays on the list, without gating D3.
-
-The milestone plan that predates the D-phases is archived in [`archive/ROADMAP-2026-10.md`](archive/ROADMAP-2026-10.md).
+v0.2.0 is being released: the night lots on branch `v020-night` (the issues of the
+v0.2.0 milestone) plus the release preparation. The next version is v0.3.0 — the
+director as a plugin for any coding agent (#82), see the milestone. The GitHub
+milestones are the source of truth (VISION §0).
 
 ---
 
@@ -25,20 +24,6 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 | D4 | Mode B on the same index (fillers, chapters, Shorts ranking) + graphics station | 🔲 mostly done — Mode B fillers (S56), chapters and Shorts ranking (S57), real folder layout + sync by sound + chapters/Shorts from the final edit + karaoke Shorts (S59) done; the graphics station shipped in S51; the index integration remains |
 | D5 | P1 features (reframe, captions, audio clean-up, speed ramps, themes, search) | 🔲 partly done — reframe (D2-8), audio clean-up (D2-8), speed ramps (D2-12), Shorts karaoke captions with the brand look (S59); themes, search and burned captions on the long clip remain |
 | D6 | Packaging and publishing: thumbnail + brand kit, audio/SFX/music, dubbing, background removal, upload, PeerTube | 🔲 partly done — thumbnail + brand kit (issue #48, pulled forward 2026-10-17) |
-
-**D2-13 … D2-18 (2026-10-15):** versions + honest run state, smooth Ken Burns, exact length, heroes first, the model's edit repaired not discarded, Shots marks, best photo of a burst, still 9:16 crop without a face, explain thumbnails on moved workspaces, agent loop guards, running station + progress bar, Re-edit always makes a new edit — reports `D2-13`, `D2-14`, `D2-15`.
-
-**D2-19 (2026-10-15):** edit expectations as a test (`eval/kotor-edit.yaml` + `scripts/eval_edit.py` + `yt-eval-edit` skill) and the LLM director keeps the top stars (`hero_missing` violation, repair swaps one in for the weakest non-star of a compatible length; `STAR_*` shared in `common/moves.py`) — see [`reports/D2-19-REPORT.md`](reports/D2-19-REPORT.md). Real kotor-demo re-edit passes `eval_edit.py` 3/3 with `meta.director.by: llm`.
-
-**D6-48 (2026-10-17, pulled forward by Doru):** `scripts/thumbnail.py` + `brand.json` + `schemas/brand.schema.json` + `yt-thumbnail` skill — portrait + title → branded 1280x720 thumbnail (two themes, rembg `birefnet-portrait` cut-out, layered `thumbnail.psd` via psd-tools) — see [`reports/D6-48-REPORT.md`](reports/D6-48-REPORT.md). Doru runs it once on a real photo (the build LXC OOM-kills BiRefNet).
-
-**S51 publish-kit sprint (issue #51, branch `sprint-publish-kit`):** lot 0 done 2026-10-20 (watchdog per-run spend cap); lot 1 done 2026-10-20 — the publish chain (`subs_from_edit.py`, `transcribe.py`, `metadata.py` + `prompts/metadata.md`, `publish.py`, `yt-publish` skill, doctor publish checks; `analyze_srt.py`/`translate_srt.py`/`daily_summary_srt.py` now take the model per role from the config through `common/llm.py`) plus the lot 1 addendum (2026-10-20: `metadata.md` writes a `## Thumbnail` section with 2-3 photo concepts mapping to `thumbnail.py`); lot 2 done 2026-10-20 — `matte.py` (issue #50 scope 1-2: RVM via `torch.hub` → ProRes 4444 `.mov` with alpha for a time range); lot 3 done 2026-10-21 — HyperFrames graphics (`graphics.py` + `graphics_plan.py`, DECISIONS 2026-10-21); lot 4 done 2026-10-21 — licence AGPL-3.0-or-later + CLA, docs cleaned; lot 5 done 2026-10-21 — FilmCraft bridge (`fcproj_markers.py` → `markers.json` + Rose `todo.md`, `loudness.py` two backends); lot 6 done 2026-10-21 — `publish.py --kit` publish kit for manual YouTube Studio upload (variant B per Doru's comment: no API upload, `studio.md` copy-ready blocks + loud checks). PR #53 merged 2026-10-21.
-
-**S54 FilmCraft-adapter sprint (issue #54, branch `s54-filmcraft-spike`):** lot 1 done 2026-10-21 — the export spike (`scripts/export_filmcraft.py` writes `edit.json` → `.fcproj` directly, route A; route B's `filmcraft-cli` fails on missing media; round trip through `subs_from_edit.py` identical, project opens headless; report `docs/reports/S54-filmcraft-spike.md` carries a proposed DECISIONS entry for Doru); lot 2 done 2026-10-21 — Shots-tab review buttons ("must be in" / "wrong label" → `<workspace>/expectations.yaml`, the file `eval_edit.py` reads) and the run-progress bar themed from `brand.json` `colors.cool`. PR open, not merged.
-
-**S57 Mode B second slice + phone cut review (issue #57, branch `s57-mode-b-2`):** lot 1 done 2026-10-21 — phone cut review (`serve.py` Cuts tab, `POST /<project>/cut-review` → `cut_review.yaml`, `GET /<project>/cut-audio`, `rough_cut.py --review` keeps a reviewed cut in with reason `kept by review`, `eval_rough_cut.py --review` reads the review as ground truth); lot 2 done 2026-10-21 — `chapters.py` + `schemas/chapters.schema.json` (topic chapters in timeline time, role `metadata`), `export_filmcraft.py --chapters` Green section markers, `mode_b.py` chapters step; lot 3 done 2026-10-21 — `shorts_rank.py` + `schemas/shorts_candidates.schema.json` (sentence-aligned 20–60 s candidates scored on hook/payoff, top 5), `shorts_generator.py --candidates`, `export_filmcraft.py --shorts-candidates` Mango markers for the top 3. Report `docs/reports/S57-mode-b-2.md`. PR open, not merged.
-
-**S59 Mode B on the real clip (issue #60, branch `s59-mode-b-real`):** lot 1 done 2026-10-21 — `mode_b.py` real folder layout (`camera/` + `ecran/`/`screen/`), pairing by nearest name timestamp (40 camera / 32 screen reference), camera-only sessions, warnings for unpaired screens; follow-ups 2026-10-21 — shared `common/media.py` helpers, sync by voice correlation in `rough_cut.py` (`sync_offset_confidence`), screen-looks-like-camera checks + `--check`; lot 2 done 2026-10-21 — `chapters.py`/`shorts_rank.py` on the final edit (`--fcproj` / `--timeline-words`), `metadata.py`/`publish.py --chapters`, one word mapping in `common/timeline_words.py`; lot 3 done 2026-10-21 — Shorts karaoke from timeline word times, brand look, phrase breaks, safe zone, `layout: split` face over screen; review fixes 2026-10-21 — shared frame reader, one brand default, `sync_offset_s` kept on manifest rewrites; follow-up answers 2026-10-21 — flat layout ignores untimestamped videos, `words_file_for` lookup, `--check` exit codes 0/1/2 with `screen_check_incomplete`, `shorts_rank.py --layout`, one crossfade/midpoint/frame-reader rule in `scripts/common/`. Visual check: two 608x1080 Shorts from a synthetic clip, frame grabs in `examples/s59-shorts-frames/`. Report `docs/reports/S59-mode-b-real.md`. PR open, not merged.
 
 ---
 
@@ -59,22 +44,6 @@ Plan and principles: [`VISION.md`](VISION.md). Research: [`research/prior-art.md
 
 ## Next
 
-- Flaky Windows test `test_ledger_survives_concurrent_processes` (Windows CI parked by Doru for now).
-- Mode B next: the remaining D3 light edits (trim per shot); run the whole chain on the Second Brain clip the day its edit is finished (S59 made the tools fit it); the devlog clip (gate lifted 2026-10-21) and the long-clip burned captions stay on the list.
-
-### Mode B finishing
-
-The first full talking-head clip was finished by hand (an assistant driving FilmCraft through `filmcraft-cli --bridge ... run steps.jsonl`); each manual step below becomes a tool:
-
-- ✅ Move the camera picture-in-picture over screen spans into a `scripts/` tool (matte.py ratio by input height, eased entry/exit, smaller over full-screen scenes) — `scripts/finish_pip.py` (S60 lot 1, 1b, 1c and 1d).
-- Build the intro layout into the render (camera shifted right, brand background, fade, slide back).
-- Sync the intro overlays to the speech (HyperFrames, left third).
-- Open cold on the hook, cut from the strongest sentence.
-- Sync the SFX to the animation events.
-- Put background music under the intro and the outro at fixed levels (generated ducking overwrote the fades).
-- Apply the loudness recipe and measure the final export.
-- Generate the supporters banner from one variable.
-- Run the subtitle corrections through `correct_srt.py` with the local `scripts/corrections.txt` (the entries approved on the clip are in, listed in DECISIONS) and lowercase Whisper mid-sentence capitals except proper nouns.
-- Take the thumbnail from the hook frame.
-- Use the live-app batch path.
-- Route the hand-written HyperFrames compositions through `graphics.py`/`graphics_plan.py` (this clip's graphics were rendered straight from the HyperFrames CLI).
+The GitHub milestones are the source of truth (`gh api repos/Dorusto/yt-pipeline/milestones`):
+the current version is the lowest open milestone, and v0.3.0 is the director as a
+plugin (#82).

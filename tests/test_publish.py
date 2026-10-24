@@ -182,7 +182,7 @@ def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
     recorder = Recorder()
     monkeypatch.setattr(publish, "execute", recorder)
     media = tmp_path / "clip.mp4"
-    media.write_bytes(b"")
+    make_clip(media)
     argv = [
         "--project",
         str(project),
@@ -192,6 +192,8 @@ def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
         str(media),
         "--transcribe-backend",
         "mock",
+        "--whisper-model",
+        "medium",
         "--resume",
         "--json",
     ]
@@ -200,6 +202,7 @@ def test_media_source_uses_transcribe(tmp_path, monkeypatch, capsys):
     assert subs[1] == "scripts/transcribe.py"
     assert str(media) in subs
     assert "--backend" in subs and "mock" in subs
+    assert "--model" in subs and "medium" in subs
     assert "--words-dir" not in subs
 
 
@@ -507,30 +510,22 @@ def write_mock_config(tmp_path):
                     "chapters": [{"timestamp": "00:00:00", "title": "Intro"}],
                     "tags": ["a", "b"],
                     "pinned_comment": "Q?",
-                    "thumbnail_concepts": [
-                        {
-                            "name": "Concept one",
-                            "pose": "facing camera",
-                            "emotion": "joy",
-                            "text": {"title": "T1", "keyword": "K1", "kicker": ""},
-                            "theme": "tech",
-                            "source": {"kind": "new_photo"},
-                        },
-                        {
-                            "name": "Concept two",
-                            "pose": "hands up",
-                            "emotion": "surprise",
-                            "text": {"title": "T2", "keyword": "K2", "kicker": "kick"},
-                            "theme": "creator",
-                            "source": {"kind": "new_photo"},
-                        },
-                    ],
                 }
             ),
         },
         "channel": {
             "members": "Andrei, Mihai și Maria",
             "github_url": "https://example.invalid/channel",
+            "fixed": {
+                "members_sentence": {
+                    "ro": "Mulțumesc {members} pentru susținere.",
+                    "en": "Thank you {members} for the support.",
+                },
+                "closing": {
+                    "ro": "Pe curând.",
+                    "en": "See you soon.",
+                },
+            },
         },
     }
     path = tmp_path / "config.yaml"
@@ -588,8 +583,8 @@ def test_end_to_end_with_mock_llm(tmp_path):
     assert english.count("-->") == 3
     assert "Hello" in english and "World" in english and "End" in english
     metadata_text = (project / "metadata.md").read_text(encoding="utf-8")
-    assert "Andrei, Mihai și Maria" in metadata_text
-    assert "nu uita să fii creativ" in metadata_text
+    assert "Mulțumesc Andrei, Mihai și Maria pentru susținere." in metadata_text
+    assert "Pe curând." in metadata_text
     state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
     assert state["steps"]["translate"]["status"] == "done"
     assert state["steps"]["metadata"]["status"] == "done"
@@ -613,7 +608,6 @@ KIT_METADATA = {
     "chapters": [{"timestamp": "00:00:00", "title": "Intro"}],
     "tags": ["a", "b"],
     "pinned_comment": "Q?",
-    "thumbnail_concepts": [],
 }
 
 
@@ -623,7 +617,7 @@ def make_thumbnail(path, size=(1280, 720)):
     Image.new("RGB", size, (10, 20, 30)).save(path, "JPEG")
 
 
-def make_clip(path):
+def make_clip(path, duration=10):
     subprocess.run(
         [
             "ffmpeg",
@@ -633,7 +627,7 @@ def make_clip(path):
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=size=64x64:rate=10:duration=1",
+            f"testsrc2=size=64x64:rate=10:duration={duration}",
             "-pix_fmt",
             "yuv420p",
             str(path),
@@ -646,6 +640,8 @@ def make_clip(path):
 def build_kit_project(tmp_path, name="proj"):
     project = tmp_path / name
     project.mkdir()
+    clip = tmp_path / "final.mp4"
+    make_clip(clip)
     (project / f"{name}.srt").write_text(SRT_RAW, encoding="utf-8")
     (project / f"{name}_words.json").write_text("[]", encoding="utf-8")
     (project / f"{name}_RO.srt").write_text(SRT_RAW, encoding="utf-8")
@@ -653,8 +649,6 @@ def build_kit_project(tmp_path, name="proj"):
     (project / "metadata.md").write_text("# Metadata", encoding="utf-8")
     (project / "metadata.json").write_text(json.dumps(KIT_METADATA), encoding="utf-8")
     make_thumbnail(project / "thumbnail.jpg")
-    clip = tmp_path / "final.mp4"
-    make_clip(clip)
     return project, clip
 
 
@@ -685,6 +679,8 @@ def test_kit_builds_the_folder(tmp_path, capsys):
     project, clip = build_kit_project(tmp_path)
     assert run_kit(project, clip) == 0
     summary = json.loads(capsys.readouterr().out)
+    statuses = {entry["name"]: entry["status"] for entry in summary["steps"]}
+    assert statuses["verify"] == "done"
     kit = project / "publish-kit"
     assert (kit / "final.mp4").is_file()
     assert (kit / f"{project.name}_RO.srt").is_file()
@@ -700,7 +696,7 @@ def test_kit_builds_the_folder(tmp_path, capsys):
     en_block = studio.split("## Description (EN)\n\n```\n", 1)[1].split("\n```", 1)[0]
     assert ro_block.endswith("00:00 Intro")
     assert en_block.endswith("00:00 Intro")
-    assert summary["kit"]["output"] == "publish-kit"
+    assert summary["kit"]["output"] == "publish-kit/studio.md"
     assert summary["kit"]["video"] == "final.mp4"
     assert summary["kit"]["title"] == "Title one"
     assert summary["kit"]["checks"]
@@ -714,6 +710,17 @@ def test_kit_title_override(tmp_path, capsys):
     assert "Title one" in studio
 
 
+def test_kit_without_thumbnail_builds_the_kit(tmp_path, capsys):
+    project, clip = build_kit_project(tmp_path)
+    (project / "thumbnail.jpg").unlink()
+    assert run_kit(project, clip) == 0
+    kit = project / "publish-kit"
+    assert (kit / "studio.md").is_file()
+    assert not (kit / "thumbnail.jpg").exists()
+    studio = (kit / "studio.md").read_text(encoding="utf-8")
+    assert "Make and upload the thumbnail (none in the kit yet)" in studio
+
+
 def test_kit_long_title_fails(tmp_path, capsys):
     project, clip = build_kit_project(tmp_path)
     assert run_kit(project, clip, extra=["--kit-title", "x" * 101]) == 2
@@ -725,10 +732,12 @@ def test_kit_long_title_fails(tmp_path, capsys):
 def test_kit_missing_en_srt_fails(tmp_path, monkeypatch, capsys):
     project, clip = build_kit_project(tmp_path)
     (project / f"{project.name}_EN.srt").unlink()
-    monkeypatch.setattr(
-        publish,
-        "execute",
-        lambda step, argv, ctx: {
+    real_execute = publish.execute
+
+    def chain_only(step, argv, ctx):
+        if step["name"] == "kit":
+            return real_execute(step, argv, ctx)
+        return {
             "status": "done",
             "returncode": 0,
             "outputs": [],
@@ -736,8 +745,9 @@ def test_kit_missing_en_srt_fails(tmp_path, monkeypatch, capsys):
             "stderr": "",
             "stdout": "",
             "wall_time_s": 0.0,
-        },
-    )
+        }
+
+    monkeypatch.setattr(publish, "execute", chain_only)
     assert run_kit(project, clip) == 2
     err = capsys.readouterr().err
     assert "_EN.srt" in err
@@ -815,24 +825,41 @@ def test_kit_requires_final_video_for_fcproj(tmp_path, capsys):
     assert not (project / "publish-kit").exists()
 
 
-def test_kit_loudness_uses_the_loudened_file(tmp_path, monkeypatch, capsys):
+def test_verify_fails_when_srt_ends_past_the_video(tmp_path, capsys):
     project, clip = build_kit_project(tmp_path)
-    loud = tmp_path / "final_loud.mp4"
-    loud.write_bytes(b"loud")
-    monkeypatch.setattr(publish, "run_loudness", lambda ctx, final: (loud, None))
-    assert run_kit(project, clip, extra=["--kit-loudness"]) == 0
-    kit = project / "publish-kit"
-    assert (kit / "final_loud.mp4").is_file()
-    assert not (kit / "final.mp4").exists()
-
-
-def test_kit_loudness_failure_fails(tmp_path, monkeypatch, capsys):
-    project, clip = build_kit_project(tmp_path)
-    monkeypatch.setattr(publish, "run_loudness", lambda ctx, final: (None, "boom"))
-    assert run_kit(project, clip, extra=["--kit-loudness"]) == EXIT_RUNTIME
+    long_srt = (
+        "1\n00:00:00,200 --> 00:00:03,800\ndoi trei patru cinci.\n\n"
+        "2\n00:00:28,600 --> 00:00:30,000\nprea lung.\n"
+    )
+    (project / f"{project.name}_RO.srt").write_text(long_srt, encoding="utf-8")
+    assert run_kit(project, clip) == 2
     err = capsys.readouterr().err
-    assert "loudness failed" in err
+    assert "00:30" in err
+    assert "00:10" in err
     assert not (project / "publish-kit").exists()
+
+
+def test_verify_fails_when_srt_is_older_than_the_video(tmp_path, capsys):
+    project, clip = build_kit_project(tmp_path)
+    srt = project / f"{project.name}_RO.srt"
+    old = clip.stat().st_mtime - 10
+    os.utime(srt, (old, old))
+    assert run_kit(project, clip) == 2
+    err = capsys.readouterr().err
+    assert "older than the final video" in err
+    assert not (project / "publish-kit").exists()
+
+
+def test_verify_skipped_without_final_video(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "proj"
+    recorder = Recorder()
+    monkeypatch.setattr(publish, "execute", recorder)
+    assert run_publish(project, write_context(tmp_path), extra=["--resume", "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    verify = next(entry for entry in summary["steps"] if entry["name"] == "verify")
+    assert verify["status"] == "skipped"
+    state = json.loads((project / "publish_state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["verify"]["reason"] == "no final video"
 
 
 def test_kit_end_to_end_with_mock_llm(tmp_path):

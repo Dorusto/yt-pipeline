@@ -12,10 +12,13 @@ BANNED = (
     "~/yt-watchdog",
     "Dorusto/resurse",
     "~/ws",
+    '"name": "Doru"',
+    '"name":"Doru"',
+    "Monschau",
 )
 
-SCAN_DIRS = ("scripts", "prompts", ".claude/skills", "docs/guides")
-SCAN_FILES = ("README.md", "CLAUDE.md", "docs/AGENT_SETUP.md", "docs/VISION.md", "config.yaml.example")
+SCAN_DIRS = ("scripts", "prompts", ".claude/skills", "docs/guides", "docs/agents")
+SCAN_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "docs/AGENT_SETUP.md", "docs/VISION.md", "config.yaml.example")
 TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".txt", ".json", ".example"}
 
 

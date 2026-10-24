@@ -8,8 +8,9 @@ Usage:
     python scripts/beats.py song.mp3 --out beats.json --target-duration-s 90 --slots 15
 
 The music is decoded to mono 22.05 kHz PCM in a temporary folder and analysed in
-numpy only: a spectral-flux onset envelope, autocorrelation for the beat period,
-a least-squares phase fit for the beat grid, four-four downbeats and a per-0.5 s
+numpy only: a spectral-flux onset envelope, autocorrelation for a coarse beat
+period, a fine best-phase comb refinement of that period, dynamic-programming
+beat tracking (Ellis 2007) for the beat grid, four-four downbeats and a per-0.5 s
 RMS energy curve. With ``--target-duration-s`` the tool also returns a cut grid:
 edit-time boundaries snapped to the music's beats so an edit's cuts land on the
 music. The source is read only; ``--out`` is written atomically. No model service
@@ -36,6 +37,8 @@ from common.ffmpeg_tools import ffmpeg_path
 ANALYSIS_RATE = 22050
 STFT_WINDOW = 1024
 STFT_HOP = 256
+# The flux at envelope index j compares frames j and j+1, so its natural time is the midpoint of the two window centres, half a window minus half a hop before the current frame time.
+ONSET_LATENCY_S = (STFT_WINDOW / 2 - STFT_HOP / 2) / ANALYSIS_RATE
 PEAK_HALF_WINDOW = 10
 DOWNBEAT_HALF_WINDOW = 3
 ENERGY_WINDOW_S = 0.5
@@ -47,6 +50,11 @@ BEATS_PER_BAR = 4
 DEFAULT_SLOTS_MIN = 4
 DEFAULT_SLOTS_MAX = 24
 DEFAULT_SLOT_SECONDS = 6.0
+DP_TIGHTNESS = 100.0
+DP_WINDOW_LOW = 2.0
+DP_WINDOW_HIGH = 0.5
+PERIOD_REFINE_RANGE = 0.05
+PERIOD_REFINE_STEP = 0.001
 
 
 class BeatsError(RuntimeError):
@@ -206,7 +214,8 @@ def pick_onsets(envelope, rate=ANALYSIS_RATE, hop=STFT_HOP, min_beat_s=0.25, hal
         if all(abs(index - other) >= min_gap for other in selected):
             selected.append(index)
     selected.sort()
-    return np.array([(index + 1) * hop / rate for index in selected])
+    times = np.array([(index + 1) * hop / rate for index in selected]) - ONSET_LATENCY_S
+    return np.maximum(times, 0.0)
 
 
 def _is_local_max(values, index, half):
@@ -250,24 +259,86 @@ def estimate_beat_period(envelope, rate=ANALYSIS_RATE, hop=STFT_HOP, min_beat_s=
     return period, min(MAX_BPM, max(MIN_BPM, bpm))
 
 
-def snap_beats(onset_times, period, duration_s):
-    """Fit a grid to the onsets (least squares) and return ``(beat_times, period)``."""
-    if len(onset_times) == 0 or period <= 0:
+def refine_period(envelope, period, rate=ANALYSIS_RATE, hop=STFT_HOP, min_beat_s=0.25, max_beat_s=2.0):
+    """Return the period whose best-phase comb best matches the onset envelope."""
+    if len(envelope) == 0 or period <= 0:
+        return period
+    low = max(min_beat_s, period * (1.0 - PERIOD_REFINE_RANGE))
+    high = min(max_beat_s, period * (1.0 + PERIOD_REFINE_RANGE))
+    step = period * PERIOD_REFINE_STEP
+    if high < low or step <= 0:
+        return period
+    count = int(round((high - low) / step)) + 1
+    candidates = low + step * np.arange(count)
+    candidates = candidates[(candidates >= min_beat_s) & (candidates <= max_beat_s)]
+    if candidates.size == 0:
+        return period
+    best_period = period
+    best_score = -np.inf
+    best_distance = np.inf
+    for candidate in candidates:
+        period_frames = candidate * rate / hop
+        if period_frames <= 0:
+            continue
+        phase_count = max(1, int(round(period_frames)))
+        score = -np.inf
+        for phase in range(phase_count):
+            steps = np.arange(0, int((len(envelope) - 1 - phase) / period_frames) + 1)
+            indices = np.round(phase + steps * period_frames).astype(int)
+            indices = indices[(indices >= 0) & (indices < len(envelope))]
+            if indices.size == 0:
+                continue
+            value = float(envelope[indices].sum())
+            if value > score:
+                score = value
+        distance = abs(candidate - period)
+        if score > best_score or (score == best_score and distance < best_distance):
+            best_score = score
+            best_period = candidate
+            best_distance = distance
+    return float(best_period)
+
+
+def track_beats(envelope, period, duration_s, rate=ANALYSIS_RATE, hop=STFT_HOP):
+    """Return ``(beat_times, period)`` by dynamic-programming beat tracking (Ellis 2007)."""
+    if len(envelope) == 0 or period <= 0:
         return np.zeros(0), period
-    indices = np.round(onset_times / period).astype(int)
-    phase = float(np.mean(onset_times - indices * period))
-    indices = np.round((onset_times - phase) / period).astype(int)
-    if len(np.unique(indices)) >= 2:
-        slope, intercept = np.polyfit(indices, onset_times, 1)
-    else:
-        slope, intercept = period, phase
-    if slope <= 0:
-        slope, intercept = period, phase
-    first = int(np.floor((0.0 - intercept) / slope))
-    last = int(np.floor((duration_s - intercept) / slope + 1e-9))
-    beats = intercept + slope * np.arange(first, last + 1)
-    beats = beats[(beats >= -1e-9) & (beats <= duration_s + 1e-6)]
-    return beats, float(slope)
+    peak = float(envelope.max())
+    if peak <= 0:
+        return np.zeros(0), period
+    score = envelope / peak
+    period_frames = period * rate / hop
+    if period_frames <= 0:
+        return np.zeros(0), period
+    window = np.round(
+        np.arange(-DP_WINDOW_LOW * period_frames, -DP_WINDOW_HIGH * period_frames + 1)
+    ).astype(int)
+    penalty = -DP_TIGHTNESS * (np.log(-window / period_frames) ** 2)
+    count = len(score)
+    cumscore = np.zeros(count)
+    backlink = np.full(count, -1, dtype=int)
+    for i in range(count):
+        lo = i + window
+        valid = lo >= 0
+        if not valid.any():
+            cumscore[i] = score[i]
+            backlink[i] = -1
+            continue
+        candidates = cumscore[lo[valid]] + penalty[valid]
+        best = int(np.argmax(candidates))
+        backlink[i] = int(lo[valid][best])
+        cumscore[i] = score[i] + candidates[best]
+    tail = int(np.argmax(cumscore))
+    path = [tail]
+    index = backlink[tail]
+    while index >= 0:
+        path.append(index)
+        index = backlink[index]
+    path.reverse()
+    times = np.array([frame * hop / rate for frame in path], dtype=float) - ONSET_LATENCY_S
+    times = np.maximum(times, 0.0)
+    times = times[(times >= 0.0) & (times <= duration_s)]
+    return times, period
 
 
 def find_downbeats(beat_s, envelope, rate=ANALYSIS_RATE, hop=STFT_HOP, half=DOWNBEAT_HALF_WINDOW):
@@ -308,7 +379,8 @@ def measure(samples, min_beat_s=0.25, max_beat_s=2.0):
     warnings = []
     if envelope.size and envelope.max() > 0 and len(onsets):
         period, _ = estimate_beat_period(envelope, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
-        beat_s, period = snap_beats(onsets, period, duration_s)
+        period = refine_period(envelope, period, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
+        beat_s, period = track_beats(envelope, period, duration_s)
         bpm = min(MAX_BPM, max(MIN_BPM, 60.0 / period)) if period > 0 else 0.0
     else:
         period, bpm, beat_s = 0.0, 0.0, np.zeros(0)

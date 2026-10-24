@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from common.config import ConfigError, load_config
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -33,8 +34,11 @@ MISSING_WHISPER = (
     "use --backend mock for offline runs"
 )
 EXTRACTION_RATE = 16000
-CPU_MODEL = "tiny"
+MOCK_MODEL = "tiny"
 GPU_MODEL = "turbo"
+CPU_ENGLISH_MODEL = "small"
+CPU_NON_ENGLISH_MODEL = "medium"
+WHISPER_MODEL_ENV = "YT_PIPELINE_WHISPER_MODEL"
 BACKENDS = ("whisper", "mock")
 
 MOCK_TEXT = "Bună ziua. Aceasta este o înregistrare de test."
@@ -63,7 +67,7 @@ class Transcriber:
 
     name = "base"
     device = "cpu"
-    model_name = CPU_MODEL
+    model_name = MOCK_MODEL
 
     def transcribe(self, media_path, language):
         raise NotImplementedError
@@ -76,7 +80,7 @@ class MockTranscriber(Transcriber):
     device = "mock"
 
     def __init__(self, model=None):
-        self.model_name = model or CPU_MODEL
+        self.model_name = model or MOCK_MODEL
 
     def transcribe(self, media_path, language):
         words = [
@@ -103,19 +107,44 @@ def _cuda_available():
         return False
 
 
+def default_model(device, language):
+    """The Whisper model for a device and language: turbo on GPU, medium/small on CPU."""
+    if device == "cuda":
+        return GPU_MODEL
+    if language == "en":
+        return CPU_ENGLISH_MODEL
+    return CPU_NON_ENGLISH_MODEL
+
+
+def resolve_model(cli_model=None, language="ro", device="cpu", config=None):
+    """The Whisper model: --model, else the env var, else transcribe.model, else the default."""
+    if cli_model:
+        return cli_model
+    from_env = os.environ.get(WHISPER_MODEL_ENV)
+    if from_env:
+        return from_env
+    data = config if config is not None else load_config()
+    section = data.get("transcribe")
+    if isinstance(section, dict):
+        value = section.get("model")
+        if value:
+            return value
+    return default_model(device, language)
+
+
 class WhisperTranscriber(Transcriber):
     """Real backend: one ``openai-whisper`` run with word timestamps."""
 
     name = "whisper"
 
-    def __init__(self, model=None):
+    def __init__(self, model=None, language="ro"):
         try:
             import whisper
         except ImportError:
             raise TranscribeRuntimeError(MISSING_WHISPER)
         self._whisper = whisper
         self.device = "cuda" if _cuda_available() else "cpu"
-        self.model_name = model or (GPU_MODEL if self.device == "cuda" else CPU_MODEL)
+        self.model_name = model or resolve_model(None, language, self.device)
         self.model = None
 
     def transcribe(self, media_path, language):
@@ -135,11 +164,11 @@ class WhisperTranscriber(Transcriber):
             raise TranscribeRuntimeError(f"Whisper failed on '{media_path}': {exc}")
 
 
-def make_transcriber(backend, model):
+def make_transcriber(backend, model, language="ro"):
     if backend == "mock":
         return MockTranscriber(model)
     if backend == "whisper":
-        return WhisperTranscriber(model)
+        return WhisperTranscriber(model, language)
     raise TranscribeError(f"unknown --backend '{backend}'; use one of {', '.join(BACKENDS)}")
 
 
@@ -217,7 +246,10 @@ def run(input_path, out_dir=None, name=None, model=None, language="ro", backend=
     if not os.access(input_path, os.R_OK):
         raise TranscribeError(f"input file is not readable: {input_path}")
 
-    transcriber = make_transcriber(backend, model)
+    try:
+        transcriber = make_transcriber(backend, model, language)
+    except ConfigError as exc:
+        raise TranscribeError(str(exc))
     out_path = Path(out_dir).expanduser() if out_dir else input_path.parent
     output_name = resolve_output_stem(input_path, name)
 
@@ -271,7 +303,13 @@ def build_parser():
     parser.add_argument(
         "--model",
         default=None,
-        help=f"Whisper model id (default: {GPU_MODEL} with a CUDA GPU, else {CPU_MODEL})",
+        help=(
+            "Whisper model id (default: "
+            f"{GPU_MODEL} with a CUDA GPU, else {CPU_NON_ENGLISH_MODEL} on CPU for a "
+            f"non-English language (including auto or no language), {CPU_ENGLISH_MODEL} "
+            f"only for an explicit en; or {WHISPER_MODEL_ENV}, or "
+            "transcribe.model in the config)"
+        ),
     )
     parser.add_argument(
         "--language",

@@ -20,6 +20,7 @@ The `reviewer` agent (`.opencode/agents/reviewer.md`) answers these questions fo
 7. **Docs in step?** When behaviour changed: RULES/DECISIONS/ROADMAP, the user guide and the skill in `.claude/skills/` changed in the same commit range. Does a rule now describe something the code no longer does?
 8. **Safety rules?** No personal recordings, transcript text, keys or private IPs committed; originals read-only; every tool keeps `--help`, `--json` (wall time + LLM cost) and re-run safety.
 9. **Stable files?** Did the range change a file of a tool listed as stable in `docs/RELEASES.md` without a lot that names it (RULES "Releasing", `docs/RELEASING.md`)?
+10. **In the current version?** Does every change belong to an issue of the current milestone (the lowest open GitHub milestone, `gh api repos/Dorusto/yt-pipeline/milestones`)? A change outside it is a finding (VISION §0).
 
 ## Workflow facts (confirmed by Doru, 2026-10-21)
 

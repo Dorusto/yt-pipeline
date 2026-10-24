@@ -45,10 +45,12 @@ Keep it running (see `deploy/yt-pipeline-web.service` and
 [`pilot-host.md`](pilot-host.md)). Then from the
 phone browser: **Upload** → pick files → folder name + brief → **Start**. The
 project appears on **Projects** with a `running` badge and turns `done` when
-the recap is ready. The project page's tabs are **Recap**, **Why?** (why the
-edit looks the way it does) and **Shots** (the contact sheet); **Re-edit**
+the recap is ready. The project page's tabs are **Recap**, **Files**, **Cuts**
+and **Shorts**; **Re-edit**
 re-runs only the edit with your options and a feedback note, and keeps the
-earlier versions (chips v1, v2, … and **Compare with** on the Recap tab).
+earlier versions (chips v1, v2, …). A version that is neither the latest nor
+the first can be deleted from the **Recap** tab (its folder is removed for
+good).
 
 ## 1. (Optional) Phone: install Syncthing
 

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from common.channel import CHANNEL_FIXED_PARTS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = REPO_ROOT / "config.yaml"
 EXAMPLE_PATH = REPO_ROOT / "config.yaml.example"
@@ -117,6 +119,14 @@ def _validate(data):
         if library is not None and (not isinstance(library, str) or not library):
             raise ConfigError("music.library must be a non-empty string")
 
+    transcribe = data.get("transcribe")
+    if transcribe is not None:
+        if not isinstance(transcribe, dict):
+            raise ConfigError("transcribe must be a mapping")
+        model = transcribe.get("model")
+        if model is not None and (not isinstance(model, str) or not model):
+            raise ConfigError("transcribe.model must be a non-empty string")
+
     inbox = data.get("inbox")
     if inbox is not None:
         if not isinstance(inbox, dict):
@@ -220,6 +230,40 @@ def _validate(data):
             raise ConfigError("brand must be a mapping")
         logo = brand.get("logo")
         _check_brand_logo(logo)
+
+    channel = data.get("channel")
+    if channel is not None:
+        if not isinstance(channel, dict):
+            raise ConfigError("channel must be a mapping")
+        for key in ("members", "github_url"):
+            value = channel.get(key)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ConfigError(f"channel.{key} must be a non-empty string")
+        fixed = channel.get("fixed")
+        if fixed is not None:
+            if not isinstance(fixed, dict):
+                raise ConfigError("channel.fixed must be a mapping")
+            for part, languages in fixed.items():
+                if part not in CHANNEL_FIXED_PARTS:
+                    raise ConfigError(
+                        f"channel.fixed.{part} is not a known part; valid parts: "
+                        f"{', '.join(CHANNEL_FIXED_PARTS)}"
+                    )
+                if not isinstance(languages, dict):
+                    raise ConfigError(
+                        f"channel.fixed.{part} must be a mapping of language codes to strings"
+                    )
+                for lang, text in languages.items():
+                    if (
+                        not isinstance(lang, str)
+                        or not lang
+                        or not isinstance(text, str)
+                        or not text
+                    ):
+                        raise ConfigError(
+                            f"channel.fixed.{part} must map non-empty language codes "
+                            "to non-empty strings"
+                        )
 
     return data
 
@@ -412,11 +456,19 @@ def upkeep_percent(config=None):
     """
     from_env = os.environ.get(UPKEEP_PERCENT_ENV)
     if from_env:
-        return max(0.0, float(from_env))
+        try:
+            value = float(from_env)
+        except ValueError as exc:
+            raise ConfigError(f"{UPKEEP_PERCENT_ENV} must be a number") from exc
+        return max(0.0, value)
     data = config if config is not None else load_config()
     section = data.get("costs")
     if isinstance(section, dict) and section.get("upkeep_percent") is not None:
-        return max(0.0, float(section["upkeep_percent"]))
+        try:
+            value = float(section["upkeep_percent"])
+        except ValueError as exc:
+            raise ConfigError("costs.upkeep_percent must be a number") from exc
+        return max(0.0, value)
     return 0.0
 
 
@@ -428,11 +480,17 @@ def usd_to_eur(config=None):
     """
     from_env = os.environ.get(USD_TO_EUR_ENV)
     if from_env:
-        return float(from_env)
+        try:
+            return float(from_env)
+        except ValueError as exc:
+            raise ConfigError(f"{USD_TO_EUR_ENV} must be a number") from exc
     data = config if config is not None else load_config()
     section = data.get("costs")
     if isinstance(section, dict) and section.get("usd_to_eur"):
-        return float(section["usd_to_eur"])
+        try:
+            return float(section["usd_to_eur"])
+        except ValueError as exc:
+            raise ConfigError("costs.usd_to_eur must be a number") from exc
     return None
 
 

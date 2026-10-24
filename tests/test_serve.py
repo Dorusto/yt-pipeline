@@ -233,8 +233,8 @@ def test_project_page_default_tab_is_recap(tmp_path):
         assert status == 200
         assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
         assert b'href="/2026-10-14/?tab=recap"' in body
-        assert b'href="/2026-10-14/?tab=why"' in body
-        assert b'href="/2026-10-14/?tab=shots"' in body
+        assert b'href="/2026-10-14/?tab=why"' not in body
+        assert b'href="/2026-10-14/?tab=shots"' not in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -944,7 +944,7 @@ def test_project_page_lists_versions_and_compares_two(tmp_path):
         page = body.decode()
         assert 'src="versions/v002/recap_720p.mp4"' in page
         assert "tunnel longer" in page
-        assert "Compare with" in page
+        assert "Compare with" not in page
         _, _, body = request(server, "GET", "/2026-10-14/?tab=recap&v=2&with=1")
         page = body.decode()
         assert 'src="versions/v002/recap_720p.mp4"' in page
@@ -1619,19 +1619,45 @@ def test_shotlog_regeneration_updates_the_used_grouping(tmp_path):
     assert "must be in" in page and "wrong label" in page
 
 
-def test_project_page_groups_why_and_shots_under_details(tmp_path):
+def test_tab_bar_has_no_why_or_shots_links_but_pages_stay_reachable(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/")
         page = body.decode()
         assert status == 200
-        assert '<span class="tab-group">' in page
-        assert '<span class="tab-group-label">Details</span>' not in page
-        start = page.index('<span class="tab-group">')
-        group = page[start:page.index("</nav>", start)]
-        assert 'href="/2026-10-14/?tab=why"' in group
-        assert 'href="/2026-10-14/?tab=shots"' in group
+        nav = page[page.index('<nav class="tabs">'):page.index("</nav>")]
+        assert "?tab=why" not in nav
+        assert "?tab=shots" not in nav
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b'<iframe src="explain.html"' in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
+        assert status == 200
+        assert b'<iframe src="shotlog.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_strip_has_no_colour_legend(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "edit.json").write_text(
+        json.dumps({"video": [{"in_s": 0.0, "out_s": 5.0, "shot_key": "0081/s1"}]}),
+        encoding="utf-8",
+    )
+    render = project / "recap_720p.mp4"
+    os.utime(project / "edit.json", (render.stat().st_mtime - 10, render.stat().st_mtime - 10))
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        page = body.decode()
+        assert status == 200
+        assert "strip-legend" not in page
+        assert 'class="k-clip"' not in page
+        assert 'class="k-photo"' not in page
+        assert 'class="strip-summary"' in page
     finally:
         server.shutdown()
         server.server_close()
@@ -2336,6 +2362,29 @@ def test_drop_form_names_the_shown_version():
     assert "Tap shots" not in form and "<button" not in form
 
 
+def test_trim_form_names_the_shown_version():
+    form = serve.render_trim_form("trip", {"name": "v002"})
+    assert 'action="/trip/trim-shot"' in form
+    assert 'value="v002"' in form
+    assert 'name="shot" value=""' in form and 'name="delta" value=""' in form
+    assert "<button" not in form
+
+
+def test_strip_script_handles_the_trim_form():
+    assert "form.trim-shot" in serve.PICK_SCRIPT
+    assert "trim.submit()" in serve.PICK_SCRIPT
+    assert "shot-edit" in serve.PICK_SCRIPT
+    assert "trimTotal" in serve.PICK_SCRIPT
+    assert "trimTotal+=1" in serve.PICK_SCRIPT
+    assert "trimTotal-=1" in serve.PICK_SCRIPT
+    assert "Math.abs(trimTotal)" in serve.PICK_SCRIPT
+    assert "tdelta.value=String(trimTotal)" in serve.PICK_SCRIPT
+    assert "trimTotal=0" in serve.PICK_SCRIPT
+    assert "'<span>Shot '+(i+1)+': '" in serve.PICK_SCRIPT
+    assert "will be" in serve.PICK_SCRIPT
+    assert "Making the new version, ready in about 15 s" in serve.PICK_SCRIPT
+
+
 def make_ledger(path):
     connection = connect(path)
     insert_entry(connection, "2026-10-01", "fixed_monthly", 3.0, "", None)
@@ -2637,6 +2686,43 @@ def test_upload_page_shows_storage_and_credit(tmp_path, monkeypatch):
         server.server_close()
 
 
+def test_upload_page_warns_on_low_credit(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 4.5, "limit": 5.0, "remaining": 0.5},
+    )
+    server = start_server(root, credit_warn_usd=1.0)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "Low model credit" in page
+        assert "a run may pass the key limit" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_no_warning_when_credit_is_enough(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(
+        serve, "fetch_model_credit",
+        lambda *a, **k: {"usage": 1.8, "limit": 5.0, "remaining": 3.2},
+    )
+    server = start_server(root, credit_warn_usd=1.0)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "Low model credit" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_upload_refused_over_the_storage_limit(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     inbox = tmp_path / "inbox"
@@ -2912,6 +2998,144 @@ def test_delete_project_get_is_405(tmp_path):
         server.server_close()
 
 
+def test_delete_version_get_is_405(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, _ = request(server, "GET", "/2026-10-14/delete-version")
+        assert status == 405
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_removes_the_folder(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    server = start_server(root)
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v002"}),
+        )
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert not (project / "versions" / "v002").exists()
+        assert (project / "versions" / "v001").is_dir()
+        assert (project / "versions" / "v003").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_refuses_latest_and_first(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v003"}),
+        )
+        assert status == 409
+        assert b"cannot delete the latest version" in body
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v001"}),
+        )
+        assert status == 409
+        assert b"cannot delete the first version" in body
+        assert (project / "versions" / "v001").is_dir()
+        assert (project / "versions" / "v003").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_refused_while_running(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    monkeypatch.setattr(serve, "project_status", lambda directory: "running")
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "v002"}),
+        )
+        assert status == 409
+        assert b"already running" in body
+        assert (project / "versions" / "v002").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_version_rejects_a_crafted_name(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/delete-version",
+            headers=form_headers(),
+            body=urllib.parse.urlencode({"version": "../v001"}),
+        )
+        assert status == 400
+        assert b"invalid version" in body
+        assert (project / "versions" / "v001").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_recap_panel_shows_the_delete_version_button(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_version(project, 1, "first", "2026-10-15T10:00:00")
+    write_version(project, 2, "second", "2026-10-15T11:00:00")
+    write_version(project, 3, "third", "2026-10-15T12:00:00")
+    page = serve.render_recap_panel(project, wanted=2)
+    assert 'action="/2026-10-14/delete-version"' in page
+    assert 'value="v002"' in page
+    assert "Delete version 2? Its video and files are removed for good." in page
+    assert "delete-version" not in serve.render_recap_panel(project, wanted=3)
+    assert "delete-version" not in serve.render_recap_panel(project, wanted=1)
+
+
+def test_delete_version_script():
+    script = serve.DELETE_VERSION_SCRIPT
+    assert "askYesNo(" in script
+    assert "form.delete-version" in script
+    assert "data-question" in script
+    assert "f.submit()" in script
+
+
 def test_features_off_refuse_the_routes(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root, features=("upload",))
@@ -3051,7 +3275,7 @@ def test_project_page_has_the_delete_bin(tmp_path):
         server.server_close()
 
 
-def test_project_page_shows_the_reviewer_line(tmp_path):
+def test_project_page_hides_the_reviewer_box(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     edit = {
@@ -3072,9 +3296,10 @@ def test_project_page_shows_the_reviewer_line(tmp_path):
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
         page = body.decode()
-        assert "Reviewer: not approved" in page
-        assert "Shot 2" in page
-        assert "too long — shorten to about 2.5 s" in page
+        assert "Reviewer:" not in page
+        assert "too long — shorten to about 2.5 s" not in page
+        saved = json.loads((project / "edit.json").read_text(encoding="utf-8"))
+        assert saved["meta"]["director"]["review"]["approved"] is False
     finally:
         server.shutdown()
         server.server_close()
@@ -3780,3 +4005,26 @@ def test_instance_paid_sums_the_local_donations(tmp_path):
     connection.commit()
     connection.close()
     assert serve.instance_paid(ledger) == 4.0
+
+
+def test_render_file_row_shows_short_sizes():
+    clip = {
+        "name": "clip.mp4",
+        "kind": "clip",
+        "size_bytes": 45 * 1024 * 1024,
+        "length_s": 12.0,
+        "excluded": False,
+        "new": False,
+        "in_edit": True,
+    }
+    assert "45 MB" in serve._render_file_row("2026-10-14", clip)
+    photo = {
+        "name": "photo.jpg",
+        "kind": "photo",
+        "size_bytes": 500 * 1024,
+        "length_s": None,
+        "excluded": False,
+        "new": False,
+        "in_edit": False,
+    }
+    assert "0 MB" in serve._render_file_row("2026-10-14", photo)

@@ -1,5 +1,8 @@
 # Copy this file to corrections.txt (same folder) and add one correction per line.
 # Format: wrong|correct
+# A leading * on the wrong side also fixes the capitalised variant (first letter
+# only): *wrong|correct fixes Wrong -> Correct too. A pattern that already starts
+# with a capital letter gets no variant.
 # Lines starting with # are ignored.
 # Matching is a plain, case-sensitive text replace over the whole .srt file,
 # timestamps included, so avoid very short patterns (e.g. single digits).

@@ -45,7 +45,7 @@ Put it in your shell profile. Never commit it.
 Skills are discovered from the folder you start the agent in, upward to the repository root. Start it inside the repo.
 
 - **Claude Code:** run `claude` in the repo root. To use it from another folder, start with `claude --add-dir /path/to/yt-pipeline`.
-- **opencode:** run `opencode` in the repo root. It reads `.claude/skills/` and, when no `AGENTS.md` exists, `CLAUDE.md` as project instructions.
+- **opencode:** run `opencode` in the repo root. It reads `.claude/skills/` and `AGENTS.md` as project instructions; `CLAUDE.md` points to `AGENTS.md` for Claude Code.
 
 Ask the agent to list its skills. You should see `yt-transcript`, `yt-shorts` and `yt-rough-cut`.
 
@@ -110,16 +110,30 @@ Two common paths. In both, you make the creative decisions and the agent runs th
 
 ## 8. opencode agents
 
-Two project agents ship in `.opencode/agents/`, used to build the AI Director (see `docs/VISION.md`), not to run the pipeline:
+Four project agents ship in `.opencode/agents/`, used to build the AI Director
+(see `docs/VISION.md`), not to run the pipeline. Every agent runs on the same
+model, `deepseek/deepseek-v4.1-flash`; the reasoning level is set per agent with
+a `reasoning:` block in the agent file (`effort: high` for the planning and
+writing agents, `effort: xhigh` for `coder-max`).
 
-| Agent | Mode | Model (OpenRouter) | Role |
-|:---|:---|:---|:---|
-| `architect` | primary (Tab to select) | `xiaomi/mimo-v2.6-pro` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
-| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | implements one brief, never commits |
+| Agent | Mode | Model (OpenRouter) | Reasoning | Role |
+|:---|:---|:---|:---|:---|
+| `architect` | primary (Tab to select) | `deepseek/deepseek-v4.1-flash` | `high` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
+| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | `high` | implements one brief, never commits |
+| `coder-max` | subagent | `deepseek/deepseek-v4.1-flash` | `xhigh` | implements one brief for a hard lot, with the deepest reasoning; slower and costlier than `coder` |
+| `specwriter` | primary | `deepseek/deepseek-v4.1-flash` | `high` | writes and maintains `docs/SPEC.md`, never code |
 
-`opencode.json` in the repo root registers the three OpenRouter models and the shared permissions. Loop guards (D2-16): `steps: 150` for the architect and `steps: 80` for the coder (at the limit opencode makes the agent stop and summarise what is left), `doom_loop: deny` (an unattended run cannot answer an "agent seems stuck" prompt, so the repeat is refused instead of hanging), and the watchdog's hard stops below. To swap a model, change the `model:` line in the agent file. `z-ai/glm-5.3-flash` is the fallback coder.
+`opencode.json` in the repo root registers the OpenRouter model and the shared
+permissions. The architect hands a brief to `coder-max` only when the lot says
+"hard"; every other lot goes to `coder`. Loop guards (D2-16): `steps: 150` for
+the architect and `steps: 80` for the coder (at the limit opencode makes the
+agent stop and summarise what is left), `doom_loop: deny` (an unattended run
+cannot answer an "agent seems stuck" prompt, so the repeat is refused instead of
+hanging), and the watchdog's hard stops below. To change the reasoning level,
+edit the `reasoning:` block in the agent file.
 
-To run the pipeline itself, the default `build` agent is enough: it already loads the skills.
+To run the pipeline itself, the default `build` agent is enough: it already
+loads the skills.
 
 ## 9. Files that stay local
 
@@ -152,10 +166,10 @@ The server URL comes from `NTFY_URL` or the config key `ntfy_url`; there is no b
 ```bash
 git -C <repo> worktree add --detach <watchdog-checkout> origin/master
 mkdir -p ~/.cache/yt-pipeline
-( crontab -l 2>/dev/null; echo '*/15 * * * * cd <watchdog-checkout>/scripts && python3 agent_watchdog.py --repo <repo> --run-cap 6 --lot "S59" --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
+( crontab -l 2>/dev/null; echo '*/15 * * * * cd <watchdog-checkout>/scripts && python3 agent_watchdog.py --repo <repo> --kill-over-usd 11 --kill-no-commit-hours 1.5 --spend-usd 10 >> ~/.cache/yt-pipeline/watchdog.log 2>&1' ) | crontab -
 ```
 
-`--spend-usd X` is the daily spend threshold for the alert (default 3); `--stall-hours H` is the stall alert after H hours with an `opencode` process running and no file change (default 2); `--no-commit-hours H` is the alert after H hours with no commit (default 1.5, measured from the later of the last commit and the agent start, so a fresh run is not flagged); `--kill-over-usd X` stops every `opencode` process when today's OpenRouter spend passes X dollars; `--kill-no-commit-hours H` stops it after H hours without a commit; `--run-cap X --lot NAME` is the hard cap for the current agent run (spend since the run started, from the run-spend ledger) with an ntfy `Budget` at 80 % of the cap and a stop at the cap with `Blocked` — update the `--lot` label when a new run starts. `--lot NAME` prefixes every alert with the lot name; without it the watchdog uses the tmux session running the agent, else no prefix. A stop is claimed only after the process is re-checked, so the alert says "Stopped the agent" only when it really ended. The kill flags and the run cap are off unless given. The agent's uncommitted changes stay in the working tree; save them on a branch before starting another run. These are the only watchdog thresholds; `docs/RULES.md` points here.
+`--spend-usd X` is the daily spend threshold for the alert (default 3); `--stall-hours H` is the stall alert after H hours with an `opencode` process running and no file change (default 2); `--no-commit-hours H` is the alert after H hours with no commit (default 1.5, measured from the later of the last commit and the agent start, so a fresh run is not flagged); `--kill-over-usd X` stops every `opencode` process when today's OpenRouter spend passes X dollars (the single hard daily ceiling); `--kill-no-commit-hours H` stops it after H hours without a commit. The label is derived from the newest task brief in `<repo>/.opencode/tasks/` (review and audit notes skipped), else the tmux session running the agent, else no prefix — no per-lot flag. The run-spend ledger (`~/.cache/yt-pipeline/run-spend.json`) still measures the current lot's spend, which the stop notification reports; it is no longer a stop threshold. A stop is claimed only after the process is re-checked, so the alert says "Stopped the agent" only when it really ended. The two kill flags are off unless given. The agent's uncommitted changes stay in the working tree; save them on a branch before starting another run. These are the only watchdog thresholds; `docs/RULES.md` points here.
 
 Update it later with `git -C <watchdog-checkout> checkout --detach origin/master` after a `git fetch`.
 

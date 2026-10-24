@@ -12,6 +12,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 
 - Input: a Romanian .srt, usually raw Whisper output. Transcription itself is not done by these scripts; see README.md, Workflow, step 2.
 - Never overwrite the input. Give every step its own output path. If an output file already exists, ask before replacing it.
+- Every tool here (`correct_srt.py`, `translate_srt.py`, `analyze_srt.py`, `daily_summary_srt.py`) answers `--help` with its usage text and exit 0.
 
 ## Step 1: correct recurring transcription errors
 
@@ -22,7 +23,8 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 - Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, the script prints a warning and falls back to `scripts/corrections_example.txt` (0 active corrections), so it never crashes and always writes the output. Copy the example to `scripts/corrections.txt` to add your own corrections.
 - Without the second argument the output is `<input>_corectat.srt`.
 - Matching is a plain, case-sensitive text replace over the whole file, timestamps included. Do not add very short patterns.
-- It prints `Corecturi încărcate: N` and `Termeni înlocuiți: M`. M counts distinct wrong terms that were found, not occurrences. N = 0 means the list is empty; M = 0 with N > 0 means nothing matched.
+- A line `*wrong|correct` also fixes the capitalised variant (first letter only): `*pasnicii|paznicii` fixes `Pasnicii` → `Paznicii` too. A pattern that already starts with a capital letter gets no variant. `--capitalised` turns the variant on for every line, `*` or not.
+- It prints `Corecturi încărcate: N` and `Termeni înlocuiți: M`. M counts distinct wrong terms that were found, not occurrences, and includes the capitalised variant (a `*wrong|correct` line whose capitalised form appears counts too). N = 0 means the list is empty; M = 0 with N > 0 means nothing matched. A correction line whose wrong part is empty (`*|x` or `|x`) is a usage error (exit 2), never an empty pattern.
 - `--json` prints one JSON summary (`ok`, `output`, `corrections`, `changes`, `wall_time_s`, `llm_cost_usd`) and moves the human lines to stderr.
 
 ## Step 2: human review (do not skip silently)

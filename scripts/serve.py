@@ -73,13 +73,14 @@ from common.costs import compute_totals, connect as connect_ledger, list_entries
 from common.brief_facts import FACT_LABELS, load_brief_facts, write_brief_facts
 from common.decisions import used_shot_keys
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
+from common.feedback import append_feedback
 from common.jsonio import load_json, write_json
-from common.media import clip_kind, video_files
+from common.media import clip_kind, earliest_creation_date, video_files
 from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
 from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, spend_between
-from common.sizes import BYTES_PER_GB, format_gb
+from common.sizes import BYTES_PER_GB, format_gb, format_size_short
 from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
 from common.versions import list_versions
@@ -206,7 +207,7 @@ BRIEF_PLACEHOLDER = (
     "Leave out: the parking lot shots"
 )
 FACT_FIELD_SPECS = (
-    ("place", FACT_LABELS["place"], "Monschau, Germany"),
+    ("place", FACT_LABELS["place"], "Lisbon, Portugal"),
     ("when", FACT_LABELS["when"], "April 2026"),
     ("who", FACT_LABELS["who"], "me and a friend"),
     ("occasion", FACT_LABELS["occasion"], "motorbike weekend"),
@@ -298,13 +299,6 @@ background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:poi
 .meta-rewrite form{display:grid;gap:8px;margin:8px 0 0}
 .meta-cost{color:var(--muted);font-size:.85rem;margin:8px 0 0}
 .fact-hint{color:var(--muted);font-size:.8rem}
-"""
-
-REVIEW_STYLE = """
-.review{border:1px solid var(--line);border-radius:var(--radius-l);padding:10px 14px;margin:0 0 14px;background:var(--surface)}
-.review-line{margin:0;font-weight:600}
-.objections{margin:6px 0 0;padding-left:1.2em}
-.obj-shot{font-weight:700;margin-right:.3em}
 """
 
 
@@ -431,6 +425,7 @@ def _regenerate_shotlog(directory):
         "--workspace",
         str(directory),
         "--force",
+        "--json",
     ]
     try:
         subprocess.run(command, capture_output=True, timeout=120)
@@ -578,7 +573,7 @@ def build_parser():
     parser.add_argument(
         "--project-totals-url",
         default=None,
-        help="URL of the owner instance's /costs.json, shown as 'Project costs (everyone)' "
+        help="URL of the owner instance's /costs.json, shown on the Costs page as the project's own costs "
              "(or YT_PIPELINE_PROJECT_TOTALS_URL, or costs.project_totals_url in the config)",
     )
     parser.add_argument(
@@ -648,25 +643,7 @@ def content_type_for(path):
 
 def project_date(directory):
     """The filming date of a project as ``YYYY-MM-DD``: the earliest creation_time in ingest.json."""
-    directory = Path(directory)
-    try:
-        data = json.loads((directory / "ingest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    if not isinstance(data, dict):
-        return ""
-    values = []
-    for group in ("clips", "photos"):
-        for item in data.get(group) or []:
-            if not isinstance(item, dict):
-                continue
-            value = item.get("creation_time")
-            if isinstance(value, str) and value.strip():
-                values.append(value.strip())
-    if not values:
-        return ""
-    earliest = min(values)
-    return earliest[:10] if len(earliest) >= 10 else ""
+    return earliest_creation_date(directory) or ""
 
 
 def read_run_pid(directory):
@@ -838,6 +815,23 @@ def model_credit(api_key, now=None, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     return value
 
 
+def credit_remaining(server):
+    """Return ``(remaining, limit)`` from the cached OpenRouter credit, or None when unknown."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return None
+    credit = model_credit(api_key)
+    if credit is None:
+        return None
+    limit = credit["limit"]
+    if limit is None:
+        return None
+    remaining = credit["remaining"]
+    if remaining is None:
+        remaining = limit - credit["usage"]
+    return remaining, limit
+
+
 def credit_line(server):
     """The 'Model credit: ...' line, or '' when no OpenRouter key is set."""
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -846,14 +840,25 @@ def credit_line(server):
     credit = model_credit(api_key)
     if credit is None:
         return '<p class="credit">Model credit: unknown</p>'
-    limit = credit["limit"]
-    if limit is None:
+    if credit["limit"] is None:
         return '<p class="credit">Model credit: no credit limit set</p>'
-    remaining = credit["remaining"]
-    if remaining is None:
-        remaining = limit - credit["usage"]
+    remaining, limit = credit_remaining(server)
     warn = " warn" if remaining < server.credit_warn_usd else ""
     return f'<p class="credit{warn}">Model credit: {format_cost(remaining)} left of {format_cost(limit)}</p>'
+
+
+def credit_warning(server):
+    """The low-credit banner, or '' when the key has enough credit or is unknown."""
+    resolved = credit_remaining(server)
+    if resolved is None:
+        return ""
+    remaining, limit = resolved
+    if remaining >= server.credit_warn_usd:
+        return ""
+    return (
+        f'<p class="notice credit-warning">Low model credit: {format_cost(remaining)} left of '
+        f"{format_cost(limit)} \u2014 a run may pass the key limit. Add credit before starting.</p>"
+    )
 
 
 def fetch_project_totals(url, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
@@ -1199,13 +1204,29 @@ ask.querySelector('.yes').onclick=function(){onYes(ask);};return ask;}
 """
 
 PICK_SCRIPT = """
-(function(){var f=document.querySelector('form.drop-shot');var p=document.querySelector('.player');if(!f||!p)return;
-var hid=f.querySelector('input[name=shots]');var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
-function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});var a=p.querySelector('.strip .shot-ask');if(a)a.remove();}
+(function(){var drop=document.querySelector('form.drop-shot');var trim=document.querySelector('form.trim-shot');
+var p=document.querySelector('.player');if(!drop||!trim||!p)return;
+var hid=drop.querySelector('input[name=shots]');var tshot=trim.querySelector('input[name=shot]');var tdelta=trim.querySelector('input[name=delta]');
+var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
+var trimTotal=0;
+function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});
+var a=p.querySelector('.strip .shot-ask');if(a)a.remove();var r=p.querySelector('.strip .shot-edit');if(r)r.remove();trimTotal=0;}
+function trimAsk(host,i){var old=host.querySelector('.shot-ask');if(old)old.remove();if(!trimTotal)return;
+var ask=document.createElement('div');ask.className='shot-ask';
+ask.innerHTML='<span>Shot '+(i+1)+': '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
+host.appendChild(ask);
+ask.querySelector('.no').onclick=function(){ask.remove();trimTotal=0;};
+ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>Shot '+(i+1)+' will be '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'. Making the new version, ready in about 15 s...</span>';trim.submit();};}
+function trimRow(host,i){var r=document.createElement('div');r.className='shot-edit';
+r.innerHTML='<span>Shot '+(i+1)+'</span><button type="button" class="minus">-1 s</button><button type="button" class="plus">+1 s</button>';
+host.appendChild(r);
+r.querySelector('.minus').onclick=function(){trimTotal-=1;trimAsk(host,i);};
+r.querySelector('.plus').onclick=function(){trimTotal+=1;trimAsk(host,i);};}
 b.forEach(function(x,i){x.addEventListener('click',function(){var was=x.classList.contains('picked');clear();if(was)return;
 x.classList.add('picked');var d=document.createElement('span');d.className='shot-del';d.setAttribute('role','button');
 d.setAttribute('aria-label','Remove shot '+(i+1));d.innerHTML='__BIN__';x.appendChild(d);
-d.addEventListener('click',function(e){e.stopPropagation();askYesNo(p.querySelector('.strip'),'Remove shot '+(i+1)+'?',function(ask){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';f.submit();});});});});})();
+d.addEventListener('click',function(e){e.stopPropagation();askYesNo(p.querySelector('.strip'),'Remove shot '+(i+1)+'?',function(ask){hid.value=String(i+1);ask.innerHTML='<span>Removing shot '+(i+1)+', about 15 s...</span>';drop.submit();});});
+trimRow(p.querySelector('.strip'),i);});});})();
 """
 
 STRIP_SCRIPT = """
@@ -1513,13 +1534,7 @@ def append_request(path, line):
 
 def append_feedback_action(workspace, action, **fields):
     """Append one feedback action line to the workspace's feedback.jsonl."""
-    line = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "action": action,
-        "text": fields.get("feedback") or "",
-        "tool": TOOL,
-    }
-    append_request(Path(workspace) / "feedback.jsonl", line)
+    append_feedback(workspace, action, text=fields.get("feedback") or "", tool=TOOL)
 
 
 def render_strip(summary, prefix="", thumbs=()):
@@ -1544,9 +1559,8 @@ def render_strip(summary, prefix="", thumbs=()):
     return (
         '<div class="strip" aria-label="Edit timeline">'
         f'<div class="strip-track">{"".join(buttons)}</div>'
-        '<div class="strip-legend"><span class="k-clip">clip</span>'
-        '<span class="k-photo">photo</span>'
-        f'<span class="num">{html_escape(describe_summary(summary))}</span></div></div>'
+        f'<div class="strip-summary"><span class="num">{html_escape(describe_summary(summary))}</span></div>'
+        "</div>"
     )
 
 
@@ -1754,8 +1768,20 @@ def render_drop_form(name, version):
     )
 
 
-def render_version_links(name, versions, shown, compare=None):
-    """The row of version chips, plus compare links for the other versions."""
+def render_trim_form(name, version):
+    """A small form that makes a shot longer or shorter and renders a new version."""
+    return (
+        f'<form class="trim-shot" method="post" action="/{html_escape(name)}/trim-shot" '
+        'enctype="multipart/form-data">'
+        f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
+        '<input type="hidden" name="shot" value="">'
+        '<input type="hidden" name="delta" value="">'
+        '</form>'
+    )
+
+
+def render_version_links(name, versions, shown):
+    """The row of version chips."""
     if len(versions) < 2:
         return ""
     base = f"/{html_escape(name)}/?tab=recap"
@@ -1771,17 +1797,7 @@ def render_version_links(name, versions, shown, compare=None):
             f'<a class="{" ".join(classes)}" href="{base}&amp;v={version["number"]}" '
             f'title="{html_escape(version_meta_line(version))}">v{label}</a>'
         )
-    others = [
-        f'<a class="{"on" if compare and compare["number"] == version["number"] else ""}" '
-        f'href="{base}&amp;v={shown["number"]}&amp;with={version["number"]}">'
-        f'v{version["name"].lstrip("v").lstrip("0") or "0"}</a>'
-        for version in versions
-        if version["number"] != shown["number"] and has_video(version)
-    ]
-    row = f'<div class="versions"><span>Version</span>{"".join(chips)}</div>'
-    if others:
-        row += f'<div class="versions"><span>Compare with</span>{"".join(others)}</div>'
-    return row
+    return f'<div class="versions"><span>Version</span>{"".join(chips)}</div>'
 
 
 def render_meta_box(directory, version_path=None, name=None, version=None, meta_cost=None):
@@ -1847,37 +1863,6 @@ def _meta_field(label, value):
     )
 
 
-def render_review(edit_path):
-    """The reviewer verdict of an edit, or "" when the edit carries no review."""
-    data = load_json(edit_path)
-    if not isinstance(data, dict):
-        return ""
-    meta = data.get("meta")
-    director = meta.get("director") if isinstance(meta, dict) else None
-    review = director.get("review") if isinstance(director, dict) else None
-    if not isinstance(review, dict):
-        return ""
-    line = "Reviewer: approved" if review.get("approved") else "Reviewer: not approved"
-    items = []
-    objections = review.get("objections")
-    for objection in objections if isinstance(objections, list) else []:
-        if not isinstance(objection, dict):
-            continue
-        text = html_escape(str(objection.get("text") or ""))
-        shot = objection.get("shot")
-        if isinstance(shot, int) and not isinstance(shot, bool):
-            items.append(f'<li><span class="obj-shot">Shot {shot}</span> {text}</li>')
-        else:
-            items.append(f"<li>{text}</li>")
-    listing = f'<ul class="objections">{"".join(items)}</ul>' if items else ""
-    return (
-        '<div class="review">'
-        f'<p class="review-line">{line}</p>'
-        f"{listing}"
-        "</div>"
-    )
-
-
 def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None,
                        meta_cost=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
@@ -1888,7 +1873,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     has_previous = any(has_video(version) for version in versions) or (
         (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
     )
-    parts = [f"<style>{REVIEW_STYLE}</style>", render_run_notice(status, report, has_previous=has_previous)]
+    parts = [render_run_notice(status, report, has_previous=has_previous)]
     shown = pick_version(versions, wanted)
     if shown is None:
         has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
@@ -1901,15 +1886,17 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
-        parts.append(render_review(directory / "edit.json"))
         parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
     if compare is not None and compare["number"] == shown["number"]:
         compare = None
-    parts.append(render_version_links(name or directory.name, versions, shown, compare))
+    parts.append(render_version_links(name or directory.name, versions, shown))
+    if status != "running" and shown is not versions[-1] and shown is not versions[0]:
+        parts.append(render_delete_version_form(name or directory.name, shown))
     if status != "running" and has_video(shown):
         parts.append(render_drop_form(name or directory.name, shown))
+        parts.append(render_trim_form(name or directory.name, shown))
     heading = shown["name"].lstrip("v").lstrip("0") or "0"
     parts.append(
         render_player(
@@ -1920,7 +1907,6 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             trust_edit=True,
         )
     )
-    parts.append(render_review(Path(shown["path"]) / "edit.json"))
     parts.append(render_meta_box(directory, shown["path"], name=name, version=shown["name"],
                                  meta_cost=meta_cost))
     if compare is not None:
@@ -1934,7 +1920,6 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                 trust_edit=True,
             )
         )
-        parts.append(render_review(Path(compare["path"]) / "edit.json"))
     return "\n".join(part for part in parts if part)
 
 
@@ -2075,15 +2060,6 @@ def ingest_lengths(path):
     return lengths
 
 
-def format_size(size_bytes):
-    """Bytes as '45 MB' or '1.2 GB'."""
-    if not isinstance(size_bytes, (int, float)) or isinstance(size_bytes, bool):
-        return "0 MB"
-    if size_bytes >= BYTES_PER_GB:
-        return f"{size_bytes / BYTES_PER_GB:.1f} GB"
-    return f"{size_bytes / (1024 * 1024):.0f} MB"
-
-
 def _file_row(path, kind, edit_names, excluded, lengths, new=False):
     name = path.name
     return {
@@ -2141,7 +2117,7 @@ def project_files(directory):
 
 def _render_file_row(name, row):
     if row["kind"] == "photo":
-        meta = f"photo · {format_size(row['size_bytes'])}"
+        meta = f"photo · {format_size_short(row['size_bytes'])}"
     else:
         length = row["length_s"]
         length_text = (
@@ -2149,7 +2125,7 @@ def _render_file_row(name, row):
             if isinstance(length, (int, float)) and not isinstance(length, bool)
             else "clip"
         )
-        meta = f"{length_text} · {format_size(row['size_bytes'])}"
+        meta = f"{length_text} · {format_size_short(row['size_bytes'])}"
     if row["excluded"]:
         state = "left out"
     elif row["new"]:
@@ -2221,7 +2197,7 @@ def render_files_panel(directory, name, features=None, consent_text=None):
 
 
 def _render_tabs(name, enabled, tab):
-    """The project tab bar: Recap, the Details group (Why? and Shots), then Cuts and Shorts."""
+    """The project tab bar: Recap, Files, Cuts and Shorts."""
     labels = dict(TABS)
 
     def link(key):
@@ -2233,12 +2209,6 @@ def _render_tabs(name, enabled, tab):
         parts.append(link("recap"))
     if "files" in enabled:
         parts.append(link("files"))
-    details = [key for key in ("why", "shots") if key in enabled]
-    if details:
-        parts.append(
-            '<span class="tab-group">'
-            f'{"".join(link(key) for key in details)}</span>'
-        )
     for key in ("cuts", "shorts"):
         if key in enabled:
             parts.append(link(key))
@@ -2331,7 +2301,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     )
     script_parts = []
     if tab == "recap":
-        script_parts += [STRIP_SCRIPT, TICK_SCRIPT, PICK_SCRIPT, COPY_SCRIPT]
+        script_parts += [STRIP_SCRIPT, TICK_SCRIPT, PICK_SCRIPT, COPY_SCRIPT, DELETE_VERSION_SCRIPT]
     script_parts += [LENGTH_SCRIPT, DELETE_SCRIPT, BRIEF_HINTS_SCRIPT]
     if tab == "cuts":
         script_parts.append(CUTS_SCRIPT)
@@ -2492,12 +2462,31 @@ def render_delete_form(name):
     return f'<form class="delete-project" method="post" action="/{html_escape(name)}/delete"></form>'
 
 
+def render_delete_version_form(name, version):
+    """A small form that deletes one version (never the latest or the first)."""
+    number = version["number"]
+    question = f"Delete version {number}? Its video and files are removed for good."
+    return (
+        f'<form class="delete-version" method="post" action="/{html_escape(name)}/delete-version">'
+        f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
+        f'<button type="button" class="version-del" data-question="{html_escape(question)}">'
+        "Delete this version</button></form>"
+    )
+
+
 DELETE_SCRIPT = """
 (function(){var f=document.querySelector('form.delete-project');if(!f)return;
 var h=document.querySelector('h1');if(!h)return;
 var b=document.createElement('button');b.type='button';b.className='project-del';
 b.setAttribute('aria-label','Delete this project');b.innerHTML='__BIN__';h.appendChild(b);
 b.addEventListener('click',function(){askYesNo(h.parentNode,'Delete this project?',function(ask){ask.innerHTML='<span>Deleting, about 5 s...</span>';f.submit();});});})();
+"""
+
+DELETE_VERSION_SCRIPT = """
+(function(){var f=document.querySelector('form.delete-version');if(!f)return;
+var b=f.querySelector('button.version-del');if(!b)return;
+b.addEventListener('click',function(){var q=b.getAttribute('data-question')||'Delete this version?';
+askYesNo(f,q,function(ask){ask.innerHTML='<span>Deleting the version...</span>';f.submit();});});})();
 """
 
 BRIEF_HINTS_SCRIPT = """
@@ -2523,7 +2512,7 @@ askYesNo(f,'Leave out '+label+'?',function(){f.submit();});});});})();
 
 
 def render_upload(music_tracks, features=None, consent_text=None, storage_html="", credit_html="",
-                  brand_logo=DEFAULT_BRAND_LOGO):
+                  credit_warning_html="", brand_logo=DEFAULT_BRAND_LOGO):
     """Return the Upload page with the form wired to POST /upload."""
     limits = f"{storage_html}{credit_html}"
     drop = (
@@ -2569,6 +2558,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         '<span class="options-state">All on Auto</span></summary>'
         f"{render_form_rows(option_fields(music_tracks))}"
         f"{AUTO_HINT}</details>"
+        f"{credit_warning_html}"
         f"{consent}"
         f'<button class="go start" type="submit" name="submit" value="start"{start_disabled}>Upload and start</button>'
         '<div class="upload-progress" hidden><progress max="100" value="0"></progress>'
@@ -3404,6 +3394,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_drop_shot(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "trim-shot":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_trim_shot(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "add-files":
             if not feature_on(features, "recap"):
                 self.send_not_found()
@@ -3427,6 +3423,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if len(segments) == 2 and segments[1] == "delete":
             self.handle_delete_project(segments[0])
+            return
+        if len(segments) == 2 and segments[1] == "delete-version":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_delete_version(segments[0])
             return
         if segments == ["costs", "request"]:
             if not feature_on(features, "requests"):
@@ -3638,8 +3640,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             location += f"&v={int(version[1:])}"
         self.send_redirect(location)
 
-    def handle_drop_shot(self, project):
-        """Remove shots from a version with edit_drop.py and show the new version."""
+    def _edit_drop_request(self, project, build_extra):
+        """Shared body of the drop/trim routes: check the project, read the form, run edit_drop.py.
+
+        ``build_extra(fields)`` returns the extra edit_drop.py arguments, or None after
+        sending a 400 error.
+        """
         workspace = self.server.root / project
         if not (workspace / "versions").is_dir():
             self.send_error_text(404, "no such project")
@@ -3652,23 +3658,46 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         except UploadError as exc:
             self.send_error_text(exc.status, exc.message)
             return
-        numbers = re.findall(r"\d+", fields.get("shots") or "")
-        if not numbers:
-            self.send_error_text(400, "give the number of the shot to remove")
+        extra = build_extra(fields)
+        if extra is None:
             return
         command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
-                   "--workspace", str(workspace), "--json"]
+                   "--workspace", str(workspace), "--json", *extra]
         version = fields.get("version") or ""
         if re.fullmatch(r"v\d+", version):
             command += ["--version", version]
-        for number in numbers:
-            command += ["--drop", number]
         result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
             return
         self.send_redirect(f"/{project}/?tab=recap")
+
+    def handle_drop_shot(self, project):
+        """Remove shots from a version with edit_drop.py and show the new version."""
+        def build_extra(fields):
+            numbers = re.findall(r"\d+", fields.get("shots") or "")
+            if not numbers:
+                self.send_error_text(400, "give the number of the shot to remove")
+                return None
+            extra = []
+            for number in numbers:
+                extra += ["--drop", number]
+            return extra
+
+        self._edit_drop_request(project, build_extra)
+
+    def handle_trim_shot(self, project):
+        """Make a shot longer or shorter with edit_drop.py and show the new version."""
+        def build_extra(fields):
+            shot = (fields.get("shot") or "").strip()
+            delta = (fields.get("delta") or "").strip()
+            if not re.fullmatch(r"\d+", shot) or not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", delta):
+                self.send_error_text(400, "give the shot number and the change in seconds")
+                return None
+            return ["--trim", f"{shot}:{delta}"]
+
+        self._edit_drop_request(project, build_extra)
 
     def handle_add_files(self, project):
         """Store more files in the project's recorded inbox source folder."""
@@ -3759,6 +3788,46 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(500, f"could not delete the project: {exc}")
             return
         self.send_redirect("/")
+
+    def handle_delete_version(self, project):
+        """Delete one version folder; refuse the latest, the first and while a run is going."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        if project_status(workspace) == "running":
+            self.send_error_text(409, "already running")
+            return
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        version = (fields.get("version") or "").strip()
+        if not VERSION_RE.fullmatch(version):
+            self.send_error_text(400, "invalid version")
+            return
+        versions = list_versions(workspace)
+        if not versions:
+            self.send_error_text(404, "unknown version")
+            return
+        if version == versions[-1]["name"]:
+            self.send_error_text(409, "cannot delete the latest version")
+            return
+        if version == versions[0]["name"]:
+            self.send_error_text(409, "cannot delete the first version")
+            return
+        root = (workspace / "versions").resolve()
+        target = (workspace / "versions" / version).resolve()
+        if target.parent != root or not target.is_dir():
+            self.send_error_text(404, "unknown version")
+            return
+        try:
+            shutil.rmtree(target)
+        except OSError as exc:
+            self.send_error_text(500, f"could not delete the version: {exc}")
+            return
+        self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_expectations(self, project):
         """Append one phone-review expectation to the workspace's expectations.yaml."""
@@ -4059,6 +4128,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     consent_text=self.server.consent_text,
                     storage_html=storage_line(self.server),
                     credit_html=credit_line(self.server),
+                    credit_warning_html=credit_warning(self.server),
                     brand_logo=self.server.brand_logo,
                 ),
                 send_body,
@@ -4104,7 +4174,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if len(segments) == 2 and segments[1] == "cut-audio":
             self.handle_cut_audio(segments[0], send_body)
             return
-        if len(segments) == 2 and segments[1] == "delete":
+        if len(segments) == 2 and segments[1] in ("delete", "delete-version"):
             self._method_not_allowed()
             return
         if len(segments) == 2:

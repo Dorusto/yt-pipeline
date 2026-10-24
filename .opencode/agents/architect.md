@@ -1,13 +1,16 @@
 ---
 description: Plans and audits AI Director work in yt-pipeline. Splits a phase into small tasks, writes self-contained task briefs, delegates implementation to the coder subagent, audits every result against CLAUDE.md, docs/RULES.md, docs/VISION.md and docs/DECISIONS.md, and keeps ROADMAP, DECISIONS and phase reports current.
 mode: primary
-model: openrouter/xiaomi/mimo-v2.6-pro
+model: openrouter/deepseek/deepseek-v4.1-flash
+reasoning:
+  effort: high
 temperature: 0.2
 steps: 150
 permission:
   task:
     "*": deny
     "coder": allow
+    "coder-max": allow
     "explore": allow
     "general": allow
   bash:
@@ -50,6 +53,7 @@ Read `CLAUDE.md`, `docs/RULES.md`, `docs/VISION.md`, the D-phase status in `docs
    - Acceptance checks: tests to add, commands to run and their expected output
    - Out of scope
 3. Delegate to the `coder` subagent with the full brief text, not only its path.
+Hand the brief to `coder-max` instead of `coder` only when the lot says "hard".
 4. Audit: read the whole diff, run the tests and the acceptance commands yourself, run the tool on sample media and look at visual outputs. Check the definition of done in CLAUDE.md.
 5. If it fails, send back specific fixes. After 2 failed rounds, split the task into smaller tasks with narrower briefs and delegate again; if those fail too, notify `Struggling` and stop.
    - Never repeat the same command or tool call more than twice. If a tool fails, returns nothing useful, or returns the same result twice, stop, send `python scripts/notify.py "<task id>: <tool> keeps failing" --title Blocked` and end the run. Placeholder commands such as `echo ok` are not progress.

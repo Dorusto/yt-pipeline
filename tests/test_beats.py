@@ -1,10 +1,98 @@
 import json
 import subprocess
+import tempfile
+import wave
 
+import numpy as np
 import pytest
 
 import beats
 from common.exit_codes import EXIT_OK, EXIT_USAGE
+from helpers import make_click
+
+
+def write_click_track(path, times, rate=22050, amplitude=0.9, pulse_s=0.02):
+    samples = np.zeros(int(rate * (max(times) + 1.0)))
+    pulse_len = int(pulse_s * rate)
+    pulse = np.sin(2 * np.pi * 1000 * np.arange(pulse_len) / rate)
+    for time_s in times:
+        start = int(round(time_s * rate))
+        end = min(len(samples), start + pulse_len)
+        samples[start:end] += amplitude * pulse[: end - start]
+    data = np.clip(samples, -1.0, 1.0)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes((data * 32767).astype("<i2").tobytes())
+
+
+def make_drifting_click(path, duration=60.0, bpm=120.0, t0=0.23, drift=0.03):
+    """Write a click track whose period drifts by ``drift`` over the track and return the click times."""
+    period = 60.0 / bpm
+    times = []
+    time_s = t0
+    while time_s < duration:
+        times.append(time_s)
+        time_s += period * (1.0 + drift * time_s / 60.0)
+    write_click_track(path, times)
+    return times
+
+
+def make_attack_click(path, duration=8.0, bpm=120.0, rate=22050):
+    """Write a click track with a realistic attack and return the true hit onsets."""
+    period = 60.0 / bpm
+    times = list(np.arange(0.0, duration, period))
+    samples = np.zeros(int(rate * duration))
+    attack_len = int(0.005 * rate)
+    decay_len = int(0.040 * rate)
+    body_len = attack_len + decay_len
+    body = np.sin(2 * np.pi * 60 * np.arange(body_len) / rate)
+    envelope = np.concatenate(
+        [
+            np.linspace(0.0, 1.0, attack_len),
+            np.exp(-np.arange(decay_len) / (0.010 * rate)),
+        ]
+    )
+    hat_len = int(0.030 * rate)
+    hat_window = np.hanning(hat_len)
+    rng = np.random.default_rng(7)
+    for time_s in times:
+        start = int(round(time_s * rate))
+        end = min(len(samples), start + body_len)
+        samples[start:end] += 0.9 * body[: end - start] * envelope[: end - start]
+        hat_end = min(len(samples), start + hat_len)
+        noise = rng.standard_normal(hat_end - start)
+        samples[start:hat_end] += 0.3 * noise * hat_window[: hat_end - start]
+    data = np.clip(samples, -1.0, 1.0)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes((data * 32767).astype("<i2").tobytes())
+    return times
+
+
+def make_offbeat_click(path, duration=8.0, bpm=120.0, offset=0.35):
+    """Write on-beat clicks plus weaker off-beat pulses and return the on-beat times."""
+    period = 60.0 / bpm
+    on_beat = list(np.arange(0.0, duration, period))
+    off_beat = [time_s + offset * period for time_s in on_beat if time_s + offset * period < duration]
+    rate = 22050
+    samples = np.zeros(int(rate * duration))
+    pulse_len = int(0.02 * rate)
+    pulse = np.sin(2 * np.pi * 1000 * np.arange(pulse_len) / rate)
+    for time_s, amplitude in [(t, 0.9) for t in on_beat] + [(t, 0.4) for t in off_beat]:
+        start = int(round(time_s * rate))
+        end = min(len(samples), start + pulse_len)
+        samples[start:end] += amplitude * pulse[: end - start]
+    data = np.clip(samples, -1.0, 1.0)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes((data * 32767).astype("<i2").tobytes())
+    return on_beat
 
 
 def ffmpeg(args):
@@ -12,26 +100,6 @@ def ffmpeg(args):
         ["ffmpeg", "-hide_banner", "-y", "-v", "error", *args],
         check=True,
         capture_output=True,
-    )
-
-
-def make_click(path, duration=8.0, bpm=120.0, accent=False):
-    period = 60.0 / bpm
-    pulse = f"lt(mod(t,{period}),0.02)"
-    amplitude = f"(0.5+0.9*eq(mod(floor(t/{period}),4),0))" if accent else "0.9"
-    expression = f"{amplitude}*sin(2*PI*1000*t)*{pulse}"
-    ffmpeg(
-        [
-            "-f",
-            "lavfi",
-            "-i",
-            f"aevalsrc='{expression}':s=22050:d={duration}",
-            "-ac",
-            "1",
-            "-c:a",
-            "pcm_s16le",
-            str(path),
-        ]
     )
 
 
@@ -101,6 +169,20 @@ def test_phase(tmp_path, capsys):
     assert abs(summary["beat_s"][0] - 0.0) <= 0.03
     for beat in summary["beat_s"]:
         assert abs(beat - round(beat / 0.5) * 0.5) <= 0.03
+
+
+def test_beats_are_not_late(tmp_path, capsys):
+    click = tmp_path / "attack.wav"
+    true_times = make_attack_click(click)
+    summary = analyse(capsys, click)
+    detected = summary["beat_s"]
+    assert detected
+    offsets = []
+    for beat in detected:
+        nearest = min(true_times, key=lambda true: abs(true - beat))
+        assert abs(beat - nearest) <= 0.01
+        offsets.append(beat - nearest)
+    assert float(np.mean(offsets)) <= 0.0
 
 
 def test_downbeats(tmp_path, capsys):
@@ -248,3 +330,48 @@ def test_help_lists_flags_with_examples(capsys):
     ):
         assert flag in out
     assert "examples:" in out
+
+
+def test_beats_follow_a_drifting_tempo(tmp_path, capsys):
+    click = tmp_path / "drift.wav"
+    true_times = make_drifting_click(click)
+    summary = analyse(capsys, click)
+    detected = summary["beat_s"]
+    assert detected
+    for beat in detected:
+        assert min(abs(beat - true) for true in true_times) <= 0.03
+    matched = sum(1 for true in true_times if min(abs(true - beat) for beat in detected) <= 0.03)
+    assert matched >= 0.9 * len(true_times)
+
+
+def test_beats_ignore_off_beat_noise(tmp_path, capsys):
+    click = tmp_path / "offbeat.wav"
+    on_beat = make_offbeat_click(click)
+    summary = analyse(capsys, click)
+    detected = summary["beat_s"]
+    assert detected
+    for beat in detected:
+        assert min(abs(beat - true) for true in on_beat) <= 0.03
+
+
+def test_grid_is_a_local_maximum(tmp_path, capsys):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    summary = analyse(capsys, click)
+    grid = summary["beat_s"]
+    with tempfile.TemporaryDirectory() as directory:
+        samples = beats.decode_mono(click, directory)
+    envelope = beats.onset_envelope(samples)
+
+    def score(shift):
+        total = 0.0
+        for beat in grid:
+            index = int(round((beat + shift) * beats.ANALYSIS_RATE / beats.STFT_HOP))
+            if 0 <= index < len(envelope):
+                total += envelope[index]
+        return total
+
+    shifts = [step * 0.005 for step in range(-20, 21)]
+    scores = [score(shift) for shift in shifts]
+    best = shifts[int(np.argmax(scores))]
+    assert abs(best - beats.ONSET_LATENCY_S) <= 0.01

@@ -19,9 +19,27 @@ models:
 # sentence). Never commit real names; config.yaml is git-ignored.
 # github_url is the channel's code URL the metadata draft links; it is handed
 # to the model in the Inputs. Never commit the real URL here.
+# fixed is optional: the channel's own wording, one string per language. The
+# metadata draft inserts members_sentence and closing verbatim (the RO
+# description gets the RO string, the EN description the EN one) and
+# thumbnail_concepts.py hands thumbnail_formula to the model. A missing part,
+# a missing language or an empty string leaves that part out — never replaced
+# by built-in text. members is required only when a members_sentence string
+# contains the {members} placeholder; a channel that does not thank members in
+# the description runs without it.
 channel:
   members: "Andrei, Mihai și Maria"
   github_url: "<channel-code-url>"
+  fixed:
+    members_sentence:
+      ro: "Mulțumesc {members} pentru susținerea canalului."
+      en: "Thanks {members} for supporting the channel."
+    closing:
+      ro: "Pe data viitoare."
+      en: "See you next time."
+    thumbnail_formula:
+      ro: "Formula canalului: subiectul, o emoție reală și text scurt."
+      en: "Channel formula: the subject, a real emotion and short text."
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
@@ -56,6 +74,15 @@ llm_backend: openrouter
 # music:
 #   library: <music-library>
 
+# Whisper model for scripts/transcribe.py and the publish chain's --media step.
+# There is a default: turbo with a CUDA GPU, else medium on CPU for a
+# non-English language (including auto or no language), small only for an
+# explicit en. Set it here, in the
+# YT_PIPELINE_WHISPER_MODEL environment variable, or pass --model /
+# --whisper-model. Docs and examples write <whisper-model>.
+# transcribe:
+#   model: <whisper-model>
+
 # Inbox folder for serve.py uploads and the phone flow. There is no personal
 # default in code: set the folder here, in the YT_PIPELINE_INBOX environment
 # variable, or pass --inbox. Docs and examples write <inbox>.
@@ -80,9 +107,11 @@ llm_backend: openrouter
 #   donation_links:
 #     - label: Support the project
 #       url: https://example.org/donate
-#   project_totals_url is the owner instance's GET /costs.json; when set, the
-#   Costs page shows "Project costs (everyone)" next to "This instance". Set it
-#   here, in the YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or pass
+#   project_totals_url is the owner instance's GET /costs.json; when set, a
+#   friend instance's Costs page leads with the donation buttons, then its own
+#   model cost to cover, then the owner instance's costs as voluntary project
+#   costs, then the per-clip table and the donation list. Set it here, in the
+#   YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or pass
 #   --project-totals-url.
 #   project_totals_url: https://example.org/costs.json
 
@@ -97,7 +126,8 @@ llm_backend: openrouter
 # inbox size: the Upload and Costs pages show "X GB of Y GB used", warn over 80 %
 # and refuse an upload that would pass the limit before any byte is written.
 # limits.credit_warn_usd (default 1.0) warns when the OpenRouter key's remaining
-# credit falls below it. There is no personal default: set storage_gb here, in the
+# credit falls below it; the Upload page shows a low-credit banner under it.
+# There is no personal default: set storage_gb here, in the
 # YT_PIPELINE_STORAGE_GB environment variable, or pass --storage-gb.
 # limits:
 #   storage_gb: 100

@@ -4,6 +4,222 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Members only when thanked; the kit without a thumbnail (V020N lot n31)
+
+**Context:** The publish test found two blockers. `metadata.py` required `channel.members` unconditionally, so a channel whose `members_sentence` does not use `{members}` (or has none) could not run. `publish.py --kit` without `--photo` failed at the kit step with "thumbnail not found", because `publish_kit.py` treated a missing `thumbnail.jpg` as a failing check.
+
+**Decision:** `scripts/common/channel.py` gains `members_placeholder_used(fixed)`, which is True only when a `members_sentence` language string contains `{members}`. `metadata.py` requires `channel.members` (same message) only when that helper is True, and fills `{members}` only then; `channel.github_url` stays required. `publish_kit.py` treats `thumbnail.jpg` as optional: a missing file adds no error and no check, `write_kit` copies it only when present and passes `has_thumbnail` to `build_studio_md`, whose checklist line becomes `- [ ] Make and upload the thumbnail (none in the kit yet)` when there is none. The `--json` summary shape and the CLI flags are unchanged.
+
+**Consequence:** Files touched: `scripts/common/channel.py`, `scripts/metadata.py`, `scripts/publish_kit.py`, `tests/test_metadata.py`, `tests/test_publish_kit.py`, `tests/test_publish.py`, `config.yaml.example`, `.claude/skills/yt-publish/SKILL.md`, `docs/guides/tools.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. No change to `publish.py`, `scripts/common/config.py`, the `--json` summary shape, any schema or any subprocess call.
+
+---
+
+## [2026-10-24] A usable Whisper default and the beat-snap docs (V020N lot n30)
+
+**Context:** The publish flow's `--media` step ran `transcribe.py` with `tiny` on CPU, which is too weak for a real Romanian voice-over. Measured on 4 cores with CPU-only torch 2.14.1, a 60 s slice of a Romanian voice-over test clip (no text from it is in the repo): `small` 34.7 s (0.58× real time), `medium` 86.7 s (1.45× real time). End to end, a 3-minute Romanian voice-over took about 405 s with `medium` on 4 CPU cores (about 2.2× real time). `medium` stays under about 3× real time, so it is usable as the CPU default for a non-English language. Separately, the beat-snap docs still described the pre-n28 rule (a structure-beat cut preferring a downbeat inside a snap window, max shift half a beat period) and `scripts/director.py`'s `snap_slots` returned a smaller `beat_snap` shape than `llm_director.snap_slots`.
+
+**Decision:** `transcribe.py` gains a language/device-aware default model: `turbo` on a CUDA GPU, `medium` on CPU for a non-English language, `small` on CPU only for an explicit `en` (`auto` or no language is treated as non-English, so it gets `medium`); `tiny` is used only by the mock backend. The model resolves as `--model`, else `YT_PIPELINE_WHISPER_MODEL`, else `transcribe.model` in the config, else that default; there is always a default, so no error when none is set. `scripts/common/config.py` validates an optional `transcribe` mapping with an optional non-empty string `model` (a bad value is a `ConfigError` naming the key, like `music.library`), and `config.yaml.example` shows the key commented out. `publish.py` gains `--whisper-model MODEL`, passed to `transcribe.py` as `--model` in the `--media` subtitles step; without it `transcribe.py` resolves the default itself. The beat-snap docs (`docs/RULES.md`, the `yt-llm-director` skill) now state the real shift limit — the slot's allowed length range, a downbeat or half-bar cut moving up to half a bar — and the n28 rule (every cut prefers the nearest downbeat, then a half-bar beat, then the nearest beat). `scripts/director.py`'s `snap_slots` returns the same keys as `llm_director.snap_slots` (`beats`, `snapped`, `unsnapped`, `downbeats`, `half_bar`); it never prefers downbeats, so `downbeats` counts the slots flagged as downbeat (the rule-based director passes none, so it is 0) and `half_bar` is 0. `serve.py` returns 405 for `GET /<project>/delete-version` like `GET /<project>/delete`.
+
+**Consequence:** Files touched: `scripts/transcribe.py`, `scripts/publish.py`, `scripts/common/config.py`, `config.yaml.example`, `scripts/director.py`, `scripts/serve.py`, `docs/RULES.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-publish/SKILL.md`, `docs/guides/tools.md`, `docs/guides/phone-flow.md`, `docs/RELEASES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`, `tests/test_transcribe.py`, `tests/test_publish.py`, `tests/test_config.py`, `tests/test_director.py`, `tests/test_serve.py`. No new dependency, no change to `beats.py`, the `beats.json` shape, the `edit.json` schema or the `beat_grid` field, and no change to `llm_director.snap_slots` behaviour.
+
+---
+
+## [2026-10-24] Cuts land on the strong beat; the wait message (V020N lot n28)
+
+**Context:** Issue #95, measured on a real holiday edit: the cuts sat 0.03-0.04 s after the strongest hit and only 5 of 14 landed on a downbeat. The onset envelope's flux peak is late by the STFT window-centre latency, so the whole grid was systematically late, and the director only preferred a downbeat when the plan's structure beat changed. Issue #93: the text after Yes on the Watch tab read "Shot N is getting X s longer/shorter, new version in about 15 s...".
+
+**Decision:** `beats.py` gains `ONSET_LATENCY_S = (STFT_WINDOW / 2 - STFT_HOP / 2) / ANALYSIS_RATE` (≈ `0.0174 s`); `track_beats` and `pick_onsets` subtract it from their times (clamped at `0`), so the reported beat time is the start of the hit and the grid is not late. The `beats.json` shape, the CLI, the exit codes and the `--json` keys are unchanged. `llm_director.snap_slots` drops the `downbeat_at` parameter: every cut tries the nearest downbeat, then a half-bar beat (`downbeat + 2 * beat_period_s`, so the bar count stays even), then the nearest beat, and the first candidate whose snap fits the slot's allowed length range wins; the slot records the grid it used in `beat_grid` (`downbeat`/`half_bar`/`beat`, or `null` when unsnapped) and the `beat_snap` summary gains `downbeats` and `half_bar` counts. The downbeat-over-cap fallback stays. The after-Yes text becomes "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
+
+**Consequence:** Files touched: `scripts/beats.py`, `tests/test_beats.py`, `scripts/llm_director.py`, `schemas/edit.schema.json`, `tests/test_llm_director.py`, `scripts/serve.py`, `tests/test_serve.py`, `docs/guides/tools.md`, `.claude/skills/yt-beats/SKILL.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-render/SKILL.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. No new dependency, no new CLI flag, no change to the `beats.json` shape or the `beats.py` `--json` keys; `scripts/director.py` (the rule-based fallback) is unchanged and never passes downbeats.
+
+---
+
+## [2026-10-24] Beats that follow the music; the Watch-tab wording (V020N lot n24)
+
+**Context:** Issue #95: `beats.py` fitted one rigid period grid to the onsets with a least-squares line, so on a track whose tempo drifts the grid ran in and out of phase against the onset envelope and the cut grid drifted off the music. Issue #93: the owner asked for two wording changes on the Watch tab — the "Compare with v1 v2 …" row removed, and the text after Yes reworded.
+
+**Decision:** Replace the least-squares grid fit with dynamic-programming beat tracking (Ellis 2007). The coarse period from the autocorrelation is first refined finely by a best-phase comb over a `±5 %` period grid in `0.1 %` steps (`refine_period`), then `track_beats` places each beat to maximise the normalised onset strength plus a quadratic-in-log penalty for deviating from the refined period, backtracking from the highest cumulative score. `DP_TIGHTNESS` is `100.0` (librosa's value; the tests pass with it and it was not tuned). The `beats.json` shape, the CLI, the exit codes and the `--json` keys are unchanged; numpy only, no new dependency. On the Watch tab the "Compare with" row is removed (`render_version_links` loses its `compare` parameter) while the `?with=` side-by-side view stays, and the after-Yes text becomes "Shot N is getting X s longer/shorter, new version in about 15 s...".
+
+**Consequence:** Files touched: `scripts/beats.py`, `tests/test_beats.py`, `scripts/serve.py`, `tests/test_serve.py`, `.claude/skills/yt-beats/SKILL.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. The skill describes the fine period refinement and the DP tracking. No format change, no new dependency, no new CLI flag; the directors' beat snap, `music_pick.py`, `render.py` and the `beats.json` schema are untouched.
+
+---
+
+## [2026-10-24] Cuts stay on the beat after rendering; the shot question wording (V020N lot n22)
+
+**Context:** Issue #95, measured on a real holiday edit (v008 of a test project): in `edit.json` every cut sits exactly on a music beat (offset 0.00 s), but the rendered file cut later and later — planned 2.79 / 15.61 / 30.10 / 42.92 / 54.62 s, rendered 2.80 / 15.64 / 30.16 / 43.04 / 54.80 s (ffmpeg scene detection). Each clip was rounded up to whole frames on its own and the error added up (about +0.013 s per cut, 0.18 s by the end). Issue #93: the question under the shot buttons became "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?" (and the matching in-progress text), replacing the n19 wording "Make shot 2 3 s longer?".
+
+**Decision:** The render rounds the cut positions on the timeline (the cumulative time to the nearest frame; each clip's frame count is the difference of the rounded cut positions), for the landscape and the vertical render, so a cut stays on the planned beat. The shot question reads "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?". The n19 entry stays as history; this entry records that the wording changed.
+
+**Consequence:** `docs/RULES.md` and the `yt-render` skill say cut positions are rounded on the timeline, so a slot whose length is not a whole number of frames may move by less than one frame; the render test checks the rendered cut positions never drift more than half a frame from the plan.
+
+---
+
+## [2026-10-24] The shot buttons add up (V020N lot n19)
+
+**Context:** Issue #93 (milestone v0.2.0): light editing of a finished edit from the phone. Lot n6 added the strip's "− 1 s" / "+ 1 s" control, but each press asked for exactly one second, so making a shot 3 s longer took three separate versions.
+
+**Decision:** The page script keeps one running total per picked shot: presses on the same shot add up (`+1 +1 +1` = 3, then `-1` = 2), the question under the shot shows the total ("Make shot 2 3 s longer?" / "Make shot 2 2 s shorter?"), a total of 0 removes the question, pressing a different shot starts a new total, and Yes submits the existing trim form once with the total as the delta. The server already accepts any delta and is unchanged; one Yes still makes one new version.
+
+**Consequence:** `docs/RULES.md` says the length changes by the total of the presses; the `CHANGELOG.md` `[0.2.0]` and `docs/RELEASES.md` v0.2.0 sections describe the buttons as adding up. No tool, schema or server change.
+
+---
+
+## [2026-10-24] Rules checked by tests, plus the last reviewer findings (V020N lot n16)
+
+**Context:** Issue #108 points 1–4: the rules a program can check should fail in the test suite before review, and the rules that depend on review alone should be recorded. The n14/n15 review also left a few findings: `thumbnail_concepts.py` reported a model answer with an extra key (which passes the manual checks and fails the schema's `additionalProperties: false`) as a usage error (exit 2) instead of a model-call failure (exit 3); `costs.py` read a lone thousands dot (`1.000`) as 1.0; `graphics_plan.py` quoted the context path in its unreadable-file message while the other tools do not; the Files tab had its own size formatter; the four legacy SRT tools (`analyze_srt.py`, `correct_srt.py`, `daily_summary_srt.py`, `translate_srt.py`) did not answer `--help`; the owner's name sat in the graphics examples; and `SNAP_MIN_SLOT_S` was still copied in `director.py` and `llm_director.py`.
+
+**Decision:** Add three tests that make the checkable rules fail before review: `tests/test_no_duplicate_helpers.py` (AST scan of every `scripts/*.py` and `scripts/common/*.py` for a module-level function or all-uppercase constant defined in two top-level files or in a top-level file and `scripts/common/`; a frozen `BASELINE` of the 98 names duplicated today, so a new duplicate fails and a stale baseline entry fails), `tests/test_tool_contract.py` (every tool answers `--help` with exit 0 and a usage line; every tool whose help mentions `--json` carries `summary_fields` or both `wall_time_s` and `llm_cost_usd`) and `tests/test_docs_in_step.py` (every `.py` token in a skill exists under `scripts/` or `scripts/common/`; every `scripts/*.py` is named in a skill or in `docs/guides/tools.md`). Record which rules a test checks and which depend on review alone in `docs/agents/rules-checked.md`, one row per RULES bullet, and point to it from `docs/RULES.md`. Fix the findings: `thumbnail_concepts.py` raises `ThumbnailConceptsRuntimeError` on the schema-mismatch path; `costs.py` `parse_amount` strips a lone thousands dot; `common/text.py` `read_text` gains a `quote` parameter and `graphics_plan.py` passes `quote=False`; `common/sizes.py` gains `format_size_short` and `serve.py` uses it; `common/filmcraft.py` and `agent_watchdog.py` docstrings describe what they hold; the graphics examples use a `<name>` placeholder; `SNAP_MIN_SLOT_S` moves to `common/constants.py`; the four legacy SRT tools answer `--help` with exit 0. The watchdog item from the lot note is already satisfied: `agent_watchdog.py` computes the no-commit base as `max(last_commit, agent_start)` and `tests/test_agent_watchdog.py::test_no_progress_clock_starts_at_agent_start` covers the "last commit from the previous night, agent just started" case, so the watchdog code is unchanged.
+
+**Consequence:** Files touched: the new `tests/test_no_duplicate_helpers.py`, `tests/test_tool_contract.py`, `tests/test_docs_in_step.py` and `docs/agents/rules-checked.md`; `scripts/common/constants.py`, `scripts/common/text.py`, `scripts/common/sizes.py`, `scripts/common/filmcraft.py`, `scripts/director.py`, `scripts/llm_director.py`, `scripts/thumbnail_concepts.py`, `scripts/costs.py`, `scripts/graphics_plan.py`, `scripts/graphics.py`, `scripts/serve.py`, `scripts/agent_watchdog.py`, `scripts/analyze_srt.py`, `scripts/correct_srt.py`, `scripts/daily_summary_srt.py`, `scripts/translate_srt.py`; the tests `tests/test_thumbnail_concepts.py`, `tests/test_costs.py`, `tests/test_graphics_plan.py`, `tests/test_sizes.py`, `tests/test_serve.py`, `tests/test_no_personal_setup.py`; the docs `docs/RULES.md`, `docs/guides/tools.md`, `CHANGELOG.md`, `docs/DECISIONS.md`, `docs/ROADMAP.md`; the skills `.claude/skills/yt-costs/SKILL.md`, `.claude/skills/yt-publish/SKILL.md`, `.claude/skills/yt-graphics/SKILL.md`, `.claude/skills/yt-transcript/SKILL.md`; and `prompts/graphics_plan.md`. No new tool, no new dependency, no schema change; `config.yaml.example` is unchanged. No tool's `--json` shape, exit codes, messages or file outputs change except the fixes named above.
+
+---
+
+## [2026-10-24] Duplicated helpers moved into common; docs drift fixed (V020N lot n15)
+
+**Context:** A review of the v020-night lots found the same helper copied in several tools: `read_text` in `metadata.py`, `thumbnail_concepts.py` and `graphics_plan.py`; the SRT parsing and transcript helpers in `metadata.py` and `thumbnail_concepts.py`; `now_iso` in `thumbnail_concepts.py`, `shorts_rank.py`, `rough_cut.py`, `publish.py` and `chapters.py`; `parse_child_json` in `publish.py`, `publish_kit.py`, `mode_b.py`, `inbox.py` and `recap.py`; `format_size` in `publish_kit.py` and `serve.py`; the FilmCraft sequence/track/cli helpers in `loudness.py`, `colour.py` and `fcproj_markers.py`; the minimum shot length in `edit_drop.py` and `llm_director.py`; `KIT_DIR_NAME` in `publish.py` and `publish_kit.py`; the credit logic in `serve.py`'s `credit_line`/`credit_warning`; and the drop/trim route body in `serve.py`. Several docs had drifted from the code: the `--project-totals-url` help, the F35 subprocess list, the `recap_meta.py` docstring, the `CHANGELOG.md` costs entry, the `tools.md` face-detection row and personal examples, the `agent_watchdog.py` docstring, the three `docs/agents/` topic files restating RULES, the RULES CI line, the two skills' beat-snap wording and the ROADMAP current-status line.
+
+**Decision:** Move every duplicated helper into `scripts/common/` and use it from every tool that had a copy: new `common/text.py` (`read_text`) and `common/srt.py` (`SRT_END`, `parse_srt_time`, `parse_srt`, `format_clock`, `format_transcript`, `srt_end_seconds`); `parse_child_json` added to `common/jsonio.py`; `format_size` added to `common/sizes.py`; the FilmCraft project/sequence/track/cli helpers (`FilmCraftError`, `FilmCraftRuntimeError`, `load_project_json`, `find_sequences`, `select_sequence`, `sequence_block`, `select_track`, `frame_rate`, `resolve_cli`, `format_command`, `run_command`, `parse_reply`, `parse_replies`) added to `common/filmcraft.py`; `MIN_SHOT_LENGTH_S` and `KIT_DIR_NAME` added to `common/constants.py`; one `credit_remaining` helper in `serve.py` used by `credit_line` and `credit_warning` with `format_cost` as the single currency format; and one `_edit_drop_request` method shared by `handle_drop_shot` and `handle_trim_shot`. The docs drift is fixed as listed above, and the three `docs/agents/` topic files keep their intro pointer and topic-specific sections but point to `docs/RULES.md` instead of restating its rules.
+
+**Consequence:** Files touched: the new `scripts/common/text.py`, `scripts/common/srt.py` and `tests/helpers.py`; `scripts/common/jsonio.py`, `scripts/common/sizes.py`, `scripts/common/filmcraft.py`, `scripts/common/constants.py`; `scripts/metadata.py`, `scripts/thumbnail_concepts.py`, `scripts/graphics_plan.py`, `scripts/publish.py`, `scripts/publish_kit.py`, `scripts/mode_b.py`, `scripts/inbox.py`, `scripts/recap.py`, `scripts/shorts_rank.py`, `scripts/rough_cut.py`, `scripts/chapters.py`, `scripts/loudness.py`, `scripts/colour.py`, `scripts/fcproj_markers.py`, `scripts/edit_drop.py`, `scripts/llm_director.py`, `scripts/serve.py`, `scripts/agent_watchdog.py`, `scripts/recap_meta.py`; the tests `tests/test_beats.py`, `tests/test_llm_director.py`, `tests/test_shorts_rank.py`, `tests/test_llm.py` (import the moved helpers) and the two `tests/test_serve.py` credit assertions (`$3.20 left of $5.00` → `$3,20 left of $5,00`, the `format_cost` output); and the docs `docs/DECISIONS.md`, `docs/RULES.md`, `docs/ROADMAP.md`, `CHANGELOG.md`, `docs/guides/tools.md`, `docs/agents/code-style.md`, `docs/agents/testing.md`, `docs/agents/conventions.md`, `.claude/skills/yt-llm-director/SKILL.md` and `.claude/skills/yt-director/SKILL.md`. The RULES CI line is fixed. No behaviour change: no tool's `--json` shape, exit codes, messages or file outputs change (the Files-tab size display stays the short format, e.g. `1 MB` or `1.5 GB`). No new tool, no new dependency, no schema change; `config.yaml.example` is unchanged.
+
+---
+
+## [2026-10-24] Reviewer fixes, real bugs (V020N lot n14)
+
+**Context:** A review of the v020-night lots found nine real bugs, each with a test: `costs.py` rejected a decimal comma and a UTF-8 BOM on a donations CSV header; `correct_srt.py` under-counted the changes (the capitalised variant was not counted) and `load_corrections` accepted a line with an empty wrong part; `metadata.py` accepted an empty `--title` and dropped the RO title from the EN chapters section when a chapter had no `title_en`; `common/config.py` accepted an unknown `channel.fixed` part name silently; `thumbnail_concepts.py` reported a wrong-shape model answer as a usage error (exit 2) instead of a model-call failure (exit 3); `publish_kit.py` printed one `[error]` line per problem and a hand-built JSON object on failure, and reported the kit `output` as the folder instead of the file it wrote; `colour.py` accepted `--target-luma`/`--target-contrast` outside `(0, 1]` and failed later; `llm_director.py` left a cut unsnapped when the nearest downbeat was over the slot cap even though a plain beat lay under it; `.github/dependabot.yml` pinned a `time`/`timezone` the default schedule does not need.
+
+**Decision:** Fix all nine. `costs.py` gains one `parse_amount` helper (optional leading `$`/`€`, decimal comma or dot, thousands separators, a leading BOM; a finite float `> 0` or `ValueError`) used by `add` and `import-donations`, and the donations CSV opens with `encoding="utf-8-sig"`. `common/corrections.py` tracks the line number and raises `CorrectionsError` for an empty wrong part, and gains `count_changes` (the capitalised variant included) that `correct_srt.py` uses. `metadata.py` rejects an empty `--title` and falls back to the RO title in the EN chapters section. `common/channel.py` exports `CHANNEL_FIXED_PARTS` and `common/config.py` rejects an unknown `channel.fixed` part naming the key. `thumbnail_concepts.py` raises `ThumbnailConceptsRuntimeError` for every model-answer problem (shape and timecode). `publish_kit.py` reports a failure through one `report_error` call and its `--json` `output` is `publish-kit/studio.md`; `publish.py`'s skipped-kit branch matches. `colour.py` validates the two targets before any file work. `llm_director.py`'s cap branch falls back to the beat list when no downbeat fits under the cap. `.github/dependabot.yml` drops `time`/`timezone`.
+
+**Consequence:** Files touched: `scripts/costs.py`, `scripts/common/corrections.py`, `scripts/correct_srt.py`, `scripts/metadata.py`, `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/thumbnail_concepts.py`, `scripts/publish_kit.py`, `scripts/publish.py`, `scripts/colour.py`, `scripts/llm_director.py`, `.github/dependabot.yml` and the matching tests. Two test expectations changed: `test_timecode_beyond_transcript_exits_2`/`test_bad_theme_exits_2` become `..._exits_3` (EXIT_RUNTIME), and `test_dependabot_is_weekly_grouped_and_in_working_hours` becomes `test_dependabot_is_weekly_grouped` (no `time`/`timezone`). RULES lines updated: Dependabot, `costs.py import-donations`, corrections, metadata, `channel.fixed`, beat-snap. No new tool, no new dependency, no schema change; `config.yaml.example` is unchanged.
+
+---
+
+## [2026-10-24] Basic colour recipe for camera clips (V020N lot n13)
+
+**Context:** Issue #69: a talking-head clip filmed over several evenings mixes different light (warmer one night, greener the next) and nothing evens it out, so it shows when two sessions are cut together. The issue asks for a loudness-like colour recipe: one command, no manual grading, the same interface as `loudness.py` (`--fcproj`, `--dry-run`, `--json`).
+
+**Options:** (A) a per-clip auto-grade; (B) a per-session correction toward a neutral target (grey-world white balance, mid-grey exposure, target contrast) applied through the Lumetri Basic Correction of the camera clips.
+
+**Decision:** B. `scripts/colour.py` reads the project JSON directly (no `filmcraft-cli inspect`), groups the enabled camera clips of one video track into sessions by capture time (a gap over `--session-gap-min`, default 180, starts a new session), measures each session's average white balance, exposure and contrast on `--frames-per-clip` frames per clip, and computes one correction toward `--target-luma` (0.5) and `--target-contrast` (0.18). It applies `effects.apply` only when the clip has no `lumetri` effect (the command is not idempotent), then four `effects.setParam` (temperature, tint, exposure, contrast), all in one `filmcraft-cli run` script so the project is opened and saved once. It works on a copy (`<stem>_colour.fcproj`) unless `--in-place` is given. No model is called; `llm_cost_usd` is always `0.0`.
+
+**Why not A:** cuts inside one session must stay identical, and the loudness recipe normalises to an absolute target too; a per-clip grade would make two clips of the same evening drift apart.
+
+**Consequence:** the real-clip comparison (sessions from different evenings, before/after frames) is left for the owner; the tests use synthetic frames and a stub `filmcraft-cli`. No new schema and no config key; `loudness.py` and `common/filmcraft.py` are unchanged.
+
+---
+
+## [2026-10-23] Metadata prompt fixes and channel wording in the config (V020N lot n11)
+
+**Context:** Issue #76: the metadata prompt produced weak titles (the main keyword first, the "Name: subtitle" pattern), invented links and repos the Inputs never gave, a marketing-style pinned comment, one fixed members sentence and closing reused verbatim in both the RO and the EN description, and Romanian-only chapter titles. The members sentence and the closing were hardcoded in `scripts/metadata.py` (`MEMBERS_SENTENCE`, `CLOSING`) and the thumbnail formula was hardcoded in `prompts/thumbnail_concepts.md`, so one channel's wording lived in tracked code and prompts — against the rule that prompts and tracked templates carry no channel-specific value.
+
+**Options:** (A) keep the wording in code and the prompt and only fix the field rules; (B) move every channel-specific wording string to `channel.fixed` in the config (one string per language) and fix the prompt at the same time.
+
+**Decision:** B. `channel.fixed` is an optional mapping of part name (`members_sentence`, `closing`, `thumbnail_formula`) to a mapping of language code to string; `channel.members` fills `{members}` in every `members_sentence`. A missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. `scripts/common/channel.py` reads it (`fixed_strings`, `fixed_string`), `scripts/common/config.py` validates it, `metadata.py` inserts the RO string in the RO description and the EN string in the EN one, `thumbnail_concepts.py` hands `thumbnail_formula` (RO, else EN) to the model in a `## Channel` section, and `publish_kit.py` uses a chapter's `title_en` for the EN chapter lines. The prompt fixes: the chosen title first (a new `--title` input on `metadata.py`), no invented links or repos (`github_line` is `null` unless the Inputs name a repo or the context says the code is in the resources hub), a plain first-person pinned comment, each description in its own language, and English chapter titles (`title_en`).
+
+**Why not A:** the wording is the channel owner's, not the tool's; keeping it in code and prompts means every other channel edits tracked files and the rule stays broken. The config is the one place a channel's own values already live (`channel.members`, `channel.github_url`).
+
+**Consequence:** `scripts/metadata.py` loses `MEMBERS_SENTENCE` and `CLOSING`; `prompts/metadata.md` and `prompts/thumbnail_concepts.md` carry no channel wording; `config.yaml.example` shows the `channel.fixed` keys with sample wording. `metadata.json` chapters may carry `title_en`, and `metadata.md` gains a `## Chapters (EN)` section when any chapter has one. `channel.members` and `channel.github_url` stay required. `publish.py` does not forward `--title` yet (out of scope).
+
+---
+
+## [2026-10-23] The publish kit is its own tool and links the video (V020N lot n9)
+
+**Context:** Issue #73: after changing only the thumbnail the kit could not be rebuilt — the kit step is skipped while `publish-kit/studio.md` exists, and `--force` re-runs every step including translation and metadata, which would overwrite a metadata draft chosen by hand (against VISION §2.1). `--kit` also copied the final video (about 1 GB) into `publish-kit/`, so the disk held two copies.
+
+**Options:** (A) a `--kit-only` flag on `publish.py` that re-runs just the kit step; (B) move all the kit logic into a standalone `publish_kit.py` that reads the chain's existing outputs, and make `publish.py --kit` a subprocess call to it. For the video: (A) keep copying; (B) link it (hard link, else symlink, else only its path in `studio.md`).
+
+**Decision:** B for both. `scripts/publish_kit.py` takes `--project`, `--final-video`, `--name`, `--kit-loudness`, `--kit-title` and `--json`, reads `metadata.json`, `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg` and the final video, and writes `PROJECT/publish-kit/` (the SRTs and thumbnail copied, the video linked, `studio.md`). It never re-runs or overwrites the chain's outputs, so it can be re-run alone. `publish.py` keeps only the orchestration: the `kit` step carries an argv for `publish_kit.py` (or a `fail` message when `--final-video` cannot be resolved), runs it through the generic `execute`, and takes the child's JSON as the run's `kit` summary. The video link tries `os.link`, then `os.symlink`, then records `video_link: "path"` and names the absolute path in `studio.md`; before linking it prints the file and its size, and before the loudness pass one line saying it writes a large file.
+
+**Why not A:** a `--kit-only` flag keeps the kit logic in `publish.py` and duplicates the skip/force rules; the issue asks for a tool that is independent like every other stage. **Why not copy:** the disk held two copies of the same 1 GB file; a link is enough for a manual upload.
+
+**Consequence:** `publish.py` loses `collect_kit_checks`, `build_studio_md`, `write_kit`, `execute_kit`, `run_loudness`, `kit_info`, `image_dimensions`, `chapter_lines`, `chapter_mmss`, `load_metadata_json` and the kit constants; it keeps `KIT_DIR_NAME` for the skip rule and `srt_end_seconds`/`format_seconds`/`probe_duration` for `verify`. The kit skip rule is unchanged (`publish-kit/studio.md` exists; `--force` re-runs). RULES records the new subprocess pair and the kit rule.
+
+---
+
+## [2026-10-23] Thumbnail concepts move out of the metadata draft (V020N lot n10)
+
+**Context:** Issue #74: `metadata.md` mixed the publish metadata with a `## Thumbnail` section whose labels were English (Pose, Emotion, Theme, Source) while the channel works in Romanian, and thumbnail concepts are not metadata. The 2026-10-20 addendum had put a structured `thumbnail_concepts` model key into `metadata.py` and rendered it with the exact `thumbnail.py --photo --title --keyword --kicker --theme` command line per concept.
+
+**Options:** (A) keep the concepts in `metadata.py` and only translate the labels; (B) move them to their own tool and file, written in Romanian, starting from the confirmed title, and feed `thumbnail.py` directly; (C) drop the concepts entirely.
+
+**Decision:** B. `scripts/thumbnail_concepts.py` takes the corrected `.srt`, a context note and the confirmed title, asks the `metadata` model role (no config change) and writes `thumbnail_concepts.json` (validated against `schemas/thumbnail_concepts.schema.json`) plus a Romanian `thumbnail_concepts.md` with the labels `Nume`, `Poză`, `Emoție`, `Text`, `Temă`, `Sursă` and the command line `thumbnail.py --concepts thumbnail_concepts.json --pick N --photo <source> --out <dir>`. `thumbnail.py` gains `--concepts FILE` and `--pick N` (1-based, default 1): with `--concepts` the `--title`/`--keyword`/`--kicker`/`--theme` flags must not be given, and the picked concept fills them. `metadata.py` and `prompts/metadata.md` drop the `thumbnail_concepts` key and the `## Thumbnail` section; the validation rules carry over unchanged (2-3 concepts, non-empty `name`/`pose`/`emotion`, non-empty `text.title`/`text.keyword`, `theme` in `tech`/`creator`, `source.kind` in `clip_frame`/`new_photo`, a clip-frame timecode normalized and inside the transcript).
+
+**Why not A:** translating the labels leaves the concepts in the metadata draft, which is what the issue says is wrong; the concepts are a separate step with their own output. **Why not C:** the concepts are the input `thumbnail.py` needs; they just belong in their own file.
+
+**Consequence:** `metadata.md` keeps only what is pasted into Studio (titles, descriptions, chapters, tags, pinned comment). The concepts are a standalone step (not wired into `publish.py`'s chain) and `thumbnail.py` reads them with `--concepts`/`--pick`; the flag-only path is unchanged. This supersedes the 2026-10-20 addendum.
+
+---
+
+## [2026-10-23] Publish subtitle/video match check and capitalised corrections (V020N lot n8)
+
+**Context:** Two issues in the publish/subtitle path. #78: after a cut is removed or added in the final edit, the corrected SRT can silently no longer match the video, and the chain still translates, writes metadata and builds the kit from stale subtitles. #79: a correction like `pasnicii|paznicii` misses the sentence-initial `Pasnicii`, so the same word needs a second line.
+
+**Options:** For #78: (A) a new `publish.py` flag to point at the video; (B) a `verify` step that uses the final video the run already knows (`--final-video`, or `--media`) and compares the SRT's last cue end and file date with the video. For #79: (A) a global case-insensitive replace; (B) an opt-in capitalised variant, per line with a leading `*` or globally with `--capitalised`.
+
+**Decision:** B for both. `publish.py` gains a `verify` step between `correct` and `review`: `srt_end_seconds` reads the last `-->` end timestamp, `probe_duration` reads the video, and a difference over `MATCH_TOLERANCE_S` (2 s) or an SRT older than the video is `EXIT_USAGE` with one `[error]` line naming both times (or the age), aborting before translation, metadata and the kit; with no final video the step is skipped with reason `no final video`. `common/corrections.py` returns `Correction(wrong, correct, capitalised)`; a leading `*` on the wrong side sets `capitalised`, and `apply_corrections(..., capitalised=False)` also replaces the first-letter-uppercased wrong with the first-letter-uppercased correct when the wrong side starts with a lowercase letter. `correct_srt.py` gains `--capitalised` for every line.
+
+**Why not:** A) a new flag duplicates the video the run already has and would be forgotten; the check belongs in the chain. A global case-insensitive replace would touch patterns that are already capitalised (e.g. `CloudCode`) and change meaning; the opt-in variant keeps the default behaviour and never double-applies.
+
+**Consequence:** No new `publish.py` CLI flag; `--final-video`/`--kit` rules are unchanged. `shorts_generator.py` keeps working through the shared `apply_corrections` (per-line `*` markers apply there too, no new flag). RULES records both lines.
+
+---
+
+## [2026-10-23] Donations import and the low-credit warning (V020N lot n7)
+
+**Context:** Issue #97 asks for two things: importing donations into the costs ledger from a provider's CSV export instead of typing each one with `add --kind donation`, and warning the person on the Upload page when the OpenRouter key's remaining credit is low, before a run that would pass the key limit.
+
+**Options:** (A) a Ko-fi webhook or a network listener that receives donations; (B) a CSV file import, idempotent like the other imports. For the warning: (A) an ntfy alert; (B) a banner on the Upload page.
+
+**Decision:** B for both. `costs.py import-donations --from <donations.csv>` reads a header row (required `date`, `amount`; optional `note`, `id`), strips a leading `$`/`€` and thousands separators from the amount, and upserts by `source` (`donation:<id>` when the provider gives an id, else `donation:<date>:<amount>:<note>`), so re-running updates instead of duplicating. A bad date or amount is skipped with a `[warn]` line and counted in `skipped`; a missing file or a missing `date`/`amount` header is a usage error. `serve.py` gains `credit_warning(server)`, which returns a `.notice` banner when the cached credit is known, the key has a limit and `remaining < limits.credit_warn_usd`; the `/upload` route renders it above the start button.
+
+**Why not:** A) a webhook needs a public listener and payment handling, which the project explicitly avoids; the file import is the deliverable and the CLI `add --kind donation` stays. An ntfy alert is out of band — the person is already on the Upload page when they start a run, so the warning belongs there.
+
+**Consequence:** No new config key or flag beyond `import-donations --from`; no payment handling and no network listener. `credit_line` and the Costs page are unchanged. RULES records both lines.
+
+---
+
+## [2026-10-23] scripts/common/llm.py: one retry on an empty or non-JSON model answer
+
+**Context:** Issue #77: `metadata.py` with xiaomi/mimo-v2.6-pro failed once in three runs with `model response is not valid JSON: Expecting value: line 1 column 1 (char 0)` (an empty response); a second identical run worked. `metadata.py` was the only tool that parsed a model answer with no retry — `chapters.py`, `shorts_rank.py` and `recap_meta.py` already retry once, and `graphics_plan.py` retries on validation errors.
+
+**Options:** (A) add the retry in each tool that parses JSON; (B) one shared `complete_json` on the LLM client.
+
+**Decision:** B. `LLMClient.complete_json(role, messages, model=None, **kwargs)` runs a completion, parses the answer with `common.jsonio.parse_model_json` and retries once when the answer is empty or not valid JSON; both attempts are charged to the budget and the returned `JSONResponse.cost_usd` is their sum. It raises `InvalidModelJSON` (an `LLMError`) when the second answer is still empty or not valid JSON. `metadata.py` calls it instead of `complete` plus a local parse.
+
+**Why not:** A) the retry would be copied into every tool and drift; the client owns the call, so it is the one place that can retry and charge both attempts. The tools that already retry keep their own validation retry.
+
+**Consequence:** `metadata.py`'s local `parse_model_json` is gone; `InvalidModelJSON` exits `EXIT_RUNTIME` through the existing `LLMError` handler. RULES line 59 records the retry.
+
+---
+
+## [2026-10-23] The Costs page and costs.json (V020N lot n1)
+
+**Context:** The Costs page on a friend instance showed the owner instance's totals under a "Project costs (everyone)" heading next to a "This instance" heading, which read as two competing ledgers. The page and `costs.py totals` also computed the totals with different calls: the CLI passed only the month, the page passed `upkeep_percent=upkeep_percent()`.
+
+**Options:** (A) keep the two headings and the two calls; (B) one page order for a friend instance — the donation buttons first, then its own model cost to cover, then the owner instance's costs as voluntary project costs, then the per-clip table and the donation list — and one shared `compute_totals(..., upkeep_percent=upkeep_percent())` call for the CLI and the page.
+
+**Decision:** B. The "Project costs (everyone)" / "This instance" headings are gone; the owner's page is unchanged. `costs.py command_totals` now calls `compute_totals(connection, month, upkeep_percent=upkeep_percent())`, the same call `serve.py` makes, so the CLI and the page always agree.
+
+**Why not:** A) two headings for one project's costs confuse a friend about what they are being asked to cover, and two calls can drift.
+
+**Consequence:** `costs.py totals --json` now carries the upkeep fields (`upkeep_percent`, `upkeep_usd`, `total_cost_usd`) and the balance subtracts the upkeep; RULES, the user guide and `config.yaml.example` describe the current page.
+
+---
+
+## [2026-10-23] The two JSON readers (V020N lot n1)
+
+**Context:** Two `load_json` helpers exist: `common.jsonio.load_json` returns `None` on a bad file, `common.timeline_words.load_json` raises `TimelineWordsError`. A reader could not tell whether the duplication was intentional.
+
+**Options:** (A) collapse them into one strict reader; (B) keep both and document why each exists.
+
+**Decision:** B. `jsonio.load_json` is the tolerant read for the web app and metadata (a missing or unreadable file is a normal state); `timeline_words.load_json` is the strict read for word mapping (a bad words file must stop the run with a message naming the file). Both module docstrings say so.
+
+**Why not:** A) a strict reader would make the web app fail on a missing optional file, and a tolerant reader would let a bad words file pass silently.
+
+**Consequence:** the two readers stay; the reason is recorded here and in the two module docstrings.
+
+---
+
 ## [2026-10-23] Shared helpers extracted from serve.py and the tools (V010 lot fix2a)
 
 **Context:** Lot fix2 found the same small helpers copied across `serve.py` and the tools: tolerant JSON reads and atomic writes, a `git` runner, the OpenRouter key endpoint, GB formatting, the run.log tail and the spend-between-times sum, the append-only feedback line, the `sessionStorage` open-state script, the used-shot-keys set, the reason groups, the ffprobe duration and the ffmpeg frame extraction. A helper and its call sites had to change in several places at once.
@@ -2162,6 +2378,8 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-20] Metadata draft carries structured thumbnail photo concepts (S51 lot 1 addendum)
 
+**Superseded 2026-10-23** — the concepts moved to their own tool and file (`thumbnail_concepts.py` + `thumbnail.py --concepts`/`--pick`); see the V020N lot n10 entry above.
+
 **Context:** The lot 1 addendum to issue #51 (Doru, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
 
 **Options:** (A) the model writes the `## Thumbnail` section as free-form markdown in its JSON; (B) a structured `thumbnail_concepts` key (2-3 objects with `name`/`pose`/`emotion`/`text{title,keyword,kicker}`/`theme`/`source{kind,timecode}`) validated like `chapters` and rendered by the tool; (C) no section for now — frame picking is issue #52's vision pass.
@@ -2513,7 +2731,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Context:** F35: `music_pick.py` (`beats.py`), `shorts_generator.py` (`reframe.py`), `finish_pip.py` (`matte.py`), `eval_rough_cut.py` (`subs_from_edit.py`) and `render.py` (`reframe.py`) shell out to another tool's script instead of only `scripts/common/`. It matters when one tool is moved, renamed or run from another checkout. The alternative — moving each shared step behind a `common/` helper — would drag model runners and station CLIs into the shared library.
 
-**Decision:** orchestrator-style subprocess calls are accepted, limited to this set: flow orchestrators chain station CLIs (`recap.py` → the stations; `inbox.py` and `serve.py` → `recap.py`; `publish.py` → `transcribe.py`, `subs_from_edit.py`, `correct_srt.py`, `translate_srt.py`, `thumbnail.py`, `metadata.py`, `loudness.py`; `mode_b.py` → `transcribe.py`, `rough_cut.py`, `export_filmcraft.py`, `chapters.py`); fallbacks and evals (`llm_director.py` → `director.py`, `eval_rough_cut.py` → `subs_from_edit.py`); data steps (`music_pick.py` → `beats.py`; `shorts_generator.py` and `render.py` → `reframe.py`; `finish_pip.py` → `matte.py`); probes (`doctor.py` → each tool's `--help`). Every call resolves the sibling script next to the caller's own file (or the repo `scripts/` root) and runs it with the same interpreter, `--json` where the callee has it. Nothing outside this list shells out to another tool; a step needed by more than one tool goes behind `scripts/common/`. RULES carries the list.
+**Decision:** orchestrator-style subprocess calls are accepted, limited to this set: flow orchestrators chain station CLIs (`recap.py` → the stations; `inbox.py` and `serve.py` → `recap.py`; `publish.py` → `transcribe.py`, `subs_from_edit.py`, `correct_srt.py`, `translate_srt.py`, `thumbnail.py`, `metadata.py`, `publish_kit.py`; `publish_kit.py` → `loudness.py`; `mode_b.py` → `transcribe.py`, `rough_cut.py`, `export_filmcraft.py`, `chapters.py`); fallbacks and evals (`llm_director.py` → `director.py`, `eval_rough_cut.py` → `subs_from_edit.py`); data steps (`music_pick.py` → `beats.py`; `shorts_generator.py` and `render.py` → `reframe.py`; `finish_pip.py` → `matte.py`); probes (`doctor.py` → each tool's `--help`). Every call resolves the sibling script next to the caller's own file (or the repo `scripts/` root) and runs it with the same interpreter, `--json` where the callee has it. Nothing outside this list shells out to another tool; a step needed by more than one tool goes behind `scripts/common/`. RULES carries the list.
 
 **Consequence:** moving or renaming a script means updating its named pairs; a new tool-to-tool call is a new DECISIONS entry first. No code change in this lot.
 
@@ -2714,3 +2932,139 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 **Why not:** A) the hint gives no way to act on it, and the brief is written before the edit exists.
 
 **Consequence:** `brief_facts.json` is a new machine-owned file (no schema, four optional string keys); `recap_meta.py` `missing` now uses the field names (`place`, `when`, `who`, `occasion`); the new route is in RULES; the new parts are experimental in the v0.1.0 candidate.
+
+---
+
+## [2026-10-23] README is the front door, the tool reference moves to docs/guides/tools.md (V020N lot n2)
+
+The README had grown to about 500 lines and 30 sections, one per tool, so a
+first-time visitor could not see what the project is, who it is for or how to
+start. The README is now about one screen: what yt-pipeline is, who it is for, a
+short quickstart and where to go next. The tool-by-tool reference moved, grouped
+and unchanged, to `docs/guides/tools.md`, and the pilot host and costs sections
+link to their guides instead of repeating them.
+
+The README illustration is a vector SVG (`docs/images/web-app.svg`), not a PNG:
+`scripts/check_public.py` blocks `.png` outside `tests/fixtures/` and `examples/`,
+and a real capture would carry the instance's own music library names. The SVG is
+own work drawn in the app's theme colours. `tests/test_readme_layout.py` keeps the
+README short and its links resolving.
+
+---
+
+## [2026-10-23] Watchdog: no per-lot configuration, two stop rules, lot cost in the notification (V020N lot n4)
+
+**Context:** Issue #65: the watchdog needed a manual edit (the `--lot` label and a per-run `--run-cap` in the cron line) every time a new lot started; a stale label and a cap that did not match the work were easy to leave behind. The per-run cap also produced two notifications (a `Budget` at 80 % and a `Blocked` at 100 %).
+
+**Options:** (A) keep `--lot` and `--run-cap` and document them better; (B) derive the label from the active task file, keep only the two hard stops (no commit for N hours, one hard daily spend ceiling) and report the lot cost in the stop notification.
+
+**Decision:** B. `resolve_label` reads the newest task brief in `<repo>/.opencode/tasks/` (review and audit notes skipped), else the tmux session running the agent, else no prefix; `--lot` is gone. `--run-cap` and the `Budget` alert are gone; the two stop rules are `--kill-no-commit-hours` and `--kill-over-usd`. The run-spend ledger stays and measures the current lot's spend, which the single `Blocked` stop notification reports in plain words.
+
+**Why not:** A) the per-lot flag is exactly the manual step the issue wants removed, and a per-run cap that stops the agent is a second spend rule the issue asks to drop.
+
+**Consequence:** the cron line no longer carries a lot label or a run cap; the stop notification names the reason and the lot's cost; RULES, the skill and `docs/AGENT_SETUP.md` describe the two stop rules.
+
+---
+
+## [2026-10-23] Repo automations: grouped weekly Dependabot and one shared AGENTS.md (V020N lot n5)
+
+**Context:** Issue #100: the repo had no dependency-update automation, and the project rules for coding agents lived only in `CLAUDE.md`, which opencode reads only when no `AGENTS.md` exists; a second agent file would have copied the rules.
+
+**Options:** (A) keep `CLAUDE.md` as the only agent file and add a Dependabot config; (B) one shared `AGENTS.md` next to `CLAUDE.md`, the topic rules split into small files under `docs/agents/` and one pointer to them, plus a grouped weekly Dependabot config.
+
+**Decision:** B. `.github/dependabot.yml` opens one grouped pull request per week per ecosystem (`pip` and `github-actions`), Monday 09:00 `Europe/Bucharest` (the owner's working hours), `patterns: ["*"]` per group; CI (`tests.yml`, `public-check.yml`, `stable-check.yml`) already runs on `pull_request`, so it checks a Dependabot PR like any other. `AGENTS.md` is the shared instruction file for every coding agent (opencode, DeepSeek, Claude): it points to `docs/RULES.md` (the rules in force), `.claude/skills/` and the topic files `docs/agents/code-style.md`, `docs/agents/testing.md` and `docs/agents/conventions.md`, and copies no rule. `CLAUDE.md` becomes a short pointer to `AGENTS.md`.
+
+**Why not A:** the issue asks for one shared file for every agent and no copies; keeping the rules in `CLAUDE.md` alone leaves opencode without them once `AGENTS.md` exists.
+
+**Consequence:** `AGENTS.md` and `docs/agents/` are the agent entry point; `docs/AGENT_SETUP.md` and `docs/RELEASING.md` name them; `tests/test_agents_md.py` and `tests/test_dependabot.py` keep the shape; `tests/test_no_personal_setup.py` scans the new files; RULES gains two lines.
+
+## [2026-10-23] Make a shot longer or shorter in the web app (V020N lot n6)
+
+**Context:** Issue #93: after the first holiday pilot the owner wants light editing of a finished edit from the phone. Removing a shot already works (the strip's bin icon → `edit_drop.py` → a new version). The next step is making a shot a little longer or shorter without a new director run.
+
+**Options:** (A) a new tool `edit_trim.py` with its own version/render machinery; (B) extend `edit_drop.py` with a `--trim N:DELTA` option that shares the existing "modify the edit, render a new version" path.
+
+**Decision:** B. `edit_drop.py` gains `--trim N:DELTA` (repeatable, e.g. `3:+1` or `3:-1`), mutually exclusive with `--drop`. A longer shot extends its out edge up to the source clip's duration (`sources[].duration_s`) and takes the rest from the in edge down to 0; a shorter shot trims the out edge with a 1.0 s floor; a change that cannot move is a usage error. The web app's strip shows a "− 1 s" / "+ 1 s" row when a shot is picked, next to the existing bin icon; both post to a new `POST /<project>/trim-shot` route that runs `edit_drop.py --trim` and shows the new version. No model call, the old version is never edited.
+
+**Why not A:** the version/render/thumbnail path already exists in `edit_drop.py` and is named in the RULES tool-to-tool list (`serve.py → edit_drop.py`); a second tool would duplicate it and add a pair.
+
+**Consequence:** the RULES route list names `POST /<project>/trim-shot` and the trim semantics; the `yt-edit-drop` skill covers the trim; the new control is experimental in the v0.1.0 candidate; no schema change.
+
+## [2026-10-23] Beat snap: a structure-beat cut falls back to the nearest beat (V020N lot n12)
+
+**Context:** issue #95 — in the first holiday-flow pilot most cuts missed the beat; the director notes carried `cut k: not snapped to a beat (nearest X s away)` for 4 of the cuts. Reproduced on the first holiday pilot: the cuts that start a new `shot_plan` structure beat snap to the nearest **downbeat**, and the downbeat grid is sparse (every 4 beats ≈ 2.1 s), so the nearest downbeat is often farther than the half-beat snap window and the cut is left unsnapped even though a beat is ~0.2 s away.
+
+**Decision:** in `llm_director.snap_slots` a structure-beat cut prefers the nearest downbeat only when it lies inside the small window (`BEAT_SNAP_FRACTION × beat_period_s`); otherwise it lands on the nearest beat of the dense grid. Every cut is then on a beat. The rule-based `director.py` never passes downbeats, so it is unchanged. Measured on the first holiday pilot: 9/9 cuts snapped (was 7/9).
+
+## [2026-10-24] One model for every agent, reasoning level per agent (V020N lot n21)
+
+**Context:** the build agents ran on three OpenRouter models (`xiaomi/mimo-v2.6-pro`
+for the architect, `deepseek/deepseek-v4.1-flash` for the coder, `z-ai/glm-5.3-flash`
+as a fallback), so a lot's quality depended on which model happened to be picked
+and the fallback was easy to leave behind.
+
+**Options:** (A) keep the per-agent models and only document them; (B) one model
+for every agent, with the reasoning level set per agent.
+
+**Decision:** B. Every agent runs on `openrouter/deepseek/deepseek-v4.1-flash`;
+`xiaomi/mimo-v2.6-pro` and `z-ai/glm-5.3-flash` are dropped from `opencode.json`.
+The reasoning level is a `reasoning:` block in the agent file (`effort: high` for
+architect, coder and specwriter; `effort: xhigh` for the new `coder-max`), which
+opencode passes to OpenRouter. The architect hands a brief to `coder-max` only
+when the lot says "hard"; every other lot goes to `coder`.
+
+**Why not A:** the owner decided one model; a per-agent model split makes the
+output depend on the agent rather than the task, and the GLM fallback was never
+used.
+
+**Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
+four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
+level of each agent and when `coder-max` is used.
+
+## [2026-10-24] Chronological order survives the director's repairs, the reviewer box leaves the project page (V020N lot n25)
+
+**Context:** Issue #95/#93 follow-up. On a real holiday test with the brief "about 60 seconds, chronological" the final edit was not in time order (0003, 0072, 0081, 0072, ...): the top-star repair in `llm_director.py` puts the swapped-in star in the slot of the shot it replaces, so a late shot lands early. Separately, the owner decided the project page no longer shows the director reviewer box.
+
+**Options:** (A) make the repair pick a victim near the star in time; (B) let the repair swap in place and re-sort the edit (and its plan) by capture/source time afterwards, before the beat snap.
+
+**Decision:** B. `llm_director.enforce_chronological_order` re-sorts the record and the plan by `edit_order_key` when the brief's order is chronological; it runs at the end of `repair_draft` and at the start of `finish_record` (before the beat snap, so the snapped lengths stay valid), and a same-take jump cut it creates is dropped again. The project page (`serve.py`) no longer renders the reviewer box; the verdict stays in `edit.json meta.director.review` and issue #96 (v0.3.0) brings it back in plain words.
+
+**Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
+
+**Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.
+
+## [2026-10-24] A simpler Watch tab, generic example wording (V020N lot n26)
+
+**Context:** issue #93 follow-up. The owner found the Watch (Recap) tab busier than it needs to be: the tab bar carried a **Details** group with **Why?** and **Shots** links, and the strip under the player showed a clip/photo colour legend. The owner also wanted `config.yaml.example` to stop carrying his own channel wording.
+
+**Options:** (A) keep the links and the legend and only hide them behind a feature flag; (B) drop the Why?/Shots links from the tab bar and the colour legend, keep the pages reachable by URL, and replace the owner's wording in the example with neutral placeholders.
+
+**Decision:** B. `serve._render_tabs` no longer builds the Details group, so the tab bar shows only Recap, Files, Cuts and Shorts; `render_strip` drops the `strip-legend` clip/photo spans and keeps the summary line in a `strip-summary` container. The `why`/`shots` feature parts, the `?tab=why` / `?tab=shots` routes and the `explain.html` / `shotlog.html` serving are unchanged, so the pages stay reachable by URL for the developer. `config.yaml.example` carries neutral `channel.fixed` placeholders (the real wording lives only in the owner's `config.yaml`).
+
+**Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
+
+**Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.
+
+## [2026-10-24] Delete one version from the web app (V020N lot n29)
+
+**Context:** issue #109 — a project can be deleted from the web app, but a
+single version cannot, so old versions fill the disk of an instance.
+
+**Options:** (A) delete the version folder from the command line only; (B) a
+"Delete this version" action on the Recap tab, with an inline confirmation.
+
+**Decision:** B. `serve.py` gains `POST /<project>/delete-version` (urlencoded
+`version`, e.g. `v002`): it removes that version's folder under `versions/` and
+redirects to the latest version. The latest version, the first version (v001,
+the director's original) and a version while a run is going are refused; a name
+that is not `vNNN` (a crafted `../`) is a usage error, and the resolved target
+must sit directly under the project's `versions/` folder. The action shows only
+for a version that is neither the latest nor the first.
+
+**Why not A:** the owner asked for it in the phone flow; the version list and
+the disk are managed from the web app, and the confirmation matches the shot
+buttons.
+
+**Consequence:** RULES gains the route and the versions rule; the user guide
+and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
+the commit carries `Stable-change: approved`.

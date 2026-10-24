@@ -1,6 +1,14 @@
+import json
 from datetime import datetime
 
-from common.media import is_matte_export, is_video_name, parse_stamp, stem_timestamp, video_files
+from common.media import (
+    earliest_creation_date,
+    is_matte_export,
+    is_video_name,
+    parse_stamp,
+    stem_timestamp,
+    video_files,
+)
 
 
 def test_parse_stamp_from_stem_and_path():
@@ -46,3 +54,27 @@ def test_video_files_sorted_and_matte_filter(tmp_path):
 def test_video_files_missing_directory(tmp_path):
     assert video_files(tmp_path / "absent") == []
     assert video_files(None) == []
+
+
+def test_earliest_creation_date_across_clips_and_photos(tmp_path):
+    (tmp_path / "ingest.json").write_text(
+        json.dumps(
+            {
+                "clips": [
+                    {"creation_time": "2026-09-29T20:58:37"},
+                    {"creation_time": "2026-09-28T10:00:00"},
+                ],
+                "photos": [{"creation_time": "2026-09-27T08:00:00"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert earliest_creation_date(tmp_path) == "2026-09-27"
+
+
+def test_earliest_creation_date_missing_and_empty(tmp_path):
+    assert earliest_creation_date(tmp_path) is None
+    (tmp_path / "ingest.json").write_text(
+        json.dumps({"clips": [], "photos": []}), encoding="utf-8"
+    )
+    assert earliest_creation_date(tmp_path) is None

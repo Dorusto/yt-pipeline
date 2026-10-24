@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" width="720" height="420" role="img" aria-label="The web app: a project page with the recap and the brief form">
+  <rect x="0" y="0" width="720" height="420" fill="#151619"/>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+    <text x="24" y="36" fill="#efedea" font-size="20" font-weight="650">AI Director</text>
+    <text x="540" y="35" fill="#efedea" font-size="14" text-anchor="end">Projects</text>
+    <text x="620" y="35" fill="#9c9b98" font-size="14" text-anchor="end">New recap</text>
+    <text x="696" y="35" fill="#9c9b98" font-size="14" text-anchor="end">Costs</text>
+    <line x1="0" y1="56" x2="720" y2="56" stroke="#30333a" stroke-width="1"/>
+
+    <rect x="24" y="72" width="304" height="171" rx="14" fill="#1e2024" stroke="#30333a" stroke-width="1"/>
+    <polygon points="166,142 166,173 192,157.5" fill="#f0a53a"/>
+    <text x="24" y="272" fill="#efedea" font-size="18" font-weight="600">Trip — day 3</text>
+    <text x="24" y="294" fill="#9c9b98" font-size="13">90 s · 22 shots · 3 photos</text>
+
+    <rect x="24" y="306" width="672" height="52" rx="10" fill="#1e2024" stroke="#30333a" stroke-width="1"/>
+    <text x="38" y="337" fill="#9c9b98" font-size="14">90 s, chronological, calm start, ambient sound only</text>
+
+    <rect x="24" y="370" width="72" height="34" rx="17" fill="#1e2024" stroke="#30333a" stroke-width="1"/>
+    <text x="60" y="392" fill="#9c9b98" font-size="13" text-anchor="middle">Place</text>
+    <rect x="104" y="370" width="72" height="34" rx="17" fill="#1e2024" stroke="#30333a" stroke-width="1"/>
+    <text x="140" y="392" fill="#9c9b98" font-size="13" text-anchor="middle">When</text>
+    <rect x="184" y="370" width="96" height="34" rx="17" fill="#1e2024" stroke="#30333a" stroke-width="1"/>
+    <text x="232" y="392" fill="#9c9b98" font-size="13" text-anchor="middle">Occasion</text>
+
+    <rect x="496" y="370" width="200" height="34" rx="10" fill="#f0a53a"/>
+    <text x="596" y="392" fill="#151619" font-size="14" font-weight="600" text-anchor="middle">Make the new version</text>
+  </g>
+</svg>

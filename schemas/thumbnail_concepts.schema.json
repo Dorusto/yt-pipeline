@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/thumbnail_concepts.schema.json",
+  "title": "thumbnail_concepts",
+  "description": "2-3 Romanian thumbnail concepts proposed by scripts/thumbnail_concepts.py from a confirmed title, a context note and a corrected Romanian .srt. Each concept maps to thumbnail.py --concepts thumbnail_concepts.json --pick N: the creator's own face, a real emotion and short text, never a generic illustration. The chosen concept feeds thumbnail.py directly.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "tool",
+    "title",
+    "concepts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UTC timestamp the file was written"
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the script that wrote the file, e.g. scripts/thumbnail_concepts.py"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the confirmed title the concepts start from"
+    },
+    "concepts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "description": "distinct thumbnail concepts, each an alternative to choose from",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "pose",
+          "emotion",
+          "text",
+          "theme",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "short Romanian label for the concept"
+          },
+          "pose": {
+            "type": "string",
+            "minLength": 1,
+            "description": "what the face and body do in the shot"
+          },
+          "emotion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "a real, readable emotion, never neutral"
+          },
+          "text": {
+            "type": "object",
+            "required": [
+              "title",
+              "keyword",
+              "kicker"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "description": "row 1 of the thumbnail text"
+              },
+              "keyword": {
+                "type": "string",
+                "minLength": 1,
+                "description": "row 2 of the thumbnail text"
+              },
+              "kicker": {
+                "type": "string",
+                "description": "small line above the title, may be empty"
+              }
+            }
+          },
+          "theme": {
+            "type": "string",
+            "enum": [
+              "tech",
+              "creator"
+            ],
+            "description": "brand theme for thumbnail.py"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "clip_frame",
+                  "new_photo"
+                ],
+                "description": "a frame from the clip or a new photo to shoot"
+              },
+              "timecode": {
+                "type": "string",
+                "minLength": 1,
+                "description": "HH:MM:SS moment inside the transcript, required for kind clip_frame"
+              }
+            },
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "clip_frame"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "timecode"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

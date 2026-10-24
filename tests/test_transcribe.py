@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 import subs_from_edit
 import transcribe
@@ -68,6 +69,43 @@ def test_json_summary_fields(tmp_path, capsys):
     assert summary["wall_time_s"] >= 0.0
     assert Path(summary["outputs"]["srt"]) == out / "camera A.srt"
     assert Path(summary["outputs"]["words_json"]) == out / "camera A_words.json"
+
+
+def test_default_model_is_language_and_device_aware():
+    assert transcribe.default_model("cuda", "ro") == "turbo"
+    assert transcribe.default_model("cpu", "ro") == "medium"
+    assert transcribe.default_model("cpu", "en") == "small"
+    assert transcribe.default_model("cpu", None) == "medium"
+    assert transcribe.default_model("cpu", "auto") == "medium"
+
+
+def test_model_flag_overrides_the_default(tmp_path, capsys):
+    rc, out, summary = run_mock(tmp_path, capsys, extra=["--model", "large-v3"])
+    assert rc == 0
+    assert summary["model"] == "large-v3"
+
+
+def test_env_var_overrides_the_default(monkeypatch):
+    monkeypatch.setenv(transcribe.WHISPER_MODEL_ENV, "large-v2")
+    assert transcribe.resolve_model(None, "ro", "cpu", config={}) == "large-v2"
+
+
+def test_config_model_overrides_the_default(tmp_path, monkeypatch):
+    monkeypatch.delenv(transcribe.WHISPER_MODEL_ENV, raising=False)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "models": {"coder": "x"},
+                "llm_budget_usd": 1.0,
+                "llm_backend": "mock",
+                "transcribe": {"model": "large-v3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YT_CONFIG", str(config_path))
+    assert transcribe.resolve_model(None, "ro", "cpu") == "large-v3"
 
 
 def test_name_overrides_input_stem(tmp_path, capsys):

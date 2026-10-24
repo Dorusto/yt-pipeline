@@ -23,7 +23,6 @@ ignored. Sources are read-only; the MP4 is written atomically to ``--out``.
 
 import argparse
 import json
-import math
 import os
 import subprocess
 import sys
@@ -39,7 +38,7 @@ from common.ambience import (
     resolve_denoiser,
 )
 from common.ffmpeg_tools import ffmpeg_path, probe_duration
-from common.moves import middle_speed_of, slot_screen_length
+from common.moves import middle_speed_of, screen_factor, slot_screen_length
 from common.timeline_words import fade_for_join
 from common.photos import ensure_jpeg, open_photo
 from common import vertical
@@ -336,13 +335,40 @@ def probe_video_size(path):
         return None
 
 
+def frame_aligned_durations(slots, durations, xfade_s):
+    """On-screen durations and crossfade lengths rounded to whole frames.
+
+    The cumulative on-screen position of every cut is rounded to the nearest
+    frame and each clip's on-screen length is the difference of the rounded
+    positions, so the per-clip rounding never accumulates into a drift across
+    the edit. Returns ``(aligned_durations, aligned_fades)``.
+    """
+    aligned = []
+    fades = []
+    position = 0.0
+    frames = 0
+    for index, duration in enumerate(durations):
+        position += duration
+        target = round(position * FPS)
+        aligned.append((target - frames) / FPS)
+        frames = target
+        if index < len(slots) - 1:
+            fade = fade_for_join(slots[index + 1], durations[index], durations[index + 1], xfade_s)
+            fade_frames = round(fade * FPS)
+            fades.append(fade_frames / FPS)
+            position -= fade_frames / FPS
+            frames -= fade_frames
+        else:
+            fades.append(0.0)
+    return aligned, fades
+
+
 def total_duration(slots, durations, xfade_s):
-    """The on-screen length of the whole edit, crossfades included."""
-    total = durations[0]
+    """The on-screen length of the whole edit, crossfades included, frame-aligned."""
+    aligned, fades = frame_aligned_durations(slots, durations, xfade_s)
+    total = aligned[0]
     for join in range(len(slots) - 1):
-        nxt = join + 1
-        fade = fade_for_join(slots[nxt], durations[join], durations[nxt], xfade_s)
-        total += durations[nxt] - fade
+        total += aligned[join + 1] - fades[join]
     return total
 
 
@@ -495,7 +521,7 @@ def photo_filters(index, slot, duration, width, height, photo_size):
     amount = float(burns.get("amount", 0.08))
     focus_x = float(burns.get("focus_x", 0.5))
     focus_y = float(burns.get("focus_y", 0.5))
-    frames = max(1, math.ceil(duration * FPS))
+    frames = max(1, round(duration * FPS))
     zoompan = zoompan_for(move, amount, focus_x, focus_y, frames, width, height)
     photo_width, photo_height = photo_size
     frame_aspect = width / height
@@ -522,20 +548,20 @@ def photo_filters(index, slot, duration, width, height, photo_size):
     ]
 
 
-def ramp_quarters(slot):
+def ramp_quarters(slot, end_s=None):
     """The source times that split a ramped slot into head quarter, middle half and tail quarter."""
     in_s = float(slot["in_s"])
-    out_s = float(slot["out_s"])
+    out_s = float(slot["out_s"]) if end_s is None else float(end_s)
     length = out_s - in_s
     return in_s, in_s + length / 4, in_s + 3 * length / 4, out_s
 
 
-def ramp_video_filters(index, slot, speed, width, height, crop=None):
+def ramp_video_filters(index, slot, speed, width, height, crop=None, end_s=None):
     """Three trims joined: head quarter and tail quarter in real time, middle half at ``speed``.
 
     ``crop`` is an optional ``crop`` filter applied to the source before it is split.
     """
-    start, first, second, end = ramp_quarters(slot)
+    start, first, second, end = ramp_quarters(slot, end_s)
     head = [f"[{index}:v]{crop}[rc{index}]"] if crop else []
     source = f"rc{index}" if crop else f"{index}:v"
     return head + [
@@ -550,9 +576,9 @@ def ramp_video_filters(index, slot, speed, width, height, crop=None):
     ]
 
 
-def ramp_audio_filters(index, slot, speed):
+def ramp_audio_filters(index, slot, speed, end_s=None):
     """The ambient sound cut the same way: ``atempo`` on the middle half keeps it continuous."""
-    start, first, second, end = ramp_quarters(slot)
+    start, first, second, end = ramp_quarters(slot, end_s)
     return [
         f"[{index}:a]asplit=3[ah{index}][am{index}][at{index}]",
         f"[ah{index}]atrim=start={fmt(start)}:end={fmt(first)},asetpts=PTS-STARTPTS,"
@@ -577,17 +603,19 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
     parts = []
     sizes = photo_sizes or [None] * len(slots)
     crops = crops or [None] * len(slots)
+    aligned, fades = frame_aligned_durations(slots, durations, xfade_s)
     for index, slot in enumerate(slots):
         is_photo = slot.get("kind") == "photo"
         if is_photo:
-            parts.extend(photo_filters(index, slot, durations[index], width, height, sizes[index]))
+            parts.extend(photo_filters(index, slot, aligned[index], width, height, sizes[index]))
         else:
             start = fmt(slot["in_s"])
-            end = fmt(slot["out_s"])
             ramp = middle_speed_of(slot)
             if ramp > 1.0:
-                parts.extend(ramp_video_filters(index, slot, ramp, width, height, crops[index]))
+                end_s = float(slot["in_s"]) + aligned[index] / screen_factor(ramp)
+                parts.extend(ramp_video_filters(index, slot, ramp, width, height, crops[index], end_s))
             else:
+                end = fmt(float(slot["in_s"]) + aligned[index])
                 crop_prefix = f"{crops[index]}," if crops[index] else ""
                 parts.append(
                     f"[{index}:v]{crop_prefix}trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={FPS},"
@@ -596,8 +624,10 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
                 )
         if ambience_enabled and has_audio[index] and not is_photo:
             if ramp > 1.0:
-                parts.extend(ramp_audio_filters(index, slot, ramp))
+                end_s = float(slot["in_s"]) + aligned[index] / screen_factor(ramp)
+                parts.extend(ramp_audio_filters(index, slot, ramp, end_s))
             else:
+                end = fmt(float(slot["in_s"]) + aligned[index])
                 parts.append(
                     f"[{index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
                     f"aresample={SAMPLE_RATE}[a{index}]"
@@ -605,16 +635,16 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
         else:
             parts.append(
                 f"anullsrc=r={SAMPLE_RATE}:cl=stereo,"
-                f"atrim=start=0:end={fmt(durations[index])},"
+                f"atrim=start=0:end={fmt(aligned[index])},"
                 f"asetpts=PTS-STARTPTS[a{index}]"
             )
 
     current_v = "v0"
     current_a = "a0"
-    accumulated = durations[0]
+    accumulated = aligned[0]
     for join in range(len(slots) - 1):
         nxt = join + 1
-        fade = fade_for_join(slots[nxt], durations[join], durations[nxt], xfade_s)
+        fade = fades[join]
         if fade > 0:
             offset = accumulated - fade
             if offset < 0:
@@ -627,7 +657,7 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
             parts.append(f"[{current_a}][a{nxt}]acrossfade=d={fmt(fade)}[xa{join}]")
             current_v = f"xv{join}"
             current_a = f"xa{join}"
-            accumulated = accumulated + durations[nxt] - fade
+            accumulated = accumulated + aligned[nxt] - fade
         else:
             parts.append(
                 f"[{current_v}][{current_a}][v{nxt}][a{nxt}]concat=n=2:v=1:a=1"
@@ -636,7 +666,7 @@ def build_filter_graph(slots, durations, has_audio, ambience_enabled, width, hei
             parts.append(f"[cv{join}]settb=1/{FPS}[cvt{join}]")
             current_v = f"cvt{join}"
             current_a = f"ca{join}"
-            accumulated = accumulated + durations[nxt]
+            accumulated = accumulated + aligned[nxt]
     if clean_chain:
         parts.append(f"[{current_a}]{','.join(clean_chain)}[aclean]")
         current_a = "aclean"
@@ -776,7 +806,7 @@ def render(
             raise RenderError(f"music file has no audio stream: {music_config['path']}")
         music_duration = probe_duration(music_config["path"])
         if music_duration is None:
-            raise RenderError(f"could not read music duration: {music_config['path']}")
+            raise RenderRuntimeError(f"could not read music duration: {music_config['path']}")
         music_mtime = music_config["path"].stat().st_mtime
     ducking = bool(music_config is not None and ambience_enabled)
     looped = bool(music_config is not None and music_duration < edit_duration)

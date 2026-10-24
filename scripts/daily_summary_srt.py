@@ -24,10 +24,11 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from common.cli import handle_help
 from common.config import ConfigError
 from common.llm import LLMError, make_client
 from common.summary import summary_fields
-from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.exit_codes import EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
 BATCH_CHARS = 80000
@@ -102,6 +103,7 @@ def spent_usd():
 
 def main():
     started = time.monotonic()
+    handle_help(["Utilizare: python3 daily_summary_srt.py transcripts_raw/ [output.md] [--json]"])
     json_out = "--json" in sys.argv[1:]
     stream = sys.stderr if json_out else sys.stdout
     positionals = [a for a in sys.argv[1:] if not a.startswith("--")]

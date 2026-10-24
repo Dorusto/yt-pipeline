@@ -30,6 +30,7 @@ from common.errors import report_error
 from common.llm import LLMError, make_client
 from common.overlap import overlap_fraction, overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
+from common.text import read_text
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROMPT = REPO_ROOT / "prompts" / "graphics_plan.md"
@@ -75,16 +76,6 @@ def build_parser():
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
-
-
-def read_text(path, label):
-    """Read a UTF-8 text file, raising a named error when it is missing or unreadable."""
-    try:
-        return Path(path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise GraphicsPlanError(f"{label} file not found: {path}")
-    except OSError as exc:
-        raise GraphicsPlanError(f"cannot read {label} file {path}: {exc}")
 
 
 def read_json(path, label):
@@ -414,8 +405,8 @@ def run(words_path, markers_path=None, context_path=None, out_path=None, max_ent
     words, shape = load_words(words_file)
     span = max(word["end"] for word in words)
     candidates = load_markers(markers_path) if markers_path else []
-    context_text = read_text(context_path, "context") if context_path else None
-    prompt_text = read_text(DEFAULT_PROMPT, "prompt")
+    context_text = read_text(context_path, "context", GraphicsPlanError, quote=False) if context_path else None
+    prompt_text = read_text(DEFAULT_PROMPT, "prompt", GraphicsPlanError, quote=False)
     transcript = build_transcript(words)
     message = build_message(prompt_text, transcript, candidates, context_text, max_entries)
     config = load_config()

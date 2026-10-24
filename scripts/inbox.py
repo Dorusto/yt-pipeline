@@ -29,6 +29,7 @@ from pathlib import Path
 from common.config import ConfigError, no_projects_message, projects_path
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
+from common.jsonio import parse_child_json
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 DEFAULT_BRIEF = (
@@ -431,29 +432,6 @@ def build_recap_command(source, workspace, brief_path, args, python):
         command.append("--force")
     command.append("--json")
     return command
-
-
-def parse_child_json(stdout):
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
 
 
 def run_recap(source, workspace, brief_path, args, python, repo_root):

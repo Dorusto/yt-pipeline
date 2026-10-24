@@ -103,6 +103,16 @@ def test_bad_words_exit_2(tmp_path, capsys, payload, needle):
     assert needle in capsys.readouterr().err
 
 
+def test_context_directory_exits_2(tmp_path, capsys):
+    words = write_words(tmp_path)
+    context = tmp_path / "context-dir"
+    context.mkdir()
+    rc = graphics_plan.main([str(words), "--context", str(context)])
+    assert rc == EXIT_USAGE
+    err = capsys.readouterr().err
+    assert f"cannot read context file {context}:" in err
+
+
 def test_mango_only_markers(tmp_path):
     path = write_markers(
         tmp_path,

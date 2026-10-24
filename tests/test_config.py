@@ -180,6 +180,17 @@ def test_music_section_validated():
             config._validate(with_value("music", bad))
 
 
+def test_transcribe_section_validated():
+    assert config._validate(with_value("transcribe", {"model": "medium"}))["transcribe"]["model"] == "medium"
+    assert config._validate(with_value("transcribe", {}))["transcribe"] == {}
+    with pytest.raises(config.ConfigError):
+        config._validate(with_value("transcribe", "nope"))
+    for bad in ("", 5):
+        with pytest.raises(config.ConfigError) as exc:
+            config._validate(with_value("transcribe", {"model": bad}))
+        assert "transcribe.model" in str(exc.value)
+
+
 def test_no_music_library_message_names_the_flag():
     for flag in ("--library", "--music-dir"):
         message = config.no_music_library_message(flag)
@@ -393,3 +404,60 @@ def test_brand_logo_rejects_an_unknown_value(monkeypatch):
 def test_brand_logo_invalid_in_config_is_rejected(tmp_path):
     with pytest.raises(config.ConfigError):
         config.load_config(write_config(tmp_path, with_value("brand", {"logo": "nope"})))
+
+
+def test_upkeep_percent_rejects_non_numeric(monkeypatch):
+    monkeypatch.setenv(config.UPKEEP_PERCENT_ENV, "abc")
+    with pytest.raises(config.ConfigError):
+        config.upkeep_percent()
+    monkeypatch.delenv(config.UPKEEP_PERCENT_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.upkeep_percent(config={"costs": {"upkeep_percent": "abc"}})
+
+
+def test_usd_to_eur_rejects_non_numeric(monkeypatch):
+    monkeypatch.setenv(config.USD_TO_EUR_ENV, "abc")
+    with pytest.raises(config.ConfigError):
+        config.usd_to_eur()
+    monkeypatch.delenv(config.USD_TO_EUR_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.usd_to_eur(config={"costs": {"usd_to_eur": "abc"}})
+
+
+def test_channel_fixed_loads(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {
+        "members": "A, B",
+        "github_url": "https://example.invalid/c",
+        "fixed": {
+            "members_sentence": {"ro": "Mulțumesc {members}.", "en": "Thanks {members}."},
+            "closing": {"ro": "Pe curând.", "en": "See you."},
+        },
+    }
+    loaded = config.load_config(write_config(tmp_path, data))
+    assert loaded["channel"]["fixed"]["closing"]["ro"] == "Pe curând."
+
+
+def test_channel_invalid_raises(tmp_path):
+    for bad in (
+        "nope",
+        {"members": ""},
+        {"github_url": 5},
+        {"fixed": "nope"},
+        {"fixed": {"closing": "nope"}},
+        {"fixed": {"closing": {"ro": ""}}},
+        {"fixed": {"closing": {"": "x"}}},
+        {"fixed": {"closing": {"ro": 5}}},
+    ):
+        data = copy.deepcopy(VALID)
+        data["channel"] = bad
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, data))
+
+
+def test_channel_fixed_unknown_key_raises(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"fixed": {"nope": {"ro": "x"}}}
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_config(write_config(tmp_path, data))
+    assert "nope" in str(exc.value)

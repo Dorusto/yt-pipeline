@@ -238,7 +238,9 @@ def test_whisper_package_ok_when_found(monkeypatch, capsys):
 
 
 def test_publish_config_warns_listing_missing(monkeypatch, capsys):
-    patch_config(monkeypatch, clean_config())
+    config = clean_config()
+    config["channel"] = {"fixed": {"members_sentence": {"ro": "Mulțumim {members}!"}}}
+    patch_config(monkeypatch, config)
     code, out, err = run_main(capsys, ["--json"])
     summary = json.loads(out)
     check = find_check(summary, "publish_config")
@@ -254,7 +256,10 @@ def test_publish_config_ok_with_all_keys(monkeypatch, capsys):
     config = clean_config()
     config["models"]["translate"] = "deepseek/deepseek-v4.1-flash"
     config["models"]["metadata"] = "deepseek/deepseek-v4.1-flash"
-    config["channel"] = {"members": "Andrei, Mihai"}
+    config["channel"] = {
+        "members": "Andrei, Mihai",
+        "fixed": {"members_sentence": {"ro": "Mulțumim {members}!"}},
+    }
     patch_config(monkeypatch, config)
     code, out, err = run_main(capsys, ["--json"])
     check = find_check(json.loads(out), "publish_config")
@@ -266,12 +271,27 @@ def test_publish_config_warns_on_empty_members(monkeypatch, capsys):
     config = clean_config()
     config["models"]["translate"] = "deepseek/deepseek-v4.1-flash"
     config["models"]["metadata"] = "deepseek/deepseek-v4.1-flash"
-    config["channel"] = {"members": "   "}
+    config["channel"] = {
+        "members": "   ",
+        "fixed": {"members_sentence": {"ro": "Mulțumim {members}!"}},
+    }
     patch_config(monkeypatch, config)
     code, out, err = run_main(capsys, ["--json"])
     check = find_check(json.loads(out), "publish_config")
     assert check["status"] == "warn"
     assert "channel.members" in check["detail"]
+
+
+def test_publish_config_ok_without_members_placeholder(monkeypatch, capsys):
+    config = clean_config()
+    config["models"]["translate"] = "deepseek/deepseek-v4.1-flash"
+    config["models"]["metadata"] = "deepseek/deepseek-v4.1-flash"
+    config["channel"] = {"fixed": {"members_sentence": {"ro": "Mulțumim tuturor!"}}}
+    patch_config(monkeypatch, config)
+    code, out, err = run_main(capsys, ["--json"])
+    check = find_check(json.loads(out), "publish_config")
+    assert check["status"] == "ok"
+    assert check["detail"] == "publish roles set"
 
 
 def test_warn_alone_keeps_ok(monkeypatch, capsys):

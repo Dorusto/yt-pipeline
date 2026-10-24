@@ -42,7 +42,7 @@ Return EXACTLY one JSON object and nothing else, no markdown fences:
       "time_s": 3.2,
       "duration_s": 3.0,
       "template": "lower_third",
-      "props": {"name": "Doru", "role": "creator"},
+      "props": {"name": "<name>", "role": "creator"},
       "reason": "the speaker first names himself here",
       "hint": "optional"
     }

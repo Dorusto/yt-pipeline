@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Watch the build agents and send an ntfy alert only when something looks wrong.
 
-Run it from cron every 30 minutes. Two checks:
+Run it from cron every 15 minutes. Three checks:
 
 - spend: today's OpenRouter usage for the agents' API key is above a threshold;
 - stall: an ``opencode`` process is running but nothing has changed in the
-  watched folders for longer than a threshold.
+  watched folders for longer than a threshold;
+- no-progress: an ``opencode`` process is running but there has been no commit
+  for longer than a threshold.
 
 Each problem is reported once: once per UTC day for spend, once per stall
 episode for stall. State lives in a small JSON file.
@@ -15,21 +17,26 @@ Usage:
     python scripts/agent_watchdog.py --repo <repo>
     python scripts/agent_watchdog.py --repo <repo> --spend-usd 3 --stall-hours 2 --json
     python scripts/agent_watchdog.py --repo <repo> --dry-run
-    python scripts/agent_watchdog.py --repo <repo> --run-cap 6 --lot "S51 lot 1" --start-run
+    python scripts/agent_watchdog.py --repo <repo> --kill-over-usd 11 --kill-no-commit-hours 1.5
 
 The API key is read from OPENROUTER_API_KEY or from --key-file
 (default ~/.config/opencode/secrets/openrouter.key). It is never printed.
 
-With ``--run-cap`` the spend is measured since the run started (a run-spend
-ledger kept by this script), not per day: ntfy ``Budget`` at 80 % of the cap
-and ntfy ``Blocked`` plus a stop at 100 %.
+Two stop rules, both off unless given: no commit for N hours
+(``--kill-no-commit-hours``) and one hard daily spend ceiling
+(``--kill-over-usd``). The run-spend ledger measures the current lot's spend,
+which the single ``Blocked`` stop notification reports; it is not a stop
+threshold.
+
+The alert label comes from the newest task brief in ``<repo>/.opencode/tasks/``
+(review, audit and README notes skipped), else the tmux session running the
+agent, else nothing — no per-lot flag.
 
 The no-commit clock starts at the later of the last commit and the agent start
 (the run marker, else the running ``opencode`` process start time), so a fresh
 run is never reported as a long no-commit stretch and a future-dated commit
 never reads as a negative age. A stop is claimed only after the process is
-re-checked. Every ntfy message is prefixed with ``--lot``, else the tmux
-session running the agent, else nothing.
+re-checked.
 """
 
 import argparse
@@ -52,6 +59,8 @@ DEFAULT_KEY_FILE = "~/.config/opencode/secrets/openrouter.key"
 DEFAULT_STATE_FILE = "~/.cache/yt-pipeline/watchdog-state.json"
 DEFAULT_LEDGER_FILE = "~/.cache/yt-pipeline/run-spend.json"
 DEFAULT_EXTRA_WATCH = "~/.local/share/opencode"
+DEFAULT_TASKS_DIR = ".opencode/tasks"
+TASK_FILE_SKIP_PREFIXES = ("review-", "AUDIT-", "README")
 SKIPPED_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -217,11 +226,35 @@ def tmux_session_for_agent():
     return None
 
 
+def active_task_label(repo, tasks_dir=DEFAULT_TASKS_DIR):
+    """Return the stem of the newest task brief in the repo, or None.
+
+    The active brief is the most recently modified ``.md`` file in
+    ``<repo>/.opencode/tasks/``; review, audit and README notes are skipped.
+    """
+    folder = Path(repo).expanduser() / tasks_dir
+    try:
+        candidates = list(folder.glob("*.md"))
+    except OSError:
+        return None
+    newest = None
+    newest_key = None
+    for path in candidates:
+        if path.name.startswith(TASK_FILE_SKIP_PREFIXES):
+            continue
+        try:
+            key = (path.stat().st_mtime, path.name)
+        except OSError:
+            continue
+        if newest_key is None or key > newest_key:
+            newest_key = key
+            newest = path
+    return newest.stem if newest is not None else None
+
+
 def resolve_label(args):
-    """Return the alert label: ``--lot``, else the tmux session running the agent, else None."""
-    if args.lot:
-        return args.lot
-    return tmux_session_for_agent()
+    """Return the alert label: the active task file, else the tmux session, else None."""
+    return active_task_label(args.repo) or tmux_session_for_agent()
 
 
 def labelled(message, label):
@@ -243,14 +276,10 @@ def strip_label(message, label):
     return message
 
 
-def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_commit_hours,
-                run_spend=None, run_cap=None, lot=None, agent_start=0.0):
-    """Why the agent must be stopped now, or None. All limits are off unless set."""
+def kill_reason(running, daily_usd, kill_over_usd, last_commit, now, kill_no_commit_hours, agent_start=0.0):
+    """Why the agent must be stopped now, or None. Both limits are off unless set."""
     if not running:
         return None
-    if run_cap is not None and run_spend is not None and run_cap > 0 and run_spend >= run_cap:
-        label = f"{lot}: " if lot else ""
-        return f"{label}run spend ${run_spend:.2f} is over the run cap ${run_cap:.2f}"
     if kill_over_usd is not None and daily_usd is not None and daily_usd > kill_over_usd:
         return f"spend today ${daily_usd:.2f} is over the hard cap ${kill_over_usd:.2f}"
     base = max(last_commit, agent_start)
@@ -371,28 +400,6 @@ def run_spend_usd(entries, run_started_at, ledger_path=None):
     return round(total, 8)
 
 
-def run_cap_reached(run_spend, run_cap):
-    """True when the run spend is at or over the run cap."""
-    return run_cap is not None and run_cap > 0 and run_spend is not None and run_spend >= run_cap
-
-
-def check_run_budget(run_spend, run_cap, state, lot=None):
-    """Alert once per run when run spend reaches 80 % of the cap (never stops)."""
-    if run_spend is None or run_cap is None or run_cap <= 0:
-        return None
-    markers = state.setdefault("run_alerted", [])
-    if run_spend >= run_cap or "budget-80" in markers:
-        return None
-    if run_spend < 0.8 * run_cap:
-        return None
-    markers.append("budget-80")
-    label = f"{lot}: " if lot else ""
-    return (
-        f"{label}run spend ${run_spend:.2f} reached 80% of the run cap ${run_cap:.2f}. "
-        "Check what is left to do before it stops the agent."
-    )
-
-
 def check_spend(daily_usd, threshold, state, today):
     """Return an alert message when today's spend crosses the threshold for the first time."""
     if daily_usd is None or daily_usd <= threshold:
@@ -471,10 +478,6 @@ def build_parser():
                         help="stop the agent when today's spend passes this many USD (default off)")
     parser.add_argument("--kill-no-commit-hours", type=float, default=None,
                         help="stop the agent after this many hours without a commit (default off)")
-    parser.add_argument("--run-cap", type=float, default=None,
-                        help="hard cap in USD for the current agent run (default off)")
-    parser.add_argument("--lot", default=None,
-                        help="label naming the lot/task, prefixed to every alert (else the tmux session)")
     parser.add_argument("--ledger", default=DEFAULT_LEDGER_FILE,
                         help=f"run-spend ledger (default {DEFAULT_LEDGER_FILE})")
     parser.add_argument("--start-run", action="store_true",
@@ -523,7 +526,6 @@ def main(argv=None, now=None):
     if args.start_run:
         run_started_at = now_iso
         state["run_started_at"] = now_iso
-        state["run_alerted"] = []
         state["usage_daily_last_seen"] = None
         entries = []
         if not args.dry_run:
@@ -535,7 +537,6 @@ def main(argv=None, now=None):
         if stale:
             run_started_at = now_iso
             state["run_started_at"] = now_iso
-            state["run_alerted"] = []
     if not running:
         state["agent_stopped_at"] = now_iso
 
@@ -560,14 +561,10 @@ def main(argv=None, now=None):
     ):
         if message:
             notifications.append(("yt-pipeline watchdog", labelled(message, label)))
-    if args.run_cap is not None:
-        budget_message = check_run_budget(run_spend, args.run_cap, state, args.lot)
-        if budget_message:
-            notifications.append(("Budget", labelled(budget_message, label)))
 
     reason = kill_reason(
         running, daily_usd, args.kill_over_usd, last_commit, now, args.kill_no_commit_hours,
-        run_spend=run_spend, run_cap=args.run_cap, lot=args.lot, agent_start=agent_start,
+        agent_start=agent_start,
     )
     stopped = 0
     stop_verified = False
@@ -576,23 +573,14 @@ def main(argv=None, now=None):
             stopped = stop_agent()
             stop_verified = not agent_running()
         reason_text = strip_label(reason, label)
-        if args.run_cap is not None and run_spend is not None and run_cap_reached(run_spend, args.run_cap):
-            state.setdefault("run_alerted", []).append("blocked")
-            if args.dry_run:
-                blocked = f"{reason_text} — would stop the agent. Its changes stay in the working tree."
-            elif stop_verified:
-                blocked = f"{reason_text} — the agent was stopped. Its changes stay in the working tree."
-            else:
-                blocked = f"{reason_text} — tried to stop the agent but it is still running."
-            notifications.append(("Blocked", labelled(blocked, label)))
+        cost_note = f" This lot has cost ${run_spend:.2f}." if run_spend else ""
+        if args.dry_run:
+            stop_message = f"Would stop the agent: {reason_text}.{cost_note} Its changes stay in the working tree."
+        elif stop_verified:
+            stop_message = f"Stopped the agent: {reason_text}.{cost_note} Its changes stay in the working tree."
         else:
-            if args.dry_run:
-                stop_message = f"Would stop the agent: {reason_text}. Its changes stay in the working tree."
-            elif stop_verified:
-                stop_message = f"Stopped the agent: {reason_text}. Its changes stay in the working tree."
-            else:
-                stop_message = f"Tried to stop the agent but it is still running: {reason_text}"
-            notifications.append(("yt-pipeline watchdog", labelled(stop_message, label)))
+            stop_message = f"Tried to stop the agent but it is still running: {reason_text}.{cost_note}"
+        notifications.append(("Blocked", labelled(stop_message, label)))
 
     alerts = [message for _, message in notifications]
     sent = 0
@@ -612,9 +600,7 @@ def main(argv=None, now=None):
         "hours_since_commit": round(max(0.0, (now - commit_base) / 3600), 2) if commit_base else None,
         "spend_today_usd": daily_usd,
         "run_spend_usd": run_spend,
-        "run_cap_usd": args.run_cap,
         "run_started_at": run_started_at,
-        "run_alerted": list(state.get("run_alerted", [])),
         "alerts": alerts,
         "kill_reason": reason,
         "stopped": stopped,

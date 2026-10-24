@@ -76,9 +76,6 @@ background:var(--surface);border-radius:var(--radius-l);width:fit-content;max-wi
 .tabs a{min-height:var(--tap);display:inline-flex;align-items:center;padding:0 var(--sp-4);
 border-radius:10px;color:var(--muted);text-decoration:none;white-space:nowrap}
 .tabs a.active{background:var(--text);color:var(--bg)}
-.tabs .tab-group{display:inline-flex;align-items:center;gap:var(--sp-1);border-left:1px solid var(--line);
-padding-left:6px;margin-left:2px}
-.tabs .tab-group-label{color:var(--muted);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;padding:0 6px}
 video{display:block;width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-l)}
 video.vertical{aspect-ratio:9/16;max-width:360px;margin-top:var(--sp-3)}
 .strip{margin:var(--sp-3) 0 var(--sp-1)}
@@ -99,11 +96,10 @@ display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
 .shot-ask button{border:0;border-radius:var(--radius-s);padding:.35em 1em;cursor:pointer;min-height:44px}
 .shot-ask .yes{background:var(--danger);color:#fff}
 .shot-ask .no{background:var(--surface);color:var(--text);border:1px solid var(--line)}
-.strip-legend{display:flex;gap:var(--sp-4);margin-top:var(--sp-2);color:var(--muted);font-size:var(--fs-s)}
-.strip-legend span::before{content:"";display:inline-block;width:10px;height:10px;
-border-radius:3px;margin-right:6px;vertical-align:-1px}
-.strip-legend .k-clip::before{background:var(--clip)}
-.strip-legend .k-photo::before{background:var(--text)}
+.shot-edit{display:flex;align-items:center;gap:.6em;margin:.5em 0;flex-wrap:wrap}
+.shot-edit span{color:var(--muted);font-size:var(--fs-s)}
+.shot-edit button{border:1px solid var(--line);border-radius:var(--radius-s);padding:.35em 1em;cursor:pointer;min-height:44px;background:var(--surface);color:var(--text)}
+.strip-summary{display:flex;gap:var(--sp-4);margin-top:var(--sp-2);color:var(--muted);font-size:var(--fs-s)}
 .download{display:inline-flex;align-items:center;min-height:var(--tap);margin-top:6px}
 iframe{display:block;width:100%;height:78vh;border:0;border-radius:var(--radius-l);
 background:var(--surface)}
@@ -235,8 +231,6 @@ text-align:center;transition:border-color .15s}
 cursor:pointer;font-weight:650}
 .options-state{color:var(--muted);font-weight:400;font-size:var(--fs-s)}
 .upload-form button.start{justify-self:stretch;min-height:52px;font-size:var(--fs-m)}
-.tabs .tab-group-label{display:none}
-.tabs .tab-group a{font-size:var(--fs-s)}
 .project-del{background:transparent;border:1px solid var(--line)}
 .project-del svg{fill:var(--muted)}
 .project-del:hover{border-color:var(--danger)}

@@ -9,6 +9,8 @@ import pytest
 from common.config import ConfigError
 from common.llm import (
     BudgetExceeded,
+    InvalidModelJSON,
+    JSONResponse,
     LLMClient,
     LLMError,
     LLMResponse,
@@ -20,6 +22,7 @@ from common.llm import (
     read_ledger,
     resolve_ledger_path,
 )
+from helpers import SequenceClient
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 
@@ -491,3 +494,41 @@ def test_make_client_mock_reads_llm_mock_text_string():
     client = make_client(config)
     assert client.complete("vision", MESSAGES).text == "canned"
     assert client.complete("architect", MESSAGES).text == "canned"
+
+
+def test_complete_json_parses_valid_answer():
+    client = MockClient(text='{"a": 1}', cost_per_call=0.01)
+    answer = client.complete_json("metadata", MESSAGES)
+    assert isinstance(answer, JSONResponse)
+    assert answer.data == {"a": 1}
+    assert answer.attempts == 1
+    assert answer.cost_usd == pytest.approx(0.01)
+
+
+def test_complete_json_retries_empty_answer():
+    client = SequenceClient(["", '{"a": 1}'], cost_per_call=0.01)
+    answer = client.complete_json("metadata", MESSAGES)
+    assert answer.data == {"a": 1}
+    assert answer.attempts == 2
+    assert answer.cost_usd == pytest.approx(0.02)
+
+
+def test_complete_json_retries_non_json_answer():
+    client = SequenceClient(["not json", '{"a": 1}'], cost_per_call=0.01)
+    answer = client.complete_json("metadata", MESSAGES)
+    assert answer.data == {"a": 1}
+    assert answer.attempts == 2
+    assert answer.cost_usd == pytest.approx(0.02)
+
+
+def test_complete_json_two_invalid_answers_raise():
+    client = SequenceClient(["", "not json"], cost_per_call=0.01)
+    with pytest.raises(InvalidModelJSON) as exc:
+        client.complete_json("metadata", MESSAGES)
+    assert "after one retry" in str(exc.value)
+
+
+def test_complete_json_charges_both_attempts():
+    client = SequenceClient(["", '{"a": 1}'], cost_per_call=0.01)
+    client.complete_json("metadata", MESSAGES)
+    assert client.spent_usd == pytest.approx(0.02)

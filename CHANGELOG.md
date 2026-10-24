@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-24
+
+yt-pipeline v0.2.0 is the first release with the publish flow and the phone
+editing controls. On the project page you can make a shot a second longer or
+shorter and delete a single version you no longer want, and the director cuts
+on the strong beat of the music. The publish kit is its own step and works
+before the thumbnail exists, the metadata prompt writes better titles and
+descriptions, and the description no longer needs the members' names. On a
+CPU-only server the Romanian subtitles are usable (Whisper `medium` by
+default). The Costs page shows donations and warns before a run that would
+pass your model credit, and the app can run on a friend's own instance.
+
+### Added
+
+- Publish: `publish_kit.py` is the manual-upload kit as its own standalone tool — it reads the chain's existing outputs (`metadata.json`, the RO/EN SRTs, the thumbnail and the final video) and can be re-run alone after changing only the thumbnail, without re-running or overwriting any other step.
+- Publish: `thumbnail_concepts.py` writes `thumbnail_concepts.json` and a Romanian `thumbnail_concepts.md` from the confirmed title, the context note and the corrected `.srt` (2-3 concepts, model role `metadata`), and `thumbnail.py --concepts`/`--pick` reads them directly.
+- Publish: `publish.py` gains a `verify` step between corrections and the human-review stop — it compares the corrected SRT's end time and file date with the final video and stops with a clear message (exit 2) before translation, metadata and the kit when they no longer match.
+- Subtitles: a corrections line `*wrong|correct` also fixes the capitalised variant (first letter only), and `correct_srt.py --capitalised` turns the variant on for every line; a pattern that already starts with a capital letter gets no variant.
+- Costs: `costs.py import-donations --from <donations.csv>` imports donations from a CSV export (required `date`, `amount`; optional `note`, `id`), idempotent by `source`, skipping bad rows with a warning.
+- Web app: the Upload page shows a low-credit warning banner when the OpenRouter key's remaining credit is under `limits.credit_warn_usd`, before a run that would pass the key limit.
+- Repo automations: Dependabot opens one grouped weekly pull request per ecosystem (Python requirements and GitHub Actions), checked by CI like any pull request; `AGENTS.md` is the shared instruction file for every coding agent, pointing to `docs/RULES.md`, the skills and the topic files in `docs/agents/` (code style, testing, conventions), with `CLAUDE.md` pointing to it.
+- Web app: a shot on the strip can be made longer or shorter (a "− 1 s" / "+ 1 s" control next to the bin icon); presses on the same shot add up into one running total, so `+1 +1 +1` asks to make the shot 3 s longer and Yes submits that total as the delta, rendered as one new version with `edit_drop.py --trim` and no model call.
+- Publish: `metadata.py` gains `--title` — the chosen title is handed to the model in a `## Chosen title` section and used verbatim as the first title.
+- FilmCraft: `colour.py` applies a basic colour recipe to the camera clips of a project — one Lumetri Basic Correction per recording session (white balance, exposure, contrast), measured on a few frames, on a copy unless `--in-place`.
+- Repo checks: `tests/test_no_duplicate_helpers.py`, `tests/test_tool_contract.py` and `tests/test_docs_in_step.py` make the rules a program can check fail in the suite before review (no new duplicated helper, every tool answers `--help` and reports its summary fields, every skill names an existing tool and every tool is named), and `docs/agents/rules-checked.md` records which rules a test checks and which depend on review alone.
+- Web app: the Recap tab can delete a single version (never the latest or the first) with an inline confirmation; its folder is removed for good.
+
+### Changed
+
+- Publish: the metadata prompt is fixed (the chosen title first, no invented links or repos, a plain first-person pinned comment, each description in its own language, English chapter titles) and every channel-specific wording string moved out of `scripts/metadata.py` and the prompts into `channel.fixed` in the config, one string per language and omitted when missing; `thumbnail_concepts.py` hands `channel.fixed.thumbnail_formula` to the model and `publish_kit.py` uses a chapter's `title_en` for the EN chapter lines.
+- Publish: `publish.py --kit` is orchestration only — it calls `publish_kit.py` as its last step, and the kit links the final video (hard link, else symlink, else only its path in `studio.md`) instead of copying it, so the disk no longer holds two copies.
+- Publish: `metadata.py` and `prompts/metadata.md` no longer carry the thumbnail section — the concepts live in their own tool and file, and `metadata.md` keeps only what is pasted into Studio.
+- Watchdog: no per-lot flag — the alert label comes from the newest task brief in `.opencode/tasks/`, the two stop rules are no commit for N hours and one hard daily spend ceiling, and the stop notification reports the lot's cost.
+- Cleanup lot (V020N lot n1): a failed ffprobe is `EXIT_RUNTIME` in `kdenlive_from_fragments.py` and `render.py`; `serve.py` and `recap_meta.py` share `earliest_creation_date`, `serve.py` writes feedback through `common.feedback`, `costs.py totals` and the Costs page share one `compute_totals` call, `upkeep_percent()`/`usd_to_eur()` raise a clear `ConfigError`, `common.openrouter` no longer pulls `openai`/`filelock`, `pytest-timeout` (120 s per test) is in the test requirements and CI, and `release.yml` starts `deploy.yml` after it creates the release.
+- Docs: the README is now a one-screen front door (what it is, who it is for, a quickstart, where to go next); the tool-by-tool reference moved to `docs/guides/tools.md`, and the pilot host and costs sections link to their guides.
+- Cleanup lot (V020N lot n15): the duplicated helpers moved into scripts/common/ (SRT parsing, read_text, now_iso, parse_child_json, format_size, the FilmCraft sequence/track/cli helpers, the minimum shot length, KIT_DIR_NAME, the credit helper and the drop/trim route body), and the docs drift fixed.
+- Cleanup: the `--help` guard copied in the four legacy SRT tools moved into one helper in `scripts/common/cli.py`.
+- Publish: `transcribe.py` defaults to `medium` on CPU for a non-English language (including `auto` or no language) and `small` only for an explicit `en` (turbo on GPU, tiny only for the mock backend), resolved from `--model`, `YT_PIPELINE_WHISPER_MODEL` or `transcribe.model` in the config; `publish.py` gains `--whisper-model` for the `--media` step.
+- Doctor: `check_publish_config` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, matching `metadata.py`.
+- Publish: `metadata.py` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, so a channel that does not thank members in the description runs without it.
+- Publish: `publish_kit.py` treats `thumbnail.jpg` as optional — a missing thumbnail no longer fails the kit, the kit is built without it and the `studio.md` checklist says to make and upload one.
+- Director: every timeline cut now prefers the nearest downbeat when it lies inside the slot's allowed length range, otherwise a half-bar beat (keeps the bar count even), otherwise the nearest beat; the slot records which grid it used in `beat_grid` and the `beat_snap` summary gains `downbeats`/`half_bar` counts.
+- Beats: `beats.py` places the beat grid by dynamic-programming beat tracking (Ellis 2007) after a fine best-phase refinement of the coarse period, so the grid follows a drifting tempo instead of a rigid period; the `beats.json` shape and the CLI are unchanged.
+- Web app: the Watch tab no longer shows the "Compare with v1 v2 …" row (the `?with=` side-by-side view stays), and the text after Yes reads "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
+- Web app: the project page no longer shows the director reviewer box; the verdict stays in `edit.json`.
+- Web app: the Watch tab no longer links the Why?/Shots pages (they stay reachable by URL) and drops the clip/photo colour legend; `config.yaml.example` uses neutral `channel.fixed` placeholders.
+
+### Fixed
+
+- Render: cut positions are rounded on the timeline (the cumulative time to the nearest frame, each clip's frame count the difference of the rounded cut positions), so a cut no longer drifts later and later across the edit.
+- Reviewer fixes (V020N lot n16): `thumbnail_concepts.py` reports a model answer with an extra key as `EXIT_RUNTIME` (3) instead of a usage error; `costs.py` reads a lone thousands dot (`1.000` → 1000); `graphics_plan.py` keeps its unquoted context-file message; the Files tab uses the shared `format_size_short`; the four legacy SRT tools (`analyze_srt.py`, `correct_srt.py`, `daily_summary_srt.py`, `translate_srt.py`) answer `--help` with exit 0; the owner's name in the graphics examples becomes a placeholder.
+- Reviewer fixes (V020N lot n14): `costs.py` accepts a decimal comma, a thousands dot and a UTF-8 BOM on a donations CSV header; `correct_srt.py` counts the capitalised variant in `Termeni înlocuiți` and a correction line with an empty wrong part is a usage error; `metadata.py` rejects an empty `--title` and the EN chapters section falls back to the RO title when `title_en` is missing; an unknown `channel.fixed` part name is a config error naming the key; `thumbnail_concepts.py` reports a wrong-shape model answer as `EXIT_RUNTIME`; `publish_kit.py` reports a failure as one `{"ok": false, ...}` object and its `--json` `output` is `publish-kit/studio.md`; `colour.py` rejects `--target-luma`/`--target-contrast` outside `(0, 1]` as usage errors; `llm_director.py` falls back to the nearest beat under the slot cap when the downbeat is over it; `.github/dependabot.yml` drops the `time`/`timezone` the default schedule does not need.
+- The LLM client retries once when a model answer is empty or not valid JSON, charging both attempts to the budget; `metadata.py` uses it.
+- Music: in the holiday flow a cut that starts a new structure beat now falls back to the nearest beat when the nearest downbeat is outside the snap window, so every cut lands on a beat.
+- Beats: `beats.py` compensates the STFT window-centre latency (`ONSET_LATENCY_S`, ≈ 0.0174 s) in the onset and beat times, so the reported beat time is the start of the hit and the grid is no longer systematically late; the `beats.json` shape and the CLI are unchanged.
+- Director: for a chronological brief the repairs no longer break the time order — after a repair the edit and its plan are re-sorted by capture/source time before the beat snap, so a swapped-in top star lands at its place in the day.
+- Director: after a chronological re-sort every slot's transition is set again (first cut, the rest crossfade, hard cuts with a beat grid), so a re-sorted edit no longer keeps a cut in the middle.
+
 ## [0.1.2] - 2026-10-23
 
 The Costs page no longer says "Paid" before you have made any edit: it shows 0,00 until the AI models are used. The model credit line now uses the same currency as the rest of the page.
@@ -37,6 +95,7 @@ yt-pipeline turns the clips from a trip into a short video. Upload your clips an
 - Music: the library path comes from a flag, an environment variable or the config, and `music_pick.py --list` reports each track's licence status.
 - Shorts: `shorts_rank.py` writes standalone candidates with titles and descriptions.
 - Costs: `costs.py` keeps a SQLite ledger of model jobs, build-agent spend, fixed monthly costs, investments and donations, with idempotent imports and a `totals` view.
+- Costs: `costs.py import-opencode` imports build-agent spend per day from opencode's session database, only for this project's folders (`--db`, repeatable `--match`), idempotent by date.
 - Web app: a read-only Costs page (per-clip model cost, ledger totals, donation link) and a feedback/requests form that appends one JSON line to the requests file.
 - Recap metadata: `recap_meta.py` writes `recap_meta.json` (title, description, hashtags) from `edit.json`, the Recap tab shows it with a Copy button per field, and each version keeps its own text.
 - Web app: four optional brief facts (place, when, who, occasion) on the Upload and Re-edit forms and in the Recap tab's Rewrite button, stored as `brief_facts.json` in the inbox source and the workspace and read as facts by the director prompt and `recap_meta.py`; the Rewrite button re-runs `recap_meta.py --force` for the shown version.

@@ -26,13 +26,14 @@ import sys
 import tempfile
 import time
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 import yaml
 
 from common.config import ConfigError
+from common.jsonio import now_iso
 from common.llm import LLMError, make_client
 from common.media import parse_stamp
 from common.timeline_words import word_in_window
@@ -66,10 +67,6 @@ DEFAULT_CONFIG = {
 
 class RoughCutError(Exception):
     """A user-facing error that exits with code 2 and writes nothing."""
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def is_number(value):
