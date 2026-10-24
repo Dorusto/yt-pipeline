@@ -9,7 +9,7 @@
     {
       "name": "yt-director",
       "source": "./",
-      "description": "The holiday/edit director: recap, director, llm-director, beats, music-pick, edit-drop, render, thumbs, explain, ingest, index, describe, quality, similarity, eval-edit, mode-b, rough-cut, router.",
+      "description": "The holiday/edit director: recap, director, llm-director, beats, music-pick, edit-drop, render, thumbs, explain, ingest, index, describe, quality, similarity, eval-edit, mode-b, rough-cut, router, notebook.",
       "author": {
         "name": "Dorusto",
         "url": "https://github.com/Dorusto"
@@ -35,7 +35,8 @@
         "./.claude/skills/yt-eval-edit",
         "./.claude/skills/yt-mode-b",
         "./.claude/skills/yt-rough-cut",
-        "./.claude/skills/yt-router"
+        "./.claude/skills/yt-router",
+        "./.claude/skills/yt-notebook"
       ]
     },
     {

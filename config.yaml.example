@@ -132,6 +132,15 @@ llm_backend: openrouter
 # requests:
 #   path: <requests.jsonl>
 
+# Instance learning notebook for notebook.py, llm_director.py and serve.py: a
+# small JSON file of short lessons the director keeps between edits, at most 40
+# of them. It is optional: with no path set the director reads nothing and the
+# web app shows no section. There is no personal default in code: set the file
+# here, in the YT_PIPELINE_NOTEBOOK environment variable, or pass --notebook.
+# Docs and examples write <notebook-file>.
+# notebook:
+#   path: <notebook-file>
+
 # Instance limits for the web app. limits.storage_gb caps the workspaces and the
 # inbox size: the Upload and Costs pages show "X GB of Y GB used", warn over 80 %
 # and refuse an upload that would pass the limit before any byte is written.

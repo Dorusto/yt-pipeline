@@ -30,10 +30,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from common.config import ConfigError, load_config
+from common.config import ConfigError, load_config, notebook_path
 from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
 from common.feedback import append_feedback
+from common.notebook import notebook_block
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
@@ -258,6 +259,14 @@ def build_parser():
         ),
     )
     parser.add_argument("--force", action="store_true", help="rewrite even when the output is up to date")
+    parser.add_argument(
+        "--notebook",
+        default=None,
+        help=(
+            "instance notebook JSON file (or YT_PIPELINE_NOTEBOOK, or notebook.path "
+            "in the config; no personal default)"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -1062,7 +1071,7 @@ def build_feedback_block(feedback, workspace, edit_path=None):
     return "\n".join(lines)
 
 
-def build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s, feedback_block=None):
+def build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s, feedback_block=None, notebook_block=None):
     lines = [
         f"Brief: {brief_text}",
         f"Content type: {content_type}",
@@ -1073,6 +1082,8 @@ def build_screenwriter_user(brief_text, content_type, hints, rows, important_max
     ]
     if feedback_block:
         lines += ["", feedback_block]
+    if notebook_block:
+        lines += ["", notebook_block]
     lines += [
         "",
         "Eligible shotlog rows:",
@@ -1094,7 +1105,7 @@ def editor_facts(plan, facts):
     return result
 
 
-def build_editor_user(plan, facts, review, pacing=None, feedback_block=None):
+def build_editor_user(plan, facts, review, pacing=None, feedback_block=None, notebook_block=None):
     lines = []
     if pacing:
         lines.append(
@@ -1105,6 +1116,8 @@ def build_editor_user(plan, facts, review, pacing=None, feedback_block=None):
         lines.append("")
     if feedback_block:
         lines += [feedback_block, ""]
+    if notebook_block:
+        lines += [notebook_block, ""]
     lines += [
         "Plan:",
         json.dumps(
@@ -1124,7 +1137,7 @@ def build_editor_user(plan, facts, review, pacing=None, feedback_block=None):
     return "\n".join(lines)
 
 
-def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedback_block=None):
+def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedback_block=None, notebook_block=None):
     lines = []
     if pacing:
         lines.append(
@@ -1135,6 +1148,8 @@ def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedb
         lines.append("")
     if feedback_block:
         lines += [feedback_block, ""]
+    if notebook_block:
+        lines += [notebook_block, ""]
     lines += [
         f"Brief: {brief_text}",
         "",
@@ -1157,12 +1172,12 @@ def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedb
     return "\n".join(lines)
 
 
-def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, important_max_s, feedback_block=None):
+def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, important_max_s, feedback_block=None, notebook_block=None):
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
-            "content": build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s, feedback_block),
+            "content": build_screenwriter_user(brief_text, content_type, hints, rows, important_max_s, feedback_block, notebook_block),
         },
     ]
     for _ in range(2):
@@ -1176,10 +1191,10 @@ def screenwriter(client, prompt, brief_text, content_type, hints, rows, state, i
     return None
 
 
-def editor_round(client, prompt, plan, facts, review, state, build_record_fn, feedback_block=None):
+def editor_round(client, prompt, plan, facts, review, state, build_record_fn, feedback_block=None, notebook_block=None):
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": build_editor_user(plan, facts, review, plan_pacing(plan), feedback_block)},
+        {"role": "user", "content": build_editor_user(plan, facts, review, plan_pacing(plan), feedback_block, notebook_block)},
     ]
     for _ in range(2):
         response = call_client(client, messages, state)
@@ -1195,13 +1210,13 @@ def editor_round(client, prompt, plan, facts, review, state, build_record_fn, fe
     return None
 
 
-def reviewer(client, prompt, brief_text, plan, record, violations, state, feedback_block=None):
+def reviewer(client, prompt, brief_text, plan, record, violations, state, feedback_block=None, notebook_block=None):
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": build_reviewer_user(
-                brief_text, plan, record, violations, plan_pacing(plan), feedback_block
+                brief_text, plan, record, violations, plan_pacing(plan), feedback_block, notebook_block
             ),
         },
     ]
@@ -2791,6 +2806,7 @@ def run(
     ambient_under_music_db=None,
     feedback=None,
     speed_ramp=False,
+    notebook=None,
 ):
     """Run the three-role loop and return ``(summary, exit_code)``."""
     summary, code = _run_loop(
@@ -2816,6 +2832,7 @@ def run(
         ambient_under_music_db=ambient_under_music_db,
         feedback=feedback,
         speed_ramp=speed_ramp,
+        notebook=notebook,
     )
     summary["feedback"] = list(feedback or [])
     return summary, code
@@ -2844,6 +2861,7 @@ def _run_loop(
     ambient_under_music_db=None,
     feedback=None,
     speed_ramp=False,
+    notebook=None,
 ):
     """Run the three-role loop body; ``run`` adds the ``feedback`` summary key."""
     started = time.monotonic()
@@ -2855,6 +2873,8 @@ def _run_loop(
     if feedback:
         append_feedback_lines(workspace_path, feedback)
     feedback_block = build_feedback_block(feedback, workspace_path) if feedback else None
+    notebook_file = notebook_path(notebook)
+    notebook_text = notebook_block(notebook_file) if notebook_file is not None else None
 
     out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
     plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
@@ -2932,7 +2952,7 @@ def _run_loop(
     record = None
     plan = None
     try:
-        plan = screenwriter(client, screenwriter_prompt, prompt_brief, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block)
+        plan = screenwriter(client, screenwriter_prompt, prompt_brief, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block, notebook_text)
         if plan is None:
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
@@ -2953,11 +2973,11 @@ def _run_loop(
         last_verdict = None
         for round_index in range(rounds):
             rounds_used = round_index + 1
-            record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block)
+            record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block, notebook_text)
             if record is None:
                 raise LoopFailure("editor produced no valid edit")
             violations = validate_edit(record, plan, facts, effective_important_max_s)
-            verdict = reviewer(client, reviewer_prompt, prompt_brief, plan, record, violations, state, feedback_block)
+            verdict = reviewer(client, reviewer_prompt, prompt_brief, plan, record, violations, state, feedback_block, notebook_text)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
             last_verdict = verdict
@@ -3139,6 +3159,7 @@ def _agent_inputs_text(
     music=None,
     ambient_under_music_db=None,
     speed_ramp=False,
+    notebook_block=None,
 ):
     """The ``inputs.md`` the host agent reads: brief, settings, rules, shots and shapes."""
     hints = context["hints"]
@@ -3171,6 +3192,7 @@ def _agent_inputs_text(
         parts.append("## The beat grid\n\n```json\n" + json.dumps(beat_grid, indent=2) + "\n```")
     else:
         parts.append("## The beat grid\n\nnone given")
+    parts.append("## The notebook\n\n" + (notebook_block if notebook_block else "none"))
     parts.append(
         "\n".join(
             [
@@ -3245,6 +3267,7 @@ def prepare_agent_inputs(
     music=None,
     ambient_under_music_db=None,
     speed_ramp=False,
+    notebook=None,
 ):
     """Write WORKSPACE/director/inputs.md for the host agent; no model call."""
     started = time.monotonic()
@@ -3264,6 +3287,8 @@ def prepare_agent_inputs(
         if not music_path.is_file():
             raise LLMDirectorError(f"music file not found: {music}")
         music = str(music_path)
+    notebook_file = notebook_path(notebook)
+    notebook_text = notebook_block(notebook_file) if notebook_file is not None else None
     inputs_path.write_text(
         _agent_inputs_text(
             workspace_path,
@@ -3275,6 +3300,7 @@ def prepare_agent_inputs(
             music=music,
             ambient_under_music_db=ambient_under_music_db,
             speed_ramp=speed_ramp,
+            notebook_block=notebook_text,
         ),
         encoding="utf-8",
     )
@@ -3304,6 +3330,7 @@ def apply_agent_answer(
     ambient_under_music_db=None,
     speed_ramp=False,
     force=False,
+    notebook=None,
 ):
     """Validate, repair and write the host agent's plan and editor answer as edit.json."""
     started = time.monotonic()
@@ -3510,6 +3537,7 @@ def main(argv=None):
                 music=args.music,
                 ambient_under_music_db=args.ambient_under_music_db,
                 speed_ramp=args.speed_ramp,
+                notebook=args.notebook,
             )
         elif args.apply:
             summary, code = apply_agent_answer(
@@ -3527,6 +3555,7 @@ def main(argv=None):
                 ambient_under_music_db=args.ambient_under_music_db,
                 speed_ramp=args.speed_ramp,
                 force=args.force,
+                notebook=args.notebook,
             )
         elif args.interpret_feedback is not None:
             summary, code = interpret_feedback(
@@ -3558,6 +3587,7 @@ def main(argv=None):
                 ambient_under_music_db=args.ambient_under_music_db,
                 feedback=args.feedback,
                 speed_ramp=args.speed_ramp,
+                notebook=args.notebook,
             )
     except (LLMDirectorRuntimeError, LLMError, OSError) as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)

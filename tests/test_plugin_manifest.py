@@ -28,6 +28,7 @@ PLUGIN_SKILLS = {
         "yt-mode-b",
         "yt-rough-cut",
         "yt-router",
+        "yt-notebook",
     ],
     "yt-publish": [
         "yt-transcript",

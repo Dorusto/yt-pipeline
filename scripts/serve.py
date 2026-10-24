@@ -61,9 +61,11 @@ from common.config import (
     no_costs_message,
     no_inbox_message,
     no_music_library_message,
+    no_notebook_message,
     no_project_totals_message,
     no_requests_message,
     no_storage_message,
+    notebook_path,
     project_totals_url,
     requests_path,
     storage_gb,
@@ -76,6 +78,7 @@ from common.excluded import exclude_name, include_name, is_excluded, load_exclud
 from common.feedback import append_feedback
 from common.jsonio import load_json, write_json
 from common.media import clip_kind, earliest_creation_date, video_files
+from common.notebook import notebook_lessons
 from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
@@ -581,6 +584,12 @@ def build_parser():
         default=None,
         help="logo mark shown in the top bar and used as the favicon "
              "(or YT_PIPELINE_BRAND_LOGO, or brand.logo in the config; default: option-1)",
+    )
+    parser.add_argument(
+        "--notebook",
+        default=None,
+        help="instance notebook JSON file (or YT_PIPELINE_NOTEBOOK, or notebook.path "
+             "in the config; no personal default)",
     )
     parser.add_argument(
         "--check",
@@ -1180,6 +1189,18 @@ RUN_NOTICE_STYLE = (
     ".run-steps ol{margin:.4em 0;padding-left:1.2em}"
     ".run-steps li{display:flex;justify-content:space-between;gap:1em;max-width:28em}"
     ".run-hint{opacity:.75;margin:.4em 0 0}"
+)
+
+NOTEBOOK_STYLE = (
+    ".notebook{margin-top:var(--sp-5);border:1px solid var(--line);border-radius:var(--radius-l);"
+    "background:var(--surface);padding:var(--sp-3)}"
+    ".notebook summary{cursor:pointer;font-family:var(--font-display);font-weight:600}"
+    ".notebook ul{list-style:none;margin:var(--sp-3) 0 0;padding:0;display:grid;gap:var(--sp-2)}"
+    ".notebook li{display:flex;gap:var(--sp-2);align-items:baseline;justify-content:space-between}"
+    ".notebook .lesson-id{color:var(--muted);font-size:var(--fs-s)}"
+    ".notebook .proposal{color:var(--accent)}"
+    ".notebook form{margin:0}"
+    ".notebook button{min-height:var(--tap)}"
 )
 
 # Durations in the run notice keep counting between the page refreshes.
@@ -2310,10 +2331,34 @@ def render_files_panel(directory, name, features=None, consent_text=None):
     return f"<style>{DROP_STYLE}</style>{summary}{new_line}{rows}{add}"
 
 
+def render_notebook_panel(notebook, name):
+    """Return the collapsible notebook section, or an empty string when no notebook is set."""
+    if notebook is None:
+        return ""
+    lessons = notebook_lessons(notebook)
+    rows = []
+    for lesson in lessons:
+        lesson_id = html_escape(str(lesson.get("id") or ""))
+        text = html_escape(str(lesson.get("text") or ""))
+        label = ""
+        if lesson.get("kind") == "proposal" and lesson.get("part"):
+            label = f' <span class="proposal">\u2192 channel.fixed.{html_escape(str(lesson["part"]))}</span>'
+        rows.append(
+            f'<li><span><span class="lesson-id">{lesson_id}</span> {text}{label}</span>'
+            f'<form method="post" action="/{html_escape(name)}/notebook-delete">'
+            f'<input type="hidden" name="id" value="{lesson_id}">'
+            f'<button type="submit">Delete</button></form></li>'
+        )
+    inner = "<ul>" + "".join(rows) + "</ul>" if rows else '<p class="empty">No lessons yet.</p>'
+    return (
+        f'<details class="notebook" id="notebook">'
+        f'<summary>Notebook ({len(lessons)} lessons)</summary>{inner}</details>'
+    )
+
+
 def _render_tabs(name, enabled, tab):
     """The project tab bar: Recap, Files, Cuts and Shorts."""
     labels = dict(TABS)
-
     def link(key):
         active = ' class="active"' if key == tab else ""
         return f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(labels[key])}</a>'
@@ -2331,7 +2376,7 @@ def _render_tabs(name, enabled, tab):
 
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
                    feedback_prefill="", reedit_open=False, consent_text=None,
-                   brand_logo=DEFAULT_BRAND_LOGO, meta_cost=None):
+                   brand_logo=DEFAULT_BRAND_LOGO, meta_cost=None, notebook=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
@@ -2406,12 +2451,13 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         else ""
     )
     body = (
-        f"<style>{RUN_NOTICE_STYLE}</style><h1>{html_escape(name)}</h1>"
+        f"<style>{RUN_NOTICE_STYLE}{NOTEBOOK_STYLE}</style><h1>{html_escape(name)}</h1>"
         f'<p class="lede">{lede}</p>'
         f"{render_delete_form(name)}"
         f"{nav}"
         f'<section class="panel">{panels.get(tab, "")}</section>'
         f"{reedit}"
+        f"{render_notebook_panel(notebook, name)}"
     )
     script_parts = []
     if tab == "recap":
@@ -3483,6 +3529,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_exclude_file(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "notebook-delete":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_notebook_delete(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "cut-review":
             self.handle_cut_review(segments[0])
             return
@@ -3847,6 +3899,35 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(500, f"could not save the file list: {exc}")
             return
         self.send_redirect(f"/{project}/?tab=files")
+
+    def handle_notebook_delete(self, project):
+        """Remove one lesson from the instance notebook with notebook.py."""
+        workspace = self.server.root / project
+        if self.server.notebook is None or not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        lesson_id = (fields.get("id") or "").strip()
+        if not lesson_id:
+            self.send_error_text(400, "give the lesson id to remove")
+            return
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "notebook.py"),
+            "--notebook", str(self.server.notebook),
+            "--remove", lesson_id,
+            "--json",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            message = (result.stderr or "").strip().splitlines()[-1:] or ["the lesson could not be removed"]
+            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            return
+        self.send_redirect(f"/{project}/#notebook")
 
     def handle_delete_project(self, project):
         """Delete the workspace and its inbox source; refuse while a run is going."""
@@ -4254,6 +4335,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     consent_text=self.server.consent_text,
                     brand_logo=self.server.brand_logo,
                     meta_cost=query_param(self.path, "meta_cost"),
+                    notebook=self.server.notebook,
                 ),
                 send_body,
             )
@@ -4416,7 +4498,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
     def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
                  ledger=None, requests=None, donation_links=None, features=None, consent_text=None,
                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                 brand_logo=DEFAULT_BRAND_LOGO):
+                 brand_logo=DEFAULT_BRAND_LOGO, notebook=None):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
@@ -4431,6 +4513,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         self.credit_warn_usd = credit_warn_usd if credit_warn_usd is not None else DEFAULT_CREDIT_WARN_USD
         self.project_totals_url = project_totals_url
         self.brand_logo = brand_logo
+        self.notebook = Path(notebook) if notebook is not None else None
         super().__init__(address, WorkspaceHandler)
 
 
@@ -4439,7 +4522,7 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
                  ledger=None, requests=None, donation_links=None,
                  features=None, consent_text=None,
                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                 brand_logo=DEFAULT_BRAND_LOGO):
+                 brand_logo=DEFAULT_BRAND_LOGO, notebook=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -4457,6 +4540,7 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         credit_warn_usd,
         project_totals_url,
         brand_logo,
+        notebook,
     )
 
 
@@ -4464,7 +4548,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
                   inbox=None, ledger=None, requests=None, donation_links=None,
                   features=None, consent_text=None,
                   storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                  brand_logo=DEFAULT_BRAND_LOGO):
+                  brand_logo=DEFAULT_BRAND_LOGO, notebook=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -4505,6 +4589,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "inbox": str(Path(inbox).expanduser().resolve()) if inbox else None,
         "ledger": str(Path(ledger).expanduser()) if ledger else None,
         "requests": str(Path(requests).expanduser()) if requests else None,
+        "notebook": str(notebook) if notebook else None,
         "donation_links": donation_links,
         "features": list(features) if features is not None else list(WEB_FEATURES),
         "consent": bool(consent_text),
@@ -4580,6 +4665,9 @@ def main(argv=None):
         requests = requests_path(args.requests)
         if requests is None:
             print(f"[warn] {no_requests_message('--requests')}", file=sys.stderr)
+        notebook = notebook_path(args.notebook)
+        if notebook is None:
+            print(f"[warn] {no_notebook_message('--notebook')}", file=sys.stderr)
         donation = donation_links(args.donation_url)
         global EUR_PER_USD
         EUR_PER_USD = usd_to_eur()
@@ -4611,6 +4699,7 @@ def main(argv=None):
                 warn_usd,
                 totals_url,
                 logo,
+                notebook,
             )
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
@@ -4624,7 +4713,7 @@ def main(argv=None):
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
         music_dir, inbox, ledger, requests, donation, features, consent,
-        storage, warn_usd, totals_url, logo,
+        storage, warn_usd, totals_url, logo, notebook,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

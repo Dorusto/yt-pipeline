@@ -40,3 +40,7 @@ channel-specific.
 - `yt reframe` — a vertical crop path.
 - `yt mode_b` — the Mode B rough cut.
 - `yt rough_cut` — the rough-cut Kdenlive project.
+
+## Learn
+
+- `yt notebook` — the instance's lessons: read them, add one, remove a stale one, merge overlapping ones, propose moving a repeated sentence to `channel.fixed`.

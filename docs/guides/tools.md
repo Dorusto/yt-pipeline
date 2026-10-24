@@ -180,6 +180,23 @@ The agent mode splits the loop in two so a host coding agent can direct the edit
   --brief "about 90 seconds, chronological" --apply --json
 ```
 
+### Notebook (learning notebook)
+
+`notebook.py` reads and edits the instance's learning notebook — a small JSON file (`schemas/notebook.schema.json`) of short lessons the director keeps between edits, at most 40 of them. Skill: `yt-notebook`.
+
+```bash
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --list
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --add "keep the tunnel longer"
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --remove l003
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --merge l001,l002 --text "..."
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --propose members_sentence --text "..."
+```
+
+- The path comes from `--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config; it is optional, so with none of the three set the director reads nothing and the web app shows no section — there is no personal default. A missing file is an empty notebook; the first write creates it.
+- Exactly one command is required: `--list`, `--add`, `--remove`, `--merge` or `--propose`. Ids are `lNNN` (zero-padded to 3, one past the highest id in the file). `--merge IDS --text TEXT` removes the named lessons and appends one lesson; an unknown id is a usage error naming the id.
+- The 40-lesson limit is a code rule (`--limit` overrides it for tests). A write past the limit fails with `EXIT_USAGE` and the message `notebook is full (40 lessons): merge overlapping lessons or remove stale ones first, then retry`; nothing is written.
+- `--propose PART --text TEXT` records a proposal to move a repeated sentence to `channel.fixed.<part>` (`members_sentence`, `closing` or `thumbnail_formula`); the code never writes the config — the owner says yes by editing it. `llm_director.py` reads the notebook before every edit and `serve.py` shows it at the bottom of the project page with a delete form.
+
 ---
 
 ## Render and output

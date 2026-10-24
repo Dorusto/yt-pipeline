@@ -3175,3 +3175,48 @@ loop. `--apply --force` re-applies from the plan and the existing edit's slots
 when `edit.json` is already a complete edit. The OpenRouter three-role loop
 stays the default for the web app. The shared setup (`_resolve_workspace_brief`,
 `_agent_context`) is one place used by both the loop and the agent mode.
+
+---
+
+## [2026-10-24] Learning notebook with a 40-lesson limit (V030 lot c10)
+
+**Context:** Issue #106 points 3 and 4 and issue #96 point 3. The director kept
+no memory between edits: a lesson learned on one edit (a repeated sentence, a
+pacing that worked) was lost on the next, and a repeated sentence such as the
+sponsor line had no home outside the config. The owner wanted a small notebook
+the director keeps on this instance, with a size limit so it stays useful, and a
+way to record that a repeated sentence should move to `channel.fixed`.
+
+**Options:** (A) a per-workspace notebook with no limit; (B) a per-instance
+notebook file with a fixed 40-lesson limit, read by the director before each
+edit, shown in the web app, with a proposal lesson for a repeated sentence.
+
+**Decision:** B. `scripts/common/notebook.py` holds the shared loader and the
+`NOTEBOOK_LIMIT` of 40; `scripts/notebook.py` reads and edits the file
+(`--list`, `--add`, `--remove`, `--merge`, `--propose`) and validates it against
+`schemas/notebook.schema.json` before an atomic write. The path comes from
+`--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config;
+it is optional, so with none of the three set the director reads nothing and the
+web app shows no section — there is no personal default. The 40-lesson limit is
+a code rule, not a schema `maxItems`, so `--limit` stays a valid test override;
+a write past the limit fails with `EXIT_USAGE` and the caller merges overlapping
+lessons or removes stale ones first. A lesson of kind `proposal` names a
+`channel.fixed` part and the code never writes the config — the owner says yes
+by editing it. `llm_director.py` reads the notebook before every edit and hands
+it to the screenwriter, the editor and the reviewer (and to the host agent in
+`--prepare`); `serve.py` shows it as a collapsible section at the bottom of the
+project page with a delete form (`POST /<project>/notebook-delete`).
+
+**Why not A:** the issue asks for a per-instance notebook with a size limit and
+forced cleanup; a per-workspace notebook with no limit would grow without bound
+and would not carry a lesson from one edit to the next.
+
+**Consequence:** New `scripts/notebook.py`, `scripts/common/notebook.py`,
+`schemas/notebook.schema.json` and the `yt-notebook` skill; `llm_director.py`
+gains `--notebook` and the notebook block, `serve.py` gains `--notebook`, the
+panel and the delete route, and `scripts/common/config.py` gains
+`notebook_path()` and the `notebook.path` validation. `docs/RULES.md` gains the
+notebook rule and the `serve.py` → `notebook.py` subprocess entry. No automatic
+write to `channel.fixed`, no shared notebook between instances and no new web
+feature flag.
+

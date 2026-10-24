@@ -207,6 +207,14 @@ def _validate(data):
         if path is not None and (not isinstance(path, str) or not path):
             raise ConfigError("requests.path must be a non-empty string")
 
+    notebook = data.get("notebook")
+    if notebook is not None:
+        if not isinstance(notebook, dict):
+            raise ConfigError("notebook must be a mapping")
+        path = notebook.get("path")
+        if path is not None and (not isinstance(path, str) or not path):
+            raise ConfigError("notebook.path must be a non-empty string")
+
     web = data.get("web")
     if web is not None:
         if not isinstance(web, dict):
@@ -288,6 +296,7 @@ DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
 UPKEEP_PERCENT_ENV = "YT_PIPELINE_UPKEEP_PERCENT"
 USD_TO_EUR_ENV = "YT_PIPELINE_USD_TO_EUR"
 REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
+NOTEBOOK_ENV = "YT_PIPELINE_NOTEBOOK"
 STORAGE_GB_ENV = "YT_PIPELINE_STORAGE_GB"
 PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
 DEFAULT_DONATION_LABEL = "Support the project"
@@ -337,6 +346,14 @@ def no_requests_message(flag_name):
     return (
         f"no requests file configured: pass {flag_name} PATH, set the "
         f"{REQUESTS_ENV} environment variable, or set requests.path in the config"
+    )
+
+
+def no_notebook_message(flag_name):
+    """The one usage error for an unconfigured notebook, naming the flag."""
+    return (
+        f"no notebook configured: pass {flag_name} PATH, set the "
+        f"{NOTEBOOK_ENV} environment variable, or set notebook.path in the config"
     )
 
 
@@ -536,6 +553,26 @@ def requests_path(cli_value=None, config=None):
         return Path(from_env).expanduser()
     data = config if config is not None else load_config()
     section = data.get("requests")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def notebook_path(cli_value=None, config=None):
+    """The instance notebook file: CLI flag, else NOTEBOOK_ENV, else notebook.path.
+
+    Returns None when none of the three is set — the notebook is optional, so the
+    director reads nothing and the app shows no section. There is no personal default.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(NOTEBOOK_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("notebook")
     if isinstance(section, dict):
         value = section.get("path")
         if value:
