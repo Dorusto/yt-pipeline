@@ -1559,9 +1559,8 @@ def render_strip(summary, prefix="", thumbs=()):
     return (
         '<div class="strip" aria-label="Edit timeline">'
         f'<div class="strip-track">{"".join(buttons)}</div>'
-        '<div class="strip-legend"><span class="k-clip">clip</span>'
-        '<span class="k-photo">photo</span>'
-        f'<span class="num">{html_escape(describe_summary(summary))}</span></div></div>'
+        f'<div class="strip-summary"><span class="num">{html_escape(describe_summary(summary))}</span></div>'
+        "</div>"
     )
 
 
@@ -2196,7 +2195,7 @@ def render_files_panel(directory, name, features=None, consent_text=None):
 
 
 def _render_tabs(name, enabled, tab):
-    """The project tab bar: Recap, the Details group (Why? and Shots), then Cuts and Shorts."""
+    """The project tab bar: Recap, Files, Cuts and Shorts."""
     labels = dict(TABS)
 
     def link(key):
@@ -2208,12 +2207,6 @@ def _render_tabs(name, enabled, tab):
         parts.append(link("recap"))
     if "files" in enabled:
         parts.append(link("files"))
-    details = [key for key in ("why", "shots") if key in enabled]
-    if details:
-        parts.append(
-            '<span class="tab-group">'
-            f'{"".join(link(key) for key in details)}</span>'
-        )
     for key in ("cuts", "shorts"):
         if key in enabled:
             parts.append(link(key))

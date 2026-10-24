@@ -3002,3 +3002,15 @@ level of each agent and when `coder-max` is used.
 **Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
 
 **Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.
+
+## [2026-10-24] A simpler Watch tab, generic example wording (V020N lot n26)
+
+**Context:** issue #93 follow-up. The owner found the Watch (Recap) tab busier than it needs to be: the tab bar carried a **Details** group with **Why?** and **Shots** links, and the strip under the player showed a clip/photo colour legend. The owner also wanted `config.yaml.example` to stop carrying his own channel wording.
+
+**Options:** (A) keep the links and the legend and only hide them behind a feature flag; (B) drop the Why?/Shots links from the tab bar and the colour legend, keep the pages reachable by URL, and replace the owner's wording in the example with neutral placeholders.
+
+**Decision:** B. `serve._render_tabs` no longer builds the Details group, so the tab bar shows only Recap, Files, Cuts and Shorts; `render_strip` drops the `strip-legend` clip/photo spans and keeps the summary line in a `strip-summary` container. The `why`/`shots` feature parts, the `?tab=why` / `?tab=shots` routes and the `explain.html` / `shotlog.html` serving are unchanged, so the pages stay reachable by URL for the developer. `config.yaml.example` carries neutral `channel.fixed` placeholders (the real wording lives only in the owner's `config.yaml`).
+
+**Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
+
+**Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.

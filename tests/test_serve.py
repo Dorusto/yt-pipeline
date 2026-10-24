@@ -233,8 +233,8 @@ def test_project_page_default_tab_is_recap(tmp_path):
         assert status == 200
         assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
         assert b'href="/2026-10-14/?tab=recap"' in body
-        assert b'href="/2026-10-14/?tab=why"' in body
-        assert b'href="/2026-10-14/?tab=shots"' in body
+        assert b'href="/2026-10-14/?tab=why"' not in body
+        assert b'href="/2026-10-14/?tab=shots"' not in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -1619,19 +1619,45 @@ def test_shotlog_regeneration_updates_the_used_grouping(tmp_path):
     assert "must be in" in page and "wrong label" in page
 
 
-def test_project_page_groups_why_and_shots_under_details(tmp_path):
+def test_tab_bar_has_no_why_or_shots_links_but_pages_stay_reachable(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/")
         page = body.decode()
         assert status == 200
-        assert '<span class="tab-group">' in page
-        assert '<span class="tab-group-label">Details</span>' not in page
-        start = page.index('<span class="tab-group">')
-        group = page[start:page.index("</nav>", start)]
-        assert 'href="/2026-10-14/?tab=why"' in group
-        assert 'href="/2026-10-14/?tab=shots"' in group
+        nav = page[page.index('<nav class="tabs">'):page.index("</nav>")]
+        assert "?tab=why" not in nav
+        assert "?tab=shots" not in nav
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b'<iframe src="explain.html"' in body
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
+        assert status == 200
+        assert b'<iframe src="shotlog.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_strip_has_no_colour_legend(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "edit.json").write_text(
+        json.dumps({"video": [{"in_s": 0.0, "out_s": 5.0, "shot_key": "0081/s1"}]}),
+        encoding="utf-8",
+    )
+    render = project / "recap_720p.mp4"
+    os.utime(project / "edit.json", (render.stat().st_mtime - 10, render.stat().st_mtime - 10))
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        page = body.decode()
+        assert status == 200
+        assert "strip-legend" not in page
+        assert 'class="k-clip"' not in page
+        assert 'class="k-photo"' not in page
+        assert 'class="strip-summary"' in page
     finally:
         server.shutdown()
         server.server_close()

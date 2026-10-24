@@ -30,14 +30,14 @@ channel:
   github_url: "<channel-code-url>"
   fixed:
     members_sentence:
-      ro: "Mulțumesc {members} pentru susținerea canalului meu de YouTube. Dacă îți place ce fac și vrei să te alături și tu, poți folosi cu încredere butonul de membru mai jos."
-      en: "Thank you {members} for supporting my YouTube channel. If you like what I do and want to join, feel free to use the join button below."
+      ro: "Mulțumesc {members} pentru susținerea canalului."
+      en: "Thanks {members} for supporting the channel."
     closing:
-      ro: "Până data viitoare — nu uita să fii creativ."
-      en: "Until next time, don't forget to be creative."
+      ro: "Pe data viitoare."
+      en: "See you next time."
     thumbnail_formula:
-      ro: "Formula canalului: fața creatorului, o emoție reală (niciodată neutră) și text scurt — niciodată o ilustrație generică."
-      en: "Channel formula: the creator's own face, a real emotion (never neutral) and short text — never a generic illustration."
+      ro: "Formula canalului: subiectul, o emoție reală și text scurt."
+      en: "Channel formula: the subject, a real emotion and short text."
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
