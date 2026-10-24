@@ -111,7 +111,7 @@ def default_model(device, language):
     """The Whisper model for a device and language: turbo on GPU, medium/small on CPU."""
     if device == "cuda":
         return GPU_MODEL
-    if language in (None, "auto", "en"):
+    if language == "en":
         return CPU_ENGLISH_MODEL
     return CPU_NON_ENGLISH_MODEL
 

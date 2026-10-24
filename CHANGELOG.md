@@ -56,7 +56,7 @@ friend's own instance.
 - Docs: the README is now a one-screen front door (what it is, who it is for, a quickstart, where to go next); the tool-by-tool reference moved to `docs/guides/tools.md`, and the pilot host and costs sections link to their guides.
 - Cleanup lot (V020N lot n15): the duplicated helpers moved into scripts/common/ (SRT parsing, read_text, now_iso, parse_child_json, format_size, the FilmCraft sequence/track/cli helpers, the minimum shot length, KIT_DIR_NAME, the credit helper and the drop/trim route body), and the docs drift fixed.
 - Cleanup: the `--help` guard copied in the four legacy SRT tools moved into one helper in `scripts/common/cli.py`.
-- Publish: `transcribe.py` defaults to `medium` on CPU for a non-English language and `small` for English (turbo on GPU, tiny only for the mock backend), resolved from `--model`, `YT_PIPELINE_WHISPER_MODEL` or `transcribe.model` in the config; `publish.py` gains `--whisper-model` for the `--media` step.
+- Publish: `transcribe.py` defaults to `medium` on CPU for a non-English language (including `auto` or no language) and `small` only for an explicit `en` (turbo on GPU, tiny only for the mock backend), resolved from `--model`, `YT_PIPELINE_WHISPER_MODEL` or `transcribe.model` in the config; `publish.py` gains `--whisper-model` for the `--media` step.
 
 ### Fixed
 

@@ -75,8 +75,8 @@ def test_default_model_is_language_and_device_aware():
     assert transcribe.default_model("cuda", "ro") == "turbo"
     assert transcribe.default_model("cpu", "ro") == "medium"
     assert transcribe.default_model("cpu", "en") == "small"
-    assert transcribe.default_model("cpu", None) == "small"
-    assert transcribe.default_model("cpu", "auto") == "small"
+    assert transcribe.default_model("cpu", None) == "medium"
+    assert transcribe.default_model("cpu", "auto") == "medium"
 
 
 def test_model_flag_overrides_the_default(tmp_path, capsys):

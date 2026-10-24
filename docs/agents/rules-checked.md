@@ -120,7 +120,7 @@ for the rules that depend on review alone (no program can check them).
 | Photos and music — Ken Burns renders with zoompan | `tests/test_render.py` |
 | Photos and music — music is the bed under the ambient | `tests/test_render.py` |
 | Photos and music — --music auto picks the track | `tests/test_music_pick.py` |
-| Photos and music — beat-snapped cuts | `tests/test_llm_director.py` |
+| Photos and music — beat-snapped cuts | `tests/test_llm_director.py`, `tests/test_director.py` |
 | Packaging and brand — brand.json is the brand kit | `tests/test_thumbnail.py` |
 | Packaging and brand — fonts load only from the brand paths | `tests/test_thumbnail.py` |
 | Packaging and brand — thumbnail cut-out is rembg | `tests/test_thumbnail.py` |
