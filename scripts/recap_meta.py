@@ -11,13 +11,13 @@ Usage:
 Reads ``edit.json`` (required, validated against ``schemas/edit.schema.json``)
 and ``ingest.json`` (optional, for the date), builds the deterministic facts
 (the brief text, the four facts from ``brief_facts.json`` — place, when, who,
-occasion — winning over the brief syntax and the ingest date, and the shot
-descriptions), asks the ``metadata`` model role for one title, a 2-3 sentence
-description and 5-10 hashtags, and writes ``recap_meta.json`` validated against
-``schemas/recap_meta.schema.json``. The fact fields the brief and
-``brief_facts.json`` did not carry are listed by field name in ``missing`` so
-the web app can hint at them. Sources are read-only; the output is written
-atomically and skipped when it is newer than ``edit.json``, unless ``--force``.
+occasion — with the ingest date for ``when``, and the shot descriptions), asks
+the ``metadata`` model role for one title, a 2-3 sentence description and 5-10
+hashtags, and writes ``recap_meta.json`` validated against
+``schemas/recap_meta.schema.json``. The fact fields ``brief_facts.json`` did not
+carry are listed by field name in ``missing`` so the web app can hint at them.
+Sources are read-only; the output is written atomically and skipped when it is
+newer than ``edit.json``, unless ``--force``.
 """
 
 import argparse

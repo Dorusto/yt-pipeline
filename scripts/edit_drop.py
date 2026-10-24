@@ -28,13 +28,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import versions  # noqa: E402
+from common.constants import MIN_SHOT_LENGTH_S  # noqa: E402
 from common.errors import report_error  # noqa: E402
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE  # noqa: E402
 from common.summary import summary_fields  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 PREVIEW_NAME = "recap_720p.mp4"
-MIN_LEN_S = 1.0
 
 
 class DropError(Exception):
@@ -139,7 +139,7 @@ def trim_shots(edit, specs):
             new_out = min(out_s + delta, duration)
             new_in = max(0.0, in_s - (delta - (new_out - out_s)))
         else:
-            floor = in_s + MIN_LEN_S
+            floor = in_s + MIN_SHOT_LENGTH_S
             if out_s <= floor:
                 raise DropError(f"shot {number} is already at its shortest")
             new_out = max(out_s - abs(delta), floor)

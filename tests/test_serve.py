@@ -2611,7 +2611,7 @@ def test_costs_page_shows_storage_and_credit(tmp_path, monkeypatch):
         page = body.decode()
         assert status == 200
         assert "GB of 100 GB used" in page
-        assert "Model credit: $3.20 left of $5.00" in page
+        assert "Model credit: $3,20 left of $5,00" in page
     finally:
         server.shutdown()
         server.server_close()
@@ -2645,7 +2645,7 @@ def test_upload_page_shows_storage_and_credit(tmp_path, monkeypatch):
         page = body.decode()
         assert status == 200
         assert "GB of 100 GB used" in page
-        assert "Model credit: $3.20 left of $5.00" in page
+        assert "Model credit: $3,20 left of $5,00" in page
     finally:
         server.shutdown()
         server.server_close()

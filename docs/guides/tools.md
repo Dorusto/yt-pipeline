@@ -199,7 +199,7 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 
 ### Thumbnail (brand kit)
 
-`thumbnail.py` turns a portrait photo + a title into a branded 1280x720 YouTube thumbnail (the approved `DEPPSiT-template-v2` look, driven by `brand.json`): cut-out portrait with an outer glow, generated or photo background, title/keyword/kicker in the brand fonts and the `#DEPPSiT` tag. Skill: `yt-thumbnail`.
+`thumbnail.py` turns a portrait photo + a title into a branded 1280x720 YouTube thumbnail (the approved brand template look, driven by `brand.json`): cut-out portrait with an outer glow, generated or photo background, title/keyword/kicker in the brand fonts and the channel tag. Skill: `yt-thumbnail`.
 
 ```bash
 .venv/bin/python scripts/thumbnail.py --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
@@ -256,7 +256,7 @@ The S1 output adapter turns an `edit.json` edit list into a preview-quality 720p
 .venv/bin/python scripts/graphics_plan.py words.json --markers markers.json \
     --context context.md --max-entries 3 --json
 .venv/bin/python scripts/graphics.py --template lower_third \
-    --props '{"name":"Doru","role":"creator"}' --out /tmp/lt.mov --json
+    --props '{"name":"<name>","role":"creator"}' --out /tmp/lt.mov --json
 .venv/bin/python scripts/graphics.py --template counter \
     --props '{"number":"42","label":"clips"}' --out /tmp/counter.mov --duration 3
 .venv/bin/python scripts/graphics.py --template callout \
@@ -507,7 +507,7 @@ Copy from `shorts_config_example.yaml`. File is git-ignored.
 |:---|:---|
 | Transcription | `openai-whisper turbo` (pipx) |
 | Forced alignment | `whisperx` (wav2vec2 Romanian) |
-| Face detection | OpenCV Haar cascades |
+| Face detection | OpenCV YuNet |
 | ASS subtitles | `pysubs2` |
 | Video render | `ffmpeg h264_nvenc` (NVIDIA GPU) / `h264_videotoolbox` (macOS) / `libx264` (CPU fallback, automatic) |
 | AI (translation; metadata gen deprecated) | DeepSeek via OpenRouter |

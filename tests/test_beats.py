@@ -5,6 +5,7 @@ import pytest
 
 import beats
 from common.exit_codes import EXIT_OK, EXIT_USAGE
+from helpers import make_click
 
 
 def ffmpeg(args):
@@ -12,26 +13,6 @@ def ffmpeg(args):
         ["ffmpeg", "-hide_banner", "-y", "-v", "error", *args],
         check=True,
         capture_output=True,
-    )
-
-
-def make_click(path, duration=8.0, bpm=120.0, accent=False):
-    period = 60.0 / bpm
-    pulse = f"lt(mod(t,{period}),0.02)"
-    amplitude = f"(0.5+0.9*eq(mod(floor(t/{period}),4),0))" if accent else "0.9"
-    expression = f"{amplitude}*sin(2*PI*1000*t)*{pulse}"
-    ffmpeg(
-        [
-            "-f",
-            "lavfi",
-            "-i",
-            f"aevalsrc='{expression}':s=22050:d={duration}",
-            "-ac",
-            "1",
-            "-c:a",
-            "pcm_s16le",
-            str(path),
-        ]
     )
 
 

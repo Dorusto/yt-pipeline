@@ -15,6 +15,7 @@ from common.moves import slot_screen_length
 from common.photos import ken_burns_for
 from common.schema import validate
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from helpers import make_click
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "llm_director.py"
@@ -1122,7 +1123,7 @@ def test_normalisation_reported_in_warnings(tmp_path):
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     slot = edit["video"][0]
     assert slot["out_s"] - slot["in_s"] <= llm_director.MAX_SLOT_S + llm_director.TOLERANCE_S
-    assert slot["out_s"] - slot["in_s"] >= llm_director.MIN_SLOT_S - llm_director.TOLERANCE_S
+    assert slot["out_s"] - slot["in_s"] >= llm_director.MIN_SHOT_LENGTH_S - llm_director.TOLERANCE_S
 
 
 def test_missing_last_round_slot_is_synthesised(tmp_path):
@@ -1647,32 +1648,6 @@ def record_cuts(record):
         position += slot["duration_s"] if slot.get("kind") == "photo" else slot["out_s"] - slot["in_s"]
         cuts.append(round(position, 4))
     return cuts
-
-
-def make_click(path, duration=8.0, bpm=120.0):
-    period = 60.0 / bpm
-    pulse = f"lt(mod(t,{period}),0.02)"
-    expression = f"0.9*sin(2*PI*1000*t)*{pulse}"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-y",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"aevalsrc='{expression}':s=22050:d={duration}",
-            "-ac",
-            "1",
-            "-c:a",
-            "pcm_s16le",
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-    )
 
 
 def test_load_beats_accepts_both_shapes(tmp_path):

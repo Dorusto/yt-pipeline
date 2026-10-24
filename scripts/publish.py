@@ -26,19 +26,19 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
+from common.constants import KIT_DIR_NAME
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 from common.ffmpeg_tools import probe_duration
+from common.jsonio import now_iso, parse_child_json
+from common.srt import srt_end_seconds
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL = "scripts/publish.py"
 STATE_NAME = "publish_state.json"
 COST_LINE = re.compile(r"LLM cost:\s*\$([0-9]+(?:\.[0-9]+)?)")
-KIT_DIR_NAME = "publish-kit"
 MATCH_TOLERANCE_S = 2.0
-SRT_END = re.compile(r"--> (\d{2}):(\d{2}):(\d{2}),(\d{3})")
 
 
 class PublishError(RuntimeError):
@@ -499,30 +499,6 @@ def normalize_subs_output(ctx):
         os.replace(ro, raw)
 
 
-def parse_child_json(stdout):
-    """Return the child's JSON summary object, or None when there is none."""
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
-
-
 def child_outputs(data):
     """Collect the output paths a child reported in its JSON summary."""
     if not isinstance(data, dict):
@@ -599,10 +575,6 @@ def execute(step, argv, ctx):
         "stdout": stdout,
         "wall_time_s": wall_time_s,
     }
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def build_options(ctx):
@@ -693,19 +665,6 @@ def resolve_final_video(ctx):
     if ctx.source_kind == "media":
         return ctx.media
     return None
-
-
-def srt_end_seconds(path):
-    """Return the last cue's end time in seconds, or None when there is none."""
-    try:
-        content = Path(path).read_text(encoding="utf-8")
-    except OSError:
-        return None
-    matches = SRT_END.findall(content)
-    if not matches:
-        return None
-    hours, minutes, seconds, millis = matches[-1]
-    return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
 
 
 def format_seconds(seconds):

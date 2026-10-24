@@ -30,6 +30,7 @@ from pathlib import Path
 from common import notify, versions
 from common.config import ConfigError, music_library, no_music_library_message
 from common.edit_timeline import edit_summary
+from common.jsonio import parse_child_json
 from common.media import video_files
 from common.photos import is_photo
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -712,29 +713,6 @@ def normalize_commands(argv):
     if isinstance(argv[0], str):
         return [argv]
     return list(argv)
-
-
-def parse_child_json(stdout):
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
 
 
 def execute(station, argv, ctx):

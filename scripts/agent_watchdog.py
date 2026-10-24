@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Watch the build agents and send an ntfy alert only when something looks wrong.
 
-Run it from cron every 15 minutes. Two checks:
+Run it from cron every 15 minutes. Three checks:
 
 - spend: today's OpenRouter usage for the agents' API key is above a threshold;
 - stall: an ``opencode`` process is running but nothing has changed in the
-  watched folders for longer than a threshold.
+  watched folders for longer than a threshold;
+- no-progress: an ``opencode`` process is running but there has been no commit
+  for longer than a threshold.
 
 Each problem is reported once: once per UTC day for spend, once per stall
 episode for stall. State lives in a small JSON file.
@@ -27,8 +29,8 @@ which the single ``Blocked`` stop notification reports; it is not a stop
 threshold.
 
 The alert label comes from the newest task brief in ``<repo>/.opencode/tasks/``
-(review and audit notes skipped), else the tmux session running the agent, else
-nothing — no per-lot flag.
+(review, audit and README notes skipped), else the tmux session running the
+agent, else nothing — no per-lot flag.
 
 The no-commit clock starts at the later of the last commit and the agent start
 (the run marker, else the running ``opencode`` process start time), so a fresh
@@ -58,7 +60,7 @@ DEFAULT_STATE_FILE = "~/.cache/yt-pipeline/watchdog-state.json"
 DEFAULT_LEDGER_FILE = "~/.cache/yt-pipeline/run-spend.json"
 DEFAULT_EXTRA_WATCH = "~/.local/share/opencode"
 DEFAULT_TASKS_DIR = ".opencode/tasks"
-TASK_FILE_SKIP_PREFIXES = ("review-", "AUDIT-")
+TASK_FILE_SKIP_PREFIXES = ("review-", "AUDIT-", "README")
 SKIPPED_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"}
 IS_WINDOWS = sys.platform.startswith("win")
 

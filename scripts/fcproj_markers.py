@@ -20,7 +20,14 @@ import time
 from pathlib import Path
 
 from common.constants import TICKS_PER_SECOND
-from common.filmcraft import parse_frame_rate
+from common.filmcraft import (
+    FilmCraftError,
+    find_sequences,
+    frame_rate,
+    load_project_json,
+    select_sequence,
+    sequence_block,
+)
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 ROSE = "rose"
@@ -52,55 +59,6 @@ def build_parser():
     parser.add_argument("--todo", default=None, help="todo markdown path (default: <project dir>/todo.md)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
-
-
-def load_json(path):
-    """Read a UTF-8 JSON file, raising a named error when it is missing or unreadable."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except FileNotFoundError:
-        raise MarkersError(f"cannot read '{path}': file not found")
-    except json.JSONDecodeError as exc:
-        raise MarkersError(f"cannot read '{path}': not valid JSON ({exc})")
-    except OSError as exc:
-        raise MarkersError(f"cannot read '{path}': {exc}")
-
-
-def find_sequences(items):
-    """Return ``{name: sequence item}`` for every named sequence item."""
-    sequences = {}
-    for value in items.values():
-        kind = value.get("kind") or {}
-        if "Sequence" in kind and value.get("name"):
-            sequences[value["name"]] = value
-    return sequences
-
-
-def select_sequence(items, requested):
-    """Return ``(name, sequence item)`` for the requested or only sequence."""
-    sequences = find_sequences(items)
-    if not sequences:
-        raise MarkersError("no sequence found in the project")
-    if requested:
-        if requested not in sequences:
-            found = ", ".join(sorted(sequences)) or "none"
-            raise MarkersError(f"unknown sequence '{requested}' (sequences found: {found})")
-        return requested, sequences[requested]
-    if len(sequences) > 1:
-        found = ", ".join(sorted(sequences))
-        raise MarkersError(f"the project has more than one sequence, pass --sequence (found: {found})")
-    name = next(iter(sequences))
-    return name, sequences[name]
-
-
-def sequence_block(sequence_item):
-    return (sequence_item.get("kind") or {}).get("Sequence") or {}
-
-
-def frame_rate(sequence_item):
-    """Return the sequence frame rate as a float, defaulting to 25 when unset."""
-    return parse_frame_rate(sequence_block(sequence_item).get("settings") or {})
 
 
 def format_timecode(seconds, fps):
@@ -175,7 +133,7 @@ def run(project_path, sequence_name=None, out_path=None, todo_path=None):
     """Read the project markers, write markers.json and todo.md, and return the summary."""
     started = time.monotonic()
     project = Path(project_path).expanduser()
-    data = load_json(project)
+    data = load_project_json(project)
     project_block = data.get("project")
     if not isinstance(project_block, dict) or not isinstance(project_block.get("items"), dict):
         raise MarkersError(f"'{project}' is not a FilmCraft project (no project.items)")
@@ -215,6 +173,8 @@ def main(argv=None):
         summary = run(args.project, args.sequence, args.out, args.todo)
     except MarkersError as exc:
         return report_error(exc, EXIT_USAGE, args.json)
+    except FilmCraftError as exc:
+        return report_error(exc, exc.code, args.json)
 
     if args.json:
         print(json.dumps(summary))

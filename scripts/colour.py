@@ -34,7 +34,15 @@ import numpy as np
 from common.constants import TICKS_PER_SECOND
 from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
-from common.filmcraft import cli_path
+from common.filmcraft import (
+    FilmCraftError,
+    find_sequences,
+    load_project_json,
+    parse_replies,
+    resolve_cli,
+    select_sequence,
+    select_track,
+)
 from common.frames import read_frame_pairs
 from common.media import parse_stamp
 from common.summary import summary_fields
@@ -99,19 +107,6 @@ def build_parser():
 def clamp(value, low, high):
     """Return ``value`` limited to the ``[low, high]`` range."""
     return max(low, min(high, value))
-
-
-def load_json(path):
-    """Read a UTF-8 JSON file, raising a named error when it is missing or unreadable."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except FileNotFoundError:
-        raise ColourError(f"cannot read '{path}': file not found")
-    except json.JSONDecodeError as exc:
-        raise ColourError(f"cannot read '{path}': not valid JSON ({exc})")
-    except OSError as exc:
-        raise ColourError(f"cannot read '{path}': {exc}")
 
 
 def measure_frames(frames):
@@ -188,43 +183,6 @@ def sample_times(start_s, end_s, count):
         return []
     step = (end_s - start_s) / count
     return [start_s + step * (index + 0.5) for index in range(count)]
-
-
-def find_sequences(items):
-    """Return ``{name: sequence item}`` for every named sequence item."""
-    sequences = {}
-    for value in items.values():
-        kind = value.get("kind") or {}
-        if "Sequence" in kind and value.get("name"):
-            sequences[value["name"]] = value
-    return sequences
-
-
-def select_sequence(items, requested):
-    """Return ``(name, sequence item)`` for the requested or only sequence."""
-    sequences = find_sequences(items)
-    if not sequences:
-        raise ColourError("no sequence found in the project")
-    if requested:
-        if requested not in sequences:
-            found = ", ".join(sorted(sequences)) or "none"
-            raise ColourError(f"unknown sequence '{requested}' (sequences found: {found})")
-        return requested, sequences[requested]
-    if len(sequences) > 1:
-        found = ", ".join(sorted(sequences))
-        raise ColourError(f"the project has more than one sequence, pass --sequence (found: {found})")
-    name = next(iter(sequences))
-    return name, sequences[name]
-
-
-def select_track(sequence_item, track_name):
-    """Return the video track named ``track_name`` of the sequence."""
-    block = (sequence_item.get("kind") or {}).get("Sequence") or {}
-    tracks = {entry.get("name"): entry for entry in block.get("video_tracks") or []}
-    if track_name not in tracks:
-        found = ", ".join(sorted(str(name) for name in tracks)) or "none"
-        raise ColourError(f"unknown track '{track_name}' (tracks found: {found})")
-    return tracks[track_name]
 
 
 def media_path(items, clip, project_dir):
@@ -314,33 +272,6 @@ def build_commands(sessions):
     return lines
 
 
-def resolve_cli(required=True):
-    """Return the filmcraft-cli binary from ``$FILMCRAFT_CLI`` or PATH.
-
-    With ``required=False`` (``--dry-run``) a missing binary is not an error.
-    """
-    found = cli_path()
-    if found:
-        return found
-    if not required:
-        return "filmcraft-cli"
-    raise ColourRuntimeError("filmcraft-cli not found: set FILMCRAFT_CLI or put filmcraft-cli on PATH")
-
-
-def parse_replies(text):
-    """Parse the JSON reply lines ``filmcraft-cli run`` prints."""
-    replies = []
-    for line in (text or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            replies.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return replies
-
-
 def run_script(cli, target, lines):
     """Run the JSONL script through ``filmcraft-cli run`` and raise on a failed command."""
     command = [cli, "run", "-", "--project", str(target), "--save", "--compact"]
@@ -381,12 +312,12 @@ def run_fcproj(project_path, sequence_name, track_name, session_gap_min, frames_
     project = Path(project_path).expanduser()
     if not project.is_file():
         raise ColourError(f"project not found: {project}")
-    data = load_json(project)
+    data = load_project_json(project)
     items = (data.get("project") or {}).get("items")
     if not isinstance(items, dict):
         raise ColourError(f"'{project}' is not a FilmCraft project (no project.items)")
     name, sequence_item = select_sequence(items, sequence_name)
-    track = select_track(sequence_item, track_name)
+    track = select_track(sequence_item, track_name, "video_tracks")
 
     warnings = []
     clips = collect_clips(items, track, project.parent, track_name, warnings)
@@ -475,7 +406,7 @@ def main(argv=None):
             args.in_place,
             args.dry_run,
         )
-    except ColourError as exc:
+    except (ColourError, FilmCraftError) as exc:
         return report_error(exc, exc.code, args.json)
 
     if args.json:

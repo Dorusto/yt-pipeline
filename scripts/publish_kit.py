@@ -23,11 +23,13 @@ import sys
 import time
 from pathlib import Path
 
+from common.constants import KIT_DIR_NAME
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
+from common.jsonio import parse_child_json
+from common.sizes import format_size
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-KIT_DIR_NAME = "publish-kit"
 TITLE_MAX = 100
 DESCRIPTION_MAX = 5000
 TAGS_MAX = 500
@@ -87,41 +89,6 @@ def say(json_mode, message):
     """Print a progress line to stdout, or to stderr when ``--json`` keeps stdout pure."""
     stream = sys.stderr if json_mode else sys.stdout
     print(message, file=stream, flush=True)
-
-
-def format_size(num_bytes):
-    """Render a byte count as B, KB, MB or GB with one decimal."""
-    if num_bytes < 1024:
-        return f"{num_bytes} B"
-    if num_bytes < 1024 * 1024:
-        return f"{num_bytes / 1024:.1f} KB"
-    if num_bytes < 1024 * 1024 * 1024:
-        return f"{num_bytes / (1024 * 1024):.1f} MB"
-    return f"{num_bytes / (1024 * 1024 * 1024):.1f} GB"
-
-
-def parse_child_json(stdout):
-    """Return the child's JSON summary object, or None when there is none."""
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
 
 
 def load_metadata_json(project):

@@ -38,6 +38,7 @@ from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
 from common.llm import BudgetExceeded, LLMError, make_client
 from common import runlog
+from common.constants import MIN_SHOT_LENGTH_S
 from common.moves import (
     EXCEPTION_SHARE,
     SAME_TAKE_MIN_GAP_S,
@@ -64,7 +65,6 @@ PROMPTS_DIR = REPO_ROOT / "prompts"
 DIRECTOR_SCRIPT = REPO_ROOT / "scripts" / "director.py"
 
 MAX_ROUNDS = 3
-MIN_SLOT_S = 1.0
 MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
 LONG_CUT_PACING_S = 180.0
@@ -554,7 +554,7 @@ def plan_pacing(plan):
     return run_pacing(target)
 
 
-def default_target_s(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
+def default_target_s(candidate, important_max_s, slot_min_s=MIN_SHOT_LENGTH_S, slot_max_s=MAX_SLOT_S):
     window = candidate["out_s"] - candidate["in_s"]
     if is_important(candidate):
         return round(min(window, important_max_s), 3)
@@ -566,7 +566,7 @@ def keeps_whole(fact):
     return bool(fact.get("keep_whole")) and fact.get("motion_label") not in NON_MOVE_MOTION_LABELS
 
 
-def make_fact(candidate, important_max_s, slot_min_s=MIN_SLOT_S, slot_max_s=MAX_SLOT_S):
+def make_fact(candidate, important_max_s, slot_min_s=MIN_SHOT_LENGTH_S, slot_max_s=MAX_SLOT_S):
     return {
         "shot_key": candidate.get("shot_key"),
         "clip": candidate["clip"],
@@ -618,7 +618,7 @@ def build_shot_facts(
     shotlog,
     important_max_s=DEFAULT_IMPORTANT_MAX_S,
     drop_reasons=None,
-    slot_min_s=MIN_SLOT_S,
+    slot_min_s=MIN_SHOT_LENGTH_S,
     slot_max_s=MAX_SLOT_S,
 ):
     clips = order_clips(load_ingest(workspace))
@@ -643,7 +643,7 @@ def build_shot_facts(
         motion = load_json(workspace / "motion" / f"{stem}.json")
         position = clip_position(moment, first_moment, span_seconds)
         candidates = build_candidates(
-            clip, moment, position, content_offset, quality, motion, MIN_SLOT_S,
+            clip, moment, position, content_offset, quality, motion, MIN_SHOT_LENGTH_S,
             beats_by_segment=beats_by_segment,
         )
         scored = []

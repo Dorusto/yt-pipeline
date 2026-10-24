@@ -36,10 +36,10 @@ import re
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from common.config import ConfigError, load_config
+from common.jsonio import now_iso
 from common.llm import LLMError, make_client
 from common.media import clip_kind
 from common.overlap import overlap_fraction
@@ -92,10 +92,6 @@ def get_client():
     if _client is None:
         _client = make_client()
     return _client
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def load_json(path):

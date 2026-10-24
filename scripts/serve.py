@@ -80,7 +80,7 @@ from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
 from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, spend_between
-from common.sizes import BYTES_PER_GB, format_gb
+from common.sizes import BYTES_PER_GB, format_gb, format_size
 from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
 from common.versions import list_versions
@@ -580,7 +580,7 @@ def build_parser():
     parser.add_argument(
         "--project-totals-url",
         default=None,
-        help="URL of the owner instance's /costs.json, shown as 'Project costs (everyone)' "
+        help="URL of the owner instance's /costs.json, shown on the Costs page as the project's own costs "
              "(or YT_PIPELINE_PROJECT_TOTALS_URL, or costs.project_totals_url in the config)",
     )
     parser.add_argument(
@@ -822,6 +822,23 @@ def model_credit(api_key, now=None, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
     return value
 
 
+def credit_remaining(server):
+    """Return ``(remaining, limit)`` from the cached OpenRouter credit, or None when unknown."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return None
+    credit = model_credit(api_key)
+    if credit is None:
+        return None
+    limit = credit["limit"]
+    if limit is None:
+        return None
+    remaining = credit["remaining"]
+    if remaining is None:
+        remaining = limit - credit["usage"]
+    return remaining, limit
+
+
 def credit_line(server):
     """The 'Model credit: ...' line, or '' when no OpenRouter key is set."""
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -830,30 +847,19 @@ def credit_line(server):
     credit = model_credit(api_key)
     if credit is None:
         return '<p class="credit">Model credit: unknown</p>'
-    limit = credit["limit"]
-    if limit is None:
+    if credit["limit"] is None:
         return '<p class="credit">Model credit: no credit limit set</p>'
-    remaining = credit["remaining"]
-    if remaining is None:
-        remaining = limit - credit["usage"]
+    remaining, limit = credit_remaining(server)
     warn = " warn" if remaining < server.credit_warn_usd else ""
-    return f'<p class="credit{warn}">Model credit: ${remaining:.2f} left of ${limit:.2f}</p>'
+    return f'<p class="credit{warn}">Model credit: {format_cost(remaining)} left of {format_cost(limit)}</p>'
 
 
 def credit_warning(server):
     """The low-credit banner, or '' when the key has enough credit or is unknown."""
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    resolved = credit_remaining(server)
+    if resolved is None:
         return ""
-    credit = model_credit(api_key)
-    if credit is None:
-        return ""
-    limit = credit["limit"]
-    if limit is None:
-        return ""
-    remaining = credit["remaining"]
-    if remaining is None:
-        remaining = limit - credit["usage"]
+    remaining, limit = resolved
     if remaining >= server.credit_warn_usd:
         return ""
     return (
@@ -2090,15 +2096,6 @@ def ingest_lengths(path):
         if isinstance(clip, dict) and clip.get("file"):
             lengths[clip["file"]] = clip.get("duration_s")
     return lengths
-
-
-def format_size(size_bytes):
-    """Bytes as '45 MB' or '1.2 GB'."""
-    if not isinstance(size_bytes, (int, float)) or isinstance(size_bytes, bool):
-        return "0 MB"
-    if size_bytes >= BYTES_PER_GB:
-        return f"{size_bytes / BYTES_PER_GB:.1f} GB"
-    return f"{size_bytes / (1024 * 1024):.0f} MB"
 
 
 def _file_row(path, kind, edit_names, excluded, lengths, new=False):
@@ -3662,8 +3659,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             location += f"&v={int(version[1:])}"
         self.send_redirect(location)
 
-    def handle_drop_shot(self, project):
-        """Remove shots from a version with edit_drop.py and show the new version."""
+    def _edit_drop_request(self, project, build_extra):
+        """Shared body of the drop/trim routes: check the project, read the form, run edit_drop.py.
+
+        ``build_extra(fields)`` returns the extra edit_drop.py arguments, or None after
+        sending a 400 error.
+        """
         workspace = self.server.root / project
         if not (workspace / "versions").is_dir():
             self.send_error_text(404, "no such project")
@@ -3676,17 +3677,14 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         except UploadError as exc:
             self.send_error_text(exc.status, exc.message)
             return
-        numbers = re.findall(r"\d+", fields.get("shots") or "")
-        if not numbers:
-            self.send_error_text(400, "give the number of the shot to remove")
+        extra = build_extra(fields)
+        if extra is None:
             return
         command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
-                   "--workspace", str(workspace), "--json"]
+                   "--workspace", str(workspace), "--json", *extra]
         version = fields.get("version") or ""
         if re.fullmatch(r"v\d+", version):
             command += ["--version", version]
-        for number in numbers:
-            command += ["--drop", number]
         result = subprocess.run(command, capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
@@ -3694,36 +3692,31 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         self.send_redirect(f"/{project}/?tab=recap")
 
+    def handle_drop_shot(self, project):
+        """Remove shots from a version with edit_drop.py and show the new version."""
+        def build_extra(fields):
+            numbers = re.findall(r"\d+", fields.get("shots") or "")
+            if not numbers:
+                self.send_error_text(400, "give the number of the shot to remove")
+                return None
+            extra = []
+            for number in numbers:
+                extra += ["--drop", number]
+            return extra
+
+        self._edit_drop_request(project, build_extra)
+
     def handle_trim_shot(self, project):
         """Make a shot longer or shorter with edit_drop.py and show the new version."""
-        workspace = self.server.root / project
-        if not (workspace / "versions").is_dir():
-            self.send_error_text(404, "no such project")
-            return
-        if project_status(workspace) == "running":
-            self.send_error_text(409, "already running")
-            return
-        try:
-            fields = parse_fields_only(self._reader())
-        except UploadError as exc:
-            self.send_error_text(exc.status, exc.message)
-            return
-        shot = (fields.get("shot") or "").strip()
-        delta = (fields.get("delta") or "").strip()
-        if not re.fullmatch(r"\d+", shot) or not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", delta):
-            self.send_error_text(400, "give the shot number and the change in seconds")
-            return
-        command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
-                   "--workspace", str(workspace), "--json", "--trim", f"{shot}:{delta}"]
-        version = fields.get("version") or ""
-        if re.fullmatch(r"v\d+", version):
-            command += ["--version", version]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
-        if result.returncode != 0:
-            message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
-            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
-            return
-        self.send_redirect(f"/{project}/?tab=recap")
+        def build_extra(fields):
+            shot = (fields.get("shot") or "").strip()
+            delta = (fields.get("delta") or "").strip()
+            if not re.fullmatch(r"\d+", shot) or not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", delta):
+                self.send_error_text(400, "give the shot number and the change in seconds")
+                return None
+            return ["--trim", f"{shot}:{delta}"]
+
+        self._edit_drop_request(project, build_extra)
 
     def handle_add_files(self, project):
         """Store more files in the project's recorded inbox source folder."""

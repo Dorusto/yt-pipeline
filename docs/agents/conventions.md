@@ -11,21 +11,10 @@ is organised here.
 - Conventional commit messages; never push to `master`; open a pull request at the
   end of a phase.
 
-## Docs to update
-
-- `docs/DECISIONS.md` after any significant architectural decision (existing
-  format).
-- `docs/RULES.md` in the same commit when a decision changes a rule.
-- `docs/ROADMAP.md` after a milestone or a priority change.
-- `CHANGELOG.md` (Unreleased) for a user-visible change.
-- A skill in `.claude/skills/` changes together with its script in the same commit.
-
 ## Files and footage
 
-- Footage is read-only; outputs go to the project workspace; tools refuse to write
-  inside the originals folder.
-- Every tool is a standalone script in `scripts/`; shared code only in
-  `scripts/common/`; the edit list is `edit.json`.
+- The docs-to-update rule and the read-only-footage rule are in `docs/RULES.md`
+  and are not repeated here.
 - File structure: `Export/video/`, `Export/audio/`, `Export/subtitles/`,
   `Export/auto/`, `Export/shorts/`.
 

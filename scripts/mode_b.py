@@ -64,6 +64,7 @@ from common.faces import (
     make_detector,
 )
 from common.frames import read_frame_pairs
+from common.jsonio import parse_child_json
 from common.media import parse_stamp, stem_timestamp, video_files
 from common.timeline_words import words_file_for
 from common.errors import report_error
@@ -375,30 +376,6 @@ def run_command(command):
     except OSError as exc:
         return 1, "", str(exc)
     return result.returncode, result.stdout or "", result.stderr or ""
-
-
-def parse_child_json(stdout):
-    """Return the JSON object a child printed, or None."""
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
 
 
 def step_error(step, name, code, stderr):

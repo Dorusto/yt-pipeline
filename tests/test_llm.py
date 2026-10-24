@@ -22,6 +22,7 @@ from common.llm import (
     read_ledger,
     resolve_ledger_path,
 )
+from helpers import SequenceClient
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 
@@ -493,18 +494,6 @@ def test_make_client_mock_reads_llm_mock_text_string():
     client = make_client(config)
     assert client.complete("vision", MESSAGES).text == "canned"
     assert client.complete("architect", MESSAGES).text == "canned"
-
-
-class SequenceClient(MockClient):
-    def __init__(self, answers, **kwargs):
-        super().__init__(**kwargs)
-        self.answers = list(answers)
-        self.calls = 0
-
-    def complete(self, role, messages, model=None, **kwargs):
-        self._default_text = self.answers[self.calls]
-        self.calls += 1
-        return super().complete(role, messages, model=model, **kwargs)
 
 
 def test_complete_json_parses_valid_answer():

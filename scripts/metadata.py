@@ -19,7 +19,6 @@ Usage:
 
 import argparse
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -28,6 +27,8 @@ from common.channel import fixed_string, fixed_strings
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
+from common.srt import format_clock, format_transcript, parse_srt
+from common.text import read_text
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -48,54 +49,6 @@ def get_client():
     if _client is None:
         _client = make_client()
     return _client
-
-
-def read_text(path, label):
-    """Read a UTF-8 text file, raising a named error when it is missing or unreadable."""
-    try:
-        return Path(path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise MetadataError(f"{label} file not found: {path}")
-    except OSError as exc:
-        raise MetadataError(f"cannot read {label} file '{path}': {exc}")
-
-
-def parse_srt_time(value):
-    value = value.replace(",", ".")
-    hours, minutes, seconds = value.split(":")
-    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-
-
-def parse_srt(text):
-    """Return ``[{start, end, text}]`` in seconds for every cue of an SRT body."""
-    cues = []
-    for block in re.split(r"\n\s*\n", text.strip()):
-        lines = block.strip().splitlines()
-        if len(lines) < 3:
-            continue
-        match = re.match(
-            r"(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})",
-            lines[1],
-        )
-        if not match:
-            continue
-        cues.append({
-            "start": parse_srt_time(match.group(1)),
-            "end": parse_srt_time(match.group(2)),
-            "text": " ".join(line.strip() for line in lines[2:]).strip(),
-        })
-    return cues
-
-
-def format_clock(seconds):
-    total = int(seconds)
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-
-def format_transcript(cues):
-    return "\n".join(f"[{format_clock(cue['start'])}] {cue['text']}" for cue in cues)
 
 
 def build_message(
@@ -356,8 +309,8 @@ def run(
 
     srt_path = Path(srt_path).expanduser()
     context_path = Path(context_path).expanduser()
-    srt_text = read_text(srt_path, "SRT")
-    context_text = read_text(context_path, "context")
+    srt_text = read_text(srt_path, "SRT", MetadataError)
+    context_text = read_text(context_path, "context", MetadataError)
 
     if title is not None and not title.strip():
         raise MetadataError("--title must be a non-empty string")
@@ -372,7 +325,7 @@ def run(
     fixed = fill_members(fixed_strings(config), members)
 
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
-    prompt_text = read_text(prompt_file, "prompt")
+    prompt_text = read_text(prompt_file, "prompt", MetadataError)
 
     cues = parse_srt(srt_text)
     srt_end = max((cue["end"] for cue in cues), default=0.0)

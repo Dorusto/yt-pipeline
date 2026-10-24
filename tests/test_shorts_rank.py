@@ -10,6 +10,7 @@ import subs_from_edit
 from common.schema import validate_or_raise
 from fs_probe import safe_is_dir
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from helpers import SequenceClient
 
 CONFIG = {
     "models": {"director": "mock-model"},
@@ -75,22 +76,6 @@ class AutoScoreClient:
                 "description": self.description,
             })
         return SimpleNamespace(text=json.dumps({"scores": rows}), cost_usd=self.cost_per_call)
-
-
-class SequenceClient:
-    """A client returning a different canned text per call, for the retry tests."""
-
-    def __init__(self, texts, cost_per_call=0.0):
-        self._texts = list(texts)
-        self.calls = 0
-        self.spent_usd = 0.0
-        self.cost_per_call = cost_per_call
-
-    def complete(self, role, messages, temperature=None, **kwargs):
-        index = min(self.calls, len(self._texts) - 1)
-        self.calls += 1
-        self.spent_usd = round(self.spent_usd + self.cost_per_call, 8)
-        return SimpleNamespace(text=self._texts[index], cost_usd=self.cost_per_call)
 
 
 def write_edit(path, video, sources=None):
