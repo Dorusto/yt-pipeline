@@ -7,31 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Doctor: `check_publish_config` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, matching `metadata.py`.
-- Publish: `metadata.py` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, so a channel that does not thank members in the description runs without it.
-- Publish: `publish_kit.py` treats `thumbnail.jpg` as optional — a missing thumbnail no longer fails the kit, the kit is built without it and the `studio.md` checklist says to make and upload one.
-- Beats: `beats.py` compensates the STFT window-centre latency (`ONSET_LATENCY_S`, ≈ 0.0174 s) in the onset and beat times, so the reported beat time is the start of the hit and the grid is no longer systematically late; the `beats.json` shape and the CLI are unchanged.
-- Director: every timeline cut now prefers the nearest downbeat when it lies inside the slot's allowed length range, otherwise a half-bar beat (keeps the bar count even), otherwise the nearest beat; the slot records which grid it used in `beat_grid` and the `beat_snap` summary gains `downbeats`/`half_bar` counts.
-- Web app: the text after Yes on the Watch tab reads "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
-- Beats: `beats.py` places the beat grid by dynamic-programming beat tracking (Ellis 2007) after a fine best-phase refinement of the coarse period, so the grid follows a drifting tempo instead of a rigid period; the `beats.json` shape and the CLI are unchanged.
-- Web app: the Watch tab no longer shows the "Compare with v1 v2 …" row (the `?with=` side-by-side view stays), and the text after Yes reads "Shot N is getting X s longer/shorter, new version in about 15 s...".
-- Director: for a chronological brief the repairs no longer break the time order — after a repair the edit and its plan are re-sorted by capture/source time before the beat snap, so a swapped-in top star lands at its place in the day.
-- Director: after a chronological re-sort every slot's transition is set again (first cut, the rest crossfade, hard cuts with a beat grid), so a re-sorted edit no longer keeps a cut in the middle.
-- Web app: the project page no longer shows the director reviewer box; the verdict stays in `edit.json`.
-- Web app: the Watch tab no longer links the Why?/Shots pages (they stay reachable by URL) and drops the clip/photo colour legend; `config.yaml.example` uses neutral `channel.fixed` placeholders.
-- Web app: the Recap tab can delete a single version (never the latest or the first) with an inline confirmation; its folder is removed for good.
-
 ## [0.2.0] - 2026-10-24
 
-yt-pipeline v0.2.0 is the first release with the publish flow and the phone editing
-controls. On the project page you can now make a shot a second longer or shorter,
-and the director cuts on the beat of the music. The publish kit is its own step, so
-changing only the thumbnail no longer re-runs the whole chain, and the metadata
-prompt writes better titles and descriptions. The Costs page shows donations and
-warns before a run that would pass your model credit, and the app can run on a
-friend's own instance.
+yt-pipeline v0.2.0 is the first release with the publish flow and the phone
+editing controls. On the project page you can make a shot a second longer or
+shorter and delete a single version you no longer want, and the director cuts
+on the strong beat of the music. The publish kit is its own step and works
+before the thumbnail exists, the metadata prompt writes better titles and
+descriptions, and the description no longer needs the members' names. On a
+CPU-only server the Romanian subtitles are usable (Whisper `medium` by
+default). The Costs page shows donations and warns before a run that would
+pass your model credit, and the app can run on a friend's own instance.
 
 ### Added
 
@@ -46,6 +32,7 @@ friend's own instance.
 - Publish: `metadata.py` gains `--title` — the chosen title is handed to the model in a `## Chosen title` section and used verbatim as the first title.
 - FilmCraft: `colour.py` applies a basic colour recipe to the camera clips of a project — one Lumetri Basic Correction per recording session (white balance, exposure, contrast), measured on a few frames, on a copy unless `--in-place`.
 - Repo checks: `tests/test_no_duplicate_helpers.py`, `tests/test_tool_contract.py` and `tests/test_docs_in_step.py` make the rules a program can check fail in the suite before review (no new duplicated helper, every tool answers `--help` and reports its summary fields, every skill names an existing tool and every tool is named), and `docs/agents/rules-checked.md` records which rules a test checks and which depend on review alone.
+- Web app: the Recap tab can delete a single version (never the latest or the first) with an inline confirmation; its folder is removed for good.
 
 ### Changed
 
@@ -58,6 +45,14 @@ friend's own instance.
 - Cleanup lot (V020N lot n15): the duplicated helpers moved into scripts/common/ (SRT parsing, read_text, now_iso, parse_child_json, format_size, the FilmCraft sequence/track/cli helpers, the minimum shot length, KIT_DIR_NAME, the credit helper and the drop/trim route body), and the docs drift fixed.
 - Cleanup: the `--help` guard copied in the four legacy SRT tools moved into one helper in `scripts/common/cli.py`.
 - Publish: `transcribe.py` defaults to `medium` on CPU for a non-English language (including `auto` or no language) and `small` only for an explicit `en` (turbo on GPU, tiny only for the mock backend), resolved from `--model`, `YT_PIPELINE_WHISPER_MODEL` or `transcribe.model` in the config; `publish.py` gains `--whisper-model` for the `--media` step.
+- Doctor: `check_publish_config` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, matching `metadata.py`.
+- Publish: `metadata.py` requires `channel.members` only when a `members_sentence` string contains the `{members}` placeholder, so a channel that does not thank members in the description runs without it.
+- Publish: `publish_kit.py` treats `thumbnail.jpg` as optional — a missing thumbnail no longer fails the kit, the kit is built without it and the `studio.md` checklist says to make and upload one.
+- Director: every timeline cut now prefers the nearest downbeat when it lies inside the slot's allowed length range, otherwise a half-bar beat (keeps the bar count even), otherwise the nearest beat; the slot records which grid it used in `beat_grid` and the `beat_snap` summary gains `downbeats`/`half_bar` counts.
+- Beats: `beats.py` places the beat grid by dynamic-programming beat tracking (Ellis 2007) after a fine best-phase refinement of the coarse period, so the grid follows a drifting tempo instead of a rigid period; the `beats.json` shape and the CLI are unchanged.
+- Web app: the Watch tab no longer shows the "Compare with v1 v2 …" row (the `?with=` side-by-side view stays), and the text after Yes reads "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
+- Web app: the project page no longer shows the director reviewer box; the verdict stays in `edit.json`.
+- Web app: the Watch tab no longer links the Why?/Shots pages (they stay reachable by URL) and drops the clip/photo colour legend; `config.yaml.example` uses neutral `channel.fixed` placeholders.
 
 ### Fixed
 
@@ -66,6 +61,9 @@ friend's own instance.
 - Reviewer fixes (V020N lot n14): `costs.py` accepts a decimal comma, a thousands dot and a UTF-8 BOM on a donations CSV header; `correct_srt.py` counts the capitalised variant in `Termeni înlocuiți` and a correction line with an empty wrong part is a usage error; `metadata.py` rejects an empty `--title` and the EN chapters section falls back to the RO title when `title_en` is missing; an unknown `channel.fixed` part name is a config error naming the key; `thumbnail_concepts.py` reports a wrong-shape model answer as `EXIT_RUNTIME`; `publish_kit.py` reports a failure as one `{"ok": false, ...}` object and its `--json` `output` is `publish-kit/studio.md`; `colour.py` rejects `--target-luma`/`--target-contrast` outside `(0, 1]` as usage errors; `llm_director.py` falls back to the nearest beat under the slot cap when the downbeat is over it; `.github/dependabot.yml` drops the `time`/`timezone` the default schedule does not need.
 - The LLM client retries once when a model answer is empty or not valid JSON, charging both attempts to the budget; `metadata.py` uses it.
 - Music: in the holiday flow a cut that starts a new structure beat now falls back to the nearest beat when the nearest downbeat is outside the snap window, so every cut lands on a beat.
+- Beats: `beats.py` compensates the STFT window-centre latency (`ONSET_LATENCY_S`, ≈ 0.0174 s) in the onset and beat times, so the reported beat time is the start of the hit and the grid is no longer systematically late; the `beats.json` shape and the CLI are unchanged.
+- Director: for a chronological brief the repairs no longer break the time order — after a repair the edit and its plan are re-sorted by capture/source time before the beat snap, so a swapped-in top star lands at its place in the day.
+- Director: after a chronological re-sort every slot's transition is set again (first cut, the rest crossfade, hard cuts with a beat grid), so a re-sorted edit no longer keeps a cut in the middle.
 
 ## [0.1.2] - 2026-10-23
 

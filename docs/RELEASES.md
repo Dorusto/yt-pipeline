@@ -4,17 +4,18 @@ One section per version. Per version: the tools and behaviour marked **stable** 
 
 ## v0.2.0 (2026-10-24)
 
-The holiday flow from the phone is easier: on the project page you can make a shot
-a second longer or shorter, delete a single version you no longer want, and the
-director cuts on the beat of the music. The
-publish flow is ready for a real upload: the publish kit is its own step (change
-only the thumbnail and re-run just that), the metadata prompt writes better titles
-and descriptions, and the subtitles fix the capitalised variants. The Costs page
-shows donations and warns before a run that would pass your model credit, and the
-app can run on a friend's own instance. The rendered cuts now stay on the beat:
-the cut positions are rounded on the timeline, so a cut no longer drifts later
-and later across the edit. The director's reviewer box is hidden from the project
-page for now; it comes back in plain words with the director chat (#96).
+The holiday flow from the phone is easier: on the project page you can make a
+shot a second longer or shorter and delete a single version you no longer want,
+and the director cuts on the strong beat of the music. The publish flow is
+ready for a real upload: the publish kit is its own step and works before the
+thumbnail exists, the metadata prompt writes better titles and descriptions,
+and the description no longer needs the members' names. On a CPU-only server
+the Romanian subtitles are usable (Whisper `medium` by default). The Costs page
+shows donations and warns before a run that would pass your model credit, and
+the app can run on a friend's own instance. The rendered cuts stay on the beat:
+the cut positions are rounded on the timeline. The director's reviewer box is
+hidden from the project page for now; it comes back in plain words with the
+director chat (#96).
 
 **Stable candidate** — the holiday flow in the web app (as in v0.1.0), plus making
 a shot longer or shorter on the project page (the "− 1 s" / "+ 1 s" buttons add up
