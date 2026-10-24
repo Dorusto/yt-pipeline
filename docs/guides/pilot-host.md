@@ -107,7 +107,8 @@ to every pilot container, one job per container on its own self-hosted runner.
 
 Publishing a release (or a manual dispatch with a tag) then runs
 `deploy/update.sh <tag>` on each container; the run is visible in the Actions
-tab.
+tab. The release also closes the open issues of the milestone named like the tag
+and the milestone itself.
 
 ## Storage limit per person
 

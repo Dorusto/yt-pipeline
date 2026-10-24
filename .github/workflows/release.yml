@@ -6,6 +6,7 @@ on:
 permissions:
   contents: write
   actions: write
+  issues: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -30,6 +31,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
+      - name: Close the milestone issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: python3 .github/scripts/close_milestone_issues.py --tag "$TAG" --repo "${{ github.repository }}"
       - name: Start the deploy workflow
         env:
           GH_TOKEN: ${{ github.token }}
