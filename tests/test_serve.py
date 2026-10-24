@@ -2348,6 +2348,12 @@ def test_strip_script_handles_the_trim_form():
     assert "form.trim-shot" in serve.PICK_SCRIPT
     assert "trim.submit()" in serve.PICK_SCRIPT
     assert "shot-edit" in serve.PICK_SCRIPT
+    assert "trimTotal" in serve.PICK_SCRIPT
+    assert "trimTotal+=1" in serve.PICK_SCRIPT
+    assert "trimTotal-=1" in serve.PICK_SCRIPT
+    assert "Math.abs(trimTotal)" in serve.PICK_SCRIPT
+    assert "tdelta.value=String(trimTotal)" in serve.PICK_SCRIPT
+    assert "trimTotal=0" in serve.PICK_SCRIPT
 
 
 def make_ledger(path):

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Web app: the strip's `− 1 s` / `+ 1 s` buttons add up into one running total for the picked shot, so `+1 +1 +1` asks to make the shot 3 s longer and Yes submits that total as the delta.
+
 ## [0.2.0] - 2026-10-24
 
 yt-pipeline v0.2.0 is the first release with the publish flow and the phone editing

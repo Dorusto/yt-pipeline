@@ -1215,13 +1215,20 @@ PICK_SCRIPT = """
 var p=document.querySelector('.player');if(!drop||!trim||!p)return;
 var hid=drop.querySelector('input[name=shots]');var tshot=trim.querySelector('input[name=shot]');var tdelta=trim.querySelector('input[name=delta]');
 var b=[].slice.call(p.querySelectorAll('.strip-track button'));if(!b.length)return;
+var trimTotal=0;
 function clear(){b.forEach(function(x){x.classList.remove('picked');var d=x.querySelector('.shot-del');if(d)d.remove();});
-var a=p.querySelector('.strip .shot-ask');if(a)a.remove();var r=p.querySelector('.strip .shot-edit');if(r)r.remove();}
+var a=p.querySelector('.strip .shot-ask');if(a)a.remove();var r=p.querySelector('.strip .shot-edit');if(r)r.remove();trimTotal=0;}
+function trimAsk(host,i){var old=host.querySelector('.shot-ask');if(old)old.remove();if(!trimTotal)return;
+var ask=document.createElement('div');ask.className='shot-ask';
+ask.innerHTML='<span>Make shot '+(i+1)+' '+Math.abs(trimTotal)+' s '+(trimTotal>0?'longer':'shorter')+'?</span><button type="button" class="yes">Yes</button><button type="button" class="no">No</button>';
+host.appendChild(ask);
+ask.querySelector('.no').onclick=function(){ask.remove();trimTotal=0;};
+ask.querySelector('.yes').onclick=function(){tshot.value=String(i+1);tdelta.value=String(trimTotal);ask.innerHTML='<span>'+(trimTotal>0?'Lengthening':'Shortening')+' shot '+(i+1)+', about 15 s...</span>';trim.submit();};}
 function trimRow(host,i){var r=document.createElement('div');r.className='shot-edit';
 r.innerHTML='<span>Shot '+(i+1)+'</span><button type="button" class="minus">-1 s</button><button type="button" class="plus">+1 s</button>';
 host.appendChild(r);
-r.querySelector('.minus').onclick=function(){askYesNo(host,'Make shot '+(i+1)+' 1 s shorter?',function(ask){tshot.value=String(i+1);tdelta.value='-1';ask.innerHTML='<span>Shortening shot '+(i+1)+', about 15 s...</span>';trim.submit();});};
-r.querySelector('.plus').onclick=function(){askYesNo(host,'Make shot '+(i+1)+' 1 s longer?',function(ask){tshot.value=String(i+1);tdelta.value='1';ask.innerHTML='<span>Lengthening shot '+(i+1)+', about 15 s...</span>';trim.submit();});};}
+r.querySelector('.minus').onclick=function(){trimTotal-=1;trimAsk(host,i);};
+r.querySelector('.plus').onclick=function(){trimTotal+=1;trimAsk(host,i);};}
 b.forEach(function(x,i){x.addEventListener('click',function(){var was=x.classList.contains('picked');clear();if(was)return;
 x.classList.add('picked');var d=document.createElement('span');d.className='shot-del';d.setAttribute('role','button');
 d.setAttribute('aria-label','Remove shot '+(i+1));d.innerHTML='__BIN__';x.appendChild(d);
