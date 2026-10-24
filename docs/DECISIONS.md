@@ -4,6 +4,16 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] The shot buttons add up (V020N lot n19)
+
+**Context:** Issue #93 (milestone v0.2.0): light editing of a finished edit from the phone. Lot n6 added the strip's "− 1 s" / "+ 1 s" control, but each press asked for exactly one second, so making a shot 3 s longer took three separate versions.
+
+**Decision:** The page script keeps one running total per picked shot: presses on the same shot add up (`+1 +1 +1` = 3, then `-1` = 2), the question under the shot shows the total ("Make shot 2 3 s longer?" / "Make shot 2 2 s shorter?"), a total of 0 removes the question, pressing a different shot starts a new total, and Yes submits the existing trim form once with the total as the delta. The server already accepts any delta and is unchanged; one Yes still makes one new version.
+
+**Consequence:** `docs/RULES.md` says the length changes by the total of the presses; the `CHANGELOG.md` `[0.2.0]` and `docs/RELEASES.md` v0.2.0 sections describe the buttons as adding up. No tool, schema or server change.
+
+---
+
 ## [2026-10-24] Rules checked by tests, plus the last reviewer findings (V020N lot n16)
 
 **Context:** Issue #108 points 1–4: the rules a program can check should fail in the test suite before review, and the rules that depend on review alone should be recorded. The n14/n15 review also left a few findings: `thumbnail_concepts.py` reported a model answer with an extra key (which passes the manual checks and fails the schema's `additionalProperties: false`) as a usage error (exit 2) instead of a model-call failure (exit 3); `costs.py` read a lone thousands dot (`1.000`) as 1.0; `graphics_plan.py` quoted the context path in its unreadable-file message while the other tools do not; the Files tab had its own size formatter; the four legacy SRT tools (`analyze_srt.py`, `correct_srt.py`, `daily_summary_srt.py`, `translate_srt.py`) did not answer `--help`; the owner's name sat in the graphics examples; and `SNAP_MIN_SLOT_S` was still copied in `director.py` and `llm_director.py`.

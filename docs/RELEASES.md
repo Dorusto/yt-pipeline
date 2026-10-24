@@ -13,7 +13,8 @@ shows donations and warns before a run that would pass your model credit, and th
 app can run on a friend's own instance.
 
 **Stable candidate** — the holiday flow in the web app (as in v0.1.0), plus making
-a shot longer or shorter on the project page.
+a shot longer or shorter on the project page (the "− 1 s" / "+ 1 s" buttons add up
+into one running total, one new version per Yes).
 
 **Experimental** — everything else, as in v0.1.0, plus:
 
