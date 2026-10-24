@@ -4,6 +4,16 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Cuts stay on the beat after rendering; the shot question wording (V020N lot n22)
+
+**Context:** Issue #95, measured on a real holiday edit (v008 of a test project): in `edit.json` every cut sits exactly on a music beat (offset 0.00 s), but the rendered file cut later and later — planned 2.79 / 15.61 / 30.10 / 42.92 / 54.62 s, rendered 2.80 / 15.64 / 30.16 / 43.04 / 54.80 s (ffmpeg scene detection). Each clip was rounded up to whole frames on its own and the error added up (about +0.013 s per cut, 0.18 s by the end). Issue #93: the question under the shot buttons became "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?" (and the matching in-progress text), replacing the n19 wording "Make shot 2 3 s longer?".
+
+**Decision:** The render rounds the cut positions on the timeline (the cumulative time to the nearest frame; each clip's frame count is the difference of the rounded cut positions), for the landscape and the vertical render, so a cut stays on the planned beat. The shot question reads "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?". The n19 entry stays as history; this entry records that the wording changed.
+
+**Consequence:** `docs/RULES.md` and the `yt-render` skill say cut positions are rounded on the timeline, so a slot whose length is not a whole number of frames may move by less than one frame; the render test checks the rendered cut positions never drift more than half a frame from the plan.
+
+---
+
 ## [2026-10-24] The shot buttons add up (V020N lot n19)
 
 **Context:** Issue #93 (milestone v0.2.0): light editing of a finished edit from the phone. Lot n6 added the strip's "− 1 s" / "+ 1 s" control, but each press asked for exactly one second, so making a shot 3 s longer took three separate versions.

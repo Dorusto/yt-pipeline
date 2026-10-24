@@ -50,7 +50,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 - Similarity: MobileNetV2 ONNX through `cv2.dnn` (hist backend offline); "similar" starts at 0.90 and stays a flag. — 2026-10-13
 - Eval scoring: interval overlap (full credit exact, 0.5 geometric look-alike), horizon tolerance 5°, events one-to-one F1 within ±3 s. — 2026-10-13
 - `describe`: frames at OpenCV scene changes and motion phase boundaries, tiled 6-9 per mosaic image with burned-in timestamps (one image per group, `--frame-mode legacy` keeps the fixed-position separate frames), timestamps + motion label in the facts, `long: yes|no` keys the beats, one-line summary (≤ 12 words) + tags, retry once on unparseable output, `max_tokens` 8000 for reasoning models. — 2026-10-13 / 2026-10-15
-- Render: 720p preview from proxies, final from the originals at native size (`--originals-dir`), crossfade 0.3 s, frame-inclusive Kdenlive `out` (`out_s - 1/fps`); a slot with `middle_speed` renders as three trims (middle `setpts`/`atempo`), byte-for-byte as before when it is 1. — 2026-10-13 / 2026-10-15
+- Render: 720p preview from proxies, final from the originals at native size (`--originals-dir`), crossfade 0.3 s, frame-inclusive Kdenlive `out` (`out_s - 1/fps`); a slot with `middle_speed` renders as three trims (middle `setpts`/`atempo`); cut positions are rounded on the timeline, so a slot whose length is not a whole number of frames may move by less than one frame. — 2026-10-13 / 2026-10-15 / 2026-10-24 (V020N lot n22)
 
 ## Model routing
 
