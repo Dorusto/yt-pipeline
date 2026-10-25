@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Third-party licences: `NOTICE.md` and `docs/licences.md`.
 - Beats: an optional Beat This! downbeat engine (`beats.engine`, `numpy` | `beat_this`, default `numpy`; `--engine` or `YT_PIPELINE_BEATS_ENGINE` overrides it), so the cuts can land on the strongest beat of the bar.
 - Release: pushing a tag closes the open issues of the milestone named like the tag and the milestone itself.
+- Quality: faces are counted per segment and the whip pattern is marked, and the score uses both — a fast move next to a short hold on people scores low, while a deliberate move is not punished for its shake.
 
 ### Changed
 
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Director: the screenwriter gets a shortlist of the eligible candidates (every star plus the top-K by score) instead of the whole pool, the reviewer runs at most 2 rounds by default, and `describe` runs its per-clip model calls in a small worker pool (`--workers`, default 4), so a first edit is faster.
 - Web app: a friend's Costs page shows only that instance's own costs (its model cost to cover, its limits, its clips, the donation buttons and the line that anything paid above the model cost goes into building the app further) and no owner project totals or donations list; the UI label "New recap" becomes "New video".
 - Notebook: lessons that do not fit are kept as `waiting` lessons (never dropped, at most 3) and the learn-pass cost is counted in the instance total model cost.
+- Director: the screenwriter's shortlist now also sends every clip's best eligible segment, and the label score no longer rewards clean-but-dull shots (steadiness and a defect-free segment add nothing; only unsteady levels and real defects subtract).
 
 ### Fixed
 

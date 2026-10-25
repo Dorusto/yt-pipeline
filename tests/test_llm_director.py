@@ -2620,7 +2620,11 @@ def build_many_workspace(root, count=100, stars=5):
         stem = Path(clip["file"]).stem
         write_json(
             root / "quality" / f"{stem}.json",
-            quality_doc(clip["file"], 60.0, [segment("s1", 0.0, 20.0, "hold")]),
+            quality_doc(
+                clip["file"],
+                60.0,
+                [segment("s1", 0.0, 20.0, "hold"), segment("s2", 20.0, 40.0, "hold")],
+            ),
         )
         write_json(root / "motion" / f"{stem}.json", motion_doc(clip["file"], 60.0))
         shots.append(
@@ -2635,6 +2639,19 @@ def build_many_workspace(root, count=100, stars=5):
                 f"shot {index}",
                 f"interest {index}",
                 hero=index < stars,
+            )
+        )
+        shots.append(
+            shotlog_shot(
+                f"{index:04d}/s2",
+                clip["file"],
+                "s2",
+                20.0,
+                40.0,
+                True,
+                0.1 + (index % 10) / 100.0,
+                f"second shot {index}",
+                f"interest {index}",
             )
         )
     write_json(
@@ -2706,6 +2723,51 @@ def test_shortlist_rows_keeps_stars_and_top_scores_in_order():
     assert keys == [row["key"] for row in rows if row["key"] in set(keys)]
     for index in range(5):
         assert f"{index:04d}/s1" in keys
+
+
+def test_shortlist_includes_each_clips_best_eligible_segment():
+    rows = []
+    for clip_index in range(5):
+        for row_index in range(10):
+            score = 0.80 - 0.01 * (clip_index * 10 + row_index)
+            rows.append(
+                {
+                    "key": f"c{clip_index}/s{row_index}",
+                    "clip": f"c{clip_index}",
+                    "score": score,
+                    "eligible": True,
+                }
+            )
+    result = llm_director.shortlist_rows(rows, 5)
+    keys = [row["key"] for row in result]
+    assert keys == [row["key"] for row in rows if row["key"] in set(keys)]
+    for clip_index in range(5):
+        best = max(
+            (row for row in rows if row["clip"] == f"c{clip_index}"),
+            key=lambda row: row["score"],
+        )
+        assert best["key"] in keys
+
+
+def test_shortlist_skips_whip_short_hold_best():
+    rows = []
+    for clip_index in range(5):
+        for row_index in range(10):
+            score = 0.80 - 0.01 * (clip_index * 10 + row_index)
+            rows.append(
+                {
+                    "key": f"c{clip_index}/s{row_index}",
+                    "clip": f"c{clip_index}",
+                    "score": score,
+                    "eligible": True,
+                }
+            )
+    rows.append({"key": "c9/s0", "clip": "c9", "score": 0.50, "eligible": True, "whip": "short_hold"})
+    rows.append({"key": "c9/s1", "clip": "c9", "score": 0.05, "eligible": True})
+    result = llm_director.shortlist_rows(rows, 5)
+    keys = [row["key"] for row in result]
+    assert "c9/s0" not in keys
+    assert "c9/s1" in keys
 
 
 def test_screenwriter_message_uses_the_shortlist(tmp_path):

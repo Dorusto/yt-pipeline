@@ -4,6 +4,45 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Director shortlist and the clean-shot bonus (V030 lot c22)
+
+**Context:** Issue #119 points 4–5, plus the c21 review. The label score still
+rewarded a clean-but-dull hold (a steadiness bonus and a `+0.10` no-defect
+bonus), and the same formula lived twice — in `scripts/index.py` and
+`scripts/director.py`. The screenwriter's shortlist could drop a clip entirely
+when none of its shots reached the top-K, so a whole clip never reached the
+model. The c21 review also found `quality.py` silently defaulting the whip
+threshold when an explicit `--config` could not load.
+
+**Options:** (A) leave the score and the shortlist as they are; (B) move the
+label score to one shared function, drop the clean-shot bonuses, and let every
+clip send its best eligible segment to the screenwriter.
+
+**Decision:** B. The label score lives in the new `scripts/common/scoring.py`
+(`label_score`), used by `scripts/index.py` and `scripts/director.py`; the local
+`ROLE_BASE`, `STEADINESS_BONUS`, `DEFECT_WEIGHTS`, `DEFAULT_DEFECT_WEIGHT` and
+`_label_score` are gone. The formula is the role base + 0.25·confidence, minus
+`unsteady` (0.10) / `very_unsteady` (0.20) and the real defects (capped at 0.4);
+steadiness and a defect-free segment no longer add points. `shortlist_rows` in
+`scripts/llm_director.py` adds every clip's best eligible segment (skipping a
+whip short-hold) to the stars and the top-K, in shotlog order. The shotlog row
+carries the `whip` mark (`schemas/shotlog.schema.json`). `quality.py`'s
+`_whip_min_hold_s` treats an explicit `--config` that cannot load as a usage
+error (exit 2) instead of a silent default.
+
+**Why not A:** the two signals are free and the issue shows the score rewards
+clean-but-dull holds; a clip that never reaches the shortlist can never be
+chosen, whatever the brief asks.
+
+**Consequence:** files touched — `scripts/common/scoring.py` (new),
+`scripts/index.py`, `scripts/director.py`, `scripts/llm_director.py`,
+`scripts/quality.py` (a stable file, so the commit carries
+`Stable-change: approved`), `schemas/shotlog.schema.json`, the tests,
+`docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/guides/shot-grammar.md`,
+`CHANGELOG.md`, `docs/plans/v0.3.0.md`, `docs/DECISIONS.md`. No OpenRouter model
+call; no change to the editing grammar, the pacing table, the beat snap, the
+star definition, `serve.py`, `recap.py` or `common/versions.py`.
+
 ## [2026-10-25] Faces and camera-move intent in the score (V030 lot c21)
 
 **Context:** Issue #119 points 1–3, from a re-analysis of the Kotor demo. The

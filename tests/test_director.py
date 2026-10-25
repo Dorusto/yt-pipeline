@@ -2052,3 +2052,14 @@ def test_deliberate_move_shake_not_penalised():
     assert director.score_candidate(base, "uniform") == pytest.approx(
         director.score_candidate(without, "uniform")
     )
+
+
+def test_clean_hold_gets_no_no_defect_bonus():
+    candidate = {
+        "role": "hold",
+        "segment": {"id": "s1", "confidence": 0.7, "defects": []},
+        "steadiness": "static",
+        "motion_label": "static",
+        "position": 0.5,
+    }
+    assert director.score_candidate(candidate, "uniform") == pytest.approx(0.55 + 0.25 * 0.7)

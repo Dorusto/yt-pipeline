@@ -342,6 +342,18 @@
             "minimum": 0,
             "description": "counted samples with at least one face times the sample interval; null when faces were not measured"
           },
+          "whip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "short_hold",
+              "deliberate",
+              null
+            ],
+            "description": "the whip mark carried from quality; null when the segment has none"
+          },
           "suppressed_by": {
             "oneOf": [
               {

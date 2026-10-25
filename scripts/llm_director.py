@@ -35,6 +35,7 @@ from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
 from common.director import director_review
 from common.feedback import append_feedback
+from common.intent import is_whip_short_hold
 from common.notebook import notebook_block
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
@@ -280,13 +281,29 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def best_eligible_per_clip(rows):
+    """The highest-scoring eligible row of every clip, skipping whip short-holds."""
+    best = {}
+    for row in rows:
+        if not row.get("eligible", True):
+            continue
+        if is_whip_short_hold(row):
+            continue
+        clip = row.get("clip")
+        current = best.get(clip)
+        if current is None or float(row.get("score") or 0.0) > float(current.get("score") or 0.0):
+            best[clip] = row
+    return list(best.values())
+
+
 def shortlist_rows(rows, n_slots):
-    """The screenwriter's menu: every star plus the top-K rows by score, in shotlog order."""
+    """The screenwriter's menu: every star, the top-K by score and every clip's best eligible segment, in shotlog order."""
     stars = [row for row in rows if is_star(row)]
     k = int(clamp(n_slots * SHORTLIST_FACTOR, SHORTLIST_MIN, SHORTLIST_MAX))
     ranked = sorted(rows, key=lambda row: (-float(row.get("score") or 0.0), row.get("key") or ""))
     keep = {id(row) for row in stars}
     keep.update(id(row) for row in ranked[:k])
+    keep.update(id(row) for row in best_eligible_per_clip(rows))
     return [row for row in rows if id(row) in keep]
 
 

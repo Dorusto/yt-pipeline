@@ -1171,9 +1171,11 @@ def _build_detector(enabled):
 
 
 def _whip_min_hold_s(config):
-    """The whip short-hold threshold from the config, or the default when it cannot load."""
+    """The whip short-hold threshold; an explicit --config that cannot load is a usage error."""
+    if config is not None:
+        return whip_min_hold_s(load_config(config))
     try:
-        data = load_config(config)
+        data = load_config(None)
     except ConfigError:
         return WHIP_MIN_HOLD_S
     return whip_min_hold_s(data)
@@ -1234,7 +1236,7 @@ def main(argv=None):
             faces=args.faces,
             config=args.config,
         )
-    except (QualityError, SchemaError) as exc:
+    except (QualityError, SchemaError, ConfigError) as exc:
         return report_error(exc, EXIT_USAGE, args.json)
     except OSError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)

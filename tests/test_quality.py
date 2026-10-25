@@ -815,6 +815,16 @@ def test_missing_input_errors(tmp_path):
     assert not (tmp_path / "workspace" / "quality").exists()
 
 
+def test_explicit_config_that_cannot_load_is_a_usage_error(tmp_path):
+    source = tmp_path / "clips"
+    make_noisy_still_clip(source / "clip.mp4", seconds=2)
+    workspace = tmp_path / "workspace"
+    missing = tmp_path / "missing.yaml"
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--config", missing)
+    assert result.returncode == EXIT_USAGE
+    assert "[error]" in result.stderr
+
+
 def test_unreadable_motion_json_falls_back(tmp_path):
     source = tmp_path / "clips"
     make_noisy_still_clip(source / "broken.mp4", seconds=3)

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from common.constants import SNAP_MIN_SLOT_S
 from common.decisions import build_decisions
-from common.intent import WHIP_SHORT_HOLD_SCORE, is_deliberate_move, is_whip_short_hold
+from common.intent import is_deliberate_move
 from common.moves import (
     STAR_MIN_SCORE,
     STAR_SHARE,
@@ -43,6 +43,7 @@ from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
+from common.scoring import label_score
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -51,16 +52,6 @@ SCHEMA_VERSION = "0.1"
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
 SKIP_ROLES = {"accidental", "setup", "teardown"}
-ROLE_BASE = {"hold": 0.55, "move": 0.50, "transition_in": 0.35, "transition_out": 0.35}
-STEADINESS_BONUS = {
-    "no_shaking": 0.15,
-    "minimal_shaking": 0.08,
-    "static": 0.10,
-    "unsteady": -0.10,
-    "very_unsteady": -0.20,
-}
-DEFECT_WEIGHTS = {"horizon": 0.5}
-DEFAULT_DEFECT_WEIGHT = 1.0
 ENERGY_LABELS = {
     "travel_forward",
     "travel_backward",
@@ -517,24 +508,15 @@ def pacing_bonus(candidate, position):
 
 def score_candidate(candidate, pacing):
     segment = candidate["segment"]
-    if is_whip_short_hold(segment):
-        return WHIP_SHORT_HOLD_SCORE
-    score = ROLE_BASE.get(candidate["role"], 0.0)
-    score += 0.25 * segment.get("confidence", 0.0)
-    if candidate["steadiness"] in STEADINESS_BONUS:
-        score += STEADINESS_BONUS[candidate["steadiness"]]
-    defects = segment.get("defects") or []
     deliberate = is_deliberate_move(candidate.get("motion_label")) or candidate.get("semantic_motion") == "orbit"
-    if deliberate:
-        defects = [defect for defect in defects if defect.get("name") != "shake"]
-    if defects:
-        penalty = sum(
-            defect.get("value", 0.0) * DEFECT_WEIGHTS.get(defect.get("name"), DEFAULT_DEFECT_WEIGHT)
-            for defect in defects
-        )
-        score -= min(0.4, penalty)
-    else:
-        score += 0.10
+    score = label_score(
+        candidate["role"],
+        segment.get("confidence", 0.0),
+        candidate["steadiness"],
+        segment.get("defects") or [],
+        segment.get("whip"),
+        deliberate,
+    )
     if pacing == "calm-to-energy":
         score += pacing_bonus(candidate, candidate["position"])
     return clamp(score, 0.0, 1.0)
