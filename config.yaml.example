@@ -104,9 +104,9 @@ llm_backend: openrouter
 # Director reasoning effort for scripts/llm_director.py: how much hidden
 # reasoning the model spends on every call. One of low, medium, high or off
 # (off disables reasoning). Set it here or pass --reasoning-effort; the default
-# is low. There is no environment variable.
+# is medium. There is no environment variable.
 # director:
-#   reasoning_effort: low
+#   reasoning_effort: medium
 
 # Whisper model for scripts/transcribe.py and the publish chain's --media step.
 # There is a default: turbo with a CUDA GPU, else medium on CPU for a

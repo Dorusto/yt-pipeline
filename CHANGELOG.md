@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Beats: an optional Beat This! downbeat engine (`beats.engine`, `numpy` | `beat_this`, default `numpy`; `--engine` or `YT_PIPELINE_BEATS_ENGINE` overrides it), so the cuts can land on the strongest beat of the bar.
 - Release: pushing a tag closes the open issues of the milestone named like the tag and the milestone itself.
 - Quality: faces are counted per segment and the whip pattern is marked, and the score uses both — a fast move next to a short hold on people scores low, while a deliberate move is not punished for its shake.
+- Director speed: `director.reasoning_effort` (`low`, `medium`, `high` or `off`, default `medium`) and `--reasoning-effort` set how much hidden reasoning the model spends on every `llm_director` call, sent as OpenRouter's `reasoning` body; the spend ledger records the reasoning tokens of each call.
+- Web app: a **Director** tab holds the chat with the director and, under it, the collapsible notebook.
 
 ### Changed
 
@@ -33,12 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: a friend's Costs page shows only that instance's own costs (its model cost to cover, its limits, its clips, the donation buttons and the line that anything paid above the model cost goes into building the app further) and no owner project totals or donations list; the UI label "New recap" becomes "New video".
 - Notebook: lessons that do not fit are kept as `waiting` lessons (never dropped, at most 3) and the learn-pass cost is counted in the instance total model cost.
 - Director: the screenwriter's shortlist now also sends every clip's best eligible segment, and the label score no longer rewards clean-but-dull shots (steadiness and a defect-free segment add nothing; only unsteady levels and real defects subtract).
+- Web app: the chat with the director and the notebook moved out of the Recap tab and the bottom of the project page into the **Director** tab.
+- Web app: the run progress card shows "Total so far" only when it differs from the current step's time, and a skipped step shows "already done" instead of "0 s".
 
 ### Fixed
 
 - `llm_director.py --prepare` together with `--force` is a usage error.
 - `notebook.py --merge` with a repeated id is a usage error.
 - An empty or duplicate `channel.style.description_order` is a config error; `recap_meta.py` no longer receives `description_order`.
+- A defect the intent rule waives (shake on a deliberate move) is no longer given as "defect: ..." in the edit's reasons; the shot gets its real reason (low score / did not fit the length).
+- An explicit request to add a named shot is followed even when the shot has minor defects — the reply says which defects it has; only an `accidental`/`setup`/`teardown` role or a whip short-hold stays refused.
 
 ## [0.2.0] - 2026-10-24
 

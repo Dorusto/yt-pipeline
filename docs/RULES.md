@@ -56,7 +56,7 @@ Current state, one line per rule, with the `DECISIONS.md` entry date it comes fr
 ## Model routing
 
 - One model for every agent: `openrouter/deepseek/deepseek-v4.1-flash`; the reasoning level is set per agent file (`reasoning: effort: high` for architect, coder and specwriter, `xhigh` for `coder-max`), and the architect hands a brief to `coder-max` only when the lot says "hard". Do not switch coder models mid-task. — 2026-10-24 (V020N lot n21)
-- The director's reasoning effort comes from `--reasoning-effort`, else `director.reasoning_effort` in the config, else `low` (values `low`, `medium`, `high`, `off`; no environment variable) and is sent as OpenRouter's `reasoning` body on every `llm_director` call. — 2026-10-25 (V030 lot c23)
+- The director's reasoning effort comes from `--reasoning-effort`, else `director.reasoning_effort` in the config, else `medium` (values `low`, `medium`, `high`, `off`; no environment variable) and is sent as OpenRouter's `reasoning` body on every `llm_director` call. — 2026-10-25 (V030 lot c23)
 - Vision default: GLM 5.3 Flash (fallback DeepSeek V4.1 Flash); the backend is a config value, never code. — 2026-10-13
 - Local Qwen3.8 27B (4-bit, RTX 3090, vLLM) takes over for private footage. — 2026-10-12
 - Every LLM call goes through `scripts/common/llm.py`: `usage.cost` charged per call (missing cost raises), a per-project spend ledger caps the whole job; stop and report at the budget cap; a model answer that is empty or not valid JSON is retried once, both attempts charged to the budget. — 2026-10-12 / 2026-10-23

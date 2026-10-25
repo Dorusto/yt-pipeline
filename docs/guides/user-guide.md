@@ -233,7 +233,7 @@ finished recap, the explanation and the contact sheet.
   owner sees which tools the director needs next. The director's reasoning
   effort — how much hidden reasoning the model spends on every call — comes from
   `--reasoning-effort` (`low`, `medium`, `high` or `off`), else
-  `director.reasoning_effort` in the config, else `low`. From the command line:
+  `director.reasoning_effort` in the config, else `medium`. From the command line:
   `.venv/bin/python scripts/llm_director.py --workspace <workspace> --interpret-feedback "drop 0071/s2, tunnel longer" --json`.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
   (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is

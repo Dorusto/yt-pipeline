@@ -344,7 +344,7 @@ DEFAULT_DONATION_LABEL = "Support the project"
 DEFAULT_CREDIT_WARN_USD = 1.0
 WHIP_MIN_HOLD_S = 3.0
 DIRECTOR_REASONING_EFFORTS = ("low", "medium", "high", "off")
-DEFAULT_DIRECTOR_REASONING_EFFORT = "low"
+DEFAULT_DIRECTOR_REASONING_EFFORT = "medium"
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
@@ -680,7 +680,7 @@ def whip_min_hold_s(config=None):
 
 
 def director_reasoning_effort(cli_value=None, config=None):
-    """The director's reasoning effort: CLI flag, else director.reasoning_effort, else low.
+    """The director's reasoning effort: CLI flag, else director.reasoning_effort, else medium.
 
     An unknown value is a ConfigError naming the valid values. There is no
     environment variable.

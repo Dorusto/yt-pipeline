@@ -550,8 +550,8 @@ def test_whip_min_hold_s_default_and_override(tmp_path):
         config.load_config(write_config(tmp_path, with_value("whip", {"min_hold_s": -1})))
 
 
-def test_director_reasoning_effort_defaults_to_low():
-    assert config.director_reasoning_effort(config={}) == "low"
+def test_director_reasoning_effort_defaults_to_medium():
+    assert config.director_reasoning_effort(config={}) == "medium"
 
 
 def test_director_reasoning_effort_flag_wins_over_config():

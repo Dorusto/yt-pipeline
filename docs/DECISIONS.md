@@ -4,6 +4,70 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Director tab, honest reasons, progress card and director speed (V030 lot c23)
+
+**Context:** The owner's phone test of v030 filed issues #118 (the Director tab),
+#119 (honest reasons, director speed) and #94 (the progress card). The chat with
+the director and the notebook lived in the Recap tab and at the bottom of the
+project page; the edit's `decisions[]` named a defect the c21 intent rule already
+waives; the progress card showed "Total so far" even when it equalled the current
+step's time and "0 s" for a skipped step; the director's calls spent almost all
+their time on hidden reasoning tokens (11 k to 51 k completion tokens per call on
+the Kotor demo, for a short JSON answer).
+
+**Options:** (A) leave the layout, the reasons, the card and the reasoning as they
+are; (B) move the chat and the notebook into their own Director tab, make the
+reasons honest, fix the card, and add a configurable reasoning effort with a
+measured default.
+
+**Decision:** B, with these parts:
+
+1. Director tab: `scripts/serve.py` `TABS` gains `("director", "Director")` next
+   to Files; `render_director_panel` holds the chat (`render_chat_panel`) and,
+   under it, the collapsible notebook (`render_notebook_panel`); the notebook is
+   no longer at the bottom of the project page; the tab is part of the `recap`
+   feature; the feedback-reply redirect goes to `?tab=director#chat` and the
+   notebook-delete redirect to `?tab=director#notebook`.
+2. Honest reasons: `scripts/common/decisions.py` `_reject_reason` drops a defect
+   the intent rule waives (`counts_as_defect` in `scripts/common/scoring.py`: a
+   deliberate move or a semantic `orbit` waives `shake`), so such a shot gets its
+   real reason (low score / did not fit the length);
+   `prompts/interpret_feedback.md` and `prompts/screenwriter.md` say an explicit
+   request to add a named shot is followed even when it has minor defects (the
+   reply names the defects); only an `accidental`/`setup`/`teardown` role or a
+   whip short-hold stays refused.
+3. Progress card: `render_run_notice` shows "Total so far" only when it differs
+   from the current step's time by at least 1 s; `render_step_list` shows "already
+   done" for a step whose seconds are 0 (a skipped step) instead of "0 s".
+4. Director speed: `director.reasoning_effort` (`low` | `medium` | `high` | `off`)
+   in the config, `--reasoning-effort` overrides it; `scripts/common/llm.py`
+   `reasoning_extra_body` sends OpenRouter's `reasoning: {"effort": ...}` (`off` →
+   `{"enabled": false}`) on every `llm_director` call (screenwriter, editor,
+   reviewer and the `--interpret-feedback` reply); `llm_spend.json` records
+   `reasoning_tokens` per call. Measured on a copy of the Kotor demo: baseline (no
+   reasoning body) 282.26 s; `low` 168.31 s but it fell back to the rule director
+   2 of 2 times (224.20 s with the fallback); `medium` 205.28 s; `eval_edit` 3/3
+   for each. Because `low` lost the model edit, the default is `medium`.
+5. c22b review: the `yt-index` skill's label-score line names the whip short-hold
+   score 0.1 and the deliberate-move shake rule; `docs/plans/v0.3.0.md` lists c22b
+   and c23 with the real total (15.85 USD).
+
+**Why not A:** the owner's phone test showed the layout and the reasons were wrong,
+and the reasoning tokens were the whole cost of a director call; the numbers show
+`low` is faster but loses the model edit, so `medium` is the honest default.
+
+**Consequence:** files touched — `scripts/serve.py`, `scripts/common/decisions.py`,
+`scripts/common/scoring.py`, `scripts/common/config.py`, `scripts/common/llm.py`,
+`scripts/llm_director.py`, `prompts/interpret_feedback.md`,
+`prompts/screenwriter.md`, `config.yaml.example`, the tests,
+`.claude/skills/yt-index/SKILL.md`, `.claude/skills/yt-llm-director/SKILL.md`,
+`.claude/skills/yt-notebook/SKILL.md`, `docs/RULES.md`,
+`docs/agents/rules-checked.md`, `docs/guides/tools.md`,
+`docs/guides/user-guide.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/DECISIONS.md`. No OpenRouter model call in the tests; the speed numbers come
+from a copy of the Kotor demo (`/root/media/projects/kotor-speed`), never written
+into `kotor-test` or `kotor-demo`.
+
 ## [2026-10-25] Director shortlist and the clean-shot bonus (V030 lot c22)
 
 **Context:** Issue #119 points 4–5, plus the c21 review. The label score still
