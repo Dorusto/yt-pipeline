@@ -196,7 +196,7 @@ CUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
 MODE_B_TOOL = "scripts/rough_cut.py"
 REEDIT_FIELDS = (
     "brief", "length", "length_s", "order", "audio_clean", "format",
-    "speed_ramp", "shorts_layout", "music", "ambient_under_music_db",
+    "speed_ramp", "music", "ambient_under_music_db",
     "fact_place", "fact_when", "fact_who", "fact_occasion",
 )
 REQUESTS_MAX_CHARS = 2000

@@ -129,7 +129,9 @@ def test_yt_describe_returns_json_contract(monkeypatch):
 def test_tool_skill_and_json_contract():
     assert tool_skill(ROOT, "director") == "yt-director"
     assert tool_skill(ROOT, "notebook") == "yt-notebook"
-    assert tool_skill(ROOT, "metadata") == "yt-publish"
+    assert tool_skill(ROOT, "edit_to_fragments") == "yt-export-kdenlive"
+    assert tool_skill(ROOT, "doctor") is None
+    assert tool_skill(ROOT, "metadata") is None
     assert skill_json_contract(ROOT, "yt-director")["example"].startswith("The `--json` output")
     assert skill_json_contract(ROOT, "yt-recap") is None
 

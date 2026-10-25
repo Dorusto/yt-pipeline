@@ -43,11 +43,12 @@ def plugin_tools(root, plugin):
 
 
 def tool_skill(root, tool):
-    """Return the skill that documents one tool, or None.
+    """Return the skill that documents one tool's ``--json`` contract, or None.
 
     The tool's own skill is the one named ``yt-<tool>`` (underscores become
-    dashes); when there is none, the first skill in marketplace order that
-    names the tool.
+    dashes). When there is none, the skill that names the tool and documents a
+    ``--json`` output contract; a skill that only mentions the tool in passing
+    (no contract) is not its skill.
     """
     skills = []
     for plugin in plugin_names(root):
@@ -58,7 +59,7 @@ def tool_skill(root, tool):
     if own in skills and tool in skill_tools(root, own):
         return own
     for skill in skills:
-        if tool in skill_tools(root, skill):
+        if tool in skill_tools(root, skill) and skill_json_contract(root, skill):
             return skill
     return None
 

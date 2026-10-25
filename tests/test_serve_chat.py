@@ -288,3 +288,31 @@ def test_reedit_form_has_no_ask_button():
     page = serve.render_reedit("2026-10-14", [])
     assert "feedback-reply" not in page
     assert "Ask the director" not in page
+
+
+def test_reedit_fields_are_all_read():
+    """Every REEDIT_FIELDS name changes the re-edit command or the facts."""
+    values = {
+        "brief": "a brief",
+        "length": "90s",
+        "length_s": "90",
+        "order": "chronological",
+        "audio_clean": "no",
+        "format": "9x16",
+        "speed_ramp": "on",
+        "music": "track.mp3",
+        "ambient_under_music_db": "12",
+        "fact_place": "Place",
+        "fact_when": "When",
+        "fact_who": "Who",
+        "fact_occasion": "Occasion",
+    }
+    assert set(values) == set(serve.REEDIT_FIELDS)
+    base_command = serve.build_recap_command("py", "src", "ws", "brief", {}, "/lib")
+    base_facts = serve.facts_from_fields({})
+    for name in serve.REEDIT_FIELDS:
+        fields = {name: values[name]}
+        brief = fields.get("brief") or "brief"
+        command = serve.build_recap_command("py", "src", "ws", brief, fields, "/lib")
+        facts = serve.facts_from_fields(fields)
+        assert command != base_command or facts != base_facts, name
