@@ -30,6 +30,7 @@ from pathlib import Path
 from common import notify, versions
 from common.config import ConfigError, music_library, no_music_library_message
 from common.edit_timeline import edit_summary
+from common.excluded import filter_excluded, load_excluded
 from common.jsonio import parse_child_json
 from common.media import video_files
 from common.photos import is_photo, proxy_name
@@ -292,9 +293,13 @@ def is_up_to_date(name, ctx):
     proxy_dir = ws / "proxy"
     proxies = video_files(proxy_dir)
     if name == "proxy":
-        clips = video_files(src)
+        excluded = load_excluded(ws)
+        clips = filter_excluded(video_files(src), excluded)
         photos = (
-            [path for path in Path(src).iterdir() if path.is_file() and is_photo(path)]
+            filter_excluded(
+                [path for path in Path(src).iterdir() if path.is_file() and is_photo(path)],
+                excluded,
+            )
             if Path(src).is_dir()
             else []
         )

@@ -4104,6 +4104,21 @@ def test_notebook_panel_shows_waiting_lessons(tmp_path):
         server.server_close()
 
 
+def test_has_proxy_uses_photo_proxy_name(tmp_path):
+    proxy_dir = tmp_path / "proxy"
+    proxy_dir.mkdir()
+    heic = tmp_path / "photo.heic"
+    heic.write_bytes(b"heic")
+    (proxy_dir / "photo.jpg").write_bytes(b"proxy")
+    assert serve._has_proxy(proxy_dir, heic) is True
+    (proxy_dir / "photo.jpg").unlink()
+    assert serve._has_proxy(proxy_dir, heic) is False
+    jpg = tmp_path / "plain.jpg"
+    jpg.write_bytes(b"jpg")
+    (proxy_dir / "plain.jpg").write_bytes(b"proxy")
+    assert serve._has_proxy(proxy_dir, jpg) is True
+
+
 def test_friend_costs_total_includes_the_notebook_ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(serve, "EUR_PER_USD", None)
     root = make_root(tmp_path)

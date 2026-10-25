@@ -121,11 +121,11 @@ def copy_photo(photo, out_dir):
     """
     if photo.suffix.lower() == ".heic":
         converted = ensure_jpeg(photo, out_dir)
-        target = out_dir / f"{photo.stem}.jpg"
+        target = out_dir / proxy_name(photo)
         if converted != target:
             os.replace(converted, target)
         return target.name
-    target = out_dir / photo.name
+    target = out_dir / proxy_name(photo)
     if not target.exists():
         shutil.copy2(photo, target)
     return target.name

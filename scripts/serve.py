@@ -80,7 +80,7 @@ from common.jsonio import load_json, write_json
 from common.media import clip_kind, earliest_creation_date, video_files
 from common.notebook import notebook_ledger_path, notebook_lessons, notebook_waiting
 from common.openrouter import key_info
-from common.photos import is_photo
+from common.photos import is_photo, proxy_name
 from common.edit_timeline import edit_summary as edit_summary_document
 from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, spend_between
 from common.sizes import BYTES_PER_GB, format_gb, format_size_short
@@ -2163,11 +2163,7 @@ def _file_row(path, kind, edit_names, excluded, lengths, new=False):
 
 
 def _has_proxy(proxy_dir, path):
-    if (proxy_dir / path.name).is_file():
-        return True
-    if path.suffix.lower() == ".heic" and (proxy_dir / f"{path.stem}.jpg").is_file():
-        return True
-    return False
+    return (proxy_dir / proxy_name(path)).is_file()
 
 
 def project_files(directory):

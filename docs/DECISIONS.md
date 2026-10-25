@@ -81,7 +81,7 @@ read the reference folder from an environment variable.
 `docs/licences.md` (BSD-3-Clause). The reference-material tests read the folder
 from `YT_PIPELINE_REFERENCE_DIR` through `tests/helpers.py` `reference_dir()`, with
 a non-existent placeholder default, so they skip when it is unset and no personal
-path stays in the repo.
+path stays in those five reference tests.
 
 **Why not A:** a direct import must be declared (a transitive dependency can
 vanish without notice), and the placeholder rule (RULES 2026-10-23) applies to

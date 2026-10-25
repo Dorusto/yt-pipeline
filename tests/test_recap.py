@@ -1044,6 +1044,21 @@ def test_proxy_skip_notices_photo_added_after_last_run(tmp_path):
     assert recap.is_up_to_date("proxy", ctx) is False
 
 
+def test_proxy_skip_ignores_excluded_photos(tmp_path):
+    ctx = make_context(tmp_path)
+    (ctx.source / "clip.mp4").write_bytes(b"clip")
+    (ctx.source / "photo.jpg").write_bytes(b"photo")
+    proxy_dir = ctx.workspace / "proxy"
+    proxy_dir.mkdir(parents=True, exist_ok=True)
+    (proxy_dir / "clip.mp4").write_bytes(b"proxy")
+    (ctx.workspace / "excluded.json").write_text(
+        json.dumps({"excluded": ["photo.jpg"]}), encoding="utf-8"
+    )
+    assert recap.is_up_to_date("proxy", ctx) is True
+    (ctx.source / "photo2.jpg").write_bytes(b"photo")
+    assert recap.is_up_to_date("proxy", ctx) is False
+
+
 def test_proxy_name_maps_heic_to_jpg():
     assert proxy_name("photo.heic") == "photo.jpg"
     assert proxy_name("photo.HEIC") == "photo.jpg"
