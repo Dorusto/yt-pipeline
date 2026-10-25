@@ -1,4 +1,5 @@
 opencv-python-headless
+numpy
 openai
 openai-whisper
 pillow

@@ -8,6 +8,8 @@ are written and run here.
 - `pytest.ini` sets `timeout = 120` per test, so a hung test fails with its name.
 - Every feature that passed the owner's real test gets a regression test on
   synthetic data that fixes its behaviour.
+- The reference-material tests read the folder from `YT_PIPELINE_REFERENCE_DIR`
+  and skip when it is unset, so the repo carries no personal path.
 
 ## Definition of done (every task)
 

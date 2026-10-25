@@ -1,6 +1,7 @@
 import pytest
 
 import fs_probe
+from helpers import REFERENCE_DIR_PLACEHOLDER
 
 
 def test_safe_is_dir_true_and_false(tmp_path):
@@ -24,4 +25,4 @@ def test_probes_return_false_on_oserror(helper, method, monkeypatch):
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr("pathlib.Path." + method, boom)
-    assert helper("/root/media/eval/second-brain") is False
+    assert helper(str(REFERENCE_DIR_PLACEHOLDER)) is False

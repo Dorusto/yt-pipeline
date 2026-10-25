@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 import yaml
@@ -9,8 +8,9 @@ import export_filmcraft as ef
 import rough_cut as rc
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from fs_probe import safe_is_dir
+from helpers import reference_dir
 
-REFERENCE_DIR = Path("/root/media/eval/second-brain")
+REFERENCE_DIR = reference_dir()
 REFERENCE_FCPROJ = REFERENCE_DIR / "Second Brain.fcproj"
 REFERENCE_SEQUENCE = "Second Brain - 15 min"
 

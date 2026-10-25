@@ -4,6 +4,36 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] numpy declared and reference tests read the host path from an env var (V030 audit lot a6, F18, F16)
+
+**Context:** The v0.3.0 audit found (F18) `numpy` imported directly by 12 scripts
+but absent from `requirements.txt` and `docs/licences.md`, and
+`tests/test_licences.py` only checks packages listed in the requirements files, so
+it cannot catch it; and (F16) five tracked test files hardcode the personal path
+`/root/media/eval/second-brain`, while `tests/test_no_personal_setup.py` does not
+scan `tests/`.
+
+**Options:** (A) leave numpy implicit as a transitive dependency of
+`opencv-python-headless` and keep the hardcoded test path; (B) declare numpy and
+read the reference folder from an environment variable.
+
+**Decision:** B. `numpy` is added to `requirements.txt` and gets one row in
+`docs/licences.md` (BSD-3-Clause). The reference-material tests read the folder
+from `YT_PIPELINE_REFERENCE_DIR` through `tests/helpers.py` `reference_dir()`, with
+a non-existent placeholder default, so they skip when it is unset and no personal
+path stays in the repo.
+
+**Why not A:** a direct import must be declared (a transitive dependency can
+vanish without notice), and the placeholder rule (RULES 2026-10-23) applies to
+tests too.
+
+**Consequence:** files touched — `requirements.txt`, `docs/licences.md`,
+`tests/helpers.py`, `tests/test_chapters.py`, `tests/test_eval_rough_cut.py`,
+`tests/test_mode_b.py`, `tests/test_shorts_rank.py`, `tests/test_fs.py`,
+`tests/test_reference_dir.py` (new), `docs/agents/testing.md`, `docs/DECISIONS.md`.
+No CLI, schema or behaviour change; the reference tests now skip unless the host
+sets the env var.
+
 ## [2026-10-25] One shared ordered worker pool (V030 audit lot a5, F4)
 
 **Context:** The v0.3.0 audit (F4) found the bounded worker pool hand-rolled in

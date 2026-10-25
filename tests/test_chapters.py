@@ -10,6 +10,7 @@ from common.llm import MockClient
 from common.schema import validate_or_raise
 from fs_probe import safe_is_dir
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from helpers import reference_dir
 
 CONFIG = {
     "models": {"metadata": "mock-model"},
@@ -22,7 +23,7 @@ VALID = {"chapters": [{"start_s": 0.0, "title": "Intro", "summary": "Start."}]}
 FIXTURES = Path(__file__).parent / "fixtures" / "publish"
 FCPROJ = FIXTURES / "fixture.fcproj"
 MOCK_CONFIG = Path(__file__).parent / "fixtures" / "mock_llm_config.yaml"
-REFERENCE_DIR = Path("/root/media/eval/second-brain")
+REFERENCE_DIR = reference_dir()
 REFERENCE_FCPROJ = REFERENCE_DIR / "Second Brain.fcproj"
 REFERENCE_SEQUENCE = "Second Brain - 15 min"
 REFERENCE_WORDS = REFERENCE_DIR / "json"

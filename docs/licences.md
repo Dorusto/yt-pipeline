@@ -8,6 +8,7 @@ The credits and the required notices are in [`NOTICE.md`](../NOTICE.md).
 | Name | Licence | How it is used |
 |:---|:---|:---|
 | opencv-python-headless | Apache-2.0 | linked library — optical flow, frame sampling, `cv2.dnn` inference, YuNet face detection |
+| numpy | BSD-3-Clause | linked library — numeric arrays (motion, quality, beats, similarity, colour, photos) |
 | openai | Apache-2.0 | linked library — OpenRouter/OpenAI-compatible client (`common/llm.py`, `common/openrouter.py`) |
 | openai-whisper | MIT | linked library — transcription (`transcribe.py`) |
 | pillow | MIT-CMU (HPND) | linked library — image handling (photos, thumbnails) |
