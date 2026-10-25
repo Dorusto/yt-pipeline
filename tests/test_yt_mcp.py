@@ -1,13 +1,19 @@
 import asyncio
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
 from mcp.types import ImageContent
 
 import yt_mcp
-from common.plugins import plugin_names, plugin_tools
+from common.plugins import (
+    plugin_names,
+    plugin_tools,
+    skill_json_contract,
+    tool_skill,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,7 +57,7 @@ def make_stub_root(tmp_path, tools):
 
 def use_stub_env(monkeypatch, root):
     monkeypatch.setenv("YT_PIPELINE_HOME", str(root))
-    monkeypatch.setenv("YT_PIPELINE_VENV", str(ROOT / ".venv"))
+    monkeypatch.setattr(yt_mcp, "resolve_python", lambda root: sys.executable)
 
 
 def call(server, name, arguments):
@@ -100,12 +106,32 @@ def test_yt_list_one_line_per_tool(tmp_path, monkeypatch):
     assert lines[0].startswith("fail_tool: ")
 
 
-def test_yt_describe_doctor():
+def test_yt_describe_doctor(monkeypatch):
+    monkeypatch.setattr(yt_mcp, "resolve_python", lambda root: sys.executable)
     server = yt_mcp.build_server("yt-director", root=ROOT)
     described = json_of(call(server, "yt_describe", {"tool": "doctor"}))
     assert described["ok"] is True
     assert "usage" in described["help"]
     assert described["json"] is True
+
+
+def test_yt_describe_returns_json_contract(monkeypatch):
+    monkeypatch.setattr(yt_mcp, "resolve_python", lambda root: sys.executable)
+    server = yt_mcp.build_server("yt-director", root=ROOT)
+    described = json_of(call(server, "yt_describe", {"tool": "director"}))
+    assert described["contract"]["example"].startswith("The `--json` output")
+    assert "status" in described["contract"]["example"]
+    assert "exit" in described["contract"]["exit_codes"]
+    none = json_of(call(server, "yt_describe", {"tool": "doctor"}))
+    assert none["contract"] is None
+
+
+def test_tool_skill_and_json_contract():
+    assert tool_skill(ROOT, "director") == "yt-director"
+    assert tool_skill(ROOT, "notebook") == "yt-notebook"
+    assert tool_skill(ROOT, "metadata") == "yt-publish"
+    assert skill_json_contract(ROOT, "yt-director")["example"].startswith("The `--json` output")
+    assert skill_json_contract(ROOT, "yt-recap") is None
 
 
 def test_yt_run_success(tmp_path, monkeypatch):

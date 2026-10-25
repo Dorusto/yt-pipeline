@@ -40,3 +40,47 @@ def plugin_tools(root, plugin):
         tools |= skill_tools(root, skill)
     scripts = Path(root) / "scripts"
     return sorted(name for name in tools if (scripts / f"{name}.py").is_file())
+
+
+def tool_skill(root, tool):
+    """Return the skill that documents one tool, or None.
+
+    The tool's own skill is the one named ``yt-<tool>`` (underscores become
+    dashes); when there is none, the first skill in marketplace order that
+    names the tool.
+    """
+    skills = []
+    for plugin in plugin_names(root):
+        for skill in plugin_skills(root, plugin):
+            if skill not in skills:
+                skills.append(skill)
+    own = "yt-" + tool.replace("_", "-")
+    if own in skills and tool in skill_tools(root, own):
+        return own
+    for skill in skills:
+        if tool in skill_tools(root, skill):
+            return skill
+    return None
+
+
+def skill_json_contract(root, skill):
+    """Return the ``--json`` output contract a skill documents, or None.
+
+    The contract is the skill's ``--json`` output paragraph (the example
+    object) plus its exit-code line, read from the skill text. Returns None
+    when the skill documents no ``--json`` output.
+    """
+    if not skill:
+        return None
+    text = (Path(root) / SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    example = None
+    exit_codes = None
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("-*").strip()
+        if example is None and "`--json` output" in stripped:
+            example = stripped
+        if exit_codes is None and "[error]" in stripped and "exit" in stripped:
+            exit_codes = stripped
+    if example is None:
+        return None
+    return {"example": example, "exit_codes": exit_codes}

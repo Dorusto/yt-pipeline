@@ -126,8 +126,9 @@ grouping comes from the marketplace and the skills, so a new tool appears withou
 a code change.
 
 - `yt_list` → the tools of the plugin, one line each.
-- `yt_describe` with `{"tool": "render"}` → the tool's `--help` text and whether
-  it supports `--json`.
+- `yt_describe` with `{"tool": "render"}` → the tool's `--help` text, whether
+  it supports `--json`, and its `--json` output contract (the example object and
+  exit codes, read from the tool's skill; `null` when the skill documents none).
 - `yt_run` with `{"tool": "doctor", "args": ["--source", "<folder>"]}` → the
   tool's `--json` object, or the structured `{"ok": false, ...}` error.
 - `yt_preview` with `{"path": "<workspace>"}` → the poster or a frame as an

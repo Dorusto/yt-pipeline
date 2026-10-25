@@ -30,17 +30,18 @@ from common.errors import report_error
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.ffmpeg_tools import probe_duration
 from common.frames import extract_frame
-from common.plugins import plugin_names, plugin_tools
+from common.jsonio import parse_child_json
+from common.plugins import (
+    plugin_names,
+    plugin_tools,
+    skill_json_contract,
+    tool_skill,
+)
 from common.summary import summary_fields
+from common.versions import POSTER_NAME, RENDER_NAMES, THUMBS_DIR
 
 DEFAULT_TIMEOUT_S = 300.0
 DEFAULT_PREVIEW_WIDTH = 640
-PREVIEW_NAMES = (
-    "recap_720p.mp4",
-    "recap_final.mp4",
-    "recap_720p_9x16.mp4",
-    "recap_final_9x16.mp4",
-)
 
 
 class PreviewError(RuntimeError):
@@ -84,7 +85,7 @@ def run_tool(root, python, tool, args, timeout_s):
         }
     except OSError as exc:
         return {"ok": False, "error": str(exc), "exit_code": EXIT_RUNTIME}
-    payload = _parse_json_object(result.stdout)
+    payload = parse_child_json(result.stdout)
     if payload is None:
         return {
             "ok": False,
@@ -94,33 +95,19 @@ def run_tool(root, python, tool, args, timeout_s):
     return payload
 
 
-def _parse_json_object(stdout):
-    """Parse one JSON object from stdout, falling back to the last non-empty line."""
-    text = stdout.strip()
-    if not text:
-        return None
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        lines = [line for line in text.splitlines() if line.strip()]
-        if not lines:
-            return None
-        try:
-            payload = json.loads(lines[-1])
-        except json.JSONDecodeError:
-            return None
-    return payload if isinstance(payload, dict) else None
-
-
 def preview_image(path, time_s=None, width=DEFAULT_PREVIEW_WIDTH):
     """Return an ``Image`` for a workspace folder or a video file."""
     target = Path(path)
     if target.is_dir():
-        poster = target / "thumbs" / "poster.jpg"
+        poster = target / THUMBS_DIR / POSTER_NAME
         if poster.is_file():
             return Image(data=poster.read_bytes(), format="jpeg")
         video = next(
-            (target / name for name in PREVIEW_NAMES if (target / name).is_file()),
+            (
+                target / name
+                for name in RENDER_NAMES
+                if name.endswith(".mp4") and (target / name).is_file()
+            ),
             None,
         )
         if video is None:
@@ -155,7 +142,7 @@ def build_server(plugin, root=None, timeout_s=DEFAULT_TIMEOUT_S):
 
     @server.tool()
     def yt_describe(tool: str) -> dict:
-        """Return one tool's --help text and whether it supports --json."""
+        """Return one tool's --help text, whether it supports --json, and its --json output contract."""
         if tool not in plugin_tools(root, plugin):
             return {
                 "ok": False,
@@ -163,7 +150,14 @@ def build_server(plugin, root=None, timeout_s=DEFAULT_TIMEOUT_S):
                 "exit_code": EXIT_USAGE,
             }
         text = run_help(root, resolve_python(root), tool)
-        return {"ok": True, "tool": tool, "help": text, "json": "--json" in text}
+        contract = skill_json_contract(root, tool_skill(root, tool))
+        return {
+            "ok": True,
+            "tool": tool,
+            "help": text,
+            "json": "--json" in text,
+            "contract": contract,
+        }
 
     @server.tool()
     def yt_run(tool: str, args: list[str] | None = None) -> dict:
