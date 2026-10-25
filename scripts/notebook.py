@@ -59,6 +59,18 @@ DEFAULT_MERGE_PROMPT = REPO_ROOT / "prompts" / "notebook_merge.md"
 LEARN_MARKER = ".learn.json"
 MAX_NEW_LESSONS = 3
 MAX_WAITING = 3
+SHOT_ID_RE = re.compile(r"\d{3,4}/s\d+")
+CLIP_NUMBER_RE = re.compile(r"\b\d{4}\b")
+
+
+def lesson_is_general(text, project_name=None):
+    """True when a lesson names no shot id, no 4-digit clip number and no project name."""
+    if SHOT_ID_RE.search(text) or CLIP_NUMBER_RE.search(text):
+        return False
+    name = (project_name or "").strip()
+    if name and name.lower() in text.lower():
+        return False
+    return True
 
 
 class NotebookError(RuntimeError):
@@ -328,7 +340,7 @@ def build_learn_message(prompt_text, lessons, rows, brief_text, max_new=MAX_NEW_
     return "\n".join(lines)
 
 
-def normalize_learn_answer(answer, max_new=MAX_NEW_LESSONS):
+def normalize_learn_answer(answer, max_new=MAX_NEW_LESSONS, project_name=None):
     """Validate the model answer; return ``(lessons, remove_ids)`` or raise a runtime error."""
     if not isinstance(answer, dict):
         raise NotebookRuntimeError("model answer is not a JSON object")
@@ -343,6 +355,12 @@ def normalize_learn_answer(answer, max_new=MAX_NEW_LESSONS):
             continue
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
+            continue
+        if not lesson_is_general(text.strip(), project_name):
+            print(
+                f"[warn] skipping a lesson that names a shot, a clip or the project: {text.strip()}",
+                file=sys.stderr,
+            )
             continue
         kind = raw.get("kind") or "lesson"
         if kind not in ("lesson", "proposal"):
@@ -473,7 +491,7 @@ def learn(workspace, notebook, limit):
     client = make_client(load_config(), ledger_path=notebook_ledger_path(path))
     response = client.complete_json("metadata", [{"role": "user", "content": message}])
     llm_cost = response.cost_usd
-    new_lessons, remove_ids = normalize_learn_answer(response.data, max_new)
+    new_lessons, remove_ids = normalize_learn_answer(response.data, max_new, workspace_path.name)
     removed = []
     for lesson_id in remove_ids:
         index = find_index(lessons, lesson_id)

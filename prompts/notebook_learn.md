@@ -43,5 +43,8 @@ Field rules:
 
 - Write in the same language as the feedback.
 - One sentence per lesson; no personal data and no clip text beyond what is given.
+- A lesson is a general rule for any project: never name a shot id (e.g.
+  `0091/s2`), a clip number (e.g. `0072`) or a project name. Say the rule in
+  plain words instead.
 - Never invent a lesson the feedback does not support; when the feedback says
   nothing useful, return an empty `lessons` list.

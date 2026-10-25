@@ -169,6 +169,50 @@ def test_learn_writes_at_most_three_lessons_and_sets_the_marker(tmp_path, monkey
     assert validate(document, "notebook") == []
 
 
+def make_named_workspace(tmp_path, name="kotor-demo"):
+    workspace = tmp_path / name
+    workspace.mkdir()
+    (workspace / "feedback.jsonl").write_text(
+        json.dumps({"ts": "2020-01-01T00:00:00+00:00", "action": "feedback", "text": "keep the tunnel longer"}) + "\n",
+        encoding="utf-8",
+    )
+    return workspace
+
+
+def test_normalize_learn_answer_rejects_named_lessons(capsys):
+    answer = {
+        "lessons": [
+            {"text": "Keep 0091/s2 longer.", "kind": "lesson", "part": None},
+            {"text": "Keep clip 0072 longer.", "kind": "lesson", "part": None},
+            {"text": "In kotor-demo, keep the tunnel longer.", "kind": "lesson", "part": None},
+            {"text": "Keep the tunnel shot longer.", "kind": "lesson", "part": None},
+        ],
+        "remove": [],
+    }
+    lessons, remove = notebook.normalize_learn_answer(answer, project_name="kotor-demo")
+    assert [lesson["text"] for lesson in lessons] == ["Keep the tunnel shot longer."]
+    assert remove == []
+    assert capsys.readouterr().err.count("[warn]") == 3
+
+
+def test_learn_skips_a_lesson_that_names_a_shot(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    workspace = make_named_workspace(tmp_path)
+    answer = {
+        "lessons": [
+            {"text": "Keep 0091/s2 longer.", "kind": "lesson", "part": None},
+            {"text": "Keep the tunnel shot longer.", "kind": "lesson", "part": None},
+        ],
+        "remove": [],
+    }
+    stub_learn_client(monkeypatch, answer)
+    summary = notebook.learn(str(workspace), str(notebook_file), 40)
+    assert summary["status"] == "written"
+    assert summary["count"] == 1
+    document = read_json(notebook_file)
+    assert [lesson["text"] for lesson in document["lessons"]] == ["Keep the tunnel shot longer."]
+
+
 def test_learn_skips_when_there_is_no_new_feedback(tmp_path, monkeypatch):
     notebook_file = tmp_path / "notebook.json"
     workspace = make_workspace(tmp_path)

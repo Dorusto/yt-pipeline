@@ -147,6 +147,20 @@ def build_parser():
         default="",
         help="comma-separated shot keys the owner asked to keep next to each other",
     )
+    parser.add_argument(
+        "--add-shots",
+        action="append",
+        default=[],
+        metavar="KEY,KEY",
+        help="comma-separated shot keys the owner asked to add (repeatable)",
+    )
+    parser.add_argument(
+        "--drop-shots",
+        action="append",
+        default=[],
+        metavar="KEY,KEY",
+        help="comma-separated shot keys the owner asked to drop (repeatable)",
+    )
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
     parser.add_argument(
         "--beats",
@@ -184,6 +198,14 @@ def clamp(value, low, high):
 def parse_keep_shots(value):
     """The set of shot keys from a comma-separated ``--keep-shots`` value."""
     return {key.strip() for key in (value or "").split(",") if key.strip()}
+
+
+def parse_shot_keys(values):
+    """The set of shot keys from repeatable comma-separated values."""
+    keys = set()
+    for value in values or []:
+        keys |= parse_keep_shots(value)
+    return keys
 
 
 def parse_time(value):
@@ -1404,6 +1426,69 @@ def fill_to_target(candidates, chosen, used, target_duration_s, max_slot_s, min_
     return chosen
 
 
+def force_add_shots(slots, candidates, add_keys, target_duration_s, max_slot_s, min_slot_s, order, warnings, important_max_s, slot_target_s):
+    """Force the owner's add keys into the edit; return ``(slots, applied, not_applied)``.
+
+    Every named key that is not already in the edit is cut from its candidate
+    window the way the rule director cuts a slot. When the target length is
+    exceeded the weakest non-forced slot is dropped. A key with no candidate is
+    reported as not applied.
+    """
+    if not add_keys:
+        return slots, [], []
+    by_key = {}
+    for candidate in candidates:
+        key = candidate.get("shot_key") or candidate_key(candidate)
+        by_key.setdefault(key, candidate)
+    present = {slot.get("shot_key") for slot in slots}
+    applied = []
+    not_applied = []
+    for key in sorted(add_keys):
+        if key in present:
+            applied.append(key)
+            continue
+        candidate = by_key.get(key)
+        if candidate is None:
+            not_applied.append(key)
+            continue
+        slot = make_slot(candidate, slot_target_s, max_slot_s, min_slot_s, slots, warnings, important_max_s)
+        if slot is None:
+            not_applied.append(key)
+            continue
+        if order == "chronological":
+            insert_at = content_insert_index(slots, slot["content_offset"] + slot["in_s"])
+        else:
+            insert_at = len(slots)
+        slots.insert(insert_at, slot)
+        present.add(key)
+        applied.append(key)
+    forced = set(applied)
+    total = sum(timeline_length(slot) for slot in slots)
+    while total > target_duration_s and len(slots) > 1:
+        victims = [
+            slot for slot in slots
+            if (slot.get("shot_key") or candidate_key(slot)) not in forced
+        ]
+        if not victims:
+            break
+        weakest = min(victims, key=lambda slot: (slot.get("score") or 0.0, slot.get("shot_key") or ""))
+        slots.remove(weakest)
+        total = sum(timeline_length(slot) for slot in slots)
+    return slots, applied, not_applied
+
+
+def owner_key_status(slots, add_keys, drop_keys):
+    """The owner's keys that made it into the edit and those that did not."""
+    present = {slot.get("shot_key") for slot in slots}
+    applied = []
+    not_applied = []
+    for key in sorted(add_keys):
+        (applied if key in present else not_applied).append(key)
+    for key in sorted(drop_keys):
+        (applied if key not in present else not_applied).append(key)
+    return applied, not_applied
+
+
 def mark_centred(slot):
     """Set ``centred`` on a video slot: its cut was trimmed around its peak."""
     if slot.get("media_type") == "photo" or slot.get("peak_s") is None:
@@ -1568,6 +1653,8 @@ def run(args, started):
             raise DirectorError(f"music file not found: {args.music}")
         args.music = str(music_path)
     beat_grid = load_beats(beats_path) if beats_path is not None else None
+    add_keys = parse_shot_keys(args.add_shots)
+    drop_keys = parse_shot_keys(args.drop_shots)
 
     if not args.force and is_up_to_date(out_path, workspace, beats_path, args.speed_ramp):
         existing = load_json(out_path) or {}
@@ -1584,6 +1671,8 @@ def run(args, started):
                 "wall_time_s": round(time.monotonic() - started, 2),
                 "llm_cost_usd": 0.0,
                 "beat_snap": None,
+                "applied_keys": [],
+                "not_applied_keys": [],
             },
             None,
         )
@@ -1693,6 +1782,18 @@ def run(args, started):
     skipped_ineligible += photo_ineligible
     skipped_roles += photo_roles
 
+    if drop_keys:
+        kept_candidates = [
+            candidate for candidate in candidates
+            if (candidate.get("shot_key") or candidate_key(candidate)) not in drop_keys
+        ]
+        for candidate in candidates:
+            key = candidate.get("shot_key") or candidate_key(candidate)
+            if key in drop_keys:
+                drop_reasons.setdefault(key, "the owner asked to drop it")
+                warnings.append(f"dropped {key}: the owner asked to drop it")
+        candidates = kept_candidates
+
     if skipped_roles:
         warnings.append(f"skipped {skipped_roles} accidental/setup/teardown segments")
     if skipped_ineligible:
@@ -1732,6 +1833,13 @@ def run(args, started):
         key = slot.get("shot_key") or candidate_key(slot)
         drop_reasons.setdefault(key, reason)
         warnings.append(f"dropped {key}: {reason}")
+
+    slots, forced_applied, forced_not_applied = force_add_shots(
+        slots, candidates, add_keys, args.target_duration_s, max_slot_s, min_slot_s,
+        args.order, warnings, important_max_s, pacing["slot_target"],
+    )
+    for key in forced_not_applied:
+        warnings.append(f"could not add {key}: no usable candidate")
 
     if not slots:
         raise DirectorError("no usable candidates")
@@ -1774,6 +1882,7 @@ def run(args, started):
     atomic_write_json(out_path, record)
 
     total = sum(timeline_length(slot) for slot in slots)
+    applied_keys, not_applied_keys = owner_key_status(slots, add_keys, drop_keys)
     summary = {
         "status": "written",
         "out": str(out_path),
@@ -1784,6 +1893,8 @@ def run(args, started):
         "wall_time_s": round(wall_time_s, 2),
         "llm_cost_usd": 0.0,
         "beat_snap": beat_snap,
+        "applied_keys": applied_keys,
+        "not_applied_keys": not_applied_keys,
     }
     return summary, record
 

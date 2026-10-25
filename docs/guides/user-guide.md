@@ -237,7 +237,10 @@ finished recap, the explanation and the contact sheet.
   so the owner sees which tools the director needs next. The chat shows the last
   3 exchanges; older ones sit in a closed **Earlier messages (N)** section above
   them, and the message box and the approve/disabled button sit directly under
-  the newest exchange. The director's reasoning
+  the newest exchange. When the director cannot make the edit and a simpler
+  editor makes it instead, the page says so in plain words ("The director could
+  not make this edit; a simpler editor made it.") and lists which requested
+  changes were applied and which were not. The director's reasoning
   effort — how much hidden reasoning the model spends on every call — comes from
   `--reasoning-effort` (`low`, `medium`, `high` or `off`), else
   `director.reasoning_effort` in the config, else `medium`. From the command line:

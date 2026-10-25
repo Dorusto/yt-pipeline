@@ -1220,6 +1220,127 @@ def test_keep_shots_keeps_both_beats_of_one_segment(tmp_path):
     assert "clipA/s1b2" in keys
 
 
+def build_owner_keys_workspace(root):
+    clips = [
+        {"file": "clip_0072_x.mp4", "path": "/media/clip_0072_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clip_0091_x.mp4", "path": "/media/clip_0091_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        root / "quality" / "clip_0072_x.json",
+        quality_doc("clip_0072_x.mp4", 60.0, [segment("s7", 0.0, 60.0, "hold", motion_label="static")]),
+    )
+    write_json(root / "motion" / "clip_0072_x.json", motion_doc("clip_0072_x.mp4", 60.0, []))
+    write_json(
+        root / "quality" / "clip_0091_x.json",
+        quality_doc("clip_0091_x.mp4", 60.0, [segment("s2", 0.0, 60.0, "hold", motion_label="static")]),
+    )
+    write_json(root / "motion" / "clip_0091_x.json", motion_doc("clip_0091_x.mp4", 60.0, []))
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("0072/s7b1", "clip_0072_x.mp4", "s7b1", 0.0, 30.0, True, 0.95, "the bunker", "interest 95", hero=True),
+            shotlog_shot("0072/s7b5", "clip_0072_x.mp4", "s7b5", 30.0, 60.0, True, 0.97, "the bunker again", "interest 97", hero=True),
+            shotlog_shot("0091/s2", "clip_0091_x.mp4", "s2", 0.0, 60.0, True, 0.9, "the orbit", "interest 90", hero=True, role="move", motion_label="orbit"),
+        ],
+    )
+    shots = json.loads((root / "shotlog.json").read_text(encoding="utf-8"))["shots"]
+    for shot in shots:
+        if shot["key"] in ("0072/s7b1", "0072/s7b5"):
+            shot["beat_of"] = "s7"
+    write_json(
+        root / "shotlog.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "weights": {"vision": 0.55, "labels": 0.45}, "shots": shots},
+    )
+    return root
+
+
+def test_drop_shots_removes_the_key_from_the_edit(tmp_path):
+    workspace = build_owner_keys_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "24", "--order", "chronological", "--pacing", "uniform",
+        "--drop-shots", "0072/s7b1", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "0072/s7b1" not in keys
+    assert "0072/s7b1" in summary["applied_keys"]
+
+
+def test_add_shots_puts_the_key_in_the_edit(tmp_path):
+    workspace = build_owner_keys_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "24", "--order", "chronological", "--pacing", "uniform",
+        "--add-shots", "0091/s2", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "0091/s2" in keys
+    assert "0091/s2" in summary["applied_keys"]
+
+
+def test_add_shots_reports_a_key_with_no_candidate(tmp_path):
+    workspace = build_owner_keys_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "24", "--order", "chronological", "--pacing", "uniform",
+        "--add-shots", "9999/s9", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert "9999/s9" in summary["not_applied_keys"]
+    assert "9999/s9" not in summary["applied_keys"]
+
+
+def test_force_add_shots_inserts_a_candidate_not_in_the_edit():
+    candidate = {
+        "clip": "clip_0091_x.mp4",
+        "segment": {"id": "s2"},
+        "in_s": 0.0,
+        "out_s": 60.0,
+        "score": 0.9,
+        "role": "hold",
+        "motion_label": "static",
+        "steadiness": "static",
+        "position": 0.5,
+        "content_offset": 60.0,
+        "shot_key": "0091/s2",
+        "similar_to": [],
+    }
+    slots = [
+        {
+            "clip": "clip_0072_x.mp4",
+            "in_s": 0.0,
+            "out_s": 4.0,
+            "score": 0.5,
+            "shot_key": "0072/s7b1",
+            "content_offset": 0.0,
+            "segment": {"id": "s7"},
+            "role": "hold",
+            "motion_label": "static",
+            "steadiness": "static",
+            "position": 0.0,
+            "similar_to": [],
+        }
+    ]
+    warnings = []
+    result, applied, not_applied = director.force_add_shots(
+        slots, [candidate], {"0091/s2"}, 24.0, 5.0, 2.0, "chronological", warnings, 6.0, 3.6,
+    )
+    assert applied == ["0091/s2"]
+    assert not_applied == []
+    assert "0091/s2" in [slot.get("shot_key") for slot in result]
+
+
 def test_window_ends_at_the_steady_motion_end():
     clip = {"file": "clipA.mp4"}
     quality = quality_doc("clipA.mp4", 30.0, [segment("s1", 0.0, 30.0, "move", motion_label="pan_right")])

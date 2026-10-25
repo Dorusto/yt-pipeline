@@ -591,6 +591,116 @@ def test_required_star_keys_keeps_top_share():
     assert llm_director.required_star_keys(facts, 10)[0] == "0002/s1"
 
 
+def test_required_star_keys_collapses_two_stars_of_one_segment():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.95, hero=True, segment_id="s7"),
+        "0072/s7b5": fact("0072/s7b5", "clip_0072_x.mp4", 12.0, 24.0, score=0.97, hero=True, segment_id="s7"),
+    }
+    assert llm_director.required_star_keys(facts, 5) == ["0072/s7b5"]
+
+
+def test_required_star_keys_keeps_two_stars_of_different_segments():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.95, hero=True, segment_id="s7"),
+        "0091/s2": fact("0091/s2", "clip_0091_x.mp4", 0.0, 12.0, score=0.97, hero=True, segment_id="s2"),
+    }
+    assert llm_director.required_star_keys(facts, 5) == ["0091/s2", "0072/s7b1"]
+
+
+def test_required_star_keys_excludes_the_owner_drop_keys():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.95, hero=True, segment_id="s7"),
+        "0091/s2": fact("0091/s2", "clip_0091_x.mp4", 0.0, 12.0, score=0.97, hero=True, segment_id="s2"),
+    }
+    assert llm_director.required_star_keys(facts, 5, frozenset({"0091/s2"})) == ["0072/s7b1"]
+
+
+def test_required_star_keys_collapses_a_similar_pair():
+    facts = {
+        "0081/s5": fact("0081/s5", "clip_0081_x.mp4", 0.0, 12.0, score=0.8722, hero=True, similar_to=["0081/s7"]),
+        "0081/s7": fact("0081/s7", "clip_0081_x.mp4", 12.0, 24.0, score=0.8891, hero=True, similar_to=["0081/s5"]),
+    }
+    assert llm_director.required_star_keys(facts, 5) == ["0081/s7"]
+
+
+def test_required_star_keys_collapses_a_similar_chain():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 12.0, score=0.96, hero=True, similar_to=["0002/s1"]),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 12.0, score=0.99, hero=True, similar_to=["0001/s1", "0003/s1"]),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 12.0, score=0.97, hero=True, similar_to=["0002/s1"]),
+    }
+    assert llm_director.required_star_keys(facts, 5) == ["0002/s1"]
+
+
+def test_hero_missing_not_fired_when_the_better_of_a_similar_pair_is_planned():
+    facts = {
+        "0081/s5": fact("0081/s5", "clip_0081_x.mp4", 0.0, 12.0, score=0.8722, hero=True, similar_to=["0081/s7"]),
+        "0081/s7": fact("0081/s7", "clip_0081_x.mp4", 12.0, 24.0, score=0.8891, hero=True, similar_to=["0081/s5"]),
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+    }
+    plan = star_plan(["0001/s1", "0081/s7"])
+    record = star_record([("v1", "clip_0001_x.mp4"), ("v2", "clip_0081_x.mp4")])
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert [item for item in violations if item["rule"] == "hero_missing"] == []
+
+
+def test_hero_missing_fires_when_neither_of_a_similar_pair_is_planned():
+    facts = {
+        "0081/s5": fact("0081/s5", "clip_0081_x.mp4", 0.0, 12.0, score=0.8722, hero=True, similar_to=["0081/s7"]),
+        "0081/s7": fact("0081/s7", "clip_0081_x.mp4", 12.0, 24.0, score=0.8891, hero=True, similar_to=["0081/s5"]),
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+    }
+    plan = star_plan(["0001/s1"])
+    record = star_record([("v1", "clip_0001_x.mp4")])
+    violations = llm_director.validate_edit(record, plan, facts)
+    missing = [item["slot"] for item in violations if item["rule"] == "hero_missing"]
+    assert missing == ["0081/s7"]
+
+
+def run_star_loop(facts, keys, clips):
+    plan = star_plan(keys)
+    plan["brief"]["target_duration_s"] = 12.0
+    record = star_record([(f"v{index + 1}", clip) for index, clip in enumerate(clips)])
+    seen = []
+    for _ in range(3):
+        violations = llm_director.validate_edit(record, plan, facts)
+        if not llm_director.blocking(violations):
+            break
+        llm_director.repair_draft(record, plan, facts, {}, violations)
+        seen.append([slot.get("shot_key") for slot in plan["slot_plan"]])
+    return plan, record, seen
+
+
+def test_similar_star_pair_is_not_dropped_and_added_again():
+    facts = {
+        "0081/s5": fact("0081/s5", "clip_0081_x.mp4", 0.0, 12.0, score=0.8722, hero=True, similar_to=["0081/s7"]),
+        "0081/s7": fact("0081/s7", "clip_0081_x.mp4", 12.0, 24.0, score=0.8891, hero=True, similar_to=["0081/s5"]),
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+    }
+    plan, record, seen = run_star_loop(
+        facts, ["0081/s5", "0081/s7", "0001/s1"], ["clip_0081_x.mp4", "clip_0081_x.mp4", "clip_0001_x.mp4"]
+    )
+    used = [slot.get("shot_key") for slot in plan["slot_plan"]]
+    assert "0081/s7" in used and "0081/s5" not in used
+    assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+    assert len(seen) <= 1
+
+
+def test_same_segment_star_beats_are_not_dropped_and_added_again():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.95, hero=True, segment_id="s7"),
+        "0072/s7b5": fact("0072/s7b5", "clip_0072_x.mp4", 12.0, 24.0, score=0.97, hero=True, segment_id="s7"),
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+    }
+    plan, record, seen = run_star_loop(
+        facts, ["0072/s7b1", "0072/s7b5", "0001/s1"], ["clip_0072_x.mp4", "clip_0072_x.mp4", "clip_0001_x.mp4"]
+    )
+    used = [slot.get("shot_key") for slot in plan["slot_plan"]]
+    assert "0072/s7b5" in used and "0072/s7b1" not in used
+    assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+    assert len(seen) <= 1
+
+
 def test_hero_missing_when_top_star_left_out():
     facts = star_facts()
     plan = star_plan(["0001/s1", "0003/s1", "0004/s1"])
@@ -679,6 +789,29 @@ def test_repair_star_swap_skips_a_jump_cut_victim():
     assert "0003/s1" in used
     assert any("swapped 0002/s1 in for 0001/s1" in note for note in notes)
     assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
+
+
+def test_pick_swap_victim_skips_owner_add_and_keep_whole():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.30),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.20),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 20.0, score=0.25),
+        "0004/s1": fact(
+            "0004/s1", "clip_0004_x.mp4", 0.0, 20.0,
+            keep_whole=True, score=0.95, hero=True, role="move", motion_label="travel_forward",
+        ),
+    }
+    plan = star_plan(["0001/s1", "0002/s1", "0003/s1"])
+    plan["slot_plan"][0]["keep_whole"] = True
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0002_x.mp4"),
+        ("v3", "clip_0003_x.mp4"),
+    ])
+    victim = llm_director.pick_swap_victim(
+        record, plan, facts, facts["0004/s1"], 6.0, 1.0, 5.0, frozenset({"0002/s1"})
+    )
+    assert victim == "v3"
 
 
 def test_repair_keeps_chronological_order():
@@ -2730,6 +2863,102 @@ def test_interpret_feedback_returns_a_reply(tmp_path):
     assert rows[0]["tool"] == "scripts/llm_director.py"
 
 
+def test_interpret_feedback_stores_the_owner_keys(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            json.dumps(
+                {
+                    "reply": "I read this as: add 0091/s2, drop 0072/s7b1.",
+                    "can_do": "all",
+                    "missing_tool": None,
+                    "add_keys": ["0091/s2"],
+                    "drop_keys": ["0072/s7b1"],
+                }
+            )
+        ]
+    )
+    summary, code = llm_director.interpret_feedback(
+        workspace, "add the orbit, drop one bunker shot", client=client
+    )
+    assert code == 0
+    assert summary["add_keys"] == ["0091/s2"]
+    assert summary["drop_keys"] == ["0072/s7b1"]
+    rows = feedback_jsonl_rows(workspace)
+    assert rows[0]["add_keys"] == ["0091/s2"]
+    assert rows[0]["drop_keys"] == ["0072/s7b1"]
+
+
+def test_interpret_feedback_defaults_the_owner_keys_to_empty(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([json.dumps({"reply": "ok", "can_do": "all", "missing_tool": None})])
+    summary, code = llm_director.interpret_feedback(workspace, "keep it as it is", client=client)
+    assert code == 0
+    assert summary["add_keys"] == []
+    assert summary["drop_keys"] == []
+    rows = feedback_jsonl_rows(workspace)
+    assert rows[0]["add_keys"] == []
+    assert rows[0]["drop_keys"] == []
+
+
+def test_owner_keys_from_feedback_matches_the_prefix(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add the orbit, drop one bunker shot",
+        "reply": "I read this as: add 0091/s2, drop 0072/s7b1.",
+        "add_keys": ["0091/s2"],
+        "drop_keys": ["0072/s7b1"],
+    }
+    (workspace / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    add_keys, drop_keys = llm_director.owner_keys_from_feedback(
+        workspace,
+        ["add the orbit, drop one bunker shot\n\nDirector's reading: I read this as: add 0091/s2, drop 0072/s7b1."],
+    )
+    assert add_keys == ["0091/s2"]
+    assert drop_keys == ["0072/s7b1"]
+    assert llm_director.owner_keys_from_feedback(workspace, ["something else"]) == ([], [])
+
+
+def test_run_loop_forwards_the_owner_keys_to_the_rules_director(tmp_path, monkeypatch):
+    workspace = build_workspace(tmp_path / "ws")
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add the cave, drop the bay",
+        "reply": "I read this as: add 0080/s1, drop 0057/s1.",
+        "add_keys": ["0080/s1", "9999/s9"],
+        "drop_keys": ["0057/s1"],
+    }
+    (workspace / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    captured = {}
+    real = llm_director.run_rules_director
+
+    def spy(*args, **kwargs):
+        captured["add_keys"] = set(kwargs.get("add_keys", args[9] if len(args) > 9 else frozenset()))
+        captured["drop_keys"] = set(kwargs.get("drop_keys", args[10] if len(args) > 10 else frozenset()))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_director, "run_rules_director", spy)
+    client = StubClient(["not json", "still not json"])
+    summary, code = llm_director.run(
+        workspace,
+        brief=BRIEF,
+        client=client,
+        feedback=[
+            "add the cave, drop the bay\n\nDirector's reading: I read this as: add 0080/s1, drop 0057/s1."
+        ],
+    )
+    assert code == 0
+    assert summary["status"] == "fallback"
+    assert captured["add_keys"] == {"0080/s1", "9999/s9"}
+    assert captured["drop_keys"] == {"0057/s1"}
+    assert "0080/s1" in summary["applied_keys"]
+    assert "0057/s1" in summary["applied_keys"]
+    assert "9999/s9" in summary["not_applied_keys"]
+
+
 def test_interpret_feedback_reports_a_missing_tool(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(
@@ -2999,23 +3228,24 @@ def test_default_rounds_cap_at_two(tmp_path):
     assert summary["approved"] is False
 
 
-def test_rounds_three_runs_three_rounds(tmp_path):
+def test_rounds_three_stops_early_on_the_same_blocking_violations(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(
         [
             plan_answer(),
-            editor_answer(),
+            editor_answer_out_of_window(),
             reviewer_not_approved(),
-            editor_answer(),
+            editor_answer_out_of_window(),
             reviewer_not_approved(),
-            editor_answer(),
+            editor_answer_out_of_window(),
             reviewer_not_approved(),
         ]
     )
     summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=3)
     assert code == 0
-    assert summary["rounds_used"] == 3
+    assert summary["rounds_used"] == 2
     assert summary["approved"] is False
+    assert any("stopped early" in warning for warning in summary["warnings"])
 
 
 def test_shortlist_rows_keeps_stars_and_top_scores_in_order():

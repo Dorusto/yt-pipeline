@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Director speed: `director.reasoning_effort` (`low`, `medium`, `high` or `off`, default `medium`) and `--reasoning-effort` set how much hidden reasoning the model spends on every `llm_director` call, sent as OpenRouter's `reasoning` body; the spend ledger records the reasoning tokens of each call.
 - Web app: a **Director** tab holds the chat with the director and, under it, the collapsible notebook.
 - Web app: a **Stop** button on the progress card of a running edit stops the run and its child processes and leaves the previous version as the current one.
+- Director: the rule director takes the owner's explicit keys (`--add-shots`/`--drop-shots`, comma-separated and repeatable) and the `--json` summary reports `applied_keys`/`not_applied_keys`; the web app says "The director could not make this edit; a simpler editor made it." and lists which requested changes were applied and which were not when the shown edit is a rule fallback.
 
 ### Changed
 
@@ -41,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Director: a plain-word request is resolved against the shot descriptions and clip numbers and the reply names the shots it means; the reply's `can_do` is `all`/`part`/`none` and a reply that cannot do everything replaces "Make the new version" with a disabled "Answer the director first" button; two neighbouring slots that are beats of one segment, or a similar pair, keep only the better one.
 - Director: the one jump-cut rule — a same-segment-beat or similar neighbour pair keeps only the better one unless the owner explicitly asked for both; the director never marks such a cut `deliberate` by itself.
 - Web app: the Director tab's chat shows the last 3 exchanges; older ones fold under a closed "Earlier messages (N)" section, and the input box and the button sit directly under the newest exchange.
+- Director: the LLM director reads the owner's `add_keys`/`drop_keys` from the last chat reply and passes them to the rule fallback, the star repair never swaps out an owner-added shot or a `keep_whole` slot, and the round loop stops early when a round makes no progress (the same blocking `(slot, rule)` set as the previous round); the required top stars count once per group (a `similar_to` pair or beats of one segment), so the star repair and the pointless-neighbour rule no longer fight.
+- Notebook: a lesson is a general rule and may not name a shot id, a clip number or a project name; the learn pass skips such a lesson with a `[warn]` line and still succeeds.
 
 ### Fixed
 

@@ -4,6 +4,72 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] A feedback run does what the owner asked, or says it did not (V030 lot c26)
+
+**Context:** The owner's phone test. On the Kotor workspace the owner asked "add
+the orbit around the group on the boat, remove one of the two similar bunker
+shots". The chat reply resolved it correctly (add `0091/s2` despite its shake,
+drop `0072/s7b1`, keep `0072/s7b5`), the owner approved, and the version came out
+from the rule director: `llm_director` ran 650.8 s and ended in `fallback`
+(`meta.director.by = rules`, `approved` false), so the orbit was missing and the
+page said nothing.
+
+**Options:** (A) leave the star repair, the pointless-cut rule and the fallback
+as they are; (B) make the star repair and the pointless-cut rule agree, carry the
+owner's explicit add/drop keys into the rule fallback, say on the page when a
+simpler editor made the edit, stop the loop early when a round makes no progress,
+and keep the notebook lessons general.
+
+**Decision:** B, with these parts (all shipped in this lot):
+
+1. `required_star_keys` collapses two stars of one segment (same clip and
+   `segment_id`, the better kept) and excludes the owner's drop keys, so the hero
+   rule can never require a star the pointless-cut rule would drop.
+2. `drop_pointless_cuts` keeps the owner's add keys, so the pointless-cut rule
+   never drops a shot the owner asked for.
+3. `pick_swap_victim` skips the owner's add keys and `keep_whole` slots, so the
+   star repair never swaps out the owner's added shot or a whole hero.
+4. The rule director takes `--add-shots`/`--drop-shots` (comma-separated,
+   repeatable) and reports `applied_keys`/`not_applied_keys` in `--json`; the LLM
+   director reads the owner's `add_keys`/`drop_keys` from the last `reply` row
+   whose `text` prefixes the feedback and passes them to the fallback.
+5. The web app shows "The director could not make this edit; a simpler editor
+   made it." plus the applied / not-applied keys when the shown edit is a rule
+   fallback.
+6. The round loop stops early when a round makes no progress: if the reviewer is
+   not approved and the validator's blocking violations are the same
+   `(slot, rule)` set as the previous round's, it breaks and keeps the last valid
+   draft or falls back, without running another round.
+7. The learning prompt forbids shot ids, clip numbers and project names, and a
+   lesson that contains one is rejected.
+8. The required stars count once per group: `required_star_keys` groups two
+   stars that are beats of one segment (same clip and `segment_id`) or a
+   `similar_to` pair (groups are transitive) and requires only the best of each
+   group, so the star repair and the pointless-cut rule no longer undo each other
+   (#118, #119, #94).
+
+**Why not A:** the owner's explicit request was silently undone by the director's
+own repair, the version came out from the rules with no word on the page, and the
+loop kept paying for rounds that changed nothing.
+
+**Numbers:** before 650.8 s and `fallback`; after 232.9 s and `fallback` on the
+fresh Kotor copy — the run still fell back, on a `hero_missing` for `0081/s5`
+(score 0.87225), a `similar_to` neighbour of `0081/s7` that the pointless-cut
+rule drops. The group rule (c26g) makes the required stars count once per similar
+pair, so the star repair and the pointless-neighbour drop agree; the lower star
+`0081/s5` is no longer required once its similar better `0081/s7` is planned.
+`0091/s2` is in and `0072/s7b1` is out in the fallback edit. The end-to-end
+acceptance of the group rule on a real project (an `llm` edit instead of the
+fallback) is pending: the model account had no credits, so only unit tests on
+synthetic data ran.
+
+**Consequence:** files touched — `scripts/llm_director.py`, `scripts/director.py`,
+`scripts/serve.py`, `scripts/notebook.py`, `prompts/interpret_feedback.md`,
+`prompts/notebook_learn.md`, `prompts/reviewer.md`, `docs/RULES.md`,
+`docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/guides/user-guide.md`, the three skills, `tests/test_llm_director.py`, the
+tests. No OpenRouter model call in the tests; no real footage or private paths.
+
 ## [2026-10-25] Stop button, short chat, review follow-ups (V030 lot c25)
 
 **Context:** The owner's phone test of v030 and the reviews of `e61eac0` (c23)

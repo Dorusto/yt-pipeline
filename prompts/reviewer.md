@@ -52,7 +52,9 @@ no extra keys.
    in the edit? Does it open on something that earns attention and end on
    something that lands? Are there dead spots — repeated, weak or too-short
    shots? Keep the top-scored heroes unless the brief excludes them, and ask
-   which one was dropped and why if one is.
+   which one was dropped and why if one is. Two stars that are a `similar_to` pair
+   or beats of one segment count once: only the best of the group needs to be
+   kept.
 4. **Duration balance.** No ordinary slot over the slot maximum or under the
    slot minimum stated in the user message; heroes may reach the hero cap; the
    calm part longer slots, the energy part shorter ones.

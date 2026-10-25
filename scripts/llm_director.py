@@ -34,7 +34,7 @@ from common.config import ConfigError, director_reasoning_effort, load_config, n
 from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
 from common.director import director_review
-from common.feedback import append_feedback
+from common.feedback import append_feedback, read_feedback
 from common.intent import is_whip_short_hold
 from common.notebook import notebook_block
 from common.pacing import estimate_all_good
@@ -975,6 +975,17 @@ def build_interpret_user(text, workspace, edit_path=None):
     return "\n".join(lines)
 
 
+def normalize_key_list(value):
+    """A list of non-empty shot keys from a model answer field; ``[]`` for anything else."""
+    if not isinstance(value, list):
+        return []
+    keys = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and item.strip() not in keys:
+            keys.append(item.strip())
+    return keys
+
+
 def request_reply(client, prompt, user, state):
     """One cheap model call returning the parsed answer, retried once, then a runtime error."""
     messages = [
@@ -995,11 +1006,13 @@ def request_reply(client, prompt, user, state):
             "reply": reply.strip(),
             "can_do": answer["can_do"],
             "missing_tool": answer.get("missing_tool"),
+            "add_keys": normalize_key_list(answer.get("add_keys")),
+            "drop_keys": normalize_key_list(answer.get("drop_keys")),
         }
     raise LLMDirectorRuntimeError("model produced no usable reply after one retry")
 
 
-def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do="all", missing_tool=None):
+def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do="all", missing_tool=None, add_keys=None, drop_keys=None):
     """Append one ``action: reply`` line to WORKSPACE/feedback.jsonl (append-only)."""
     append_feedback(
         workspace,
@@ -1009,8 +1022,33 @@ def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do="
         estimate={"usd": estimate_usd, "s": estimate_s},
         can_do=can_do,
         missing_tool=missing_tool,
+        add_keys=list(add_keys or []),
+        drop_keys=list(drop_keys or []),
         tool=TOOL,
     )
+
+
+def owner_keys_from_feedback(workspace, feedback):
+    """The owner's add/drop keys from the last reply row whose text prefixes the feedback.
+
+    The approve form posts ``<text>\\n\\nDirector's reading: <reply>``, so the
+    reply row's ``text`` is a prefix of the feedback text. Returns
+    ``(add_keys, drop_keys)``, both ``[]`` when no row matches.
+    """
+    texts = [text for text in (feedback or []) if isinstance(text, str) and text.strip()]
+    if not texts:
+        return [], []
+    for row in reversed(read_feedback(workspace)):
+        if row.get("action") != "reply":
+            continue
+        row_text = row.get("text")
+        if not isinstance(row_text, str) or not row_text.strip():
+            continue
+        if not any(text.startswith(row_text) for text in texts):
+            continue
+        return normalize_key_list(row.get("add_keys")), normalize_key_list(row.get("drop_keys"))
+    return [], []
+
 
 
 def interpret_feedback(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None, reasoning_effort=None):
@@ -1051,11 +1089,14 @@ def interpret_feedback(workspace, text, version=None, model=None, budget_usd=Non
     append_reply_line(
         workspace_path, text, answer["reply"], estimate_usd, estimate_s,
         can_do=can_do, missing_tool=missing_tool,
+        add_keys=answer["add_keys"], drop_keys=answer["drop_keys"],
     )
     return {
         "reply": answer["reply"],
         "can_do": can_do,
         "missing_tool": missing_tool,
+        "add_keys": answer["add_keys"],
+        "drop_keys": answer["drop_keys"],
         "estimate_usd": estimate_usd,
         "estimate_s": estimate_s,
         "wall_time_s": round(time.monotonic() - started, 2),
@@ -1329,23 +1370,75 @@ def is_trimmed_cut(in_s, out_s, fact):
     return (out_s - in_s) < (float(fact["window_out_s"]) - float(fact["window_in_s"])) - TOLERANCE_S
 
 
-def required_star_keys(facts_by_key, n_slots):
+def stars_share_one_group(first_fact, second_fact):
+    """True when two stars count once: beats of one segment or a ``similar_to`` pair."""
+    if same_segment_beats(first_fact, second_fact):
+        return True
+    return shots_similar(
+        first_fact.get("shot_key"),
+        first_fact.get("similar_to"),
+        second_fact.get("shot_key"),
+        second_fact.get("similar_to"),
+    )
+
+
+def collapse_star_groups(stars):
+    """``stars`` best-first: drop every star in the same group as a better one.
+
+    Two stars are in one group when they are beats of one segment (same clip and
+    ``segment_id``) or a ``similar_to`` pair; groups are transitive, so a chain of
+    pairs is one group. The first key of a group in the input order (the best
+    score, then the smallest key) is the one kept.
+    """
+    parent = {key: key for key, _ in stars}
+
+    def root(key):
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for index, (first_key, first_fact) in enumerate(stars):
+        for second_key, second_fact in stars[index + 1:]:
+            if not stars_share_one_group(first_fact, second_fact):
+                continue
+            first_root, second_root = root(first_key), root(second_key)
+            if first_root != second_root:
+                parent[first_root] = second_root
+    kept = []
+    seen_groups = set()
+    for key, _ in stars:
+        group = root(key)
+        if group in seen_groups:
+            continue
+        seen_groups.add(group)
+        kept.append(key)
+    return kept
+
+
+def required_star_keys(facts_by_key, n_slots, drop_keys=frozenset()):
     """The top stars an edit must keep: heroes or scores >= STAR_MIN_SCORE, best first.
 
     At most ``STAR_SHARE`` of the slots' worth of stars, at least one. Photos
-    keep their own non-blocking ``hero`` rule and are never required here.
+    keep their own non-blocking ``hero`` rule and are never required here. A star
+    the owner explicitly dropped is never required. Stars count once per group:
+    two stars are one group when they are beats of one segment (same clip and
+    ``segment_id``) or a ``similar_to`` pair (groups are transitive), and only the
+    best of each group is required, so the pointless-cut rule can never drop a
+    required star.
     """
     stars = [
         (key, fact)
         for key, fact in facts_by_key.items()
-        if fact.get("media_type") != "photo" and is_star(fact)
+        if fact.get("media_type") != "photo" and is_star(fact) and key not in drop_keys
     ]
     stars.sort(key=lambda item: (-float(item[1].get("score") or 0.0), item[0]))
+    kept = collapse_star_groups(stars)
     budget = max(1, round(STAR_SHARE * max(int(n_slots), 1)))
-    return [key for key, _ in stars[:budget]]
+    return kept[:budget]
 
 
-def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_MAX_S):
+def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_MAX_S, drop_keys=frozenset()):
     pacing = plan_pacing(plan)
     slot_min_s = pacing["slot_min"]
     slot_max_s = pacing["slot_max"]
@@ -1370,7 +1463,7 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
         if key not in used_keys:
             violations.append(violation(key, "hero", "eligible hero photo is missing from the plan"))
     star_budget_source = len(slots) or len(plan.get("slot_plan") or [])
-    for key in required_star_keys(facts_by_key, star_budget_source):
+    for key in required_star_keys(facts_by_key, star_budget_source, drop_keys):
         if key in used_keys:
             continue
         fact = facts_by_key[key]
@@ -2162,8 +2255,11 @@ def star_would_jump_cut(slots, index, star_fact, victim_length, important_max_s,
     return False
 
 
-def pick_swap_victim(record, plan, facts_by_key, star_fact, important_max_s, slot_min_s, slot_max_s):
-    """The id of the weakest non-star slot the star can replace without a jump cut."""
+def pick_swap_victim(record, plan, facts_by_key, star_fact, important_max_s, slot_min_s, slot_max_s, add_keys=frozenset()):
+    """The id of the weakest non-star slot the star can replace without a jump cut.
+
+    The victim is never the owner's added shot and never a keep_whole slot.
+    """
     plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
     slots = record.get("video") or []
     star_key = star_fact.get("shot_key")
@@ -2174,6 +2270,8 @@ def pick_swap_victim(record, plan, facts_by_key, star_fact, important_max_s, slo
             continue
         key = plan_slot.get("shot_key") or slot.get("shot_key")
         if key is None or key == star_key:
+            continue
+        if key in add_keys or plan_slot.get("keep_whole"):
             continue
         victim_fact = facts_by_key.get(key) or {}
         if is_star(victim_fact) or victim_fact.get("media_type") == "photo" or slot.get("kind") == "photo":
@@ -2232,7 +2330,7 @@ def neighbour_rows(plan, facts_by_key, shotlog_by_key):
     return rows
 
 
-def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
+def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys=frozenset()):
     """Drop the weaker shot of every pointless jump-cut pair until none is left."""
     for _ in range(len(plan.get("slot_plan") or [])):
         pairs = [
@@ -2272,7 +2370,7 @@ def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_ma
             second.get("similar_to"),
         )
 
-    _, dropped = drop_pointless_neighbours(rows, similar_fn, keep_keys=owner_asked_keys(plan))
+    _, dropped = drop_pointless_neighbours(rows, similar_fn, keep_keys=owner_asked_keys(plan) | set(add_keys))
     if dropped:
         drop_from_plan(
             plan,
@@ -2285,7 +2383,7 @@ def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_ma
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
 
 
-def repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
+def repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys=frozenset(), add_keys=frozenset()):
     """Swap every missing top star in for the weakest non-star slot of a compatible length."""
     pacing = plan_pacing(plan)
     slot_min_s = pacing["slot_min"]
@@ -2293,17 +2391,19 @@ def repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_m
     for _ in range(len(facts_by_key) + 1):
         missing = [
             item.get("slot")
-            for item in validate_edit(record, plan, facts_by_key, important_max_s)
+            for item in validate_edit(record, plan, facts_by_key, important_max_s, drop_keys)
             if item.get("rule") == "hero_missing"
         ]
         if not missing:
             break
         star_key = missing[0]
+        if star_key in drop_keys:
+            break
         star_fact = facts_by_key.get(star_key)
         if star_fact is None:
             break
         victim_id = pick_swap_victim(
-            record, plan, facts_by_key, star_fact, important_max_s, slot_min_s, slot_max_s
+            record, plan, facts_by_key, star_fact, important_max_s, slot_min_s, slot_max_s, add_keys
         )
         if victim_id is None:
             break
@@ -2505,7 +2605,7 @@ def _fill_conflicts(record, plan, facts_by_key, new_slot, insert_at):
     return False
 
 
-def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S):
+def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S, add_keys=frozenset(), drop_keys=frozenset()):
     """Fix a draft's mechanical violations from the shot facts instead of discarding the draft.
 
     First pass: slots that are not in the plan are dropped, a landing hold
@@ -2520,7 +2620,7 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
     notes = []
     plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
     rebuild = set()
-    drop_keys = set()
+    landing_drop_keys = set()
     for item in violations:
         slot_id = item.get("slot")
         rule = item.get("rule")
@@ -2528,11 +2628,11 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
             slot = next((row for row in record.get("video") or [] if row.get("id") == slot_id), None)
             fact = slot_fact(slot, plan_by_id, facts_by_key) if slot else None
             if fact and fact.get("landing_hold_key"):
-                drop_keys.add(fact["landing_hold_key"])
+                landing_drop_keys.add(fact["landing_hold_key"])
                 continue
         if rule in REBUILT_RULES and slot_id in plan_by_id:
             rebuild.add(slot_id)
-    drop_from_plan(plan, drop_keys, "landing hold planned as its own slot", notes)
+    drop_from_plan(plan, landing_drop_keys, "landing hold planned as its own slot", notes)
     planned = {row["id"] for row in plan.get("slot_plan") or []}
     kept = []
     for slot in record.get("video") or []:
@@ -2546,7 +2646,7 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
     record["video"] = kept
     ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
     still_bad = {
-        item.get("slot") for item in validate_edit(record, plan, facts_by_key, important_max_s)
+        item.get("slot") for item in validate_edit(record, plan, facts_by_key, important_max_s, drop_keys)
         if item.get("rule") in REBUILT_RULES
     }
     if still_bad:
@@ -2556,13 +2656,13 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
-    repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys)
+    repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys, add_keys)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys)
     fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys)
     if enforce_chronological_order(record, plan, facts_by_key, notes):
-        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys)
     return notes
 
 
@@ -2763,7 +2863,7 @@ def hint_flags(hints, music=None, ambient_under_db=None, speed_ramp=False):
     return flags
 
 
-def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, keep_keys=frozenset()):
+def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, keep_keys=frozenset(), add_keys=frozenset(), drop_keys=frozenset()):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir) / "rules_edit.json"
         command = [
@@ -2779,6 +2879,10 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, 
         ] + hint_flags(hints, music, ambient_under_db, speed_ramp)
         if keep_keys:
             command += ["--keep-shots", ",".join(sorted(keep_keys))]
+        if add_keys:
+            command += ["--add-shots", ",".join(sorted(add_keys))]
+        if drop_keys:
+            command += ["--drop-shots", ",".join(sorted(drop_keys))]
         if beats_path is not None:
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
@@ -2789,7 +2893,7 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, 
     if data is None:
         raise LLMDirectorRuntimeError("rule-based director wrote no edit")
     atomic_write_json(out_path, data)
-    return data, summary.get("beat_snap")
+    return data, summary.get("beat_snap"), summary.get("applied_keys") or [], summary.get("not_applied_keys") or []
 
 
 def run_baseline(workspace, brief_text, hints, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False):
@@ -2849,7 +2953,7 @@ def is_up_to_date(out_path, workspace, brief_path, plan_path, beats_path=None, s
     return True
 
 
-def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, slots, total, violations, warnings, started, cost_usd, candidates=0, beat_snap=None, shortlist=0):
+def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, slots, total, violations, warnings, started, cost_usd, candidates=0, beat_snap=None, shortlist=0, applied_keys=None, not_applied_keys=None):
     return {
         "status": status,
         "out": str(out_path) if out_path is not None else None,
@@ -2866,12 +2970,17 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": round(cost_usd, 8),
         "beat_snap": beat_snap,
+        "applied_keys": list(applied_keys or []),
+        "not_applied_keys": list(not_applied_keys or []),
     }
 
 
-def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, shortlist=0, keep_keys=frozenset()):
+def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, shortlist=0, keep_keys=frozenset(), add_keys=frozenset(), drop_keys=frozenset()):
     try:
-        data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db, speed_ramp, keep_keys)
+        data, beat_snap, applied_keys, not_applied_keys = run_rules_director(
+            workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db, speed_ramp,
+            keep_keys, add_keys, drop_keys,
+        )
         data.setdefault("meta", {})["director"] = director_info("rules", approved, warnings)
         validate_or_raise(data, "edit")
         atomic_write_json(out_path, data)
@@ -2880,7 +2989,7 @@ def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings,
         return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates, shortlist=shortlist), 1
     slots = data.get("video") or []
     total = sum(slot_duration(slot) for slot in slots)
-    return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap, shortlist=shortlist), 0
+    return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap, shortlist=shortlist, applied_keys=applied_keys, not_applied_keys=not_applied_keys), 0
 
 
 def stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, code, candidates=0, shortlist=0):
@@ -2980,6 +3089,9 @@ def _run_loop(
     if feedback:
         append_feedback_lines(workspace_path, feedback)
     feedback_block = build_feedback_block(feedback, workspace_path) if feedback else None
+    owner_add_keys, owner_drop_keys = owner_keys_from_feedback(workspace_path, feedback)
+    owner_add_keys = frozenset(owner_add_keys)
+    owner_drop_keys = frozenset(owner_drop_keys)
     notebook_file = notebook_path(notebook)
     notebook_text = notebook_block(notebook_file) if notebook_file is not None else None
 
@@ -3081,12 +3193,13 @@ def _run_loop(
 
         review = None
         last_verdict = None
+        previous_blocking = None
         for round_index in range(rounds):
             rounds_used = round_index + 1
             record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block, notebook_text)
             if record is None:
                 raise LoopFailure("editor produced no valid edit")
-            violations = validate_edit(record, plan, facts, effective_important_max_s)
+            violations = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys)
             verdict = reviewer(client, reviewer_prompt, prompt_brief, plan, record, violations, state, feedback_block, notebook_text)
             if verdict is None:
                 raise LoopFailure("reviewer produced no valid answer")
@@ -3096,24 +3209,29 @@ def _run_loop(
                 break
             approved = False
             review = verdict
+            current_blocking = {(item.get("slot"), item.get("rule")) for item in blocking(violations)}
+            if previous_blocking is not None and current_blocking == previous_blocking:
+                warnings.append("stopped early: the same blocking violations came back after a fix")
+                break
+            previous_blocking = current_blocking
     except BudgetExceeded as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset(), add_keys=owner_add_keys, drop_keys=owner_drop_keys)
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset(), add_keys=owner_add_keys, drop_keys=owner_drop_keys)
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
     if approved:
         for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, []):
             if note not in warnings:
                 warnings.append(note)
-        leftover = validate_edit(record, plan, facts, effective_important_max_s)
+        leftover = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys)
         if blocking(leftover):
-            for note in repair_draft(record, plan, facts, shotlog, leftover, effective_important_max_s):
+            for note in repair_draft(record, plan, facts, shotlog, leftover, effective_important_max_s, owner_add_keys, owner_drop_keys):
                 if note not in warnings:
                     warnings.append(note)
         beat_snap = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp)
@@ -3123,7 +3241,7 @@ def _run_loop(
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
-                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset(), add_keys=owner_add_keys, drop_keys=owner_drop_keys)
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
@@ -3136,12 +3254,12 @@ def _run_loop(
             if note not in warnings:
                 warnings.append(note)
         if added:
-            violations = validate_edit(record, plan, facts, effective_important_max_s)
+            violations = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys)
     if blocking(violations):
-        for note in repair_draft(record, plan, facts, shotlog, violations, effective_important_max_s):
+        for note in repair_draft(record, plan, facts, shotlog, violations, effective_important_max_s, owner_add_keys, owner_drop_keys):
             if note not in warnings:
                 warnings.append(note)
-        violations = validate_edit(record, plan, facts, effective_important_max_s)
+        violations = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys)
         if record.get("video"):
             write_plan(plan_path, plan, started, state.cost_usd)
     for item in violations:
@@ -3158,7 +3276,7 @@ def _run_loop(
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
-                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset(), add_keys=owner_add_keys, drop_keys=owner_drop_keys)
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
@@ -3170,7 +3288,7 @@ def _run_loop(
         if note not in warnings:
             warnings.append(note)
     if fallback_rules:
-        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
+        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset(), add_keys=owner_add_keys, drop_keys=owner_drop_keys)
     return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
 

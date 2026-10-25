@@ -24,6 +24,7 @@ yt director --workspace /path/to/workspace \
 - `--speed-ramp` (default off) lets the middle half of long camera moves play up to 1.2x; without it every slot has `middle_speed` 1.0.
 - `--allow-similar` lets visually similar shots into the same edit; they are then only forbidden from being adjacent. Without it, a shot similar to any already chosen shot is skipped.
 - `--keep-shots` is a comma-separated list of shot keys the owner explicitly asked to keep next to each other; a same-segment-beat or `similar_to` neighbour pair whose two keys are both listed is kept instead of dropping the weaker one.
+- `--add-shots KEY,KEY` forces every named key that is not already in the edit in as a slot cut from its candidate window (the weakest non-forced slot is dropped when the target length is exceeded; a key with no candidate is not applied), and `--drop-shots KEY,KEY` removes the named keys from the candidate pool before selection. Both are comma-separated and repeatable like `--keep-shots`; the `--json` summary reports `applied_keys` and `not_applied_keys`.
 - `--force` rewrites even when the output is up to date. `--json` prints the machine-readable summary.
 - On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing workspace, no usable candidates, schema violation) or `3` (runtime failure after work started: disk write). It never asks questions.
 

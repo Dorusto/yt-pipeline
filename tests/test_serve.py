@@ -352,6 +352,63 @@ def test_director_tab_shows_the_chat_and_the_notebook(tmp_path):
         server.server_close()
 
 
+def test_director_tab_shows_the_rule_fallback_notice(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    edit = {
+        "meta": {"director": {"by": "rules", "approved": False}},
+        "video": [{"id": "v1", "shot_key": "0072/s7b5"}],
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add the orbit, drop one bunker shot",
+        "reply": "I read this as: add 0091/s2, drop 0072/s7b1.",
+        "add_keys": ["0091/s2"],
+        "drop_keys": ["0072/s7b1"],
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "The director could not make this edit; a simpler editor made it." in page
+        assert "Not applied: 0091/s2" in page
+        assert "Applied: 0072/s7b1" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_hides_the_notice_for_an_llm_edit(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    edit = {
+        "meta": {"director": {"by": "llm", "approved": True}},
+        "video": [{"id": "v1", "shot_key": "0091/s2"}],
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add the orbit",
+        "reply": "I read this as: add 0091/s2.",
+        "add_keys": ["0091/s2"],
+        "drop_keys": [],
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert "The director could not make this edit" not in body.decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_tab_bar_has_director_and_recap_off_hides_it(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)

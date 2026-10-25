@@ -33,7 +33,9 @@ no extra keys.
 {
   "reply": "I cannot add subtitles to the recap. I can drop or trim shots and change their length. I have noted the request.",
   "can_do": "none",
-  "missing_tool": "add subtitles to the recap"
+  "missing_tool": "add subtitles to the recap",
+  "add_keys": [],
+  "drop_keys": []
 }
 
 - `reply` is 1-3 sentences in the language of the feedback.
@@ -43,3 +45,10 @@ no extra keys.
 - `missing_tool` is, when `can_do` is not `"all"`, a few words naming the
   capability that is missing (no sentence, no punctuation at the end); `null`
   when `can_do` is `"all"`.
+- `add_keys` is the list of shot keys the request asks to add, resolved against
+  the short ids in the user message (e.g. `["0091/s2"]`); `[]` when the request
+  adds no shot.
+- `drop_keys` is the list of shot keys the request asks to drop, resolved the
+  same way (e.g. `["0072/s7b1"]`); `[]` when the request drops no shot.
+- Use `[]` for `add_keys` and `drop_keys` when you are not sure which shot the
+  request means; never invent a key that is not in the user message.

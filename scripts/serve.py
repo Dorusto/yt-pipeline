@@ -1955,12 +1955,53 @@ def normalise_can_do(value):
     return "all"
 
 
+def director_fallback_notice(edit, reply):
+    """The applied/not-applied owner keys when a rule fallback made the shown edit.
+
+    Returns ``None`` unless the edit's ``meta.director.by`` is ``"rules"`` and the
+    last reply row carries the owner's ``add_keys``/``drop_keys``. An ``add_key``
+    is applied when it is in the edit, a ``drop_key`` when it is absent.
+    """
+    if not isinstance(edit, dict) or not isinstance(reply, dict):
+        return None
+    director = (edit.get("meta") or {}).get("director")
+    if not isinstance(director, dict) or director.get("by") != "rules":
+        return None
+    add_keys = [key for key in (reply.get("add_keys") or []) if isinstance(key, str) and key.strip()]
+    drop_keys = [key for key in (reply.get("drop_keys") or []) if isinstance(key, str) and key.strip()]
+    if not add_keys and not drop_keys:
+        return None
+    present = {slot.get("shot_key") for slot in edit.get("video") or []}
+    applied = []
+    not_applied = []
+    for key in add_keys:
+        (applied if key in present else not_applied).append(key)
+    for key in drop_keys:
+        (applied if key not in present else not_applied).append(key)
+    return {"applied": applied, "not_applied": not_applied}
+
+
 def render_chat_panel(directory, name, version_path=None, version_name=""):
     """The chat with the director: the reviewer's objections and the conversation."""
     directory = Path(directory)
     base = Path(version_path) if version_path else directory
     parts = ['<section class="chat" id="chat"><h2>Chat with the director</h2>']
     edit = load_json(base / "edit.json")
+    replies = [row for row in read_feedback_lines(directory) if row.get("action") == "reply"]
+    notice = director_fallback_notice(edit, replies[-1] if replies else None)
+    if notice is not None:
+        parts.append(
+            '<p class="chat-fallback">The director could not make this edit; '
+            "a simpler editor made it.</p>"
+        )
+        if notice["applied"]:
+            parts.append(
+                f'<p class="chat-fallback">Applied: {html_escape(", ".join(notice["applied"]))}</p>'
+            )
+        if notice["not_applied"]:
+            parts.append(
+                f'<p class="chat-fallback">Not applied: {html_escape(", ".join(notice["not_applied"]))}</p>'
+            )
     review = director_review(edit)
     if isinstance(review, dict):
         for objection in review.get("objections") or []:
@@ -1976,7 +2017,6 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
             parts.append(
                 f'<div class="chat-msg director">{shot_html}<p>{html_escape(text)}</p></div>'
             )
-    replies = [row for row in read_feedback_lines(directory) if row.get("action") == "reply"]
     exchanges = []
     for row in replies:
         text = row.get("text")
