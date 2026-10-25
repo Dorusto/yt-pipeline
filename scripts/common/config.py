@@ -248,6 +248,14 @@ def _validate(data):
                 f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
             )
 
+    recap = data.get("recap")
+    if recap is not None:
+        if not isinstance(recap, dict):
+            raise ConfigError("recap must be a mapping")
+        meta = recap.get("meta")
+        if meta is not None and not isinstance(meta, bool):
+            raise ConfigError("recap.meta must be true or false")
+
     web = data.get("web")
     if web is not None:
         if not isinstance(web, dict):
@@ -345,6 +353,7 @@ DEFAULT_CREDIT_WARN_USD = 1.0
 WHIP_MIN_HOLD_S = 3.0
 DIRECTOR_REASONING_EFFORTS = ("low", "medium", "high", "off")
 DEFAULT_DIRECTOR_REASONING_EFFORT = "medium"
+DEFAULT_RECAP_META = False
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
@@ -699,6 +708,22 @@ def director_reasoning_effort(cli_value=None, config=None):
             f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
         )
     return value
+
+
+def recap_meta_enabled(cli_value=None, config=None):
+    """Whether the recap run writes the title and description.
+
+    CLI flag (True/False), else recap.meta in the config, else False.
+    """
+    if cli_value is not None:
+        return bool(cli_value)
+    data = config if config is not None else load_config()
+    section = data.get("recap")
+    if isinstance(section, dict):
+        value = section.get("meta")
+        if value is not None:
+            return bool(value)
+    return DEFAULT_RECAP_META
 
 
 def project_totals_url(cli_value=None, config=None):

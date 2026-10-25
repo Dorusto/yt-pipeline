@@ -1281,6 +1281,50 @@ def test_recap_panel_uses_the_shown_version_meta(tmp_path):
     assert "Titlu nou" not in page
 
 
+def test_upload_and_reedit_forms_have_the_meta_select():
+    page = serve.render_upload([])
+    assert '<select name="meta">' in page
+    assert "Title and description" in page
+    assert "Auto (off)" in page and ">on<" in page and ">off<" in page
+    assert '<select name="meta">' in serve.render_reedit("2026-10-14", [])
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("on", "--meta"), ("off", "--no-meta"), ("auto", None), (None, None), ("junk", None)],
+)
+def test_meta_field_becomes_the_recap_argv(tmp_path, value, expected):
+    fields = {} if value is None else {"meta": value}
+    command = serve.build_recap_command("python", tmp_path / "in", tmp_path / "ws", "brief", fields, tmp_path / "music")
+    if expected is None:
+        assert "--meta" not in command and "--no-meta" not in command
+    else:
+        assert expected in command
+
+
+def test_recap_panel_hides_the_meta_box_when_the_run_turned_it_off(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_meta(project)
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 1, "options": {"meta": "off"}}), encoding="utf-8"
+    )
+    page = serve.render_recap_panel(project)
+    assert "Title, description and hashtags" not in page
+    assert 'class="copy"' not in page
+
+
+def test_recap_panel_shows_the_meta_box_when_the_run_asked_for_it(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_meta(project)
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 1, "options": {"meta": "on"}}), encoding="utf-8"
+    )
+    page = serve.render_recap_panel(project)
+    assert "Title, description and hashtags" in page
+
+
 def test_latest_version_without_video_falls_back_to_the_last_one_that_played(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"

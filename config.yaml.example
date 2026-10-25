@@ -108,6 +108,14 @@ llm_backend: openrouter
 # director:
 #   reasoning_effort: medium
 
+# Recap title and description. recap.meta (default false) makes the recap run
+# write the YouTube title and description (the recap_meta station); the web
+# Upload and Re-edit forms carry a "Title and description" option and
+# recap.py --meta / --no-meta override it. With it off the station is skipped
+# and the Recap tab shows no title/description block.
+# recap:
+#   meta: false
+
 # Whisper model for scripts/transcribe.py and the publish chain's --media step.
 # There is a default: turbo with a CUDA GPU, else medium on CPU for a
 # non-English language (including auto or no language), small only for an

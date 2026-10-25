@@ -418,6 +418,7 @@ def test_reedit_fields_are_all_read():
         "speed_ramp": "on",
         "music": "track.mp3",
         "ambient_under_music_db": "12",
+        "meta": "on",
         "fact_place": "Place",
         "fact_when": "When",
         "fact_who": "Who",

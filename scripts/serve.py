@@ -200,7 +200,7 @@ CUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
 MODE_B_TOOL = "scripts/rough_cut.py"
 REEDIT_FIELDS = (
     "brief", "length", "length_s", "order", "audio_clean", "format",
-    "speed_ramp", "music", "ambient_under_music_db",
+    "speed_ramp", "music", "ambient_under_music_db", "meta",
     "fact_place", "fact_when", "fact_who", "fact_occasion",
 )
 REQUESTS_MAX_CHARS = 2000
@@ -362,6 +362,15 @@ def shorts_layout_default():
     elif value is False:
         value = "off"
     return value if value in SHORTS_LAYOUT_POLICIES else "auto"
+
+
+def recap_meta_default():
+    """The config's ``recap.meta`` policy as ``on``/``off``, or ``off`` when missing or invalid."""
+    try:
+        value = load_config().get("recap", {}).get("meta")
+    except (ConfigError, OSError, ValueError):
+        return "off"
+    return "on" if value is True else "off"
 
 
 def load_shorts_candidates(directory):
@@ -1969,6 +1978,11 @@ def last_run_options(directory):
     return options if isinstance(options, dict) else {}
 
 
+def meta_option_on(directory):
+    """False only when the last run explicitly turned the title and description off."""
+    return last_run_options(directory).get("meta") != "off"
+
+
 def normalise_can_do(value):
     """The can_do enum from a stored value; the old bool form reads false -> none, true -> all."""
     if value is False:
@@ -2132,7 +2146,8 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
-        parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
+        if meta_option_on(directory):
+            parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
     if compare is not None and compare["number"] == shown["number"]:
@@ -2153,10 +2168,11 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             trust_edit=True,
         )
     )
-    parts.append(
-        render_meta_box(directory, shown["path"], name=name, version=shown["name"],
-                        meta_cost=meta_cost)
-    )
+    if meta_option_on(directory):
+        parts.append(
+            render_meta_box(directory, shown["path"], name=name, version=shown["name"],
+                            meta_cost=meta_cost)
+        )
     if compare is not None:
         other = compare["name"].lstrip("v").lstrip("0") or "0"
         parts.append(
@@ -2675,6 +2691,11 @@ def option_fields(music_tracks):
                 [("auto", "Auto"), ("on", "on"), ("off", "off")],
                 default=shorts_layout_default(),
             ),
+        ),
+        (
+            "Title and description",
+            render_select("meta", [("auto", "Auto (off)"), ("off", "off"), ("on", "on")],
+                          default=recap_meta_default()),
         ),
         ("Music", render_select("music", music_options, default="auto")),
         (
@@ -3553,6 +3574,11 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
         command += ["--format", frame_format]
     if (fields.get("speed_ramp") or "auto") == "on":
         command.append("--speed-ramp")
+    meta = fields.get("meta") or "auto"
+    if meta == "on":
+        command.append("--meta")
+    elif meta == "off":
+        command.append("--no-meta")
     music = fields.get("music") or "auto"
     if music == "auto":
         command += ["--music", "auto"]

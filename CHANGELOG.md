@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The recap's YouTube title and description are optional and off by default: `recap.py --meta` / `--no-meta` override `recap.meta` in the config (default false), the web Upload and Re-edit forms carry a "Title and description" option, and with it off the `recap_meta` station is skipped and the Recap tab shows no title/description block.
 - The project page's reviewer box is replaced by the chat in the Director tab (the notebook too).
 - The metadata prompt no longer carries a built-in pinned-comment voice; it comes from `channel.style.pinned_comment_voice`.
 - `description_order` assembles the description in the configured order.

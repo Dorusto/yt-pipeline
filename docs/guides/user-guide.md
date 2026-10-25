@@ -256,14 +256,20 @@ finished recap, the explanation and the contact sheet.
   removes that version's folder for good and returns to the latest version. The
   first can be deleted too while another version stays; the latest and a version
   while a run is going cannot be deleted.
-- **Title, description and hashtags.** The Recap tab shows a box with the
-  YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
-  version, each with a **Copy** button. A **Rewrite** button opens the four
-  fact fields (Place, When, Who is in it, Occasion) and re-runs
-  `recap_meta.py --force` for the shown version, showing the cost; a field the
-  brief and `brief_facts.json` did not carry is marked "Add this for a better
-  title". The text comes from `recap_meta.py`, which reads `edit.json` and
-  `brief_facts.json` and writes `recap_meta.json` (kept in each version):
+- **Title, description and hashtags.** Optional and off by default: the recap
+  run writes the title and description only when asked. Turn it on with
+  `recap.py --meta`, `recap.meta: true` in the config, or the **Title and
+  description** option on the Upload and Re-edit forms (Auto follows the
+  config); `--no-meta` turns it off even when the config says true. With it off
+  the `recap_meta` station is skipped and the Recap tab shows no title box. When
+  it is on, the Recap tab shows a box with the YouTube title, a 2-3 sentence
+  description and 5-10 hashtags for the shown version, each with a **Copy**
+  button. A **Rewrite** button opens the four fact fields (Place, When, Who is
+  in it, Occasion) and re-runs `recap_meta.py --force` for the shown version,
+  showing the cost; a field the brief and `brief_facts.json` did not carry is
+  marked "Add this for a better title". The text comes from `recap_meta.py`,
+  which reads `edit.json` and `brief_facts.json` and writes `recap_meta.json`
+  (kept in each version):
   `.venv/bin/python scripts/recap_meta.py --workspace <workspace>`.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 - **Costs** (top bar) is a read-only page: per project the model cost and the

@@ -574,3 +574,32 @@ def test_director_section_validated(tmp_path):
         config.load_config(write_config(tmp_path, with_value("director", {"reasoning_effort": "bogus"})))
     loaded = config.load_config(write_config(tmp_path, with_value("director", {"reasoning_effort": "off"})))
     assert loaded["director"]["reasoning_effort"] == "off"
+
+
+def test_recap_meta_section_validated(tmp_path):
+    loaded = config.load_config(write_config(tmp_path, with_value("recap", {"meta": True})))
+    assert loaded["recap"]["meta"] is True
+    loaded = config.load_config(write_config(tmp_path, with_value("recap", {"meta": False})))
+    assert loaded["recap"]["meta"] is False
+    for bad in ("yes", 1, "true"):
+        with pytest.raises(config.ConfigError) as exc:
+            config.load_config(write_config(tmp_path, with_value("recap", {"meta": bad})))
+        assert "recap.meta" in str(exc.value)
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("recap", "nope")))
+
+
+def test_recap_meta_enabled_flag_wins():
+    assert config.recap_meta_enabled(True, {"recap": {"meta": False}}) is True
+    assert config.recap_meta_enabled(False, {"recap": {"meta": True}}) is False
+
+
+def test_recap_meta_enabled_reads_the_config():
+    assert config.recap_meta_enabled(None, {"recap": {"meta": True}}) is True
+    assert config.recap_meta_enabled(None, {"recap": {"meta": False}}) is False
+
+
+def test_recap_meta_enabled_defaults_to_false():
+    assert config.recap_meta_enabled(None, {}) is False
+    assert config.recap_meta_enabled(None, {"recap": {}}) is False
+    assert config.DEFAULT_RECAP_META is False

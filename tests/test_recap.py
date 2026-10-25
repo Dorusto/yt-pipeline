@@ -151,7 +151,7 @@ def test_station_order_without_final(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / "workspace"
     recorder = Recorder()
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--json"]) == 0
+    assert run_recap(source, workspace, extra=["--meta", "--json"]) == 0
     assert recorder.calls == [
         "proxy",
         "ingest",
@@ -174,7 +174,7 @@ def test_station_order_with_final(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / "workspace"
     recorder = Recorder()
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--final", "--json"]) == 0
+    assert run_recap(source, workspace, extra=["--meta", "--final", "--json"]) == 0
     assert recorder.calls == [
         "proxy",
         "ingest",
@@ -215,10 +215,10 @@ def test_new_brief_redoes_only_the_edit(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / "workspace"
     recorder = Recorder()
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, brief="brief A", extra=["--json"]) == 0
+    assert run_recap(source, workspace, brief="brief A", extra=["--meta", "--json"]) == 0
     capsys.readouterr()
     recorder.calls.clear()
-    assert run_recap(source, workspace, brief="brief B", extra=["--json"]) == 0
+    assert run_recap(source, workspace, brief="brief B", extra=["--meta", "--json"]) == 0
     assert recorder.calls == ["router", "llm_director", "explain", "recap_meta", "render", "thumbs"]
 
 
@@ -493,11 +493,11 @@ def test_feedback_reruns_only_edit_and_render(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / "workspace"
     recorder = Recorder()
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--json"]) == 0
+    assert run_recap(source, workspace, extra=["--meta", "--json"]) == 0
     capsys.readouterr()
     recorder.calls.clear()
     assert (
-        run_recap(source, workspace, extra=["--feedback", "drop 0071/s2", "--json"])
+        run_recap(source, workspace, extra=["--meta", "--feedback", "drop 0071/s2", "--json"])
         == 0
     )
     assert recorder.calls == ["llm_director", "explain", "recap_meta", "render", "thumbs"]
@@ -767,6 +767,71 @@ def test_recap_meta_station_skip_rule_follows_its_own_file(tmp_path):
     assert recap.is_up_to_date("recap_meta", ctx) is True
 
 
+def test_recap_meta_station_skipped_without_the_flag(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--json"]) == 0
+    assert "recap_meta" not in recorder.calls
+    assert "render" in recorder.calls
+    summary = json.loads(capsys.readouterr().out)
+    entry = next(entry for entry in summary["stations"] if entry["name"] == "recap_meta")
+    assert entry["status"] == "skip"
+    assert entry["detail"] == "not asked"
+
+
+def test_recap_meta_station_runs_with_the_flag(tmp_path, monkeypatch, capsys):
+    source = make_source(tmp_path)
+    workspace = tmp_path / "workspace"
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, workspace, extra=["--meta", "--json"]) == 0
+    assert "recap_meta" in recorder.calls
+
+
+def test_recap_meta_config_true_runs_the_station(tmp_path, monkeypatch, capsys):
+    write_isolated_config(tmp_path, monkeypatch, recap_meta=True)
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, tmp_path / "ws", extra=["--json"]) == 0
+    assert "recap_meta" in recorder.calls
+
+
+def test_no_meta_flag_overrides_the_config(tmp_path, monkeypatch, capsys):
+    write_isolated_config(tmp_path, monkeypatch, recap_meta=True)
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    recorder = Recorder()
+    monkeypatch.setattr(recap, "execute", recorder)
+    assert run_recap(source, tmp_path / "ws", extra=["--no-meta", "--json"]) == 0
+    assert "recap_meta" not in recorder.calls
+    summary = json.loads(capsys.readouterr().out)
+    entry = next(entry for entry in summary["stations"] if entry["name"] == "recap_meta")
+    assert entry["status"] == "skip"
+    assert entry["detail"] == "not asked"
+
+
+def test_meta_and_no_meta_together_is_a_usage_error(tmp_path, capsys):
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    with pytest.raises(SystemExit) as exc:
+        run_recap(source, tmp_path / "ws", extra=["--meta", "--no-meta"])
+    assert exc.value.code == EXIT_USAGE
+
+
+def test_broken_config_without_meta_flag_is_a_usage_error(tmp_path, monkeypatch, capsys):
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("models: [unclosed\n", encoding="utf-8")
+    monkeypatch.setenv("YT_CONFIG", str(broken))
+    source = make_source(tmp_path, names=("clip_a.mp4",))
+    assert run_recap(source, tmp_path / "ws", extra=["--json"]) == EXIT_USAGE
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == EXIT_USAGE
+    assert "Traceback" not in captured.err
+
+
 def test_format_flag_reaches_the_context_and_the_outputs(tmp_path, monkeypatch, capsys):
     source = make_source(tmp_path)
     workspace = tmp_path / "workspace"
@@ -879,25 +944,27 @@ def test_new_edit_reruns_the_edit_without_feedback(tmp_path, monkeypatch, capsys
     source = make_source(tmp_path)
     workspace = tmp_path / "workspace"
     monkeypatch.setattr(recap, "execute", Recorder())
-    assert run_recap(source, workspace, extra=["--json"]) == 0
+    assert run_recap(source, workspace, extra=["--meta", "--json"]) == 0
     capsys.readouterr()
     recorder = Recorder()
     recorder.clock += 10000.0
     monkeypatch.setattr(recap, "execute", recorder)
-    assert run_recap(source, workspace, extra=["--new-edit", "--json"]) == 0
+    assert run_recap(source, workspace, extra=["--meta", "--new-edit", "--json"]) == 0
     assert recorder.calls == ["llm_director", "explain", "recap_meta", "render", "thumbs"]
     director_argv = dict(recorder.argvs)["llm_director"]
     flat = director_argv[0] if isinstance(director_argv[0], list) else director_argv
     assert "--force" in flat
 
 
-def write_isolated_config(tmp_path, monkeypatch, library=None):
+def write_isolated_config(tmp_path, monkeypatch, library=None, recap_meta=None):
     text = (
         "models:\n  director: deepseek/deepseek-v4.1-flash\n"
         "llm_budget_usd: 5.0\nllm_backend: mock\n"
     )
     if library is not None:
         text += f"music:\n  library: {library}\n"
+    if recap_meta is not None:
+        text += f"recap:\n  meta: {'true' if recap_meta else 'false'}\n"
     path = tmp_path / "config.yaml"
     path.write_text(text, encoding="utf-8")
     monkeypatch.delenv("YT_PIPELINE_MUSIC_LIBRARY", raising=False)

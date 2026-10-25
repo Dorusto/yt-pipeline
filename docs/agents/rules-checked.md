@@ -93,6 +93,7 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — metadata prompt fixed | `tests/test_metadata.py` |
 | Safety rules — channel.fixed mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_doctor.py` |
 | Safety rules — channel.style mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_recap_meta.py` |
+| Safety rules — recap title and description optional, off by default | `tests/test_recap.py`, `tests/test_serve.py` |
 | Safety rules — learning notebook and the learn pass | `tests/test_notebook.py`, `tests/test_serve.py` |
 | Safety rules — --skip-alignment only when the JSON is correct | review |
 | Safety rules — `yt` is the named dispatcher for every tool | `tests/test_yt_entry.py` |
