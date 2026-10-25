@@ -16,6 +16,7 @@ DEFAULT_MODEL_PATH = Path.home() / ".cache" / "yt-pipeline" / "models" / "face_d
 DETECT_WIDTH = 640
 SCORE_THRESHOLD = 0.6
 NMS_THRESHOLD = 0.3
+EDGE_TOLERANCE_PX = 2.0
 
 
 class FacesError(RuntimeError):
@@ -64,3 +65,45 @@ def detect_faces(detector, frame):
         score = float(face[-1])
         boxes.append((x, y, w, h, score))
     return boxes
+
+
+def face_stats(samples, start_s, end_s, frame_size, sample_interval_s):
+    """Face stats for one segment from per-frame detections.
+
+    ``samples`` is a list of ``{"t": float, "faces": [(x, y, w, h, score), ...]}``
+    covering the whole clip; only the samples whose ``t`` lies in
+    ``[start_s, end_s]`` count. ``frame_size`` is ``(width, height)`` of the
+    analysed frame. Returns ``{"faces_max": int, "face_size_max": float,
+    "face_cut": bool, "face_seconds": float}``, or ``None`` when no sample falls
+    inside the segment.
+    """
+    counted = [sample for sample in samples if start_s <= sample["t"] <= end_s]
+    if not counted:
+        return None
+    frame_w, frame_h = frame_size
+    area = float(frame_w) * float(frame_h)
+    faces_max = 0
+    face_size_max = 0.0
+    face_cut = False
+    face_samples = 0
+    for sample in counted:
+        faces = sample.get("faces") or []
+        if faces:
+            face_samples += 1
+        faces_max = max(faces_max, len(faces))
+        for x, y, w, h, _score in faces:
+            if area > 0:
+                face_size_max = max(face_size_max, (w * h) / area)
+            if (
+                x <= EDGE_TOLERANCE_PX
+                or y <= EDGE_TOLERANCE_PX
+                or x + w >= frame_w - EDGE_TOLERANCE_PX
+                or y + h >= frame_h - EDGE_TOLERANCE_PX
+            ):
+                face_cut = True
+    return {
+        "faces_max": faces_max,
+        "face_size_max": face_size_max,
+        "face_cut": face_cut,
+        "face_seconds": face_samples * sample_interval_s,
+    }

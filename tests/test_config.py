@@ -541,3 +541,10 @@ def test_beats_section_validated(tmp_path):
         config.load_config(write_config(tmp_path, with_value("beats", {"engine": "bogus"})))
     loaded = config.load_config(write_config(tmp_path, with_value("beats", {"engine": "beat_this"})))
     assert loaded["beats"]["engine"] == "beat_this"
+
+
+def test_whip_min_hold_s_default_and_override(tmp_path):
+    assert config.whip_min_hold_s({}) == 3.0
+    assert config.whip_min_hold_s({"whip": {"min_hold_s": 2.5}}) == 2.5
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("whip", {"min_hold_s": -1})))

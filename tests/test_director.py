@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 import director
@@ -2024,3 +2025,30 @@ def test_static_framings_of_one_take_still_never_jump_cut(tmp_path):
     _, record = run_edit(workspace, tmp_path / "edit.json", "--order", "chronological")
     clips = [slot["clip"] for slot in record["video"]]
     assert all(first != second for first, second in zip(clips, clips[1:]))
+
+
+def test_whip_short_hold_scores_low():
+    candidate = {
+        "role": "move",
+        "segment": {"id": "s1", "confidence": 0.8, "defects": [], "whip": "short_hold"},
+        "steadiness": "no_shaking",
+        "motion_label": "pan_right",
+        "position": 0.5,
+    }
+    assert director.score_candidate(candidate, "uniform") == pytest.approx(0.1)
+
+
+def test_deliberate_move_shake_not_penalised():
+    base = {
+        "role": "move",
+        "segment": {"id": "s1", "confidence": 0.8, "defects": [{"name": "shake", "value": 0.5}]},
+        "steadiness": "no_shaking",
+        "motion_label": "complex_motion",
+        "semantic_motion": "orbit",
+        "position": 0.5,
+    }
+    without = dict(base)
+    without["segment"] = {"id": "s1", "confidence": 0.8, "defects": []}
+    assert director.score_candidate(base, "uniform") == pytest.approx(
+        director.score_candidate(without, "uniform")
+    )

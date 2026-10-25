@@ -95,6 +95,12 @@ llm_backend: openrouter
 # beats:
 #   engine: numpy
 
+# Whip short-hold threshold for scripts/quality.py: a fast move between holds
+# shorter than this many seconds on people is marked as a whip (a filming
+# mistake) and scores low. The default is 3.0.
+# whip:
+#   min_hold_s: 3.0
+
 # Whisper model for scripts/transcribe.py and the publish chain's --media step.
 # There is a default: turbo with a CUDA GPU, else medium on CPU for a
 # non-English language (including auto or no language), small only for an

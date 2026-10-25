@@ -9,7 +9,9 @@ import numpy as np
 import pytest
 
 import quality
+from common import faces
 from common.exit_codes import EXIT_OK, EXIT_USAGE
+from common.faces import FacesError
 from common.schema import validate
 
 
@@ -568,12 +570,137 @@ def test_build_defects_clean_segment():
     }
 
 
-def test_intent_blur_on_fast_move():
+def test_fast_move_blur_is_not_a_defect():
     metrics = clean_metrics(laplacian_rel=0.3)
-    defects = quality.build_defects(metrics, role="move", speed="fast")
-    assert any(defect["name"] == "blur" for defect in defects)
-    notes = quality.intent_evidence(defects, "move", "fast")
-    assert "motion blur during a fast move (intent)" in notes
+    assert not any(
+        defect["name"] == "blur"
+        for defect in quality.build_defects(metrics, "move", "pan_right", "fast")
+    )
+    assert any(
+        defect["name"] == "blur"
+        for defect in quality.build_defects(metrics, "move", "pan_right", "regular")
+    )
+
+
+def test_deliberate_move_shake_threshold_is_higher():
+    value = (quality.SHAKE_MIN + quality.SHAKE_MIN * quality.DELIBERATE_SHAKE_FACTOR) / 2
+    metrics = clean_metrics(shake=value)
+    assert any(defect["name"] == "shake" for defect in quality.build_defects(metrics, label="static"))
+    assert any(defect["name"] == "shake" for defect in quality.build_defects(metrics, label=None))
+    assert not any(
+        defect["name"] == "shake" for defect in quality.build_defects(metrics, label="pan_right")
+    )
+
+
+def test_face_stats_counts_faces_size_and_seconds():
+    samples = [
+        {"t": 0.5, "faces": [(10.0, 10.0, 20.0, 20.0, 0.9)]},
+        {"t": 1.0, "faces": [(30.0, 30.0, 40.0, 40.0, 0.8), (60.0, 60.0, 10.0, 10.0, 0.7)]},
+        {"t": 1.5, "faces": []},
+    ]
+    stats = faces.face_stats(samples, 0.0, 2.0, (100, 100), 0.5)
+    assert stats["faces_max"] == 2
+    assert stats["face_size_max"] == pytest.approx(40.0 * 40.0 / (100 * 100))
+    assert stats["face_cut"] is False
+    assert stats["face_seconds"] == pytest.approx(1.0)
+
+
+def test_face_stats_none_when_no_sample_in_segment():
+    samples = [{"t": 5.0, "faces": [(1.0, 1.0, 2.0, 2.0, 0.9)]}]
+    assert faces.face_stats(samples, 0.0, 1.0, (100, 100), 0.5) is None
+
+
+def test_face_cut_is_a_small_defect():
+    segment = {"id": "s1", "start_s": 0.0, "end_s": 1.0, "defects": []}
+    frames = [{"t": 0.5, "faces": [(0.0, 10.0, 20.0, 20.0, 0.9)]}]
+    quality.apply_face_stats([segment], frames, (100, 100), 0.5)
+    cut = [defect for defect in segment["defects"] if defect["name"] == "face_cut"]
+    assert len(cut) == 1
+    assert cut[0]["value"] == pytest.approx(0.2)
+    assert segment["face_cut"] is True
+
+
+def test_whip_short_hold_marks_move_and_hold():
+    segments = [
+        {"id": "s1", "start_s": 0.0, "end_s": 1.0, "role": "hold", "faces_max": 1},
+        {"id": "s2", "start_s": 1.0, "end_s": 2.0, "role": "move", "speed": "fast"},
+        {"id": "s3", "start_s": 2.0, "end_s": 6.0, "role": "hold", "faces_max": 0},
+    ]
+    quality.apply_whip_rules(segments, 3.0)
+    assert segments[1]["whip"] == "short_hold"
+    assert segments[0]["whip"] == "short_hold"
+    assert "whip" not in segments[2]
+
+
+def test_whip_deliberate_marks_move():
+    segments = [
+        {"id": "s1", "start_s": 0.0, "end_s": 4.0, "role": "hold", "faces_max": 1},
+        {"id": "s2", "start_s": 4.0, "end_s": 5.0, "role": "move", "speed": "fast"},
+        {"id": "s3", "start_s": 5.0, "end_s": 9.0, "role": "hold", "faces_max": 0},
+    ]
+    quality.apply_whip_rules(segments, 3.0)
+    assert segments[1]["whip"] == "deliberate"
+    assert "whip" not in segments[0]
+    assert "whip" not in segments[2]
+
+
+class SequenceDetector:
+    """Face detector stub: returns the next canned box list on every call."""
+
+    def __init__(self, sequence):
+        self.sequence = list(sequence)
+        self.index = 0
+
+    def setInputSize(self, size):
+        return None
+
+    def detect(self, frame):
+        boxes = self.sequence[min(self.index, len(self.sequence) - 1)]
+        self.index += 1
+        if not boxes:
+            return None, None
+        faces_array = np.array(
+            [[x, y, w, h, score] for (x, y, w, h, score) in boxes], dtype=np.float32
+        )
+        return None, faces_array
+
+
+def test_segment_carries_face_fields(tmp_path, monkeypatch):
+    source = tmp_path / "clips"
+    make_noisy_still_clip(source / "faces.mp4", seconds=3)
+    workspace = tmp_path / "workspace"
+    detector = SequenceDetector([[(10.0, 10.0, 20.0, 20.0, 0.9)]])
+    monkeypatch.setattr(quality, "make_detector", lambda path: detector)
+    monkeypatch.setattr(quality, "ensure_model", lambda path, url=None: Path(path))
+
+    quality.run(source, workspace)
+
+    data = read_quality(workspace, "faces")
+    assert validate(data, "quality") == []
+    for segment in data["segments"]:
+        assert segment["faces_max"] >= 1
+        assert "face_size_max" in segment
+        assert "face_seconds" in segment
+
+
+def test_no_face_model_records_nothing_and_warns_once(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "clips"
+    make_noisy_still_clip(source / "nofaces.mp4", seconds=3)
+    workspace = tmp_path / "workspace"
+
+    def boom(path, url=None):
+        raise FacesError("no model")
+
+    monkeypatch.setattr(quality, "ensure_model", boom)
+
+    quality.run(source, workspace)
+
+    captured = capsys.readouterr()
+    assert captured.err.count("[warn] face model unavailable") == 1
+    data = read_quality(workspace, "nofaces")
+    assert validate(data, "quality") == []
+    for segment in data["segments"]:
+        assert "faces_max" not in segment
 
 
 def test_end_to_end_noisy_still_is_hold(tmp_path):
@@ -581,7 +708,7 @@ def test_end_to_end_noisy_still_is_hold(tmp_path):
     make_noisy_still_clip(source / "still.mp4")
     workspace = tmp_path / "workspace"
 
-    result = run_cli(source, "--workspace", workspace, "--json")
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
 
     assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "still")
@@ -597,7 +724,7 @@ def test_end_to_end_black_clip_is_accidental_or_exposed(tmp_path):
     make_black_clip(source / "black.mp4")
     workspace = tmp_path / "workspace"
 
-    result = run_cli(source, "--workspace", workspace, "--json")
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
 
     assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "black")
@@ -643,7 +770,7 @@ def test_end_to_end_planted_motion_roles(tmp_path):
     }
     (motion_dir / "planted.json").write_text(json.dumps(motion), encoding="utf-8")
 
-    result = run_cli(source, "--workspace", workspace, "--json")
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
 
     assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "planted")
@@ -659,7 +786,7 @@ def test_folder_skip_and_force(tmp_path):
     make_noisy_still_clip(source / "two.mp4", seconds=1)
     workspace = tmp_path / "workspace"
 
-    first = run_cli(source, "--workspace", workspace, "--json")
+    first = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
     assert first.returncode == EXIT_OK, first.stderr
     first_summary = json.loads(first.stdout)
     assert first_summary["clips"] == 2
@@ -671,18 +798,18 @@ def test_folder_skip_and_force(tmp_path):
     assert (workspace / "quality" / "one.json").exists()
     assert (workspace / "quality" / "two.json").exists()
 
-    second = run_cli(source, "--workspace", workspace, "--json")
+    second = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
     assert second.returncode == EXIT_OK, second.stderr
     assert json.loads(second.stdout)["skipped"] == 2
     assert json.loads(second.stdout)["analyzed"] == 0
 
-    third = run_cli(source, "--workspace", workspace, "--force", "--json")
+    third = run_cli(source, "--workspace", workspace, "--no-faces", "--force", "--json")
     assert third.returncode == EXIT_OK, third.stderr
     assert json.loads(third.stdout)["analyzed"] == 2
 
 
 def test_missing_input_errors(tmp_path):
-    result = run_cli(tmp_path / "missing.mp4", "--workspace", tmp_path / "workspace")
+    result = run_cli(tmp_path / "missing.mp4", "--workspace", tmp_path / "workspace", "--no-faces")
     assert result.returncode == EXIT_USAGE
     assert "[error]" in result.stderr
     assert not (tmp_path / "workspace" / "quality").exists()
@@ -696,7 +823,7 @@ def test_unreadable_motion_json_falls_back(tmp_path):
     motion_dir.mkdir(parents=True)
     (motion_dir / "broken.json").write_text("not json at all", encoding="utf-8")
 
-    result = run_cli(source, "--workspace", workspace, "--json")
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
 
     assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "broken")
@@ -812,7 +939,7 @@ def test_end_to_end_junk_take_is_accidental(tmp_path):
     }
     (motion_dir / "junk.json").write_text(json.dumps(motion), encoding="utf-8")
 
-    result = run_cli(source, "--workspace", workspace, "--json")
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
 
     assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "junk")
@@ -984,7 +1111,7 @@ def test_old_motion_file_without_uncertainty_fields(tmp_path):
     }
     (motion_dir / "old.json").write_text(json.dumps(motion), encoding="utf-8")
 
-    result = run_cli(source, "--workspace", workspace, "--json")
+    result = run_cli(source, "--workspace", workspace, "--no-faces", "--json")
 
     assert result.returncode == EXIT_OK, result.stderr
     data = read_quality(workspace, "old")

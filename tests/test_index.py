@@ -1188,3 +1188,44 @@ def test_shotlog_page_shares_the_theme_tokens():
     for token in ("--water:#151619", "--sea:#4fb0bd", "--tap:44px",
                   "--font-display:", "prefers-color-scheme:light"):
         assert token in page
+
+
+def test_whip_short_hold_scores_low(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0)
+    segment["whip"] = "short_hold"
+    data, _ = build(tmp_path, segments=[segment])
+    shot = find(data, "0081/s1")
+    assert shot["scores"]["labels"] == pytest.approx(0.1)
+
+
+def test_deliberate_move_shake_not_penalised(tmp_path):
+    shake = {"name": "shake", "value": 0.5}
+    described = described_segment("s1", 0.0, 10.0, role="move", motion_label="complex_motion")
+    described["semantic_motion"] = "orbit"
+    with_shake, _ = build(
+        tmp_path / "with",
+        segments=[quality_segment("s1", 0.0, 10.0, role="move", motion_label="complex_motion", defects=[shake])],
+        describe_segments=[described],
+    )
+    without_shake, _ = build(
+        tmp_path / "without",
+        segments=[quality_segment("s1", 0.0, 10.0, role="move", motion_label="complex_motion")],
+        describe_segments=[described],
+    )
+    penalised = find(with_shake, "0081/s1")
+    clean = find(without_shake, "0081/s1")
+    assert penalised["scores"]["labels"] == pytest.approx(clean["scores"]["labels"])
+    assert "shake" in penalised["defects"]
+
+
+def test_shot_carries_face_fields(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0)
+    segment["faces_max"] = 2
+    segment["face_size_max"] = 0.15
+    segment["face_seconds"] = 4.0
+    data, _ = build(tmp_path, segments=[segment])
+    shot = find(data, "0081/s1")
+    assert shot["faces_max"] == 2
+    assert shot["face_size_max"] == pytest.approx(0.15)
+    assert shot["face_seconds"] == pytest.approx(4.0)
+    assert validate(data, "shotlog") == []

@@ -2734,3 +2734,19 @@ def test_json_summary_has_shortlist_and_candidates(tmp_path):
     assert "candidates" in summary
     assert summary["shortlist"] <= summary["candidates"]
 
+
+
+def test_shot_fact_carries_faces():
+    candidate = {
+        "shot_key": "clipA/s1",
+        "clip": "clipA.mp4",
+        "in_s": 0.0,
+        "out_s": 10.0,
+        "segment": {"faces_max": 3, "face_size_max": 0.2},
+        "role": "hold",
+        "motion_label": "static",
+        "similar_to": [],
+    }
+    fact = llm_director.make_fact(candidate, 6.0)
+    assert fact["faces_max"] == 3
+    assert fact["face_size_max"] == pytest.approx(0.2)

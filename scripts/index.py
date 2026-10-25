@@ -41,6 +41,7 @@ from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
 from common.html import open_state_script
+from common.intent import WHIP_SHORT_HOLD_SCORE, is_deliberate_move, is_whip_short_hold
 from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
@@ -306,7 +307,12 @@ def _build_shot(
     steadiness = _steadiness(segment, motion, role)
     defects = list(segment.get("defects") or [])
     eligible = _is_eligible(role, uncertainty)
-    labels = _label_score(role, confidence, steadiness, defects)
+    semantic_motion = vision.get("semantic_motion") if vision else None
+    deliberate = is_deliberate_move(motion_label) or semantic_motion == "orbit"
+    scoring_defects = [
+        defect for defect in defects if not (defect.get("name") == "shake" and deliberate)
+    ]
+    labels = _label_score(role, confidence, steadiness, scoring_defects, segment.get("whip"))
     vision_score = _vision_score(vision)
     if eligible:
         fusion_vision = vision_score if vision_score is not None else NO_VISION_PRIOR
@@ -361,6 +367,9 @@ def _build_shot(
         "reason": _reason(vision, motion_label, label_source, role, defects, eligible, beat_label),
         "similar_to": list(similarity_map.get(key, [])),
         "defects": [defect.get("name") for defect in defects],
+        "faces_max": segment.get("faces_max"),
+        "face_size_max": segment.get("face_size_max"),
+        "face_seconds": segment.get("face_seconds"),
         "suppressed_by": None,
     }
 
@@ -519,7 +528,9 @@ def _best_overlapping_move(segment, moves):
     return best
 
 
-def _label_score(role, confidence, steadiness, defects):
+def _label_score(role, confidence, steadiness, defects, whip=None):
+    if whip == "short_hold":
+        return WHIP_SHORT_HOLD_SCORE
     score = ROLE_BASE.get(role, 0.0)
     score += 0.25 * float(confidence or 0.0)
     if steadiness in STEADINESS_BONUS:

@@ -30,9 +30,19 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from common.config import ConfigError, WHIP_MIN_HOLD_S, load_config, whip_min_hold_s
 from common.excluded import filter_excluded, load_excluded
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
+from common.faces import (
+    DEFAULT_MODEL_PATH,
+    FacesError,
+    detect_faces,
+    ensure_model,
+    face_stats,
+    make_detector,
+)
+from common.intent import DELIBERATE_SHAKE_FACTOR, is_deliberate_move
 from common.overlap import overlap_seconds
 from common.schema import SchemaError, validate, validate_or_raise
 
@@ -81,6 +91,9 @@ LOW_PCT = 10.0
 LUMA_LOW = 40.0
 LUMA_HIGH = 200.0
 
+FACE_CUT_VALUE = 0.2
+MOVE_ROLES = {"move", "transition_in", "transition_out"}
+
 
 class QualityError(RuntimeError):
     """Raised when a clip cannot be analysed."""
@@ -92,13 +105,16 @@ def build_parser():
         description=(
             "Measure footage quality per segment and label each segment with a role "
             "(move, hold, transition_in, transition_out, setup, teardown, accidental) "
-            "plus measured defects (blur, shake, exposure, obstruction, horizon)."
+            "plus measured defects (blur, shake, exposure, obstruction, horizon, face_cut). "
+            "Faces are counted per segment with YuNet and a fast move between short holds "
+            "on people is marked as a whip."
         ),
         epilog=(
             "examples:\n"
             "  python scripts/quality.py clip.mp4 --workspace <workspace>\n"
             "  python scripts/quality.py <trip-folder> --workspace <workspace> --json\n"
             "  python scripts/quality.py clip.mp4 --workspace <workspace> --force\n"
+            "  python scripts/quality.py clip.mp4 --workspace <workspace> --no-faces\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -108,6 +124,14 @@ def build_parser():
     parser.add_argument("--force", action="store_true", help="re-analyse clips whose output already exists")
     parser.add_argument("--sample-fps", type=float, default=2.0, help="measurement sampling rate (default 2)")
     parser.add_argument("--width", type=int, default=320, help="measurement width in pixels (default 320)")
+    parser.add_argument(
+        "--no-faces",
+        dest="faces",
+        action="store_false",
+        default=True,
+        help="skip face detection; no YuNet model needed",
+    )
+    parser.add_argument("--config", default=None, help="config file path (default: repo config.yaml)")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
 
@@ -279,7 +303,7 @@ def build_defects(metrics, role=None, label=None, speed=None):
     """Return the measured defects that cross their thresholds for a segment."""
     defects = []
     laplacian_rel = metrics.get("laplacian_rel", 1.0)
-    if laplacian_rel < BLUR_REL:
+    if laplacian_rel < BLUR_REL and not (role in MOVE_ROLES and speed == "fast"):
         value = min(1.0, (BLUR_REL - laplacian_rel) / BLUR_REL)
         defects.append(
             {"name": "blur", "value": value, "detail": f"laplacian {laplacian_rel:.2f}x clip median"}
@@ -288,7 +312,8 @@ def build_defects(metrics, role=None, label=None, speed=None):
     if exposure is not None:
         defects.append(exposure)
     shake = metrics.get("shake", 0.0)
-    if shake >= SHAKE_MIN:
+    shake_min = SHAKE_MIN * DELIBERATE_SHAKE_FACTOR if is_deliberate_move(label) else SHAKE_MIN
+    if shake >= shake_min:
         defects.append(
             {"name": "shake", "value": min(1.0, shake / SHAKE_FULL), "detail": f"shake {shake:.3f}"}
         )
@@ -930,6 +955,7 @@ def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, durati
                 "role_evidence": evidence,
                 "motion_label": label,
                 "motion_label_confidence": motion_label_confidence,
+                "speed": speed,
                 "uncertain": bool(uncertain_reasons),
                 "uncertain_reasons": uncertain_reasons,
                 "defects": defects,
@@ -939,6 +965,60 @@ def _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, durati
         facts.append({"steadiness": longest["steadiness"], "move": longest["move"]})
     apply_accidental_runs(segments, facts, duration_s)
     return segments
+
+
+def apply_face_stats(segments, frames, frame_size, sample_interval_s):
+    """Set the face fields on every segment and add the face-cut defect (in place)."""
+    for segment in segments:
+        stats = face_stats(
+            frames, segment["start_s"], segment["end_s"], frame_size, sample_interval_s
+        )
+        if stats is None:
+            continue
+        segment["faces_max"] = stats["faces_max"]
+        segment["face_size_max"] = stats["face_size_max"]
+        segment["face_cut"] = stats["face_cut"]
+        segment["face_seconds"] = stats["face_seconds"]
+        if stats["face_cut"]:
+            segment["defects"].append(
+                {"name": "face_cut", "value": FACE_CUT_VALUE, "detail": "face cut by the frame edge"}
+            )
+
+
+def apply_whip_rules(segments, min_hold_s):
+    """Mark the whip patterns on the assembled segments (in place)."""
+    for index, move in enumerate(segments):
+        if move.get("role") not in MOVE_ROLES or move.get("speed") != "fast":
+            continue
+        before = segments[index - 1] if index > 0 else None
+        after = segments[index + 1] if index + 1 < len(segments) else None
+        if before is not None and before["end_s"] != move["start_s"]:
+            before = None
+        if after is not None and move["end_s"] != after["start_s"]:
+            after = None
+        short_holds = [
+            neighbour
+            for neighbour in (before, after)
+            if neighbour is not None
+            and neighbour.get("role") == "hold"
+            and neighbour.get("faces_max", 0) >= 1
+            and neighbour["end_s"] - neighbour["start_s"] < min_hold_s
+        ]
+        if short_holds:
+            move["whip"] = "short_hold"
+            for hold in short_holds:
+                hold["whip"] = "short_hold"
+            continue
+        if (
+            before is not None
+            and after is not None
+            and before.get("role") == "hold"
+            and after.get("role") == "hold"
+            and before["end_s"] - before["start_s"] >= min_hold_s
+            and after["end_s"] - after["start_s"] >= min_hold_s
+            and (before.get("faces_max", 0) >= 1 or after.get("faces_max", 0) >= 1)
+        ):
+            move["whip"] = "deliberate"
 
 
 def _to_analysis_gray(frame, width):
@@ -964,7 +1044,7 @@ def _load_motion(motion_path):
     return data, str(motion_path.resolve()), None
 
 
-def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320):
+def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320, detector=None, min_hold_s=WHIP_MIN_HOLD_S):
     """Analyse one clip and return its full quality record."""
     path = Path(path)
     capture = cv2.VideoCapture(str(path))
@@ -991,6 +1071,9 @@ def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320):
                 gray = _to_analysis_gray(frame, width)
                 measurement = measure_frame(gray, prev_gray)
                 measurement["t"] = index / fps_source
+                if detector is not None:
+                    measurement["faces"] = detect_faces(detector, frame)
+                    measurement["frame_size"] = (frame.shape[1], frame.shape[0])
                 frames.append(measurement)
                 prev_gray = gray
             index += 1
@@ -1011,6 +1094,12 @@ def analyze_clip(path, motion_path=None, sample_fps=2.0, width=320):
         trajectory = None
         warnings.append("no motion file; segments are coarse")
     segments = _merge_and_assemble(parts, frames, clip_median_laplacian, trajectory, duration_s)
+    if detector is not None:
+        frame_size = next(
+            (frame["frame_size"] for frame in frames if "frame_size" in frame), (0, 0)
+        )
+        apply_face_stats(segments, frames, frame_size, 1.0 / effective_fps)
+    apply_whip_rules(segments, min_hold_s)
     for segment in segments:
         if segment["end_s"] <= segment["start_s"]:
             raise QualityError(f"zero-length segment {segment['id']} in {path.name}")
@@ -1070,7 +1159,27 @@ def _atomic_write_json(path, data):
             temporary.unlink()
 
 
-def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, width=320):
+def _build_detector(enabled):
+    """The YuNet detector, or None when faces are off or the model is unavailable."""
+    if not enabled:
+        return None
+    try:
+        return make_detector(ensure_model(DEFAULT_MODEL_PATH))
+    except (FacesError, OSError, cv2.error) as exc:
+        print(f"[warn] face model unavailable; faces not measured ({exc})", file=sys.stderr)
+        return None
+
+
+def _whip_min_hold_s(config):
+    """The whip short-hold threshold from the config, or the default when it cannot load."""
+    try:
+        data = load_config(config)
+    except ConfigError:
+        return WHIP_MIN_HOLD_S
+    return whip_min_hold_s(data)
+
+
+def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, width=320, faces=True, config=None):
     """Analyse every clip of ``input_path`` into ``workspace/quality``; return a summary."""
     started = time.monotonic()
     clips = resolve_inputs(input_path)
@@ -1082,6 +1191,8 @@ def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, wid
         motion_path_dir = workspace_path / "motion"
     else:
         motion_path_dir = Path(motion_dir).expanduser().resolve()
+    detector = _build_detector(faces)
+    min_hold_s = _whip_min_hold_s(config)
     analyzed = 0
     skipped = 0
     for clip in clips:
@@ -1094,6 +1205,8 @@ def run(input_path, workspace, motion_dir=None, force=False, sample_fps=2.0, wid
             motion_path=motion_path_dir / f"{clip.stem}.json",
             sample_fps=sample_fps,
             width=width,
+            detector=detector,
+            min_hold_s=min_hold_s,
         )
         validate_or_raise(record, "quality")
         _atomic_write_json(output_path, record)
@@ -1118,6 +1231,8 @@ def main(argv=None):
             force=args.force,
             sample_fps=args.sample_fps,
             width=args.width,
+            faces=args.faces,
+            config=args.config,
         )
     except (QualityError, SchemaError) as exc:
         return report_error(exc, EXIT_USAGE, args.json)

@@ -317,6 +317,31 @@
             },
             "description": "measured defect names carried from quality"
           },
+          "faces_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "largest number of faces in any counted sample of the segment; null when faces were not measured"
+          },
+          "face_size_max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "largest face box area as a share of the analysed frame; null when faces were not measured"
+          },
+          "face_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "counted samples with at least one face times the sample interval; null when faces were not measured"
+          },
           "suppressed_by": {
             "oneOf": [
               {

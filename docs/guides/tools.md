@@ -141,13 +141,15 @@ Skills: `yt-ingest`, `yt-motion`, `yt-quality`, `yt-eval`.
 |:---|:---|:---|
 | `ingest.py` | folder of clips | `ws/ingest.json` — duration, fps, resolution, streams, creation time, gyro present |
 | `motion.py` | one clip or a folder | `ws/motion/<stem>.json` — trajectory, motion phases, CameraBench moves with steady range + handles |
-| `quality.py` | one clip or a folder | `ws/quality/<stem>.json` — per segment: role (move, hold, transition in/out, setup, teardown, accidental) with confidence + measured defects (blur, exposure, shake, obstruction, horizon) |
+| `quality.py` | one clip or a folder | `ws/quality/<stem>.json` — per segment: role (move, hold, transition in/out, setup, teardown, accidental) with confidence + measured defects (blur, exposure, shake, obstruction, horizon, face_cut), the per-segment face counts and the `whip` mark |
 | `eval_labels.py` | ground-truth YAML + workspace | per-clip and total move/role/horizon/event scores (table, or `--json`/`--out` report validated against `eval.schema.json`) |
 
 All three analysis tools accept `--json`, re-run safely (existing outputs are
 skipped, `--force` re-analyses) and validate their output against `schemas/`.
 `quality.py` prefers a matching `ws/motion/<stem>.json` and falls back to coarse
-frame-diff segmentation without it. `eval_labels.py` reads the workspace only and
+frame-diff segmentation without it. `quality.py` counts faces with YuNet on the
+frames it already samples (`--no-faces` skips it) and marks the whip short-hold
+pattern. `eval_labels.py` reads the workspace only and
 writes nothing unless `--out` is given. The vision stage `describe.py` (D1b)
 describes the kept segments and the still photos; its per-clip model calls run in
 a small worker pool (`--workers`, default 4, `1` = sequential) and the outputs

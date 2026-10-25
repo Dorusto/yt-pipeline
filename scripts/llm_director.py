@@ -618,6 +618,8 @@ def make_fact(candidate, important_max_s, slot_min_s=MIN_SHOT_LENGTH_S, slot_max
         "role": candidate.get("role"),
         "motion_label": candidate.get("motion_label"),
         "hero": candidate.get("hero"),
+        "faces_max": (candidate.get("segment") or {}).get("faces_max"),
+        "face_size_max": (candidate.get("segment") or {}).get("face_size_max"),
         "similar_to": list(candidate.get("similar_to") or []),
     }
 

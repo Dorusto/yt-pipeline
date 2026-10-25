@@ -223,6 +223,20 @@ def _validate(data):
         if path is not None and (not isinstance(path, str) or not path):
             raise ConfigError("notebook.path must be a non-empty string")
 
+    whip = data.get("whip")
+    if whip is not None:
+        if not isinstance(whip, dict):
+            raise ConfigError("whip must be a mapping")
+        min_hold = whip.get("min_hold_s")
+        if min_hold is not None:
+            if (
+                isinstance(min_hold, bool)
+                or not isinstance(min_hold, (int, float))
+                or not math.isfinite(min_hold)
+                or min_hold <= 0
+            ):
+                raise ConfigError("whip.min_hold_s must be a positive number")
+
     web = data.get("web")
     if web is not None:
         if not isinstance(web, dict):
@@ -317,6 +331,7 @@ STORAGE_GB_ENV = "YT_PIPELINE_STORAGE_GB"
 PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
 DEFAULT_DONATION_LABEL = "Support the project"
 DEFAULT_CREDIT_WARN_USD = 1.0
+WHIP_MIN_HOLD_S = 3.0
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
@@ -631,6 +646,24 @@ def credit_warn_usd(config=None):
         if value is not None:
             return float(value)
     return DEFAULT_CREDIT_WARN_USD
+
+
+def whip_min_hold_s(config=None):
+    """The whip short-hold threshold: ``whip.min_hold_s`` from the config, else 3.0."""
+    data = config if config is not None else load_config()
+    section = data.get("whip")
+    if isinstance(section, dict):
+        value = section.get("min_hold_s")
+        if value is not None:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ConfigError("whip.min_hold_s must be a positive number")
+            return float(value)
+    return WHIP_MIN_HOLD_S
 
 
 def project_totals_url(cli_value=None, config=None):

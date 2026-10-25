@@ -4,6 +4,45 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Faces and camera-move intent in the score (V030 lot c21)
+
+**Context:** Issue #119 points 1–3, from a re-analysis of the Kotor demo. The
+motion data already carries the camera speed and the YuNet face detector is
+already in the repo, so both signals are free (no model call).
+`docs/guides/shot-grammar.md` already says intent and defect are separate
+fields, but the score code did not apply it.
+
+**Options:** (A) leave the score as it is; (B) add the two free signals — faces
+per segment and the camera-move intent — and let them change the score.
+
+**Decision:** B. `scripts/quality.py` counts faces on the frames it already
+samples (new segment fields `faces_max`, `face_size_max`, `face_cut`,
+`face_seconds`; a face cut by the edge is the small `face_cut` defect, value
+0.2) and marks the whip pattern (`whip: "short_hold"` on a fast move next to a
+hold on people shorter than `whip.min_hold_s`, default 3.0 s; `whip:
+"deliberate"` on a fast move between two long holds). Motion blur on a fast move
+is no longer a defect and a deliberate move's shake threshold is doubled
+(`DELIBERATE_SHAKE_FACTOR` 2.0). A `short_hold` segment gets label score `0.1`
+in `scripts/index.py` and `scripts/director.py`; a deliberate move (or a
+semantic `orbit`) is not penalised for its `shake` defect. The face fields reach
+`shotlog.json` and the LLM director's shot fact. The shared vocabulary lives in
+the new `scripts/common/intent.py`; the threshold is `whip.min_hold_s` in the
+config.
+
+**Why not A:** the two signals are free and the issue shows the score currently
+rewards clean-but-dull holds and punishes deliberate moves for their intent.
+
+**Consequence:** files touched — `scripts/common/intent.py` (new),
+`scripts/common/faces.py`, `scripts/common/config.py`, `scripts/quality.py` (a
+stable file, so the commit carries `Stable-change: approved`),
+`scripts/index.py`, `scripts/director.py`, `scripts/llm_director.py`,
+`schemas/quality.schema.json`, `schemas/shotlog.schema.json`,
+`config.yaml.example`, the tests, the `yt-quality` skill,
+`docs/guides/tools.md`, `docs/guides/shot-grammar.md`, `docs/RULES.md`,
+`docs/DECISIONS.md`. No OpenRouter model call; no change to `serve.py`,
+`recap.py`, `common/versions.py`, the editing grammar, the pacing table, the
+beat snap or the star definition. Issue #119 points 4–5 stay for lot c22.
+
 ## [2026-10-25] Personal paths out of the tracked `opencode.json` (V030 audit lot a10, F17)
 
 **Context:** The v0.3.0 audit (F17) found the tracked `opencode.json` carried

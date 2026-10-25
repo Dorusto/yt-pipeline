@@ -17,7 +17,7 @@ Every technique has three columns: how it is filmed, how `motion` / `quality` / 
 
 A segment is never thrown away by the analysis tools. They **label** it; the director (and Doru in the review UI) decides.
 
-- **Intent and defect are separate fields.** Motion blur during a whip pan is intent; motion blur on a static shot is a defect. A fast rotation at the end of a take may be the first half of a transition, not junk.
+- **Intent and defect are separate fields.** Motion blur during a whip pan is intent; motion blur on a static shot is a defect. A fast rotation at the end of a take may be the first half of a transition, not junk. A fast move between short holds on people is a filming mistake (marked `whip: "short_hold"`, scores low), while a fast move between two long holds is a deliberate move (marked `whip: "deliberate"`) and its motion blur is not a defect; a deliberate move (orbit, pan, tilt, dolly, travel) is not punished for shake the way a static hold is.
 - Each segment gets a **role** with a confidence: `move`, `hold`, `transition_out`, `transition_in`, `setup`, `teardown`, `accidental`, plus a list of **defects** (`blur`, `shake`, `exposure`, `obstruction`, `horizon`), each with a measured value.
 - **One file can hold several intentional shots.** Segmentation follows motion phases and content changes, not file boundaries.
 - `setup` / `teardown` are *likely* roles (short, irregular motion right after record starts or right before it stops), not a verdict. If that motion is a clean fast rotation, it is a `transition_in` / `transition_out` candidate instead.
@@ -70,7 +70,7 @@ The director pairs `transition_out` with `transition_in` of matching type and di
 
 ### 2.4 Defects (always measured, never assumed)
 
-blur (Laplacian variance vs the clip's median), shake (trajectory residual), exposure (clipped highs / crushed lows), obstruction (water drops, finger, pocket), horizon tilt (roll offset on a static shot), accidental recording (pocket, ground, sky for minutes).
+blur (Laplacian variance vs the clip's median), shake (trajectory residual), exposure (clipped highs / crushed lows), obstruction (water drops, finger, pocket), horizon tilt (roll offset on a static shot), face_cut (a face box touching the frame edge), accidental recording (pocket, ground, sky for minutes).
 
 ## 3. What professional software does today (October 2026)
 

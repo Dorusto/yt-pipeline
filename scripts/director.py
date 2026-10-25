@@ -26,6 +26,7 @@ from pathlib import Path
 
 from common.constants import SNAP_MIN_SLOT_S
 from common.decisions import build_decisions
+from common.intent import WHIP_SHORT_HOLD_SCORE, is_deliberate_move, is_whip_short_hold
 from common.moves import (
     STAR_MIN_SCORE,
     STAR_SHARE,
@@ -516,11 +517,16 @@ def pacing_bonus(candidate, position):
 
 def score_candidate(candidate, pacing):
     segment = candidate["segment"]
+    if is_whip_short_hold(segment):
+        return WHIP_SHORT_HOLD_SCORE
     score = ROLE_BASE.get(candidate["role"], 0.0)
     score += 0.25 * segment.get("confidence", 0.0)
     if candidate["steadiness"] in STEADINESS_BONUS:
         score += STEADINESS_BONUS[candidate["steadiness"]]
     defects = segment.get("defects") or []
+    deliberate = is_deliberate_move(candidate.get("motion_label")) or candidate.get("semantic_motion") == "orbit"
+    if deliberate:
+        defects = [defect for defect in defects if defect.get("name") != "shake"]
     if defects:
         penalty = sum(
             defect.get("value", 0.0) * DEFECT_WEIGHTS.get(defect.get("name"), DEFAULT_DEFECT_WEIGHT)
