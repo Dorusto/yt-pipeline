@@ -42,18 +42,18 @@ Field rules:
 - `promo_lines` — optional, `[]` when there is nothing: an affiliate link or the channel's own offer, each line starting with the label ("link afiliat", "oferta mea"). Never invent a link the Inputs did not give.
 - `chapters` — chapter list from the timeline: `timestamp` in `HH:MM:SS`, non-decreasing, inside the transcript, first one `00:00:00`; `title` at most 40 characters in Romanian, and `title_en` the same chapter in English, at most 40 characters. Mark real topic changes, not every pause.
 - `tags` — 8-12 tags in Romanian, the main keyword first.
-- `pinned_comment` — one concrete question for the audience, at most two short sentences, like a person writing under their own video. No marketing wording, no keyword-to-type call to action, no em dash. It asks what does not work for the viewer in the area the clip covers, never a vague "ce părere aveți?". Write it in the voice given by `pinned_comment_voice` in the `## Style` section; when that part is not given, no voice is prescribed.
+- `pinned_comment` — one concrete question for the audience, at most two short sentences. No marketing wording, no keyword-to-type call to action, no em dash. It asks what does not work for the viewer in the area the clip covers, never a vague "ce părere aveți?". Write it in the voice given by `pinned_comment_voice` in the `## Style` section; when that part is not given, no voice is prescribed.
 
 ## CTA rules (the tool enforces the fixed parts)
 
-The description is assembled in this order, RO first, then EN (the channel's `description_order` in the `## Style` section overrides it when it is given):
+The description is assembled in this default order, RO first, then EN (the channel's `description_order` in the `## Style` section replaces it when it is given):
 
 1. **GitHub**: `github_line` (see above). Omitted when it is `null`.
 2. **Channel members**: the channel's fixed sentence, inserted by the tool — never write it yourself and never change one word of it. The RO description gets the Romanian sentence and the EN description the English one.
 3. **Link to a relevant earlier clip**: `previous_line`.
 4. **Subscribe**: `subscribe_line`, tied to a concrete reason.
-5. **Fixed closing**, inserted by the tool, always last. The RO description gets the Romanian closing and the EN description the English one.
+5. **Fixed closing**, inserted by the tool, last in the default order. The RO description gets the Romanian closing and the EN description the English one.
 
-Optional between subscribe and the closing: `promo_lines` (always labelled as affiliate or own offer).
+Optional in the default order, between subscribe and the closing: `promo_lines` (always labelled as affiliate or own offer).
 
 The fixed sentences are the channel's standard wording, written by the channel owner in the config: each description gets its own language version and they are never rephrased or translated by you.

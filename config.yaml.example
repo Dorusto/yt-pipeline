@@ -51,7 +51,7 @@ channel:
   # thumbnail_formula stays in fixed.
   style:
     title_style: "<how the titles should read>"
-    description_order: "intro, github, members, previous, subscribe, promo, closing"
+    # description_order: "<the order the description parts should follow>"
     pinned_comment_voice: "<the voice of the pinned comment>"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM

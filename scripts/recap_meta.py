@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 from common.config import ConfigError, load_config
-from common.channel import style_section, style_strings
+from common.channel import RECAP_META_STYLE_PARTS, style_section, style_strings
 from common.brief_facts import FACT_LABELS, load_brief_facts
 from common.jsonio import load_json, now_iso, parse_model_json, write_json
 from common.llm import LLMError, make_client
@@ -164,7 +164,7 @@ def build_message(prompt_text, facts, style=None):
         shots = "\n".join(f"- {text}" for text in facts["descriptions"])
     else:
         shots = "- (no shot descriptions)"
-    section = style_section(style)
+    section = style_section(style, parts=RECAP_META_STYLE_PARTS)
     style_block = f"\n\n{section}" if section is not None else ""
     return (
         prompt_text

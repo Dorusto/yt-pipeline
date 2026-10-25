@@ -13,11 +13,14 @@ built-in text.
 string instruction. The writing tools hand the present parts to the model in a
 ``## Style`` section; a missing part is left out, never replaced by built-in
 text. ``description_order`` also carries the order of the description parts
-applied in code (``DESCRIPTION_PARTS``).
+applied in code (``DESCRIPTION_PARTS``). ``recap_meta.py`` hands only
+``RECAP_META_STYLE_PARTS``: it writes a free 2-3 sentence description with no
+parts, so ``description_order`` does not apply to it.
 """
 
 CHANNEL_FIXED_PARTS = ("members_sentence", "closing", "thumbnail_formula")
 CHANNEL_STYLE_PARTS = ("title_style", "description_order", "pinned_comment_voice")
+RECAP_META_STYLE_PARTS = ("title_style", "pinned_comment_voice")
 DESCRIPTION_PARTS = ("intro", "github", "members", "previous", "subscribe", "promo", "closing")
 
 
@@ -83,11 +86,17 @@ def style_string(style, part):
 def parse_description_order(value):
     """Split a ``description_order`` string into part names; raise ValueError on an unknown name."""
     names = [name.strip() for name in value.split(",") if name.strip()]
+    if not names:
+        raise ValueError("description_order is empty; give at least one part name")
+    seen = set()
     for name in names:
         if name not in DESCRIPTION_PARTS:
             raise ValueError(
                 f"unknown description part '{name}'; valid parts: {', '.join(DESCRIPTION_PARTS)}"
             )
+        if name in seen:
+            raise ValueError(f"duplicate description part '{name}'")
+        seen.add(name)
     return tuple(names)
 
 
@@ -99,11 +108,11 @@ def description_order(style):
     return parse_description_order(value)
 
 
-def style_section(style):
+def style_section(style, parts=CHANNEL_STYLE_PARTS):
     """Return the ``## Style`` section text for the present parts, or None when none are set."""
     lines = [
         f"{part}: {value}"
-        for part in CHANNEL_STYLE_PARTS
+        for part in parts
         if (value := style_string(style, part)) is not None
     ]
     if not lines:

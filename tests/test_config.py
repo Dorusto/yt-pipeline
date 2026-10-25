@@ -502,3 +502,19 @@ def test_channel_style_description_order_unknown_part_raises(tmp_path):
     with pytest.raises(config.ConfigError) as exc:
         config.load_config(write_config(tmp_path, data))
     assert "nope" in str(exc.value)
+
+
+def test_channel_style_description_order_empty_raises(tmp_path):
+    for value in (",", "  "):
+        data = copy.deepcopy(VALID)
+        data["channel"] = {"style": {"description_order": value}}
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, data))
+
+
+def test_channel_style_description_order_duplicate_raises(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"style": {"description_order": "intro, intro"}}
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_config(write_config(tmp_path, data))
+    assert "intro" in str(exc.value)

@@ -88,7 +88,7 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed or a shot made longer/shorter (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
 
-`recap_meta.py` also hands the channel's `channel.style` parts (`title_style`, `description_order`, `pinned_comment_voice`) to the model in a `## Style` section, one line per part; a missing part is left out.
+`recap_meta.py` also hands the channel's `channel.style` parts (`title_style`, `pinned_comment_voice`) to the model in a `## Style` section, one line per part; a missing part is left out.
 
 Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
 
