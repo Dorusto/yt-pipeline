@@ -395,12 +395,12 @@ def normalize_merge_answer(answer):
     return merges, remove
 
 
-def waiting_full_summary(path, count, waiting, limit, started):
-    """The summary of a learn pass that wrote nothing because the waiting list is full."""
+def waiting_full_summary(path, count, waiting, limit, started, reason="waiting lessons are full"):
+    """The summary of a learn pass that wrote nothing because there is no room."""
     summary = {
         "ok": True,
         "status": "waiting_full",
-        "reason": "waiting lessons are full",
+        "reason": reason,
         "notebook": str(path),
         "count": count,
         "limit": limit,
@@ -452,6 +452,15 @@ def learn(workspace, notebook, limit):
     room = MAX_WAITING - len(waiting)
     if room <= 0:
         return waiting_full_summary(path, count_on_disk, waiting_on_disk, limit, started)
+    if len(lessons) > limit:
+        return waiting_full_summary(
+            path,
+            count_on_disk,
+            waiting_on_disk,
+            limit,
+            started,
+            reason="the notebook is over its limit",
+        )
     max_new = min(MAX_NEW_LESSONS, room + max(0, limit - len(lessons)))
     prompt_text = read_learn_prompt()
     edit = load_json(workspace_path / "edit.json")
@@ -511,12 +520,14 @@ def learn(workspace, notebook, limit):
             removed.extend(merge_removed)
             added.append(new_id)
     if len(lessons) > limit:
-        excess = len(lessons) - limit
-        overflow = sorted(lessons, key=lesson_id_number, reverse=True)[:excess]
-        overflow_ids = {lesson.get("id") for lesson in overflow}
-        waiting.extend(overflow)
-        waiting.sort(key=lesson_id_number)
-        lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in overflow_ids]
+        room = MAX_WAITING - len(waiting)
+        move_count = min(len(lessons) - limit, max(0, room))
+        if move_count > 0:
+            overflow = sorted(lessons, key=lesson_id_number, reverse=True)[:move_count]
+            overflow_ids = {lesson.get("id") for lesson in overflow}
+            waiting.extend(overflow)
+            waiting.sort(key=lesson_id_number)
+            lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in overflow_ids]
     promote_waiting(lessons, waiting, limit)
     present = {lesson.get("id") for lesson in lessons}
     added = [lesson_id for lesson_id in added if lesson_id in present]
@@ -550,7 +561,7 @@ def print_learn(summary):
         print(f"skipped: {summary['reason']}")
         return
     if summary["status"] == "waiting_full":
-        print(f"waiting_full: {summary['waiting']} waiting lessons (the notebook is full)")
+        print(f"waiting_full: {summary['reason']}")
         return
     for lesson_id in summary["added"]:
         print(f"added {lesson_id}")

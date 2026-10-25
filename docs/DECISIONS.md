@@ -4,6 +4,33 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Notebook waiting cap on an over-limit file (V030 lot a3)
+
+**Context:** The v0.3.0 audit (F10) found that a hand-edited notebook holding
+more lessons than the limit (or a lower `--limit`) could push more than 3
+lessons into `waiting`: `scripts/notebook.py` moved every lesson past the limit
+to `waiting` without a cap, so `waiting` could exceed the 3-lesson rule.
+
+**Options:** (A) cap the overflow at 3 and keep the rest in `lessons`; (B) refuse
+the learn pass with a clear error when the notebook is already over its limit.
+
+**Decision:** both, in one rule. A learn pass on a notebook that already holds
+more lessons than the limit makes no model call, writes nothing, leaves the
+`.learn.json` marker and reports `"status": "waiting_full"` (reason "the notebook
+is over its limit"); the over-limit lessons stay in the file as lessons until the
+owner removes some. The overflow step that moves lessons past the limit to
+`waiting` is capped at `MAX_WAITING` (3), the rest staying in `lessons`, so
+`waiting` can never exceed 3 and nothing is dropped silently.
+
+**Why not A alone:** without the refusal the pass would keep adding lessons to an
+already over-limit file on every run; the owner must bring the file back under
+the limit first.
+
+**Consequence:** `scripts/notebook.py` gains the over-limit check and the capped
+overflow, `waiting_full_summary` takes a `reason`; `docs/RULES.md`, the
+`yt-notebook` skill, `docs/guides/tools.md` and `docs/guides/user-guide.md`
+describe the over-limit pass.
+
 ## [2026-10-25] Notebook limit and ledger review fixes (V030 lot c10c)
 
 **Context:** The review of the c10b learn pass found three faults:

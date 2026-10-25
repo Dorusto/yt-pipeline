@@ -382,6 +382,50 @@ def test_learn_asks_for_only_the_remaining_room(tmp_path, monkeypatch):
     assert [lesson["id"] for lesson in document["waiting"]] == ["l003", "l004", "l005"]
 
 
+def test_learn_refuses_a_hand_edited_over_limit_file(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "one", "kind": "lesson"},
+            {"id": "l002", "text": "two", "kind": "lesson"},
+            {"id": "l003", "text": "three", "kind": "lesson"},
+            {"id": "l004", "text": "four", "kind": "lesson"},
+            {"id": "l005", "text": "five", "kind": "lesson"},
+        ],
+    )
+    workspace = make_workspace(tmp_path)
+    before = notebook_file.read_text(encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise AssertionError("an over-limit notebook must not call the model")
+
+    monkeypatch.setattr(notebook, "make_client", boom)
+    summary = notebook.learn(str(workspace), str(notebook_file), 3)
+    assert summary["status"] == "waiting_full"
+    assert summary["llm_cost_usd"] == 0.0
+    assert summary["waiting"] <= 3
+    assert summary["added"] == [] and summary["removed"] == []
+    document = read_json(notebook_file)
+    assert [lesson["id"] for lesson in document["lessons"]] == [
+        "l001", "l002", "l003", "l004", "l005",
+    ]
+    assert document["waiting"] == []
+    assert notebook_file.read_text(encoding="utf-8") == before
+    assert not (workspace / ".learn.json").exists()
+    assert validate(document, "notebook") == []
+
+    # the owner removes lessons down to the limit; the pass runs again
+    for lesson_id in ("l004", "l005"):
+        result = run_notebook("--notebook", str(notebook_file), "--remove", lesson_id, "--json")
+        assert result.returncode == 0
+    answer = {"lessons": [{"text": "new one", "kind": "lesson", "part": None}], "remove": []}
+    stub_learn_client(monkeypatch, answer, merge_answer={"merge": [], "remove": []})
+    summary = notebook.learn(str(workspace), str(notebook_file), 3)
+    assert summary["status"] == "written"
+    assert summary["count"] == 3
+
+
 def test_removing_a_lesson_writes_a_waiting_lesson(tmp_path):
     notebook_file = tmp_path / "notebook.json"
     write_notebook(
