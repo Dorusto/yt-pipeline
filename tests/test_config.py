@@ -518,3 +518,34 @@ def test_channel_style_description_order_duplicate_raises(tmp_path):
     with pytest.raises(config.ConfigError) as exc:
         config.load_config(write_config(tmp_path, data))
     assert "intro" in str(exc.value)
+
+
+def test_beats_engine_defaults_to_numpy(monkeypatch):
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    assert config.beats_engine(config={}) == "numpy"
+
+
+def test_beats_engine_reads_flag_env_and_config(monkeypatch):
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    assert config.beats_engine("beat_this", {"beats": {"engine": "numpy"}}) == "beat_this"
+    monkeypatch.setenv(config.BEATS_ENGINE_ENV, "beat_this")
+    assert config.beats_engine(None, {"beats": {"engine": "numpy"}}) == "beat_this"
+    assert config.beats_engine("numpy", {"beats": {"engine": "beat_this"}}) == "numpy"
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    assert config.beats_engine(None, {"beats": {"engine": "beat_this"}}) == "beat_this"
+
+
+def test_beats_engine_rejects_an_unknown_value(monkeypatch):
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.beats_engine("bogus", {})
+    monkeypatch.setenv(config.BEATS_ENGINE_ENV, "bogus")
+    with pytest.raises(config.ConfigError):
+        config.beats_engine(None, {})
+
+
+def test_beats_section_validated(tmp_path):
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("beats", {"engine": "bogus"})))
+    loaded = config.load_config(write_config(tmp_path, with_value("beats", {"engine": "beat_this"})))
+    assert loaded["beats"]["engine"] == "beat_this"

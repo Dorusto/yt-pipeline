@@ -3352,3 +3352,50 @@ owner's ledger on a friend's page is confusing.
 (its help and the docs say so); RULES, the user guide, the pilot-host guide and
 `config.yaml.example` are updated; no schema change and no new tool.
 
+---
+
+## [2026-10-25] Beat This! as an optional downbeat engine (V030 lot c17)
+
+**Context:** Issue #113 — the cuts land on the wrong beat of the bar: the bar
+phase is one beat off, and the owner noted the wrong beat is not always beat 2,
+so the bar start is guessed, not found. Lot c17 compared our downbeats with
+Beat This! (CPJKU, ISMIR 2024) on the three music tracks used in the projects and
+shipped it as an optional engine (`beats.py --engine beat_this`, default
+`numpy`). The review of `eb1d396` asked for this entry and for the engine to be
+config, not code (VISION principle 6).
+
+**Options:** (A) keep the engine as a code default and the `--engine` flag only;
+(B) make the engine a config value (`beats.engine`, `numpy` | `beat_this`, default
+`numpy`) with `--engine` and `YT_PIPELINE_BEATS_ENGINE` as overrides.
+
+**Decision:** B. The engine is a config value `beats.engine` (`numpy` |
+`beat_this`, default `numpy`); `--engine` overrides it and
+`YT_PIPELINE_BEATS_ENGINE` also sets it. `scripts/common/config.py` validates the
+`beats` section and exposes `beats_engine()`; `scripts/beats.py` resolves the
+engine through it and reports an unknown value as a usage error. `beat-this`
+stays out of `requirements.txt` (it is optional and CI does not need it), and the
+`beats.json` / `--json` shape is unchanged. The default stays `numpy` until the
+owner's tap test decides otherwise. The comparison: on the three tracks the beat
+grids agree (same tempo, matched beats within ~15–32 ms) but the bar phase differs
+by exactly one beat and the offset is constant (median +1.03 to +1.06 beats;
+98–100 % of downbeats within a quarter beat); Beat This! lands on the strongest
+kick phase (≤150 Hz) in all three tracks while our heuristic lands on a
+weak-kick phase; on a synthetic click track with a backbeat accent (beats 2 and 4
+loud) our heuristic picks beat 2 as the downbeat. Licence: the Beat This! code and
+its published weights are MIT; the upstream README warns that some *training*
+files are copyrighted or under limited CC licences — a caveat to record, not a
+blocker.
+
+**Why not A:** VISION principle 6 says model backends are config, not code; a
+code default would make the engine a code change instead of a setting, and the
+owner's tap test must be able to switch it without touching the code.
+
+**Consequence:** `scripts/common/config.py` gains `BEATS_ENGINE_ENV`,
+`BEATS_ENGINES`, `DEFAULT_BEATS_ENGINE`, the `beats` section validation and
+`beats_engine()`; `scripts/beats.py` resolves the engine from the config and
+`--engine` overrides it; `config.yaml.example` shows the key commented out;
+`docs/RULES.md` gains the engine rule; the `yt-beats` skill documents the config
+value and the install and weights lines actually run on the host. No change to
+the `beats.json` shape, no new summary key, no `beat-this` in `requirements.txt`
+and no new env var beyond `YT_PIPELINE_BEATS_ENGINE`.
+

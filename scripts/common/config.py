@@ -119,6 +119,14 @@ def _validate(data):
         if library is not None and (not isinstance(library, str) or not library):
             raise ConfigError("music.library must be a non-empty string")
 
+    beats = data.get("beats")
+    if beats is not None:
+        if not isinstance(beats, dict):
+            raise ConfigError("beats must be a mapping")
+        engine = beats.get("engine")
+        if engine is not None and engine not in BEATS_ENGINES:
+            raise ConfigError(f"beats.engine must be one of: {', '.join(BEATS_ENGINES)}")
+
     transcribe = data.get("transcribe")
     if transcribe is not None:
         if not isinstance(transcribe, dict):
@@ -294,6 +302,9 @@ def _validate(data):
 
 
 MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
+BEATS_ENGINE_ENV = "YT_PIPELINE_BEATS_ENGINE"
+BEATS_ENGINES = ("numpy", "beat_this")
+DEFAULT_BEATS_ENGINE = "numpy"
 INBOX_ENV = "YT_PIPELINE_INBOX"
 PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
@@ -717,4 +728,25 @@ def brand_logo(cli_value=None, config=None):
     if not value:
         return DEFAULT_BRAND_LOGO
     _check_brand_logo(value)
+    return value
+
+
+def beats_engine(cli_value=None, config=None):
+    """The beat/downbeat engine: CLI flag, else BEATS_ENGINE_ENV, else beats.engine, else numpy.
+
+    An unknown value is a ConfigError naming the valid engines. There is a
+    default, so this is not a three-ways error.
+    """
+    value = cli_value
+    if not value:
+        value = os.environ.get(BEATS_ENGINE_ENV)
+    if not value:
+        data = config if config is not None else load_config()
+        section = data.get("beats")
+        if isinstance(section, dict):
+            value = section.get("engine")
+    if not value:
+        value = DEFAULT_BEATS_ENGINE
+    if value not in BEATS_ENGINES:
+        raise ConfigError(f"beats.engine must be one of: {', '.join(BEATS_ENGINES)}")
     return value

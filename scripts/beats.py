@@ -14,9 +14,11 @@ beat tracking (Ellis 2007) for the beat grid, four-four downbeats and a per-0.5 
 RMS energy curve. With ``--target-duration-s`` the tool also returns a cut grid:
 edit-time boundaries snapped to the music's beats so an edit's cuts land on the
 music. The source is read only; ``--out`` is written atomically. No model service
-is called, so ``llm_cost_usd`` is always 0.0. With ``--engine beat_this`` the beat
-grid and the downbeats come from the optional Beat This! model instead of the
-numpy heuristic; the energy curve and the cut grid are unchanged.
+is called, so ``llm_cost_usd`` is always 0.0. The beat/downbeat engine comes from
+``beats.engine`` in the config (``numpy`` or ``beat_this``, default ``numpy``) and
+``--engine`` overrides it; with ``beat_this`` the beat grid and the downbeats come
+from the optional Beat This! model instead of the numpy heuristic, while the
+energy curve and the cut grid are unchanged.
 """
 
 import argparse
@@ -32,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
+from common.config import ConfigError, beats_engine
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path
@@ -137,8 +140,8 @@ def build_parser():
     parser.add_argument(
         "--engine",
         choices=("numpy", "beat_this"),
-        default="numpy",
-        help="beat and downbeat detection engine (default: numpy)",
+        default=None,
+        help="beat and downbeat detection engine; overrides beats.engine in the config (default: numpy)",
     )
     parser.add_argument("--force", action="store_true", help="rewrite --out when it exists")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -634,6 +637,7 @@ def run(
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
+        engine = beats_engine(args.engine)
         summary = run(
             args.music,
             out_path=args.out,
@@ -642,8 +646,10 @@ def main(argv=None):
             min_beat_s=args.min_beat_s,
             max_beat_s=args.max_beat_s,
             force=args.force,
-            engine=args.engine,
+            engine=engine,
         )
+    except ConfigError as exc:
+        return report_error(exc, EXIT_USAGE, args.json)
     except BeatsRuntimeError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except BeatsError as exc:

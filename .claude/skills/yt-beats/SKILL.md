@@ -1,7 +1,7 @@
 ---
 name: yt-beats
 description: Detect a music file's tempo (BPM), beat and downbeat times and per-0.5 s energy curve with a pure-numpy spectral-flux/autocorrelation tool, and plan a beat-aligned cut grid for an edit of a given length so cuts land on the music. Use when the user asks for the tempo or BPM of a track, its beats/downbeats, when an edit's cuts should land to hit the music, or a beat grid for a given edit duration. Trigger phrases - "cât e BPM-ul piesei", "detectează beat-urile", "unde pică tăieturile pe muzică", "beat grid pentru 90 de secunde", "tempo of this track", "find the beats", "cut on the beat", "beat-aligned cut grid". Not for measuring or cleaning ambient sound (that is `audio-clean`), not for choosing music or SFX (that is the render's audio mix) and not for building the edit list (that is `director`).
-compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with numpy and ffmpeg/ffprobe on the PATH; CPU only, no GPU and no network. Reads the music read-only, decodes it to mono 22.05 kHz PCM in a temp folder and writes only --out. It never calls a model service, so llm_cost_usd is 0.0. No new dependency: no librosa, only numpy + ffmpeg. The optional `--engine beat_this` needs the `beat-this` package (not in requirements.txt) and downloads its weights on first run.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with numpy and ffmpeg/ffprobe on the PATH; CPU only, no GPU and no network. Reads the music read-only, decodes it to mono 22.05 kHz PCM in a temp folder and writes only --out. It never calls a model service, so llm_cost_usd is 0.0. No new dependency: no librosa, only numpy + ffmpeg. The optional `beat_this` engine (set with `beats.engine` in the config, or `--engine`) needs the `beat-this` package (not in requirements.txt) and downloads its weights on first run.
 ---
 
 # yt-beats
@@ -29,7 +29,7 @@ yt beats /path/to/song.mp3 --out beats.json \
 - `--target-duration-s` is the length of the edit in seconds. It is the switch for the cut grid (no target, no grid).
 - `--slots N` is how many slots the grid should provide. Left out, it defaults to `clamp(round(target/6), 4, 24)` (so 90 s → 15). `--slots` without `--target-duration-s` is ignored with a warning.
 - `--min-beat-s` / `--max-beat-s` are the plausible beat period range (defaults `0.25` / `2.0`).
-- `--engine {numpy,beat_this}` picks the beat/downbeat detector (default `numpy`). `numpy` is the pure-numpy engine described below; `beat_this` uses the Beat This! model (CPJKU) for the beat grid and the downbeats. The energy curve and the cut grid are always computed from the decoded samples by the same code, and the `beats.json` shape is unchanged.
+- `--engine {numpy,beat_this}` overrides `beats.engine` in the config (default `numpy`). `numpy` is the pure-numpy engine described below; `beat_this` uses the Beat This! model (CPJKU) for the beat grid and the downbeats. The energy curve and the cut grid are always computed from the decoded samples by the same code, and the `beats.json` shape is unchanged.
 - `--json` prints the summary, `--force` rewrites `--out` when it exists. It never asks questions.
 
 ## The optional Beat This! engine
@@ -38,14 +38,14 @@ yt beats /path/to/song.mp3 --out beats.json \
 yt beats /path/to/song.mp3 --engine beat_this --json
 ```
 
-- `--engine beat_this` needs the optional `beat-this` package, which is **not** in `requirements.txt` (CI does not need it). Install it with:
+- `beat_this` needs the optional `beat-this` package, which is **not** in `requirements.txt` (CI does not need it). The install actually run on the host (see the upstream README, <https://github.com/CPJKU/beat_this>):
 
   ```bash
   pip install beat-this tqdm einops soxr rotary-embedding-torch
   ```
 
-  When the package is missing the tool exits `2` with an error naming that command.
-- The model `final0` (~78 MB) downloads on first run to `~/.cache/torch/hub/checkpoints/` (outside the repo, never committed); CPU inference is ~8–10 s per 3-minute track. A failure to load or run the model (for example the first-run download failing) exits `3`.
+  This installs `beat-this 1.1.0`. Two environment fixes were needed on the CPU host: a CPU `torchaudio` (`torchaudio==2.11.0+cpu` from the PyTorch CPU index) — a CUDA `torchaudio` fails to import on a CPU host — and `soundfile` for mp3 (`torchaudio.load` needs `torchcodec`; Beat This! falls back to `soundfile`). When the package is missing the tool exits `2` with an error naming that command.
+- The model `final0` (~78 MB) is downloaded on first run by torch hub to `~/.cache/torch/hub/checkpoints/` (outside the repo, never committed); CPU inference is ~8–10 s per 3-minute track. A failure to load or run the model (for example the first-run download failing) exits `3`. See the upstream README, <https://github.com/CPJKU/beat_this>.
 - The model object is cached at module level, so a second call in the same process does not reload it.
 - **Licence:** the `beat-this` code and its published weights are MIT. The upstream README warns that some *training* files are copyrighted or under limited CC licences, so it is the user's responsibility to assess their use case. See `docs/licences.md`.
 

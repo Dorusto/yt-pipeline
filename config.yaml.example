@@ -87,6 +87,13 @@ llm_backend: openrouter
 # music:
 #   library: <music-library>
 
+# Beat/downbeat engine for scripts/beats.py: numpy (pure numpy, the default) or
+# beat_this (the optional Beat This! model; needs the beat-this package, see the
+# yt-beats skill). Set it here, in the YT_PIPELINE_BEATS_ENGINE environment
+# variable, or pass --engine. The default is numpy.
+# beats:
+#   engine: numpy
+
 # Whisper model for scripts/transcribe.py and the publish chain's --media step.
 # There is a default: turbo with a CUDA GPU, else medium on CPU for a
 # non-English language (including auto or no language), small only for an
