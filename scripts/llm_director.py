@@ -2766,7 +2766,7 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
     }
 
 
-def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False):
+def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, shortlist=0):
     try:
         data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db, speed_ramp)
         data.setdefault("meta", {})["director"] = director_info("rules", approved, warnings)
@@ -2774,14 +2774,14 @@ def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings,
         atomic_write_json(out_path, data)
     except LLMDirectorError as exc:
         warnings.append(str(exc))
-        return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates), 1
+        return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates, shortlist=shortlist), 1
     slots = data.get("video") or []
     total = sum(slot_duration(slot) for slot in slots)
-    return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
+    return base_summary("fallback", out_path, plan_path, rounds_used, approved, "rules", len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap, shortlist=shortlist), 0
 
 
-def stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, code, candidates=0):
-    return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates), code
+def stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, code, candidates=0, shortlist=0):
+    return base_summary("error", out_path, plan_path, rounds_used, approved, None, 0, 0.0, len(violations), warnings, started, state.cost_usd, candidates, shortlist=shortlist), code
 
 
 def run(
@@ -2927,8 +2927,8 @@ def _run_loop(
     if not facts:
         warnings.append("no eligible shots in the shotlog; using the rule-based director")
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp, shortlist=len(shortlist))
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE, shortlist=len(shortlist))
     candidates = len(shotlog_rows)
 
     if client is None:
@@ -2991,13 +2991,13 @@ def _run_loop(
     except BudgetExceeded as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+        return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
     if approved:
         for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, []):
@@ -3015,8 +3015,8 @@ def _run_loop(
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
-                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap, shortlist=len(shortlist)), 0
@@ -3050,8 +3050,8 @@ def _run_loop(
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
-                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+            return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
         return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap, shortlist=len(shortlist)), 0
@@ -3062,8 +3062,8 @@ def _run_loop(
         if note not in warnings:
             warnings.append(note)
     if fallback_rules:
-        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp)
-    return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
+        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+    return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
 
 def _resolve_workspace_brief(workspace, brief, brief_file):
@@ -3219,7 +3219,7 @@ def _agent_inputs_text(
             ]
         )
     )
-    parts.append("## The eligible shots\n\n```json\n" + json.dumps(context["shortlist"], indent=2) + "\n```")
+    parts.append("## The shortlisted shots\n\n```json\n" + json.dumps(context["shortlist"], indent=2) + "\n```")
     parts.append("## The shot facts\n\n```json\n" + json.dumps(context["facts"], indent=2) + "\n```")
     apply_flags = []
     if beat_grid is not None:

@@ -1146,6 +1146,34 @@ def test_photo_described_with_pseudo_segment(tmp_path):
     assert validate(data, "describe") == []
 
 
+def test_max_calls_marks_photo_with_max_calls(tmp_path):
+    photos = [write_photo(tmp_path / f"photo_{index:02d}.jpg") for index in range(1, 4)]
+    write_ingest(tmp_path, [photo_record(photo) for photo in photos])
+    model = MockVisionModel()
+    summary, code = describe.run(
+        tmp_path,
+        model=model,
+        model_id="mock/vision",
+        config=CONFIG,
+        max_calls=1,
+        workers=4,
+        photos_only=True,
+    )
+    assert code == EXIT_RUNTIME
+    described = 0
+    skipped = 0
+    for path in (tmp_path / "describe").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for seg in data["segments"]:
+            if seg["status"] == "described":
+                described += 1
+            else:
+                assert seg["skip_reason"] == "max_calls"
+                skipped += 1
+    assert described == 1
+    assert skipped >= 1
+
+
 def test_photo_subject_position_falls_back_to_center(tmp_path):
     photo = write_photo(tmp_path / "photo_01.jpg")
     write_ingest(tmp_path, [photo_record(photo)])

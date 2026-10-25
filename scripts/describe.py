@@ -742,6 +742,7 @@ def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
             model=model_id,
         )
         answer = None
+        skip_reason = None
         try:
             response = _call_model(model, request, state)
             cost_usd += response.cost_usd
@@ -752,11 +753,16 @@ def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
                 answer = retry_answer
         except MaxCallsReached:
             state.stop("max_calls")
+            skip_reason = "max_calls"
         except BudgetExceeded:
             state.stop("budget_exceeded")
+            skip_reason = "budget_exceeded"
         if answer is None:
-            warnings.append(f"{photo['file']} p1: unparseable model output")
-            segment = _skipped_photo_segment("unparseable model output", cost_usd)
+            if skip_reason is not None:
+                segment = _skipped_photo_segment(skip_reason, cost_usd)
+            else:
+                warnings.append(f"{photo['file']} p1: unparseable model output")
+                segment = _skipped_photo_segment("unparseable model output", cost_usd)
         else:
             segment = _photo_segment(normalize_photo_answer(answer), cost_usd)
             segment["sharpness"] = photo_sharpness(photo["path"], warnings, photo["file"])

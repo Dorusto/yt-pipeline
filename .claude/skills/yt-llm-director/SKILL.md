@@ -33,7 +33,7 @@ yt llm_director --workspace /path/to/workspace --brief "..." --rounds 2 --out my
 
 ## Step 2: agent mode (prepare and apply)
 
-A host coding agent can direct the edit without an OpenRouter key. `--prepare` writes `<workspace>/director/inputs.md` — the brief, the brief settings, the editing rules, the eligible shots and their shot facts, plus the two output shapes — and makes no model call. The agent writes `<workspace>/shot_plan.json` (schema `schemas/shot_plan.schema.json`) and `<workspace>/edit.json` (the editor answer shape `{"slots": [...], "notes": [...]}`), then `--apply` validates both against the schemas and the editing grammar, repairs mechanical faults with the same machinery the loop uses and writes the final `edit.json` with `meta.director.by = "agent"`.
+A host coding agent can direct the edit without an OpenRouter key. `--prepare` writes `<workspace>/director/inputs.md` — the brief, the brief settings, the editing rules, the shortlisted shots and their shot facts, plus the two output shapes — and makes no model call. The agent writes `<workspace>/shot_plan.json` (schema `schemas/shot_plan.schema.json`) and `<workspace>/edit.json` (the editor answer shape `{"slots": [...], "notes": [...]}`), then `--apply` validates both against the schemas and the editing grammar, repairs mechanical faults with the same machinery the loop uses and writes the final `edit.json` with `meta.director.by = "agent"`.
 
 ```bash
 yt llm_director --workspace /path/to/workspace --brief "..." --prepare --json

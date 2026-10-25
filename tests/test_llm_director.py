@@ -781,7 +781,7 @@ def test_validator_catches_rule_break(tmp_path):
     assert "outside the shot window" in reviewer_calls[0]["messages"][1]["content"]
 
 
-def test_screenwriter_menu_is_cuttable_pool(tmp_path):
+def test_ineligible_segment_not_in_screenwriter_menu(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     quality_path = workspace / "quality" / "clip_0056_x.json"
     quality = json.loads(quality_path.read_text(encoding="utf-8"))
@@ -901,6 +901,25 @@ def test_budget_exceeded_no_fallback_exits_3(tmp_path):
     assert code == EXIT_RUNTIME
     assert summary["status"] == "error"
     assert not (workspace / "edit.json").exists()
+
+
+def test_fallback_summary_reports_shortlist(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["status"] == "fallback"
+    assert summary["shortlist"] > 0
+    assert summary["shortlist"] <= summary["candidates"]
+
+
+def test_stop_summary_reports_shortlist(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
+    assert code == EXIT_RUNTIME
+    assert summary["status"] == "error"
+    assert summary["shortlist"] > 0
 
 
 def test_unparseable_answers_retried_then_fallback(tmp_path):

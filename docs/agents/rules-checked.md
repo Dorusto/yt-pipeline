@@ -24,7 +24,7 @@ for the rules that depend on review alone (no program can check them).
 | Editing grammar — pacing table | `tests/test_pacing.py` |
 | Editing grammar — time-overlapping shots keep the higher score | `tests/test_overlap.py` |
 | Editing grammar — long segments split into content beats | `tests/test_describe.py` |
-| Editing grammar — screenwriter's menu is the cuttable pool | `tests/test_llm_director.py` |
+| Editing grammar — the screenwriter's menu is a shortlist of the cuttable pool | `tests/test_llm_director.py` |
 | Editing grammar — edit.json is the only source of truth | `tests/test_schema.py` |
 | Editing grammar — Mode B paired slots | `tests/test_export_filmcraft.py` |
 | Editing grammar — Mode B cut rules | `tests/test_rough_cut.py` |

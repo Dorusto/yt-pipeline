@@ -374,7 +374,7 @@ edit on its own subscription, with no OpenRouter key:
 
 1. `yt llm_director --workspace <ws> --brief "..." --prepare` writes
    `<ws>/director/inputs.md` — the brief, the settings, the editing techniques,
-   the eligible shots and the shapes to write.
+   the shortlisted shots and the shapes to write.
 2. The agent reads it and writes `<ws>/shot_plan.json` and `<ws>/edit.json` (the
    editor answer shape).
 3. `yt llm_director --workspace <ws> --brief "..." --apply` validates both,
