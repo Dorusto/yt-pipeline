@@ -153,7 +153,7 @@ and no new env var beyond `YT_PIPELINE_BEATS_ENGINE`.
 
 **Options:** (A) one MCP server for the whole repository, exposing every tool; (B) one small MCP server per plugin, declared in the plugin's marketplace entry, exposing only that plugin's tools.
 
-**Decision:** B. `scripts/yt_mcp.py` is a stdio MCP server (official `mcp` Python SDK v2 (`MCPServer` and `@server.tool()` — https://py.sdk.modelcontextprotocol.io/servers/tools/; the `Image` return — https://py.sdk.modelcontextprotocol.io/servers/media/)) with four typed tools: `yt_list` (the plugin's tools, one line each), `yt_describe` (a tool's `--help` text and whether it supports `--json`), `yt_run` (runs `yt <tool> <args> --json` and returns the parsed object or a structured error) and `yt_preview` (a workspace poster or a video frame as an image). It is started with the plugin's own `--plugin` value and there is no flag that exposes every tool. The plugin → tools grouping is read from the marketplace and the skills by `scripts/common/plugins.py` (one source, never a hand-written list), so a new tool appears without a code change. Each of the five marketplace entries gains an inline `mcpServers` map whose server runs `${CLAUDE_PLUGIN_ROOT}/bin/yt yt_mcp --plugin <entry name>`; there is no root `plugin.json`, so the entry is the manifest and the inline map applies. The server runs under the plugin venv because `bin/yt` → `scripts/yt.py` resolves it from `CLAUDE_PLUGIN_DATA`. The root/interpreter resolution moved out of `scripts/yt.py` into `scripts/common/entry.py` (`EntryError`, `resolve_repo_root`, `resolve_python`) so `yt_mcp.py` shares it. `yt_mcp.py` → `yt.py` joins the tool-to-tool named set. `mcp` is added to `requirements.txt` and the CI pip line.
+**Decision:** B. `scripts/yt_mcp.py` is a stdio MCP server (official `mcp` Python SDK v2 (`MCPServer` and `@server.tool()` — https://py.sdk.modelcontextprotocol.io/servers/tools/; the `Image` return — https://py.sdk.modelcontextprotocol.io/servers/media/)) with four typed tools: `yt_list` (the plugin's tools, one line each), `yt_describe` (a tool's `--help` text and whether it supports `--json`), `yt_run` (runs `yt <tool> <args> --json` and returns the parsed object or a structured error) and `yt_preview` (a workspace poster or a video frame as an image). It is started with the plugin's own `--plugin` value and there is no flag that exposes every tool. The plugin → tools grouping is read from the marketplace and the skills by `scripts/common/plugins.py` (one source, never a hand-written list), so a new tool appears without a code change. Each of the five marketplace entries gains an inline `mcpServers` map whose server runs `${CLAUDE_PLUGIN_ROOT}/bin/yt yt_mcp --plugin <entry name>`; there is no root `plugin.json`, so the entry is the manifest and the inline map applies (https://code.claude.com/docs/en/plugins/create-marketplace). The server runs under the plugin venv because `bin/yt` → `scripts/yt.py` resolves it from `CLAUDE_PLUGIN_DATA`. The root/interpreter resolution moved out of `scripts/yt.py` into `scripts/common/entry.py` (`EntryError`, `resolve_repo_root`, `resolve_python`) so `yt_mcp.py` shares it. `yt_mcp.py` → `yt.py` joins the tool-to-tool named set. `mcp` is added to `requirements.txt` and the CI pip line.
 
 **Why not A:** one server for every tool would give each plugin every other plugin's tools, so installing `yt-shorts` alone would still expose the director and publish tools; the plugin boundary is the point of the marketplace, and the per-plugin server keeps the surface small.
 
@@ -304,7 +304,7 @@ the agent's plan and answer back, with no OpenRouter call.
 
 **Decision:** `llm_director.py --prepare --workspace W` writes
 `<workspace>/director/inputs.md` (the brief, the brief settings, the editing
-techniques, the eligible shots and their shot facts, the beat grid and music
+techniques, the shortlisted shots and their shot facts, the beat grid and music
 facts when given, and the two output shapes) and makes no model call; the host
 agent writes `shot_plan.json` and `edit.json` (the editor answer shape);
 `llm_director.py --apply --workspace W` validates both against the schemas and
@@ -401,6 +401,32 @@ tool, schema or route changes.
 
 ---
 
+## [2026-10-24] Delete one version from the web app (V020N lot n29)
+
+**Context:** issue #109 — a project can be deleted from the web app, but a
+single version cannot, so old versions fill the disk of an instance.
+
+**Options:** (A) delete the version folder from the command line only; (B) a
+"Delete this version" action on the Recap tab, with an inline confirmation.
+
+**Decision:** B. `serve.py` gains `POST /<project>/delete-version` (urlencoded
+`version`, e.g. `v002`): it removes that version's folder under `versions/` and
+redirects to the latest version. The latest version, the first version (v001,
+the director's original) and a version while a run is going are refused; a name
+that is not `vNNN` (a crafted `../`) is a usage error, and the resolved target
+must sit directly under the project's `versions/` folder. The action shows only
+for a version that is neither the latest nor the first.
+
+**Why not A:** the owner asked for it in the phone flow; the version list and
+the disk are managed from the web app, and the confirmation matches the shot
+buttons.
+
+**Consequence:** RULES gains the route and the versions rule; the user guide
+and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
+the commit carries `Stable-change: approved`.
+
+---
+
 ## [2026-10-24] Cuts land on the strong beat; the wait message (V020N lot n28)
 
 **Context:** Issue #95, measured on a real holiday edit: the cuts sat 0.03-0.04 s after the strongest hit and only 5 of 14 landed on a downbeat. The onset envelope's flux peak is late by the STFT window-centre latency, so the whole grid was systematically late, and the director only preferred a downbeat when the plan's structure beat changed. Issue #93: the text after Yes on the Watch tab read "Shot N is getting X s longer/shorter, new version in about 15 s...".
@@ -408,6 +434,34 @@ tool, schema or route changes.
 **Decision:** `beats.py` gains `ONSET_LATENCY_S = (STFT_WINDOW / 2 - STFT_HOP / 2) / ANALYSIS_RATE` (≈ `0.0174 s`); `track_beats` and `pick_onsets` subtract it from their times (clamped at `0`), so the reported beat time is the start of the hit and the grid is not late. The `beats.json` shape, the CLI, the exit codes and the `--json` keys are unchanged. `llm_director.snap_slots` drops the `downbeat_at` parameter: every cut tries the nearest downbeat, then a half-bar beat (`downbeat + 2 * beat_period_s`, so the bar count stays even), then the nearest beat, and the first candidate whose snap fits the slot's allowed length range wins; the slot records the grid it used in `beat_grid` (`downbeat`/`half_bar`/`beat`, or `null` when unsnapped) and the `beat_snap` summary gains `downbeats` and `half_bar` counts. The downbeat-over-cap fallback stays. The after-Yes text becomes "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
 
 **Consequence:** Files touched: `scripts/beats.py`, `tests/test_beats.py`, `scripts/llm_director.py`, `schemas/edit.schema.json`, `tests/test_llm_director.py`, `scripts/serve.py`, `tests/test_serve.py`, `docs/guides/tools.md`, `.claude/skills/yt-beats/SKILL.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-render/SKILL.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. No new dependency, no new CLI flag, no change to the `beats.json` shape or the `beats.py` `--json` keys; `scripts/director.py` (the rule-based fallback) is unchanged and never passes downbeats.
+
+---
+
+## [2026-10-24] A simpler Watch tab, generic example wording (V020N lot n26)
+
+**Context:** issue #93 follow-up. The owner found the Watch (Recap) tab busier than it needs to be: the tab bar carried a **Details** group with **Why?** and **Shots** links, and the strip under the player showed a clip/photo colour legend. The owner also wanted `config.yaml.example` to stop carrying his own channel wording.
+
+**Options:** (A) keep the links and the legend and only hide them behind a feature flag; (B) drop the Why?/Shots links from the tab bar and the colour legend, keep the pages reachable by URL, and replace the owner's wording in the example with neutral placeholders.
+
+**Decision:** B. `serve._render_tabs` no longer builds the Details group, so the tab bar shows only Recap, Files, Cuts and Shorts; `render_strip` drops the `strip-legend` clip/photo spans and keeps the summary line in a `strip-summary` container. The `why`/`shots` feature parts, the `?tab=why` / `?tab=shots` routes and the `explain.html` / `shotlog.html` serving are unchanged, so the pages stay reachable by URL for the developer. `config.yaml.example` carries neutral `channel.fixed` placeholders (the real wording lives only in the owner's `config.yaml`).
+
+**Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
+
+**Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.
+
+---
+
+## [2026-10-24] Chronological order survives the director's repairs, the reviewer box leaves the project page (V020N lot n25)
+
+**Context:** Issue #95/#93 follow-up. On a real holiday test with the brief "about 60 seconds, chronological" the final edit was not in time order (0003, 0072, 0081, 0072, ...): the top-star repair in `llm_director.py` puts the swapped-in star in the slot of the shot it replaces, so a late shot lands early. Separately, the owner decided the project page no longer shows the director reviewer box.
+
+**Options:** (A) make the repair pick a victim near the star in time; (B) let the repair swap in place and re-sort the edit (and its plan) by capture/source time afterwards, before the beat snap.
+
+**Decision:** B. `llm_director.enforce_chronological_order` re-sorts the record and the plan by `edit_order_key` when the brief's order is chronological; it runs at the end of `repair_draft` and at the start of `finish_record` (before the beat snap, so the snapped lengths stay valid), and a same-take jump cut it creates is dropped again. The project page (`serve.py`) no longer renders the reviewer box; the verdict stays in `edit.json meta.director.review` and issue #96 (v0.3.0) brings it back in plain words.
+
+**Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
+
+**Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.
 
 ---
 
@@ -428,6 +482,33 @@ tool, schema or route changes.
 **Decision:** The render rounds the cut positions on the timeline (the cumulative time to the nearest frame; each clip's frame count is the difference of the rounded cut positions), for the landscape and the vertical render, so a cut stays on the planned beat. The shot question reads "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?". The n19 entry stays as history; this entry records that the wording changed.
 
 **Consequence:** `docs/RULES.md` and the `yt-render` skill say cut positions are rounded on the timeline, so a slot whose length is not a whole number of frames may move by less than one frame; the render test checks the rendered cut positions never drift more than half a frame from the plan.
+
+---
+
+## [2026-10-24] One model for every agent, reasoning level per agent (V020N lot n21)
+
+**Context:** the build agents ran on three OpenRouter models (`xiaomi/mimo-v2.6-pro`
+for the architect, `deepseek/deepseek-v4.1-flash` for the coder, `z-ai/glm-5.3-flash`
+as a fallback), so a lot's quality depended on which model happened to be picked
+and the fallback was easy to leave behind.
+
+**Options:** (A) keep the per-agent models and only document them; (B) one model
+for every agent, with the reasoning level set per agent.
+
+**Decision:** B. Every agent runs on `openrouter/deepseek/deepseek-v4.1-flash`;
+`xiaomi/mimo-v2.6-pro` and `z-ai/glm-5.3-flash` are dropped from `opencode.json`.
+The reasoning level is a `reasoning:` block in the agent file (`effort: high` for
+architect, coder and specwriter; `effort: xhigh` for the new `coder-max`), which
+opencode passes to OpenRouter. The architect hands a brief to `coder-max` only
+when the lot says "hard"; every other lot goes to `coder`.
+
+**Why not A:** the owner decided one model; a per-agent model split makes the
+output depend on the agent rather than the task, and the GLM fallback was never
+used.
+
+**Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
+four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
+level of each agent and when `coder-max` is used.
 
 ---
 
@@ -3372,76 +3453,3 @@ README short and its links resolving.
 **Context:** issue #95 — in the first holiday-flow pilot most cuts missed the beat; the director notes carried `cut k: not snapped to a beat (nearest X s away)` for 4 of the cuts. Reproduced on the first holiday pilot: the cuts that start a new `shot_plan` structure beat snap to the nearest **downbeat**, and the downbeat grid is sparse (every 4 beats ≈ 2.1 s), so the nearest downbeat is often farther than the half-beat snap window and the cut is left unsnapped even though a beat is ~0.2 s away.
 
 **Decision:** in `llm_director.snap_slots` a structure-beat cut prefers the nearest downbeat only when it lies inside the small window (`BEAT_SNAP_FRACTION × beat_period_s`); otherwise it lands on the nearest beat of the dense grid. Every cut is then on a beat. The rule-based `director.py` never passes downbeats, so it is unchanged. Measured on the first holiday pilot: 9/9 cuts snapped (was 7/9).
-
-## [2026-10-24] One model for every agent, reasoning level per agent (V020N lot n21)
-
-**Context:** the build agents ran on three OpenRouter models (`xiaomi/mimo-v2.6-pro`
-for the architect, `deepseek/deepseek-v4.1-flash` for the coder, `z-ai/glm-5.3-flash`
-as a fallback), so a lot's quality depended on which model happened to be picked
-and the fallback was easy to leave behind.
-
-**Options:** (A) keep the per-agent models and only document them; (B) one model
-for every agent, with the reasoning level set per agent.
-
-**Decision:** B. Every agent runs on `openrouter/deepseek/deepseek-v4.1-flash`;
-`xiaomi/mimo-v2.6-pro` and `z-ai/glm-5.3-flash` are dropped from `opencode.json`.
-The reasoning level is a `reasoning:` block in the agent file (`effort: high` for
-architect, coder and specwriter; `effort: xhigh` for the new `coder-max`), which
-opencode passes to OpenRouter. The architect hands a brief to `coder-max` only
-when the lot says "hard"; every other lot goes to `coder`.
-
-**Why not A:** the owner decided one model; a per-agent model split makes the
-output depend on the agent rather than the task, and the GLM fallback was never
-used.
-
-**Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
-four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
-level of each agent and when `coder-max` is used.
-
-## [2026-10-24] Chronological order survives the director's repairs, the reviewer box leaves the project page (V020N lot n25)
-
-**Context:** Issue #95/#93 follow-up. On a real holiday test with the brief "about 60 seconds, chronological" the final edit was not in time order (0003, 0072, 0081, 0072, ...): the top-star repair in `llm_director.py` puts the swapped-in star in the slot of the shot it replaces, so a late shot lands early. Separately, the owner decided the project page no longer shows the director reviewer box.
-
-**Options:** (A) make the repair pick a victim near the star in time; (B) let the repair swap in place and re-sort the edit (and its plan) by capture/source time afterwards, before the beat snap.
-
-**Decision:** B. `llm_director.enforce_chronological_order` re-sorts the record and the plan by `edit_order_key` when the brief's order is chronological; it runs at the end of `repair_draft` and at the start of `finish_record` (before the beat snap, so the snapped lengths stay valid), and a same-take jump cut it creates is dropped again. The project page (`serve.py`) no longer renders the reviewer box; the verdict stays in `edit.json meta.director.review` and issue #96 (v0.3.0) brings it back in plain words.
-
-**Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
-
-**Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.
-
-## [2026-10-24] A simpler Watch tab, generic example wording (V020N lot n26)
-
-**Context:** issue #93 follow-up. The owner found the Watch (Recap) tab busier than it needs to be: the tab bar carried a **Details** group with **Why?** and **Shots** links, and the strip under the player showed a clip/photo colour legend. The owner also wanted `config.yaml.example` to stop carrying his own channel wording.
-
-**Options:** (A) keep the links and the legend and only hide them behind a feature flag; (B) drop the Why?/Shots links from the tab bar and the colour legend, keep the pages reachable by URL, and replace the owner's wording in the example with neutral placeholders.
-
-**Decision:** B. `serve._render_tabs` no longer builds the Details group, so the tab bar shows only Recap, Files, Cuts and Shorts; `render_strip` drops the `strip-legend` clip/photo spans and keeps the summary line in a `strip-summary` container. The `why`/`shots` feature parts, the `?tab=why` / `?tab=shots` routes and the `explain.html` / `shotlog.html` serving are unchanged, so the pages stay reachable by URL for the developer. `config.yaml.example` carries neutral `channel.fixed` placeholders (the real wording lives only in the owner's `config.yaml`).
-
-**Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
-
-**Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.
-
-## [2026-10-24] Delete one version from the web app (V020N lot n29)
-
-**Context:** issue #109 — a project can be deleted from the web app, but a
-single version cannot, so old versions fill the disk of an instance.
-
-**Options:** (A) delete the version folder from the command line only; (B) a
-"Delete this version" action on the Recap tab, with an inline confirmation.
-
-**Decision:** B. `serve.py` gains `POST /<project>/delete-version` (urlencoded
-`version`, e.g. `v002`): it removes that version's folder under `versions/` and
-redirects to the latest version. The latest version, the first version (v001,
-the director's original) and a version while a run is going are refused; a name
-that is not `vNNN` (a crafted `../`) is a usage error, and the resolved target
-must sit directly under the project's `versions/` folder. The action shows only
-for a version that is neither the latest nor the first.
-
-**Why not A:** the owner asked for it in the phone flow; the version list and
-the disk are managed from the web app, and the confirmation matches the shot
-buttons.
-
-**Consequence:** RULES gains the route and the versions rule; the user guide
-and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
-the commit carries `Stable-change: approved`.

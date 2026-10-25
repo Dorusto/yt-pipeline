@@ -92,6 +92,8 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — channel.style mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_recap_meta.py` |
 | Safety rules — learning notebook and the learn pass | `tests/test_notebook.py` |
 | Safety rules — --skip-alignment only when the JSON is correct | review |
+| Safety rules — `yt` is the named dispatcher for every tool | `tests/test_yt_entry.py` |
+| Safety rules — director agent mode | `tests/test_llm_director_agent.py` |
 | Safety rules — recap.py is the single entry point | `tests/test_recap.py` |
 | Safety rules — recap skip rule | `tests/test_recap.py` |
 | Safety rules — proxies keep the source filename | `tests/test_proxy.py` |
@@ -109,6 +111,7 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — shotlog grouping is index.py's | `tests/test_index.py` |
 | Safety rules — colour.py session colour recipe | `tests/test_colour.py` |
 | Safety rules — director selection and stars | `tests/test_director.py` |
+| Safety rules — chronological order survives the director's repairs | `tests/test_llm_director.py` |
 | Safety rules — top heroes kept by the model | `tests/test_llm_director.py` |
 | Safety rules — edit expectations are tests | `tests/test_eval_edit.py` |
 | Safety rules — versions | `tests/test_versions.py` |

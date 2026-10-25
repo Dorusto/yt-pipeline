@@ -27,6 +27,9 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 .venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
+Every tool is also reachable as `yt <tool> ...` from any folder — see
+[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md).
+
 Install per OS — `ffmpeg` + `ffprobe` first: `sudo apt install ffmpeg` (Linux),
 `brew install ffmpeg` (macOS), `winget install ffmpeg` (Windows, then reopen the
 shell). Python 3.11+ and `uv` everywhere (`pip install uv`). On Windows run the
