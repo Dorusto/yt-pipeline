@@ -5,8 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 BASELINE = {
     "AMBIENT_PHRASES", "BACKENDS", "BATCH_CHARS", "BEAT_SNAP_FRACTION",
-    "BRIEF_KEYWORDS", "CAMERA_PREFIX", "CLIP_COUNTER", "CONTENT_TYPES",
-    "CONTIGUOUS_TOLERANCE_S", "DEFAULT_HEIGHT",
+    "BRIEF_KEYWORDS", "CAMERA_PREFIX", "CLIP_COUNTER",
+    "DEFAULT_HEIGHT",
     "DEFAULT_IMPORTANT_MAX_S", "DEFAULT_TRACK", "DEFAULT_WIDTH",
     "DURATION_RE", "FPS", "FRAME_COUNT",
     "IMPORTANT_MOTION_LABELS", "IMPORTANT_SEMANTIC_MOTIONS",
@@ -28,7 +28,7 @@ BASELINE = {
     "load_ingest_photos", "load_json", "load_shotlog", "nearest_beat",
     "normalize_timestamp", "order_clips", "pacing_table", "parse_duration",
     "parse_time", "screen_length", "segment_key", "segment_subranges",
-    "shots_similar", "slot_duration", "snap_warning", "source_contiguous",
+    "shots_similar", "slot_duration", "snap_warning",
     "source_delta", "spent_usd", "timestamp_seconds", "write_json",
 }
 

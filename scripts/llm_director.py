@@ -38,7 +38,8 @@ from common.feedback import append_feedback, read_feedback
 from common.intent import is_whip_short_hold
 from common.notebook import notebook_block
 from common.pacing import estimate_all_good
-from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
+from common.peak import centre_window, choose_peak, is_centred
+from common.embed import EmbedError
 from common.llm import BudgetExceeded, LLMError, make_client, reasoning_extra_body
 from common import runlog
 from common.constants import MIN_SHOT_LENGTH_S, SNAP_MIN_SLOT_S
@@ -60,7 +61,7 @@ from common.neighbours import drop_pointless_neighbours, owner_asked_keys, same_
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 from common.window_similarity import WindowEmbedder
-from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.exit_codes import EXIT_OK, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
 TOOL = "scripts/llm_director.py"
@@ -91,13 +92,11 @@ CENTRE_TOLERANCE_S = 0.3
 SKIP_ROLES = {"accidental", "setup", "teardown"}
 MOVE_ROLES = {"move", "transition_in", "transition_out"}
 LANDING_GAP_S = 0.75
-CONTIGUOUS_TOLERANCE_S = 0.5
 IMPORTANT_SEMANTIC_MOTIONS = {"orbit", "reveal", "tracking", "pov", "travel"}
 IMPORTANT_MOTION_LABELS = {"orbit", "orbit_candidate", "reveal", "tracking", "pov"}
 NON_MOVE_MOTION_LABELS = {"static", "minor_motion"}
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
-CONTENT_TYPES = ("vacation", "tutorial", "presentation", "talking-head")
 TRAVEL_LABELS = {"travel_forward", "travel_backward", "orbit", "orbit_candidate"}
 
 DIRECTOR_PROGRESS_RE = re.compile(r"^\[\s*\d+/\s*\d+\]\s+llm_director\s+\S+\s+(\d+(?:\.\d+)?)s\b")
@@ -1323,15 +1322,6 @@ def violation(slot_id, rule, message):
     return {"slot": slot_id, "rule": rule, "message": message}
 
 
-def source_contiguous(first, second):
-    if first["clip"] != second["clip"]:
-        return False
-    return (
-        abs(first["out_s"] - second["in_s"]) <= CONTIGUOUS_TOLERANCE_S
-        or abs(second["out_s"] - first["in_s"]) <= CONTIGUOUS_TOLERANCE_S
-    )
-
-
 def shots_similar(first_key, first_links, second_key, second_links):
     if first_key is None or second_key is None:
         return False
@@ -1352,7 +1342,15 @@ def make_window_similar(embedder):
             and second_slot.get("in_s") is not None
             and second_slot.get("out_s") is not None
         ):
-            return embedder.similar(first_slot, second_slot)
+            try:
+                return embedder.similar(first_slot, second_slot)
+            except EmbedError:
+                return shots_similar(
+                    first_fact.get("shot_key"),
+                    first_fact.get("similar_to"),
+                    second_fact.get("shot_key"),
+                    second_fact.get("similar_to"),
+                )
         return shots_similar(
             first_fact.get("shot_key"),
             first_fact.get("similar_to"),
@@ -1440,11 +1438,6 @@ def star_groups(stars):
             order.append(group)
         groups[group].append(key)
     return [groups[group] for group in order]
-
-
-def collapse_star_groups(stars):
-    """``stars`` best-first: drop every star in the same group as a better one."""
-    return [group[0] for group in star_groups(stars)]
 
 
 def sorted_stars(facts_by_key):
@@ -1582,41 +1575,29 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
                 )
             )
         duration = slot_duration(slot)
-        if keeps_whole(fact):
-            expected_in, expected_out = expected_cut(fact, important_max_s)
-            if abs(in_s - expected_in) > CENTRE_TOLERANCE_S or abs(out_s - expected_out) > CENTRE_TOLERANCE_S:
+        if is_trimmed_cut(in_s, out_s, fact):
+            expected_in, _ = expected_cut(fact, out_s - in_s)
+            if abs(in_s - expected_in) > CENTRE_TOLERANCE_S:
                 violations.append(
                     violation(
                         slot["id"],
-                        "keep_whole",
-                        f"hero or semantic shot must keep its window up to {important_max_s:.1f}s, centred on "
-                        f"the best moment at {fact_peak(fact):.2f}s: expected {expected_in:.2f}-{expected_out:.2f}",
+                        "peak",
+                        f"{in_s:.2f}-{out_s:.2f} is not centred on the best moment at "
+                        f"{fact_peak(fact):.2f}s: expected it to start at {expected_in:.2f}",
                     )
                 )
-        else:
-            if is_trimmed_cut(in_s, out_s, fact):
-                expected_in, _ = expected_cut(fact, out_s - in_s)
-                if abs(in_s - expected_in) > CENTRE_TOLERANCE_S:
-                    violations.append(
-                        violation(
-                            slot["id"],
-                            "peak",
-                            f"{in_s:.2f}-{out_s:.2f} is not centred on the best moment at "
-                            f"{fact_peak(fact):.2f}s: expected it to start at {expected_in:.2f}",
-                        )
+        is_move = fact.get("role") in MOVE_ROLES and fact.get("motion_label") not in NON_MOVE_MOTION_LABELS
+        if duration < slot_min_s - TOLERANCE_S or duration > slot_max_s + TOLERANCE_S:
+            if is_move and slot_max_s < duration <= max(important_max_s, slot_max_s) + TOLERANCE_S:
+                long_moves.append(slot["id"])
+            else:
+                violations.append(
+                    violation(
+                        slot["id"],
+                        "length",
+                        f"{duration:.2f}s is outside {slot_min_s:.1f}-{slot_max_s:.1f}s",
                     )
-            is_move = fact.get("role") in MOVE_ROLES and fact.get("motion_label") not in NON_MOVE_MOTION_LABELS
-            if duration < slot_min_s - TOLERANCE_S or duration > slot_max_s + TOLERANCE_S:
-                if is_move and slot_max_s < duration <= max(important_max_s, slot_max_s) + TOLERANCE_S:
-                    long_moves.append(slot["id"])
-                else:
-                    violations.append(
-                        violation(
-                            slot["id"],
-                            "length",
-                            f"{duration:.2f}s is outside {slot_min_s:.1f}-{slot_max_s:.1f}s",
-                        )
-                    )
+                )
     allowed_long = max(1, math.ceil(round(EXCEPTION_SHARE * len(slots), 9)))
     for slot_id in long_moves[allowed_long:]:
         violations.append(
@@ -1813,11 +1794,11 @@ def source_delta(slot, delta):
 
 
 def _relaxed(bounds, slack):
-    """The bounds of a slot with the beat-snap slack applied."""
+    """The bounds of a slot with the beat-snap slack applied to a hero or semantic move."""
     low = float(bounds["low"])
     high = float(bounds["high"])
     window_in = float(bounds.get("window_in", low))
-    if slack:
+    if slack and bounds.get("important"):
         low -= slack
         high += slack
         window_in -= slack
@@ -2077,12 +2058,21 @@ def annotate_peaks(record, plan, facts_by_key):
         )
 
 
+def clear_snap_notes(warnings):
+    """Drop the previous pass's beat-snap and length-exception notes."""
+    warnings[:] = [
+        note for note in warnings
+        if not (note.startswith("cut ") or note.startswith("exception:"))
+    ]
+
+
 def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp=False):
     """Run the length policy, then snap to the beat grid when there is one.
 
     Returns ``(snap summary, caps)`` so a later repair can re-snap with the same
     per-slot caps.
     """
+    clear_snap_notes(warnings)
     caps = apply_length_policy(
         record, plan, facts_by_key, plan_pacing(plan), important_max_s, warnings, speed_ramp
     )
@@ -2094,15 +2084,15 @@ def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_
     return summary, caps
 
 
-def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False, drop_keys=frozenset(), similar_fn=None):
+def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False, drop_keys=frozenset(), similar_fn=None, add_keys=frozenset(), used_ids=None):
     """Length policy, then grow back to the brief length, then police the added slots.
 
     Returns ``(snap summary, caps)``.
     """
     if enforce_chronological_order(record, plan, facts_by_key, warnings, beat_grid):
-        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings, similar_fn=similar_fn)
+        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings, add_keys, similar_fn, drop_keys, used_ids)
     beat_snap, caps = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
-    fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [], drop_keys)
+    fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [], drop_keys, used_ids)
     for note in fill_notes:
         if note not in warnings:
             warnings.append(note)
@@ -2111,13 +2101,13 @@ def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warning
     return beat_snap, caps
 
 
-def final_neighbour_check(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings, add_keys, similar_fn, beat_grid, caps):
+def final_neighbour_check(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings, add_keys, similar_fn, beat_grid, caps, drop_keys=frozenset(), used_ids=None):
     """Run the window neighbour check once more and re-snap the cuts when it dropped a slot.
 
     Returns the new beat-snap summary when a drop forced a re-snap, else None.
     """
     before = len(record.get("video") or [])
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings, add_keys, similar_fn)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings, add_keys, similar_fn, drop_keys, used_ids)
     if len(record.get("video") or []) < before and beat_grid is not None:
         return apply_beat_snap(record, plan, facts_by_key, beat_grid, warnings, caps)
     return None
@@ -2153,14 +2143,6 @@ def default_window(fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
 def normalise_window(in_s, out_s, fact, plan_slot, important_max_s, slot_min_s, slot_max_s):
     """Apply the editor spec's length and peak rules when the answer is out of policy."""
     notes = []
-    if keeps_whole(fact):
-        expected_in, expected_out = expected_cut(fact, important_max_s)
-        if abs(in_s - expected_in) > CENTRE_TOLERANCE_S or abs(out_s - expected_out) > CENTRE_TOLERANCE_S:
-            notes.append(
-                f"keep_whole window set to {expected_in:.2f}-{expected_out:.2f} (best moment {fact_peak(fact):.2f}s)"
-            )
-            return expected_in, expected_out, notes
-        return in_s, out_s, notes
     target = plan_slot.get("target_s")
     if target is None:
         target = fact.get("target_s")
@@ -2267,7 +2249,7 @@ def build_edit_record(plan, answer, facts_by_key, shotlog_by_key, sources, brief
     }
 
 
-REBUILT_RULES = {"window", "keep_whole", "peak", "length", "landing", "photo_length"}
+REBUILT_RULES = {"window", "peak", "length", "landing", "photo_length"}
 NON_BLOCKING_RULES = {"hero"}
 
 
@@ -2350,9 +2332,9 @@ def pick_swap_victim(record, plan, facts_by_key, star_fact, important_max_s, slo
         key = plan_slot.get("shot_key") or slot.get("shot_key")
         if key is None or key == star_key:
             continue
-        if key in add_keys or key in blocked or plan_slot.get("keep_whole"):
-            continue
         victim_fact = facts_by_key.get(key) or {}
+        if key in add_keys or key in blocked or keeps_whole(victim_fact):
+            continue
         if is_star(victim_fact) or victim_fact.get("media_type") == "photo" or slot.get("kind") == "photo":
             continue
         victim_length = slot_duration(slot)
@@ -2421,7 +2403,7 @@ def neighbour_rows(plan, facts_by_key, shotlog_by_key, record=None):
     return rows
 
 
-def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys=frozenset(), similar_fn=None):
+def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys=frozenset(), similar_fn=None, drop_keys=frozenset(), used_ids=None):
     """Drop the weaker shot of every pointless jump-cut pair until none is left."""
     for _ in range(len(plan.get("slot_plan") or [])):
         pairs = [
@@ -2444,10 +2426,19 @@ def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_ma
             key = (plan_by_id.get(slot.get("id")) or {}).get("shot_key")
             return float((shotlog_by_key.get(key) or {}).get("score") or slot.get("score") or 0.0), key
 
-        weaker = min((score(slot) for slot in pair), key=lambda item: item[0])[1]
+        first_key = (plan_by_id.get(pair[0].get("id")) or {}).get("shot_key")
+        second_key = (plan_by_id.get(pair[1].get("id")) or {}).get("shot_key")
+        if first_key in add_keys and second_key in add_keys:
+            break
+        if first_key in add_keys:
+            weaker = second_key
+        elif second_key in add_keys:
+            weaker = first_key
+        else:
+            weaker = min((score(slot) for slot in pair), key=lambda item: item[0])[1]
         if weaker is None:
             break
-        drop_from_plan(plan, {weaker}, "pointless jump cut with its neighbour", notes)
+        drop_from_plan(plan, {weaker}, "pointless jump cut with its neighbour", notes, used_ids)
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
@@ -2463,13 +2454,19 @@ def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_ma
             second.get("similar_to"),
         )
 
-    _, dropped = drop_pointless_neighbours(rows, similar, keep_keys=owner_asked_keys(plan) | set(add_keys))
+    keep_keys = (
+        owner_asked_keys(plan)
+        | set(add_keys)
+        | set(required_star_keys(facts_by_key, len(plan.get("slot_plan") or []), drop_keys))
+    )
+    _, dropped = drop_pointless_neighbours(rows, similar, keep_keys=keep_keys)
     if dropped:
         drop_from_plan(
             plan,
             {row.get("shot_key") for row, _ in dropped},
             "pointless jump cut with its neighbour",
             notes,
+            used_ids,
         )
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
@@ -2575,9 +2572,9 @@ def enforce_chronological_order(record, plan, facts_by_key, notes, beat_grid=Non
     return True
 
 
-def next_slot_id(plan):
-    """A free plan slot id like ``v13``."""
-    used = {row.get("id") for row in plan.get("slot_plan") or []}
+def next_slot_id(plan, used_ids=frozenset()):
+    """A free plan slot id like ``v13``, never one used earlier in the run."""
+    used = {row.get("id") for row in plan.get("slot_plan") or []} | set(used_ids)
     index = 1
     while f"v{index}" in used:
         index += 1
@@ -2599,7 +2596,7 @@ def plan_insert_index(plan, facts_by_key, new_fact):
     return index
 
 
-def fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys=frozenset()):
+def fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys=frozenset(), used_ids=None):
     """Add unused strong shots as slots until the edit reaches the brief's target length.
 
     The screenwriter may plan fewer slots than the duration needs; this pass
@@ -2634,7 +2631,9 @@ def fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, 
         in_s, out_s = star_slot_cut(fact, slot_max_s, important_max_s, slot_min_s, slot_max_s)
         if out_s <= in_s:
             continue
-        sid = next_slot_id(plan)
+        sid = next_slot_id(plan, used_ids or frozenset())
+        if used_ids is not None:
+            used_ids.add(sid)
         new_slot = {
             "id": sid,
             "clip": fact["clip"],
@@ -2713,7 +2712,7 @@ def _fill_conflicts(record, plan, facts_by_key, new_slot, insert_at):
     return False
 
 
-def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S, add_keys=frozenset(), drop_keys=frozenset(), similar_fn=None):
+def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, important_max_s=DEFAULT_IMPORTANT_MAX_S, add_keys=frozenset(), drop_keys=frozenset(), similar_fn=None, used_ids=None):
     """Fix a draft's mechanical violations from the shot facts instead of discarding the draft.
 
     First pass: slots that are not in the plan are dropped, a landing hold
@@ -2764,20 +2763,24 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn, drop_keys, used_ids)
     repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys, add_keys)
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn)
-    fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys)
-    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn, drop_keys, used_ids)
+    fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, drop_keys, used_ids)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn, drop_keys, used_ids)
     if enforce_chronological_order(record, plan, facts_by_key, notes):
-        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn)
+        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes, add_keys, similar_fn, drop_keys, used_ids)
     return notes
 
 
-def drop_from_plan(plan, keys, why, notes):
+def drop_from_plan(plan, keys, why, notes, used_ids=None):
     keys = {key for key in keys if key}
     if not keys:
         return
+    if used_ids is not None:
+        for row in plan.get("slot_plan") or []:
+            if row.get("shot_key") in keys:
+                used_ids.add(row.get("id"))
     plan["slot_plan"] = [row for row in plan.get("slot_plan") or [] if row.get("shot_key") not in keys]
     notes.extend(f"repaired: dropped {key} from the plan ({why})" for key in sorted(keys))
 
@@ -3305,6 +3308,7 @@ def _run_loop(
             review = None
             last_verdict = None
             previous_blocking = None
+            used_ids = set()
             for round_index in range(rounds):
                 rounds_used = round_index + 1
                 record = editor_round(client, editor_prompt, plan, facts, review, state, build_record_fn, feedback_block, notebook_text)
@@ -3337,19 +3341,24 @@ def _run_loop(
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
         if approved:
-            for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, [], owner_drop_keys):
+            for note in fill_to_target(record, plan, facts, shotlog, effective_important_max_s, [], owner_drop_keys, used_ids):
                 if note not in warnings:
                     warnings.append(note)
             leftover = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys, window_similar)
             if blocking(leftover):
-                for note in repair_draft(record, plan, facts, shotlog, leftover, effective_important_max_s, owner_add_keys, owner_drop_keys, window_similar):
+                for note in repair_draft(record, plan, facts, shotlog, leftover, effective_important_max_s, owner_add_keys, owner_drop_keys, window_similar, used_ids):
                     if note not in warnings:
                         warnings.append(note)
-            beat_snap, caps = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp, owner_drop_keys, window_similar)
-            final_snap = final_neighbour_check(record, plan, facts, shotlog, effective_important_max_s, warnings, owner_add_keys, window_similar, beat_grid, caps)
+            beat_snap, caps = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp, owner_drop_keys, window_similar, owner_add_keys, used_ids)
+            final_snap = final_neighbour_check(record, plan, facts, shotlog, effective_important_max_s, warnings, owner_add_keys, window_similar, beat_grid, caps, owner_drop_keys, used_ids)
             if final_snap is not None:
                 beat_snap = final_snap
+            for item in blocking(validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys, window_similar)):
+                note = violation_note(item)
+                if note not in warnings:
+                    warnings.append(note)
             attach_decisions(record, facts, shotlog, drop_reasons)
+            write_plan(plan_path, plan, started, state.cost_usd)
             try:
                 write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings, review_object(last_verdict, record)))
             except SchemaError as exc:
@@ -3370,7 +3379,7 @@ def _run_loop(
             if added:
                 violations = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys, window_similar)
         if blocking(violations):
-            for note in repair_draft(record, plan, facts, shotlog, violations, effective_important_max_s, owner_add_keys, owner_drop_keys, window_similar):
+            for note in repair_draft(record, plan, facts, shotlog, violations, effective_important_max_s, owner_add_keys, owner_drop_keys, window_similar, used_ids):
                 if note not in warnings:
                     warnings.append(note)
             violations = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys, window_similar)
@@ -3383,11 +3392,16 @@ def _run_loop(
 
         if not violations and record.get("video"):
             warnings.append("reviewer did not approve; keeping the last valid draft")
-            beat_snap, caps = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp, owner_drop_keys, window_similar)
-            final_snap = final_neighbour_check(record, plan, facts, shotlog, effective_important_max_s, warnings, owner_add_keys, window_similar, beat_grid, caps)
+            beat_snap, caps = finish_record(record, plan, facts, shotlog, beat_grid, warnings, effective_important_max_s, speed_ramp, owner_drop_keys, window_similar, owner_add_keys, used_ids)
+            final_snap = final_neighbour_check(record, plan, facts, shotlog, effective_important_max_s, warnings, owner_add_keys, window_similar, beat_grid, caps, owner_drop_keys, used_ids)
             if final_snap is not None:
                 beat_snap = final_snap
+            for item in blocking(validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys, window_similar)):
+                note = violation_note(item)
+                if note not in warnings:
+                    warnings.append(note)
             attach_decisions(record, facts, shotlog, drop_reasons)
+            write_plan(plan_path, plan, started, state.cost_usd)
             try:
                 write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings, review_object(last_verdict, record)))
             except SchemaError as exc:
@@ -3763,10 +3777,11 @@ def apply_agent_answer(
     )
     if record is None:
         raise LLMDirectorError("the agent answer had no usable slot")
+    used_ids = set()
     violations = validate_edit(record, plan, context["facts"], context["effective_important_max_s"])
     if blocking(violations):
         for note in repair_draft(
-            record, plan, context["facts"], shotlog, violations, context["effective_important_max_s"]
+            record, plan, context["facts"], shotlog, violations, context["effective_important_max_s"], used_ids=used_ids
         ):
             if note not in warnings:
                 warnings.append(note)
@@ -3785,6 +3800,7 @@ def apply_agent_answer(
         warnings,
         context["effective_important_max_s"],
         speed_ramp,
+        used_ids=used_ids,
     )
     attach_decisions(record, context["facts"], shotlog, context["drop_reasons"])
     write_edit(out_path, record, started, 0.0, director_info("agent", True, warnings))

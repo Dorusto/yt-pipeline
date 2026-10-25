@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An explicit request to add a named shot is followed even when the shot has minor defects — the reply says which defects it has; only an `accidental`/`setup`/`teardown` role or a whip short-hold stays refused.
 - Director: a shot the owner asked to drop, and every member of its star group, is never put back by a repair, the star rule or the reviewer, and the group requires no star in that run; the star repair swaps a missing required star in for the weakest compatible slot again, but never drops a shot the owner named or a member of the owner's dropped group.
 - Director: after a repair moves a cut, the edit is re-snapped to the beat grid, so every cut still lands on a beat.
+- Director: the repair chain agrees with itself — an owner-added shot or a required star is protected in the neighbour drop (the other one drops), a plan slot id is never reused after it was dropped, the warnings keep only the last pass's beat-snap and length notes, the move policy is the only length authority (the validator no longer forces a `keep_whole` window), an embed error falls back to the whole-segment similarity, and one final `validate_edit` gates the finished edit.
 
 ## [0.2.0] - 2026-10-24
 

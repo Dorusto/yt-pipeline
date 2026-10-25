@@ -11,6 +11,7 @@ from PIL import Image
 import beats
 import llm_director
 from common.config import ConfigError
+from common.embed import EmbedError
 from common.llm import BudgetExceeded
 from common.moves import slot_screen_length
 from common.photos import ken_burns_for
@@ -1470,18 +1471,167 @@ def test_drop_pointless_cuts_keeps_a_deliberate_same_segment_pair():
     assert used == {"0072/s7b1", "0072/s7b2"}
 
 
-def test_drop_jump_cuts_and_weaker_of_pair_are_gone():
-    assert not hasattr(llm_director, "drop_jump_cuts")
-    assert not hasattr(llm_director, "weaker_of_pair")
+def test_drop_pointless_cuts_drops_the_weaker_same_take_slot():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 4.0, score=0.3, segment_id="s7"),
+        "0072/s7b2": fact("0072/s7b2", "clip_0072_x.mp4", 10.0, 14.0, score=0.8, segment_id="s7"),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0072/s7b2", "target_s": 4.0, "why": "b", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.3},
+            {"id": "v2", "clip": "clip_0072_x.mp4", "in_s": 10.0, "out_s": 14.0, "score": 0.8},
+        ]
+    }
+    shotlog = {"0072/s7b1": {"score": 0.3}, "0072/s7b2": {"score": 0.8}}
+    notes = []
+    llm_director.drop_pointless_cuts(
+        record, plan, facts, shotlog, llm_director.DEFAULT_IMPORTANT_MAX_S, notes
+    )
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert used == {"0072/s7b2"}
+    assert any("0072/s7b1" in note for note in notes)
 
 
-def test_validator_catches_keep_whole_and_length():
+def test_drop_pointless_cuts_keeps_an_owner_added_shot_next_to_a_higher_scored_neighbour():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3, similar_to=["0002/s1"]),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.6, similar_to=["0001/s1"]),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0001/s1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0002/s1", "target_s": 4.0, "why": "b", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.3},
+            {"id": "v2", "clip": "clip_0002_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.6},
+        ]
+    }
+    shotlog = {"0001/s1": {"score": 0.3}, "0002/s1": {"score": 0.6}}
+    notes = []
+    llm_director.drop_pointless_cuts(
+        record, plan, facts, shotlog, llm_director.DEFAULT_IMPORTANT_MAX_S, notes, add_keys={"0001/s1"}
+    )
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert used == {"0001/s1"}
+    assert any("0002/s1" in note for note in notes)
+
+
+def test_drop_pointless_cuts_protects_a_required_star():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.9, hero=True, similar_to=["0002/s1"]),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.3, similar_to=["0001/s1"]),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0001/s1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0002/s1", "target_s": 4.0, "why": "b", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.9},
+            {"id": "v2", "clip": "clip_0002_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.3},
+        ]
+    }
+    shotlog = {"0001/s1": {"score": 0.9}, "0002/s1": {"score": 0.3}}
+    notes = []
+    llm_director.drop_pointless_cuts(
+        record, plan, facts, shotlog, llm_director.DEFAULT_IMPORTANT_MAX_S, notes
+    )
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert used == {"0001/s1"}
+    assert any("0002/s1" in note for note in notes)
+
+
+def test_next_slot_id_never_reuses_a_dropped_id():
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "a/s1"},
+            {"id": "v2", "shot_key": "b/s1"},
+        ]
+    }
+    used_ids = set()
+    llm_director.drop_from_plan(plan, {"b/s1"}, "test", [], used_ids)
+    assert [row["id"] for row in plan["slot_plan"]] == ["v1"]
+    assert llm_director.next_slot_id(plan, used_ids) == "v3"
+
+
+def test_finalize_lengths_keeps_only_the_last_pass_notes():
+    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 20.0)}
+    plan = {
+        "brief": {"target_duration_s": 90},
+        "slot_plan": [{"id": "v1", "shot_key": "a/s1", "target_s": 4.0, "why": "a", "keep_whole": False}],
+    }
+    record = {"video": [{"id": "v1", "clip": "a.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.5, "shot_key": "a/s1"}]}
+    warnings = ["cut 9: not snapped to a beat (nearest 1.0 s away)", "exception: v1 runs past slot_max"]
+    llm_director.finalize_lengths(record, plan, facts, None, warnings, 6.0)
+    llm_director.finalize_lengths(record, plan, facts, None, warnings, 6.0)
+    assert warnings == []
+
+
+def test_make_window_similar_falls_back_to_similar_to_on_embed_error():
+    class RaisingEmbedder:
+        def similar(self, first, second):
+            raise EmbedError("cannot read the clip")
+
+    similar = llm_director.make_window_similar(RaisingEmbedder())
+    first_slot = {"in_s": 0.0, "out_s": 2.0}
+    second_slot = {"in_s": 0.0, "out_s": 2.0}
+    first_fact = {"shot_key": "0001/s1", "similar_to": ["0002/s1"]}
+    second_fact = {"shot_key": "0002/s1", "similar_to": ["0001/s1"]}
+    assert similar(first_slot, second_slot, first_fact, second_fact) is True
+
+
+def test_final_edit_of_a_stub_run_passes_validate_edit(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    plan = json.loads((workspace / "shot_plan.json").read_text(encoding="utf-8"))
+    shotlog = llm_director.load_shotlog(workspace)
+    facts, _, _ = llm_director.build_shot_facts(workspace, shotlog)
+    assert llm_director.validate_edit(edit, plan, facts) == []
+
+
+def test_final_edit_of_a_stub_run_respects_pacing_and_windows(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
+    plan = json.loads((workspace / "shot_plan.json").read_text(encoding="utf-8"))
+    shotlog = llm_director.load_shotlog(workspace)
+    facts, _, _ = llm_director.build_shot_facts(workspace, shotlog)
+    pacing = llm_director.plan_pacing(plan)
+    plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
+    for slot in edit["video"]:
+        if slot.get("kind") == "photo":
+            continue
+        fact = facts[plan_by_id[slot["id"]]["shot_key"]]
+        duration = llm_director.slot_duration(slot)
+        assert duration >= pacing["slot_min"] - llm_director.TOLERANCE_S
+        assert slot["in_s"] >= fact["window_in_s"] - llm_director.TOLERANCE_S
+        assert slot["out_s"] <= fact["window_out_s"] + llm_director.TOLERANCE_S
+
+
+def test_validator_flags_a_hero_cut_off_its_peak_and_a_short_slot():
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, keep_whole=True)}
     facts["0001/s1"].update({"role": "move", "motion_label": "pan_right"})
     plan = {"slot_plan": [{"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": True}]}
     record = {"video": [{"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 0.0, "out_s": 5.0}]}
     violations = llm_director.validate_edit(record, plan, facts)
-    assert any(item["rule"] == "keep_whole" for item in violations)
+    assert any(item["rule"] == "peak" for item in violations)
+    assert not any(item["rule"] == "keep_whole" for item in violations)
 
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0)}
     plan = {"slot_plan": [{"id": "v1", "shot_key": "0001/s1", "target_s": 5.0, "why": "a", "keep_whole": False}]}
@@ -1571,8 +1721,8 @@ def test_editor_facts_follow_fact_keep_whole(tmp_path):
     slot = record["video"][0]
     assert facts["0080/s1"]["peak_s"] == pytest.approx(10.0)
     assert facts["0080/s1"]["peak_source"] == "middle"
-    assert slot["in_s"] == pytest.approx(7.0)
-    assert slot["out_s"] == pytest.approx(13.0)
+    assert slot["in_s"] == pytest.approx(7.5)
+    assert slot["out_s"] == pytest.approx(12.5)
     assert any("fixed v3" in note for note in warnings)
     violations = llm_director.validate_edit(record, plan, facts)
     assert not [item for item in violations if item["rule"] == "keep_whole"]
@@ -2088,7 +2238,7 @@ def beat_grid(period=0.5, count=60, downbeats=None, top_level=False):
     return payload if top_level else {"measurement": payload}
 
 
-def video_bound_fact(key, clip, window_in, window_out, keep_whole=False):
+def video_bound_fact(key, clip, window_in, window_out, keep_whole=False, role="hold", motion_label="static"):
     return {
         "shot_key": key,
         "clip": clip,
@@ -2100,8 +2250,8 @@ def video_bound_fact(key, clip, window_in, window_out, keep_whole=False):
         "target_s": 5.0,
         "score": 0.5,
         "summary": None,
-        "role": "hold",
-        "motion_label": "static",
+        "role": role,
+        "motion_label": motion_label,
         "hero": False,
         "similar_to": [],
     }
@@ -2171,7 +2321,7 @@ def test_beat_snap_structure_cut_falls_back_to_the_nearest_beat():
         ]
     }
     facts = {
-        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4),
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4, keep_whole=True, role="move", motion_label="pan_right"),
         "b/s1": video_bound_fact("b/s1", "b.mp4", 0.0, 5.0),
     }
     warnings = []
@@ -2201,9 +2351,9 @@ def test_beat_snap_click_track_every_cut_on_a_beat(tmp_path):
         ]
     }
     facts = {
-        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4),
-        "b/s1": video_bound_fact("b/s1", "b.mp4", 0.0, 2.4),
-        "c/s1": video_bound_fact("c/s1", "c.mp4", 0.0, 2.4),
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4, keep_whole=True, role="move", motion_label="pan_right"),
+        "b/s1": video_bound_fact("b/s1", "b.mp4", 0.0, 2.4, keep_whole=True, role="move", motion_label="pan_right"),
+        "c/s1": video_bound_fact("c/s1", "c.mp4", 0.0, 2.4, keep_whole=True, role="move", motion_label="pan_right"),
     }
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
@@ -2221,7 +2371,7 @@ def test_beat_snap_video_window_exhausted_moves_within_the_slack():
         ]
     }
     plan = {"slot_plan": [{"id": "v1", "beat": "b1", "shot_key": "a/s1"}]}
-    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4)}
+    facts = {"a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.4, keep_whole=True, role="move", motion_label="pan_right")}
     warnings = []
     stats = llm_director.apply_beat_snap(record, plan, facts, grid, warnings)
     assert abs(record["video"][0]["out_s"] - 2.5) <= 0.02
@@ -2394,7 +2544,7 @@ def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
         "similar_to": [],
     }
     facts = {
-        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.9),
+        "a/s1": video_bound_fact("a/s1", "a.mp4", 0.0, 2.9, keep_whole=True, role="move", motion_label="pan_right"),
         "p/p1": photo_fact,
     }
     warnings = []
@@ -2741,12 +2891,15 @@ def test_validator_accepts_a_cut_centred_on_the_peak_and_a_whole_window():
     assert llm_director.validate_edit(record, plan, {"p/s1": whole}) == []
 
 
-def test_validator_wants_a_hero_cut_centred_on_its_peak():
+def test_apply_length_policy_leaves_no_keep_whole_violation():
     hero = {**PEAK_FACT, "keep_whole": True, "role": "move", "motion_label": "pan_right"}
-    plan, record = peak_edit(14.0, 20.0)
-    violations = llm_director.validate_edit(record, plan, {"p/s1": hero}, 6.0)
-    assert [item["rule"] for item in violations] == ["keep_whole"]
-    plan, record = peak_edit(11.0, 17.0)
+    plan = {
+        "brief": {"target_duration_s": 90},
+        "slot_plan": [{"id": "v1", "shot_key": "p/s1", "target_s": 4.0, "why": "a", "keep_whole": True}],
+    }
+    record = {"video": [{"id": "v1", "clip": "p.mp4", "in_s": 14.0, "out_s": 20.0, "score": 0.5, "shot_key": "p/s1"}]}
+    warnings = []
+    llm_director.apply_length_policy(record, plan, {"p/s1": hero}, llm_director.plan_pacing(plan), 6.0, warnings)
     assert llm_director.validate_edit(record, plan, {"p/s1": hero}, 6.0) == []
 
 

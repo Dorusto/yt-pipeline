@@ -81,6 +81,18 @@ def test_drop_pointless_neighbours_keeps_a_pair_the_owner_asked_for():
     assert dropped == []
 
 
+def test_drop_pointless_neighbours_one_protected_key_drops_the_other():
+    slots = [
+        slot("0072/s7b1", "clip_0072.mp4", "s7", 0.4),
+        slot("0072/s7b2", "clip_0072.mp4", "s7", 0.9),
+    ]
+    kept, dropped = neighbours.drop_pointless_neighbours(
+        slots, lambda a, b: False, keep_keys={"0072/s7b1"}
+    )
+    assert [row["shot_key"] for row in kept] == ["0072/s7b1"]
+    assert dropped[0][0]["shot_key"] == "0072/s7b2"
+
+
 def test_drop_pointless_neighbours_tie_keeps_the_earlier():
     slots = [
         slot("0072/s7b1", "clip_0072.mp4", "s7", 0.5),

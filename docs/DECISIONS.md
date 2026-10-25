@@ -4,6 +4,64 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Director repairs agree with each other and with the owner (V030 lot c29)
+
+**Context:** The read-only audit of `ef7d4d1` found the LLM director's repair
+chain fighting itself. The pointless-drop pass ran 5–7 times and `fill_to_target`
+2–3 times per run; the length rules contradicted each other (the validator forced
+a `keep_whole` window while the move policy was the real authority, so a hero cut
+the policy had just fitted was flagged again); a slot id could be reused after it
+was dropped, so a later repair could overwrite a slot the owner had seen; the
+warnings kept every pass's `cut N:` and `exception:` notes, so the notes no longer
+described the edit that shipped; an owner-added shot next to a higher-scored
+similar neighbour was dropped by the pointless-cut rule; and an embed error in the
+window check silently read as "not similar". The reviewer could never approve
+because the validator kept raising a rule the policy had already satisfied. What
+worked and stays: speed, cuts on the beat, the shot picks and the owner's requests
+honoured.
+
+**Options:** (A) leave the chain as it is and only relax the reviewer; (B) make
+the repairs agree — one length authority, protected owner/star keys, stable slot
+ids, last-pass notes, a `similar_to` fallback on an embed error and one final
+`validate_edit` gate; (C) drop the `keep_whole` rule from the validator but keep
+the plan's `keep_whole` flag as the victim test.
+
+**Decision:** B. `drop_pointless_neighbours` keeps a pair with one protected key
+and drops the other (both protected keeps both); `drop_pointless_cuts` protects
+the owner's add keys and the required stars and never drops an owner-added shot in
+the same-take loop. `next_slot_id(plan, used_ids)` never reuses an id dropped
+earlier in the run (`drop_from_plan` records the ids it removes). `finalize_lengths`
+clears the previous pass's `cut N:`/`exception:` notes before it runs, so only the
+last pass's notes stay. The move policy is the only length authority: `validate_edit`
+no longer emits `keep_whole` and runs the peak and length checks unconditionally,
+`normalise_window` always applies the target/peak logic, `pick_swap_victim` tests
+`keeps_whole(victim_fact)` instead of the plan flag, and `REBUILT_RULES` drops
+`keep_whole`. `WindowEmbedder.similar` lets `EmbedError` propagate and
+`make_window_similar` falls back to the whole-segment `similar_to` check. The
+beat-snap slack applies only to a hero or semantic move (`_relaxed` checks
+`bounds["important"]`). After the final neighbour check both branches run one
+`validate_edit` and append every blocking violation as a warning, and `shot_plan.json`
+is written after the final repairs, before `edit.json`.
+
+**Why not A:** relaxing the reviewer alone leaves the validator and the policy
+disagreeing, so the same `keep_whole` violation comes back every round and the
+loop still cannot approve. **Why not C:** the plan's `keep_whole` flag is the
+model's claim, not the shot's; the fact's `keeps_whole` is the shot's own flag
+(a hero or a complete semantic move, never a static hold), which is what the
+policy and the victim test must agree on.
+
+**Consequence:** files touched — `scripts/common/neighbours.py`,
+`scripts/common/window_similarity.py`, `scripts/llm_director.py`, `docs/RULES.md`,
+`docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`, the `yt-llm-director`
+and `yt-director` skills, `tests/test_common_neighbours.py`,
+`tests/test_llm_director.py`, `tests/test_no_duplicate_helpers.py`. Dead code
+removed from `llm_director.py`:
+`source_contiguous`, `CONTIGUOUS_TOLERANCE_S`, `collapse_star_groups`,
+`CONTENT_TYPES` and the unused `peak_in_cut`/`EXIT_ATTENTION` imports. No change
+to `scripts/director.py`'s own logic, `scripts/serve.py`, `scripts/quality.py`,
+`scripts/index.py`, the schemas or the prompts; no new tool, flag or schema. No
+acceptance run on real projects in this lot — the owner's coordinator runs it.
+
 ## [2026-10-25] Owner removals stick, similarity on the windows in the edit (V030 lot c28)
 
 **Context:** The owner's end-to-end test on a copy of `kotor-demo` (v017,

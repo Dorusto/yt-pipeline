@@ -45,10 +45,10 @@ def pointless_reason(kept, dropped):
 def drop_pointless_neighbours(slots, similar, keep_keys=frozenset()):
     """Drop the weaker of every pointless neighbouring pair; return ``(kept, dropped)``.
 
-    ``dropped`` is a list of ``(slot, reason)``. A pair whose two shot keys are
-    both in ``keep_keys`` (the owner asked for both) is kept. The higher score
-    wins; a tie keeps the earlier slot. Repeat until no pointless neighbour is
-    left.
+    ``dropped`` is a list of ``(slot, reason)``. A pair with one protected key
+    drops the other one; a pair whose two keys are both protected is kept. The
+    higher score wins; a tie keeps the earlier slot. Repeat until no pointless
+    neighbour is left.
     """
     kept = list(slots)
     dropped = []
@@ -61,14 +61,21 @@ def drop_pointless_neighbours(slots, similar, keep_keys=frozenset()):
                 continue
             first_key = first.get("shot_key")
             second_key = second.get("shot_key")
-            if first_key in keep_keys and second_key in keep_keys:
+            first_protected = first_key in keep_keys
+            second_protected = second_key in keep_keys
+            if first_protected and second_protected:
                 continue
-            first_score = first.get("score") or 0.0
-            second_score = second.get("score") or 0.0
-            if first_score >= second_score:
+            if first_protected:
                 kept_slot, dropped_slot, drop_index = first, second, index + 1
-            else:
+            elif second_protected:
                 kept_slot, dropped_slot, drop_index = second, first, index
+            else:
+                first_score = first.get("score") or 0.0
+                second_score = second.get("score") or 0.0
+                if first_score >= second_score:
+                    kept_slot, dropped_slot, drop_index = first, second, index + 1
+                else:
+                    kept_slot, dropped_slot, drop_index = second, first, index
             dropped.append((dropped_slot, pointless_reason(kept_slot, dropped_slot)))
             del kept[drop_index]
             removed = True

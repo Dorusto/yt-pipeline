@@ -79,15 +79,12 @@ class WindowEmbedder:
     def similar(self, first, second):
         """True when both slots have a window and their similarity reaches the threshold.
 
-        A slot without ``in_s``/``out_s`` (a photo) or a clip that cannot be read
-        returns ``False``; the caller decides what to do about it.
+        A slot without ``in_s``/``out_s`` (a photo) returns ``False``; a clip that
+        cannot be read raises ``EmbedError`` and the caller decides.
         """
         if not _has_window(first) or not _has_window(second):
             return False
-        try:
-            return self.similarity(first, second) >= self.threshold
-        except EmbedError:
-            return False
+        return self.similarity(first, second) >= self.threshold
 
     def save(self):
         """Write the cache atomically when it changed."""
