@@ -156,7 +156,7 @@ ARTIFACT_LABELS = (
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
-TABS = (("recap", "Recap"), ("files", "Files"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
+TABS = (("recap", "Recap"), ("director", "Director"), ("files", "Files"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 SHORTS_LAYOUT_POLICIES = ("auto", "on", "off")
 SHORTS_LAYOUTS = ("face", "split")
@@ -1699,7 +1699,12 @@ def render_step_list(report):
     rows = []
     for item in report.get("steps") or []:
         label = html_escape(STATION_PLAIN_NAMES.get(item["name"], item["name"]))
-        took = format_duration(item["seconds"]) if item["seconds"] is not None else "?"
+        if item["seconds"] is None:
+            took = "?"
+        elif item["seconds"] == 0:
+            took = "already done"
+        else:
+            took = format_duration(item["seconds"])
         rows.append(f'<li><span>{item["step"]}. {label}</span><span class="num">{took}</span></li>')
     if not rows:
         return ""
@@ -1727,10 +1732,13 @@ def render_run_notice(status, report, has_previous=False):
             step_line = f'<p class="run-now">{running_step_text(report)}</p>'
         total_line = ""
         if report.get("started_at") is not None:
-            total_line = (
-                '<p class="run-total">Total so far: '
-                f'{live_time(report["started_at"], now - report["started_at"])}</p>'
-            )
+            total_seconds = now - report["started_at"]
+            step_seconds = report.get("elapsed")
+            if step_seconds is None or abs(total_seconds - step_seconds) >= 1.0:
+                total_line = (
+                    '<p class="run-total">Total so far: '
+                    f'{live_time(report["started_at"], total_seconds)}</p>'
+                )
         if report.get("cost_usd") is not None:
             total_line += f'<p class="run-total">Model cost so far: {format_cost(report["cost_usd"])}</p>'
         hint = "This page refreshes by itself."
@@ -1966,7 +1974,6 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
-        parts.append(render_chat_panel(directory, name or directory.name))
         parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
@@ -1989,15 +1996,9 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
         )
     )
     parts.append(
-        render_chat_panel(
-            directory,
-            name or directory.name,
-            version_path=shown["path"],
-            version_name=shown["name"],
-        )
+        render_meta_box(directory, shown["path"], name=name, version=shown["name"],
+                        meta_cost=meta_cost)
     )
-    parts.append(render_meta_box(directory, shown["path"], name=name, version=shown["name"],
-                                 meta_cost=meta_cost))
     if compare is not None:
         other = compare["name"].lstrip("v").lstrip("0") or "0"
         parts.append(
@@ -2316,8 +2317,21 @@ def render_notebook_panel(notebook, name):
     )
 
 
+def render_director_panel(directory, name, notebook=None, wanted=None):
+    """The Director tab: the chat with the director and the collapsible notebook."""
+    directory = Path(directory)
+    shown = pick_version(list_versions(directory), wanted)
+    if shown is not None:
+        chat = render_chat_panel(
+            directory, name, version_path=shown["path"], version_name=shown["name"]
+        )
+    else:
+        chat = render_chat_panel(directory, name)
+    return chat + render_notebook_panel(notebook, name)
+
+
 def _render_tabs(name, enabled, tab):
-    """The project tab bar: Recap, Files, Cuts and Shorts."""
+    """The project tab bar: Recap, Director, Files, Cuts and Shorts."""
     labels = dict(TABS)
     def link(key):
         active = ' class="active"' if key == tab else ""
@@ -2326,6 +2340,8 @@ def _render_tabs(name, enabled, tab):
     parts = []
     if "recap" in enabled:
         parts.append(link("recap"))
+    if "director" in enabled:
+        parts.append(link("director"))
     if "files" in enabled:
         parts.append(link("files"))
     for key in ("cuts", "shorts"):
@@ -2351,7 +2367,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             continue
         if key in ("recap", "why", "shots") and not feature_on(features, key):
             continue
-        if key == "files" and not feature_on(features, "recap"):
+        if key in ("files", "director") and not feature_on(features, "recap"):
             continue
         enabled.append(key)
     if tab not in enabled:
@@ -2361,6 +2377,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     if "recap" in enabled:
         panels["recap"] = render_recap_panel(directory, name, wanted, compare_with, status, report,
                                              meta_cost=meta_cost)
+    if "director" in enabled:
+        panels["director"] = render_director_panel(directory, name, notebook=notebook, wanted=wanted)
     if "why" in enabled:
         panels["why"] = render_iframe_panel(
             directory,
@@ -2417,7 +2435,6 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         f"{nav}"
         f'<section class="panel">{panels.get(tab, "")}</section>'
         f"{reedit}"
-        f"{render_notebook_panel(notebook, name)}"
     )
     script_parts = []
     if tab == "recap":
@@ -3743,7 +3760,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 )
             except OSError:
                 pass
-        location = f"/{project}/?tab=recap"
+        location = f"/{project}/?tab=director"
         if VERSION_RE.match(version):
             location += f"&v={int(version.lstrip('v'))}"
         self.send_redirect(location + "#chat")
@@ -3940,7 +3957,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the lesson could not be removed"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
             return
-        self.send_redirect(f"/{project}/#notebook")
+        self.send_redirect(f"/{project}/?tab=director#notebook")
 
     def handle_delete_project(self, project):
         """Delete the workspace and its inbox source; refuse while a run is going."""

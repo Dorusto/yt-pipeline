@@ -10,6 +10,7 @@ from PIL import Image
 
 import beats
 import llm_director
+from common.config import ConfigError
 from common.llm import BudgetExceeded
 from common.moves import slot_screen_length
 from common.photos import ken_burns_for
@@ -366,7 +367,7 @@ class StubClient:
         self.cost_per_call = cost_per_call
 
     def complete(self, role, messages, **kwargs):
-        self.calls.append({"role": role, "messages": messages})
+        self.calls.append({"role": role, "messages": messages, "kwargs": kwargs})
         if not self.answers:
             raise AssertionError("stub client ran out of answers")
         answer = self.answers.pop(0)
@@ -2597,6 +2598,75 @@ def test_cli_interpret_feedback_json(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     for key in ("reply", "can_do", "missing_tool", "estimate_usd", "estimate_s", "wall_time_s", "llm_cost_usd"):
         assert key in out
+
+
+def test_reasoning_effort_flag_is_accepted():
+    args = llm_director.build_parser().parse_args(
+        ["--workspace", "ws", "--reasoning-effort", "high"]
+    )
+    assert args.reasoning_effort == "high"
+
+
+def test_reasoning_effort_unknown_is_a_usage_error():
+    with pytest.raises(SystemExit) as exc:
+        llm_director.build_parser().parse_args(
+            ["--workspace", "ws", "--reasoning-effort", "bogus"]
+        )
+    assert exc.value.code == 2
+
+
+def test_call_client_passes_the_reasoning_effort():
+    client = StubClient([json.dumps({"ok": True})])
+    state = llm_director.LoopState()
+    state.reasoning_effort = "low"
+    llm_director.call_client(client, [{"role": "user", "content": "x"}], state)
+    assert client.calls[0]["kwargs"] == {"extra_body": {"reasoning": {"effort": "low"}}}
+
+
+def test_call_client_off_disables_reasoning():
+    client = StubClient([json.dumps({"ok": True})])
+    state = llm_director.LoopState()
+    state.reasoning_effort = "off"
+    llm_director.call_client(client, [{"role": "user", "content": "x"}], state)
+    assert client.calls[0]["kwargs"] == {"extra_body": {"reasoning": {"enabled": False}}}
+
+
+def test_call_client_without_effort_sends_no_extra_body():
+    client = StubClient([json.dumps({"ok": True})])
+    state = llm_director.LoopState()
+    llm_director.call_client(client, [{"role": "user", "content": "x"}], state)
+    assert client.calls[0]["kwargs"] == {}
+
+
+def test_run_sends_the_reasoning_effort_on_every_call(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(
+        workspace, brief=BRIEF, client=client, reasoning_effort="low"
+    )
+    assert code == 0
+    assert client.calls
+    assert all(
+        call["kwargs"].get("extra_body") == {"reasoning": {"effort": "low"}}
+        for call in client.calls
+    )
+
+
+def test_run_rejects_an_unknown_reasoning_effort(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    with pytest.raises(ConfigError):
+        llm_director.run(workspace, brief=BRIEF, client=client, reasoning_effort="bogus")
+
+
+def test_interpret_feedback_sends_the_reasoning_effort(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([json.dumps({"reply": "ok", "can_do": True, "missing_tool": None})])
+    summary, code = llm_director.interpret_feedback(
+        workspace, "x", client=client, reasoning_effort="off"
+    )
+    assert code == 0
+    assert client.calls[0]["kwargs"].get("extra_body") == {"reasoning": {"enabled": False}}
 
 
 def build_many_workspace(root, count=100, stars=5):

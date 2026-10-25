@@ -61,6 +61,7 @@ class LLMResponse:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
+    reasoning_tokens: int = 0
 
 
 @dataclass
@@ -73,6 +74,19 @@ class JSONResponse:
     role: str
     cost_usd: float
     attempts: int
+
+
+def reasoning_extra_body(effort):
+    """The OpenRouter ``reasoning`` request body for an effort, or None.
+
+    ``None`` sends nothing; ``off`` disables reasoning; any other value is the
+    effort level (``low``/``medium``/``high``).
+    """
+    if effort is None:
+        return None
+    if effort == "off":
+        return {"reasoning": {"enabled": False}}
+    return {"reasoning": {"effort": effort}}
 
 
 def resolve_ledger_path(ledger_path=None, config=None):
@@ -182,13 +196,14 @@ class LLMClient:
         self._check_budget()
         resolved = model if model is not None else self._resolve(role)
         response = self._create(resolved, messages, **kwargs)
-        prompt_tokens, completion_tokens, cost_usd = self._usage_of(response)
+        prompt_tokens, completion_tokens, reasoning_tokens, cost_usd = self._usage_of(response)
         self._record(
             role=role,
             model=resolved,
             cost_usd=cost_usd,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
         return LLMResponse(
             text=_text_of(response),
@@ -197,6 +212,7 @@ class LLMClient:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
+            reasoning_tokens=reasoning_tokens,
         )
 
     def complete_json(self, role, messages, model=None, **kwargs):
@@ -233,6 +249,8 @@ class LLMClient:
         usage = _value(response, "usage")
         prompt_tokens = _value(usage, "prompt_tokens", 0) or 0
         completion_tokens = _value(usage, "completion_tokens", 0) or 0
+        details = _value(usage, "completion_tokens_details")
+        reasoning_tokens = _value(details, "reasoning_tokens", 0) or 0
         cost = _value(usage, "cost")
         if cost is None:
             if self.require_cost:
@@ -243,9 +261,9 @@ class LLMClient:
             cost_usd = 0.0
         else:
             cost_usd = float(cost)
-        return int(prompt_tokens), int(completion_tokens), cost_usd
+        return int(prompt_tokens), int(completion_tokens), int(reasoning_tokens), cost_usd
 
-    def _entry(self, role, model, cost_usd, prompt_tokens, completion_tokens):
+    def _entry(self, role, model, cost_usd, prompt_tokens, completion_tokens, reasoning_tokens=0):
         return {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "role": role,
@@ -253,10 +271,11 @@ class LLMClient:
             "cost_usd": round(float(cost_usd), 8),
             "prompt_tokens": int(prompt_tokens),
             "completion_tokens": int(completion_tokens),
+            "reasoning_tokens": int(reasoning_tokens),
         }
 
-    def _record(self, role, model, cost_usd, prompt_tokens, completion_tokens):
-        entry = self._entry(role, model, cost_usd, prompt_tokens, completion_tokens)
+    def _record(self, role, model, cost_usd, prompt_tokens, completion_tokens, reasoning_tokens=0):
+        entry = self._entry(role, model, cost_usd, prompt_tokens, completion_tokens, reasoning_tokens)
         if self.ledger_path is None:
             self._entries.append(entry)
             self.spent_usd = round(self.spent_usd + float(cost_usd), 8)

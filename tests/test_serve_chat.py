@@ -30,7 +30,7 @@ def test_chat_panel_shows_the_reviewer_objections(tmp_path):
     (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
     server = start_server(root)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         page = body.decode()
         assert "shot 7 breaks the story after the departure" in page
@@ -55,7 +55,7 @@ def test_chat_panel_shows_the_conversation(tmp_path, monkeypatch):
     (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
     server = start_server(root)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         page = body.decode()
         assert "drop 0071/s2" in page
@@ -84,7 +84,7 @@ def test_chat_approve_carries_the_reedit_options(tmp_path):
     (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
     server = start_server(root)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         page = body.decode()
         form = page.split('class="chat-approve"', 1)[1].split("</form>", 1)[0]
@@ -123,7 +123,7 @@ def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatc
             body=multipart_body([("feedback", None, "drop 0071/s2")]),
         )
         assert status == 303, body
-        assert headers["Location"] == "/2026-10-14/?tab=recap#chat"
+        assert headers["Location"] == "/2026-10-14/?tab=director#chat"
         assert calls == []
     finally:
         server.shutdown()
@@ -276,7 +276,7 @@ def test_reviewer_box_stays_gone(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         assert b"Reviewer:" not in body
     finally:

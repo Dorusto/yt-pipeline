@@ -57,6 +57,7 @@ for the rules that depend on review alone (no program can check them).
 | Model routing — every LLM call through common/llm.py | `tests/test_llm.py` |
 | Model routing — transcriber interface | `tests/test_transcribe.py` |
 | Model routing — config.yaml model ids and budget | `tests/test_config.py` |
+| Model routing — director reasoning effort | `tests/test_config.py`, `tests/test_llm_director.py` |
 | Model routing — music models YuE2 and ACE-Step | review |
 | Model routing — no ComfyUI | review |
 | Model routing — no torch unless needed; encoder choice | `tests/test_ffmpeg_tools.py` |
@@ -91,7 +92,7 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — metadata prompt fixed | `tests/test_metadata.py` |
 | Safety rules — channel.fixed mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_doctor.py` |
 | Safety rules — channel.style mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_recap_meta.py` |
-| Safety rules — learning notebook and the learn pass | `tests/test_notebook.py` |
+| Safety rules — learning notebook and the learn pass | `tests/test_notebook.py`, `tests/test_serve.py` |
 | Safety rules — --skip-alignment only when the JSON is correct | review |
 | Safety rules — `yt` is the named dispatcher for every tool | `tests/test_yt_entry.py` |
 | Safety rules — director agent mode | `tests/test_llm_director_agent.py` |

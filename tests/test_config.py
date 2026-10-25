@@ -548,3 +548,29 @@ def test_whip_min_hold_s_default_and_override(tmp_path):
     assert config.whip_min_hold_s({"whip": {"min_hold_s": 2.5}}) == 2.5
     with pytest.raises(config.ConfigError):
         config.load_config(write_config(tmp_path, with_value("whip", {"min_hold_s": -1})))
+
+
+def test_director_reasoning_effort_defaults_to_low():
+    assert config.director_reasoning_effort(config={}) == "low"
+
+
+def test_director_reasoning_effort_flag_wins_over_config():
+    assert config.director_reasoning_effort("high", {"director": {"reasoning_effort": "medium"}}) == "high"
+
+
+def test_director_reasoning_effort_reads_the_config():
+    assert config.director_reasoning_effort(None, {"director": {"reasoning_effort": "medium"}}) == "medium"
+
+
+def test_director_reasoning_effort_rejects_an_unknown_value():
+    with pytest.raises(config.ConfigError):
+        config.director_reasoning_effort("bogus", {})
+    with pytest.raises(config.ConfigError):
+        config.director_reasoning_effort(None, {"director": {"reasoning_effort": "bogus"}})
+
+
+def test_director_section_validated(tmp_path):
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("director", {"reasoning_effort": "bogus"})))
+    loaded = config.load_config(write_config(tmp_path, with_value("director", {"reasoning_effort": "off"})))
+    assert loaded["director"]["reasoning_effort"] == "off"

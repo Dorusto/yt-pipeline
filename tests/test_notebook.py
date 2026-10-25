@@ -591,7 +591,7 @@ def test_serve_shows_the_notebook_and_deletes_a_lesson(tmp_path):
     run_notebook("--notebook", str(notebook), "--add", "keep the tunnel longer")
     server = start_server(root, notebook)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         page = body.decode("utf-8")
         assert "keep the tunnel longer" in page
@@ -605,7 +605,7 @@ def test_serve_shows_the_notebook_and_deletes_a_lesson(tmp_path):
             body="id=l001",
         )
         assert status == 303
-        assert headers["Location"] == "/2026-10-14/#notebook"
+        assert headers["Location"] == "/2026-10-14/?tab=director#notebook"
         assert read_json(notebook)["lessons"] == []
     finally:
         server.shutdown()

@@ -237,6 +237,17 @@ def _validate(data):
             ):
                 raise ConfigError("whip.min_hold_s must be a positive number")
 
+    director = data.get("director")
+    if director is not None:
+        if not isinstance(director, dict):
+            raise ConfigError("director must be a mapping")
+        effort = director.get("reasoning_effort")
+        if effort is not None and effort not in DIRECTOR_REASONING_EFFORTS:
+            raise ConfigError(
+                "director.reasoning_effort must be one of: "
+                f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
+            )
+
     web = data.get("web")
     if web is not None:
         if not isinstance(web, dict):
@@ -332,6 +343,8 @@ PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
 DEFAULT_DONATION_LABEL = "Support the project"
 DEFAULT_CREDIT_WARN_USD = 1.0
 WHIP_MIN_HOLD_S = 3.0
+DIRECTOR_REASONING_EFFORTS = ("low", "medium", "high", "off")
+DEFAULT_DIRECTOR_REASONING_EFFORT = "low"
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
@@ -664,6 +677,28 @@ def whip_min_hold_s(config=None):
                 raise ConfigError("whip.min_hold_s must be a positive number")
             return float(value)
     return WHIP_MIN_HOLD_S
+
+
+def director_reasoning_effort(cli_value=None, config=None):
+    """The director's reasoning effort: CLI flag, else director.reasoning_effort, else low.
+
+    An unknown value is a ConfigError naming the valid values. There is no
+    environment variable.
+    """
+    value = cli_value
+    if not value:
+        data = config if config is not None else load_config()
+        section = data.get("director")
+        if isinstance(section, dict):
+            value = section.get("reasoning_effort")
+    if not value:
+        value = DEFAULT_DIRECTOR_REASONING_EFFORT
+    if value not in DIRECTOR_REASONING_EFFORTS:
+        raise ConfigError(
+            "director.reasoning_effort must be one of: "
+            f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
+        )
+    return value
 
 
 def project_totals_url(cli_value=None, config=None):

@@ -215,22 +215,25 @@ finished recap, the explanation and the contact sheet.
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
   never outside the inbox) and starts `recap.py` in the background; the status
   shows on Projects.
-- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there and pick it; a picked block shows a bin icon (remove the shot) and a **− 1 s** / **+ 1 s** row (make it shorter or longer, within the source clip; the presses add up into one running total for the picked shot, a different shot starts a new total, and Yes submits that total) — each renders a new version from the proxies, no model call, and the old version is never edited — and the vertical 9:16 player when the format was 9:16 or both), **Files**, **Cuts** and **Shorts**.
+- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there and pick it; a picked block shows a bin icon (remove the shot) and a **− 1 s** / **+ 1 s** row (make it shorter or longer, within the source clip; the presses add up into one running total for the picked shot, a different shot starts a new total, and Yes submits that total) — each renders a new version from the proxies, no model call, and the old version is never edited — and the vertical 9:16 player when the format was 9:16 or both), **Director** (the chat with the director and, under it, the collapsible notebook), **Files**, **Cuts** and **Shorts**.
 - **Files** lists every clip and photo of the project (from its proxies and its inbox source) with its length or "photo", its size and its state — `in the edit`, `new` (added after the last edit) or `left out`. **Add files** drops more clips and photos into the project's inbox source folder (the same consent and storage checks as the Upload page); when there are new files the tab says "N new files. They join the next edit." with a **Make a new edit** button that opens the Re-edit form. A bin icon next to a file asks "Leave out <name>?" and writes the name to `<workspace>/excluded.json`; a left-out file shows **Bring back**. Nothing is deleted from disk — every station that lists clips or photos skips the left-out names, and only a project delete removes files.
 - **Re-edit** on the project page repeats the options and adds a **feedback
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
   It re-runs only the edit and the render — the analysis is reused. The
   feedback is appended to `feedback.jsonl` in the workspace.
-- **Chat with the director.** The chat sits in the Recap tab under the player.
-  The reviewer's objections appear in it as the reviewer's own sentences, each
-  naming the shot by its number on the timeline. The user writes what they like
-  and what they do not, the director answers how it reads the request with a
-  cost/time estimate (one cheap model call, no new version), and **Make the new
-  version** starts the re-edit with the feedback; no new version starts without
-  the click. When the director cannot do what the user asked, it says so in
-  plain words (what it can do instead) and the request is noted in the requests
-  file as a missing tool (`type: missing_tool`), so the owner sees which tools
-  the director needs next. From the command line:
+- **Chat with the director.** The chat sits in the **Director** tab (it is no
+  longer in the Recap tab). The reviewer's objections appear in it as the
+  reviewer's own sentences, each naming the shot by its number on the timeline.
+  The user writes what they like and what they do not, the director answers how
+  it reads the request with a cost/time estimate (one cheap model call, no new
+  version), and **Make the new version** starts the re-edit with the feedback;
+  no new version starts without the click. When the director cannot do what the
+  user asked, it says so in plain words (what it can do instead) and the request
+  is noted in the requests file as a missing tool (`type: missing_tool`), so the
+  owner sees which tools the director needs next. The director's reasoning
+  effort — how much hidden reasoning the model spends on every call — comes from
+  `--reasoning-effort` (`low`, `medium`, `high` or `off`), else
+  `director.reasoning_effort` in the config, else `low`. From the command line:
   `.venv/bin/python scripts/llm_director.py --workspace <workspace> --interpret-feedback "drop 0071/s2, tunnel longer" --json`.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
   (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is
@@ -367,7 +370,7 @@ The AI models do not change. What improves is data and rules on disk, all plain 
 
 Sizes stay small: a correction is ~200 bytes, so 10 000 corrections are about 2 MB. No footage or frames are stored, only clip names and timecodes. See `docs/DECISIONS.md`, 2026-10-14, *Feedback storage and the rules digest*, for limits and compaction.
 
-The director also keeps a small **notebook** of short lessons on this instance (the file at `notebook.path`). It reads the notebook before every edit, and after each new version the web app makes one cheap model call that writes at most 3 short lessons from the feedback since the last pass. A sentence that repeats across clips (for example the sponsor line) becomes a `proposal` lesson to move it to `channel.fixed`; it moves only after the owner says yes by editing the config. The notebook holds at most 40 lessons and is shown at the bottom of the project page, where a lesson can be deleted. When the notebook is full the pass asks the model once to merge overlapping lessons or remove stale ones; lessons that still do not fit wait in the file and are written as soon as there is room — nothing is dropped. At most 3 lessons wait at a time; while 3 are waiting the pass writes nothing and learns them once a lesson is removed; when some room is left it asks for fewer new lessons, so nothing is learned twice. A notebook that already holds more lessons than the limit (for example after a hand edit) makes the pass write nothing and report that it is full until a lesson is removed; no lesson is ever dropped. The project page shows them under the message **The notebook is full. Remove a lesson to make room for a new one.**, with the same delete button.
+The director also keeps a small **notebook** of short lessons on this instance (the file at `notebook.path`). It reads the notebook before every edit, and after each new version the web app makes one cheap model call that writes at most 3 short lessons from the feedback since the last pass. A sentence that repeats across clips (for example the sponsor line) becomes a `proposal` lesson to move it to `channel.fixed`; it moves only after the owner says yes by editing the config. The notebook holds at most 40 lessons and is shown in the **Director** tab, where a lesson can be deleted. When the notebook is full the pass asks the model once to merge overlapping lessons or remove stale ones; lessons that still do not fit wait in the file and are written as soon as there is room — nothing is dropped. At most 3 lessons wait at a time; while 3 are waiting the pass writes nothing and learns them once a lesson is removed; when some room is left it asks for fewer new lessons, so nothing is learned twice. A notebook that already holds more lessons than the limit (for example after a hand edit) makes the pass write nothing and report that it is full until a lesson is removed; no lesson is ever dropped. The project page shows them under the message **The notebook is full. Remove a lesson to make room for a new one.**, with the same delete button.
 
 ## From a coding agent
 

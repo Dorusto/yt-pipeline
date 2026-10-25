@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from common.config import ConfigError, load_config, notebook_path
+from common.config import ConfigError, director_reasoning_effort, load_config, notebook_path
 from common.brief_facts import facts_block, load_brief_facts
 from common.decisions import build_decisions
 from common.director import director_review
@@ -39,7 +39,7 @@ from common.intent import is_whip_short_hold
 from common.notebook import notebook_block
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred, peak_in_cut
-from common.llm import BudgetExceeded, LLMError, make_client
+from common.llm import BudgetExceeded, LLMError, make_client, reasoning_extra_body
 from common import runlog
 from common.constants import MIN_SHOT_LENGTH_S, SNAP_MIN_SLOT_S
 from common.moves import (
@@ -157,6 +157,7 @@ class LoopState:
     def __init__(self):
         self.calls = 0
         self.cost_usd = 0.0
+        self.reasoning_effort = None
 
 
 def build_parser():
@@ -203,6 +204,15 @@ def build_parser():
     parser.add_argument("--no-fallback-rules", dest="fallback_rules", action="store_false", help="error instead of falling back to the rule-based director")
     parser.add_argument("--model", default=None, help="director model id override (default models.director from config)")
     parser.add_argument("--budget-usd", type=float, default=None, help="refuse calls past this spend (default llm_budget_usd)")
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=["low", "medium", "high", "off"],
+        default=None,
+        help=(
+            "director reasoning effort sent to OpenRouter on every call "
+            "(default: director.reasoning_effort in the config, else low)"
+        ),
+    )
     parser.add_argument(
         "--important-max-s",
         type=float,
@@ -894,7 +904,11 @@ def read_chat_prompt():
 
 
 def call_client(client, messages, state, role="director"):
-    response = client.complete(role, messages)
+    extra = reasoning_extra_body(state.reasoning_effort)
+    if extra is not None:
+        response = client.complete(role, messages, extra_body=extra)
+    else:
+        response = client.complete(role, messages)
     state.calls += 1
     state.cost_usd = round(state.cost_usd + float(response.cost_usd), 8)
     return response
@@ -997,7 +1011,7 @@ def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do=T
     )
 
 
-def interpret_feedback(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None):
+def interpret_feedback(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None, reasoning_effort=None):
     """One cheap model call that says how the director reads a feedback request."""
     started = time.monotonic()
     workspace_path = Path(workspace).expanduser().resolve()
@@ -1023,6 +1037,7 @@ def interpret_feedback(workspace, text, version=None, model=None, budget_usd=Non
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
     prompt = read_chat_prompt()
     state = LoopState()
+    state.reasoning_effort = director_reasoning_effort(reasoning_effort, config)
     answer = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
     can_do = answer["can_do"]
     missing_tool = answer.get("missing_tool")
@@ -2827,6 +2842,7 @@ def run(
     feedback=None,
     speed_ramp=False,
     notebook=None,
+    reasoning_effort=None,
 ):
     """Run the three-role loop and return ``(summary, exit_code)``."""
     summary, code = _run_loop(
@@ -2853,6 +2869,7 @@ def run(
         feedback=feedback,
         speed_ramp=speed_ramp,
         notebook=notebook,
+        reasoning_effort=reasoning_effort,
     )
     summary["feedback"] = list(feedback or [])
     return summary, code
@@ -2882,6 +2899,7 @@ def _run_loop(
     feedback=None,
     speed_ramp=False,
     notebook=None,
+    reasoning_effort=None,
 ):
     """Run the three-role loop body; ``run`` adds the ``feedback`` summary key."""
     started = time.monotonic()
@@ -2961,6 +2979,8 @@ def _run_loop(
         if budget_usd is not None:
             effective["llm_budget_usd"] = budget_usd
         client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
+
+    state.reasoning_effort = director_reasoning_effort(reasoning_effort, config)
 
     content_type = detect_content_type(prompt_brief, workspace_path)
     screenwriter_prompt = read_role_prompt("screenwriter.md")
@@ -3589,6 +3609,7 @@ def main(argv=None):
                 version=args.version,
                 model=args.model,
                 budget_usd=args.budget_usd,
+                reasoning_effort=args.reasoning_effort,
             )
         else:
             summary, code = run(
@@ -3613,6 +3634,7 @@ def main(argv=None):
                 feedback=args.feedback,
                 speed_ramp=args.speed_ramp,
                 notebook=args.notebook,
+                reasoning_effort=args.reasoning_effort,
             )
     except (LLMDirectorRuntimeError, LLMError, OSError) as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)

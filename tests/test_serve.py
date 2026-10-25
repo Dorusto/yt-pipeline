@@ -259,6 +259,69 @@ def test_project_page_without_recap_has_no_player(tmp_path):
         server.server_close()
 
 
+def test_director_tab_shows_the_chat_and_the_notebook(tmp_path):
+    root = make_root(tmp_path)
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(
+        json.dumps({"lessons": [{"id": "l001", "text": "keep the tunnel longer", "kind": "lesson"}]}),
+        encoding="utf-8",
+    )
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert 'id="chat"' in page
+        assert 'id="notebook"' in page
+        assert "keep the tunnel longer" in page
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
+        assert status == 200
+        page = body.decode()
+        assert 'id="chat"' not in page
+        assert 'id="notebook"' not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tab_bar_has_director_and_recap_off_hides_it(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/2026-10-14/")
+        assert b'href="/2026-10-14/?tab=director"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+    server = start_server(root, features=["upload", "why", "shots", "shorts", "costs", "requests"])
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert b'href="/2026-10-14/?tab=director"' not in body
+        assert b'<iframe src="explain.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_is_phone_first(tmp_path):
+    root = make_root(tmp_path)
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(json.dumps({"lessons": []}), encoding="utf-8")
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert b'name="viewport" content="width=device-width, initial-scale=1"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+    panel = serve.render_director_panel(root / "2026-10-14", "2026-10-14", notebook=notebook)
+    assert 'id="chat"' in panel
+    assert 'id="notebook"' in panel
+    assert "width:" not in panel
+
+
 def test_tab_why_embeds_explain(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
@@ -2334,6 +2397,36 @@ def test_run_notice_shows_step_times_and_a_live_total(tmp_path):
     assert "previous version" in serve.render_run_notice("running", report, has_previous=True)
 
 
+def test_run_notice_marks_a_skipped_step_already_done():
+    report = {
+        "outcome": None, "done": 2, "total": 3, "last": "quality",
+        "failed_at": None, "error": None, "current": None, "current_step": 0,
+        "elapsed": None, "started_at": None, "step_started_at": None,
+        "steps": [
+            {"step": 1, "name": "proxy", "seconds": 0.0},
+            {"step": 2, "name": "quality", "seconds": None},
+        ],
+        "cost_usd": None,
+    }
+    notice = serve.render_run_notice("running", report)
+    assert "already done" in notice
+    assert "0 s" not in notice
+    assert "?" in notice
+
+
+def test_run_notice_hides_the_total_when_it_equals_the_step(monkeypatch):
+    monkeypatch.setattr(serve.time, "time", lambda: 1000.0)
+    report = {
+        "outcome": None, "done": 1, "total": 3, "last": "proxy",
+        "failed_at": None, "error": None, "current": "ingest", "current_step": 2,
+        "elapsed": 5.0, "started_at": 995.0, "step_started_at": 995.0,
+        "steps": [], "cost_usd": None,
+    }
+    assert "Total so far" not in serve.render_run_notice("running", report)
+    report["elapsed"] = 2.0
+    assert "Total so far" in serve.render_run_notice("running", report)
+
+
 def test_run_cost_and_version_cost(tmp_path):
     import json as _json
 
@@ -4092,7 +4185,7 @@ def test_notebook_panel_shows_waiting_lessons(tmp_path):
     )
     server = start_server(root, notebook=notebook)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         page = body.decode()
         assert "The notebook is full. Remove a lesson to make room for a new one." in page
