@@ -28,10 +28,12 @@ Sources are read-only; outputs are written atomically.
 """
 
 import argparse
+import concurrent.futures
 import json
 import math
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,16 +124,52 @@ class DescribeRuntimeError(RuntimeError):
     """Raised when the run fails after it started (frame encoding, disk)."""
 
 
+class MaxCallsReached(RuntimeError):
+    """Raised when a model call is attempted past ``--max-calls``."""
+
+
 class RunState:
-    """Model calls, spend and the reason a run stopped early."""
+    """Model calls, spend and the reason a run stopped early (thread-safe)."""
 
     def __init__(self, max_calls=None):
-        self.calls = 0
         self.max_calls = max_calls
+        self.calls = 0
         self.cost_usd = 0.0
         self.stop_reason = None
         self.frames_sampled = 0
         self.mosaics_sent = 0
+        self._lock = threading.Lock()
+
+    def reserve_call(self):
+        """Reserve one model call; False when ``max_calls`` is already reached."""
+        with self._lock:
+            if self.max_calls is not None and self.calls >= self.max_calls:
+                return False
+            self.calls += 1
+            return True
+
+    def add_cost(self, cost):
+        with self._lock:
+            self.cost_usd += cost
+
+    def note_frames(self, count):
+        with self._lock:
+            self.frames_sampled += count
+
+    def note_mosaics(self, count):
+        with self._lock:
+            self.mosaics_sent += count
+
+    def stop(self, reason):
+        """Record the reason the run stopped; the first reason wins."""
+        with self._lock:
+            if self.stop_reason is None:
+                self.stop_reason = reason
+
+    @property
+    def stopped(self):
+        with self._lock:
+            return self.stop_reason is not None
 
 
 def build_parser():
@@ -162,6 +200,7 @@ def build_parser():
     parser.add_argument("--config", default=None, help="config file path (default repo config.yaml)")
     parser.add_argument("--prompt-file", default=None, help="prompt path (default prompts/describe_segment.md, photos prompts/describe_photo.md)")
     parser.add_argument("--max-calls", type=int, default=None, help="stop after this many model calls")
+    parser.add_argument("--workers", type=int, default=4, help="per-clip model calls run in this many threads (default 4; 1 = sequential)")
     parser.add_argument("--budget-usd", type=float, default=None, help="refuse calls past this spend (default llm_budget_usd)")
     parser.add_argument("--spend-ledger", default=None, help="spend ledger path (default WORKSPACE/llm_spend.json)")
     parser.add_argument("--frame-width", type=int, default=640, help="width frames are resized to before sending (default 640; mosaic tiles are always 480 wide)")
@@ -549,8 +588,8 @@ def segment_frames(clip_path, segment, frame_width, frame_mode, motion_record, s
     if frame_mode == "legacy":
         times = frame_times(start_s, end_s)
         frames = read_frames(clip_path, times, frame_width)
-        state.frames_sampled += len(times)
-        state.mosaics_sent += len(frames)
+        state.note_frames(len(times))
+        state.note_mosaics(len(frames))
         return times, frames
     events = motion_phase_times(motion_record, start_s, end_s)
     events += detect_scene_changes(clip_path, start_s, end_s)
@@ -562,8 +601,8 @@ def segment_frames(clip_path, segment, frame_width, frame_mode, motion_record, s
         group_pairs = pairs[offset : offset + len(group)]
         offset += len(group)
         frames.append(VisionFrame(t_s=group[0], jpeg_bytes=build_mosaic(group_pairs)))
-    state.frames_sampled += len(times)
-    state.mosaics_sent += len(frames)
+    state.note_frames(len(times))
+    state.note_mosaics(len(frames))
     return times, frames
 
 
@@ -587,11 +626,11 @@ def describe_segments(
         if role in SKIP_ROLES and not uncertain:
             segments.append(_skipped_segment(segment, f"confident {role}"))
             continue
-        if state.stop_reason is not None:
+        if state.stopped:
             segments.append(_skipped_segment(segment, state.stop_reason))
             continue
         if not _calls_available(state):
-            state.stop_reason = "max_calls"
+            state.stop("max_calls")
             segments.append(_skipped_segment(segment, "max_calls"))
             continue
         times, frames = segment_frames(
@@ -606,8 +645,12 @@ def describe_segments(
         )
         try:
             response = _call_model(model, request, state)
+        except MaxCallsReached:
+            state.stop("max_calls")
+            segments.append(_skipped_segment(segment, "max_calls"))
+            continue
         except BudgetExceeded:
-            state.stop_reason = "budget_exceeded"
+            state.stop("budget_exceeded")
             segments.append(_skipped_segment(segment, "budget_exceeded"))
             continue
         segment_cost = response.cost_usd
@@ -684,10 +727,10 @@ def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
     started = time.monotonic()
     warnings = []
     cost_usd = 0.0
-    if state.stop_reason is not None:
+    if state.stopped:
         segment = _skipped_photo_segment(state.stop_reason, None)
     elif not _calls_available(state):
-        state.stop_reason = "max_calls"
+        state.stop("max_calls")
         segment = _skipped_photo_segment("max_calls", None)
     else:
         frames = [read_photo_frame(photo["path"], frame_width)]
@@ -707,8 +750,10 @@ def describe_photo(photo, model, model_id, base_prompt, frame_width, state):
                 retry_answer, retry_cost = _retry_parse(model, request, state)
                 cost_usd += retry_cost
                 answer = retry_answer
+        except MaxCallsReached:
+            state.stop("max_calls")
         except BudgetExceeded:
-            state.stop_reason = "budget_exceeded"
+            state.stop("budget_exceeded")
         if answer is None:
             warnings.append(f"{photo['file']} p1: unparseable model output")
             segment = _skipped_photo_segment("unparseable model output", cost_usd)
@@ -744,6 +789,7 @@ def run(
     backend=None,
     photos_only=False,
     frame_mode="mosaic",
+    workers=4,
 ):
     """Describe the selected clips and photos into ``workspace/describe``; return summary and exit code."""
     started = time.monotonic()
@@ -751,6 +797,8 @@ def run(
         raise DescribeError("--frame-width must be positive")
     if frame_mode not in FRAME_MODES:
         raise DescribeError(f"unknown frame mode '{frame_mode}'")
+    if workers < 1:
+        raise DescribeError("--workers must be at least 1")
     workspace_path = Path(workspace).expanduser().resolve()
     quality_dir = workspace_path / "quality"
     if config is None:
@@ -795,56 +843,63 @@ def run(
     segments_described = 0
     segments_skipped = 0
     beats_found = 0
+    jobs = []
     for quality_file in selected:
         output_path = output_dir / quality_file.name
         if not force and _output_is_valid(output_path):
             skipped += 1
             continue
-        record = _load_quality(quality_file)
-        clip_path = _clip_path(record, quality_file)
-        motion_record = _load_motion(workspace_path, quality_file)
-        clip_record = describe_clip(
-            record,
-            clip_path,
-            model,
-            model_id,
-            video_prompt,
-            frame_width,
-            state,
-            frame_mode=frame_mode,
-            motion_record=motion_record,
-        )
-        validate_or_raise(clip_record, "describe")
-        _atomic_write_json(output_path, clip_record)
-        described += 1
-        segments_described += sum(
-            1 for segment in clip_record["segments"] if segment["status"] == "described"
-        )
-        segments_skipped += sum(
-            1 for segment in clip_record["segments"] if segment["status"] == "skipped"
-        )
-        beats_found += sum(len(segment.get("beats") or []) for segment in clip_record["segments"])
-        if state.stop_reason is not None:
-            break
-    photos_described = 0
+        jobs.append(("clip", quality_file, output_path))
     for photo in photos:
         output_path = output_dir / f"{Path(photo['file']).stem}.json"
         if not force and _output_is_valid(output_path) and _photo_has_flaws(output_path):
             continue
-        if state.stop_reason is not None:
-            break
-        photo_record = describe_photo(photo, model, model_id, photo_prompt, frame_width, state)
-        validate_or_raise(photo_record, "describe")
-        _atomic_write_json(output_path, photo_record)
-        photos_described += 1
-        segments_described += sum(
-            1 for segment in photo_record["segments"] if segment["status"] == "described"
-        )
-        segments_skipped += sum(
-            1 for segment in photo_record["segments"] if segment["status"] == "skipped"
-        )
-        if state.stop_reason is not None:
-            break
+        jobs.append(("photo", photo, output_path))
+
+    def run_job(job):
+        kind, item, _ = job
+        if state.stopped:
+            return None
+        if kind == "clip":
+            record = _load_quality(item)
+            clip_path = _clip_path(record, item)
+            motion_record = _load_motion(workspace_path, item)
+            return describe_clip(
+                record,
+                clip_path,
+                model,
+                model_id,
+                video_prompt,
+                frame_width,
+                state,
+                frame_mode=frame_mode,
+                motion_record=motion_record,
+            )
+        return describe_photo(item, model, model_id, photo_prompt, frame_width, state)
+
+    photos_described = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(run_job, job) for job in jobs]
+        for job, future in zip(jobs, futures):
+            record = future.result()
+            if record is None:
+                continue
+            kind, _, output_path = job
+            validate_or_raise(record, "describe")
+            _atomic_write_json(output_path, record)
+            if kind == "clip":
+                described += 1
+                beats_found += sum(
+                    len(segment.get("beats") or []) for segment in record["segments"]
+                )
+            else:
+                photos_described += 1
+            segments_described += sum(
+                1 for segment in record["segments"] if segment["status"] == "described"
+            )
+            segments_skipped += sum(
+                1 for segment in record["segments"] if segment["status"] == "skipped"
+            )
     summary = {
         "clips": len(selected),
         "described": described,
@@ -855,6 +910,7 @@ def run(
         "photos": photos_described,
         "model": model_id,
         "frame_mode": frame_mode,
+        "workers": workers,
         "frames_sampled": state.frames_sampled,
         "mosaics_sent": state.mosaics_sent,
         "wall_time_s": round(time.monotonic() - started, 2),
@@ -880,6 +936,7 @@ def main(argv=None):
             backend=args.backend,
             photos_only=args.photos_only,
             frame_mode=args.frame_mode,
+            workers=args.workers,
         )
     except DescribeRuntimeError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
@@ -915,12 +972,15 @@ def main(argv=None):
 def _retry_parse(model, request, state):
     """Retry once for an unparseable answer; return the parsed answer or None plus the cost."""
     if not _calls_available(state):
-        state.stop_reason = "max_calls"
+        state.stop("max_calls")
         return None, 0.0
     try:
         retry = _call_model(model, request, state)
+    except MaxCallsReached:
+        state.stop("max_calls")
+        return None, 0.0
     except BudgetExceeded:
-        state.stop_reason = "budget_exceeded"
+        state.stop("budget_exceeded")
         return None, 0.0
     return parse_answer(retry.text), retry.cost_usd
 
@@ -929,7 +989,7 @@ def _retry_verdict(model, request, state, normalized, warnings, record, segment)
     """Retry once for a missing verdict; keep the description and fall back if it fails."""
     cost = 0.0
     if not _calls_available(state):
-        state.stop_reason = "max_calls"
+        state.stop("max_calls")
     else:
         try:
             retry = _call_model(model, request, state)
@@ -940,8 +1000,10 @@ def _retry_verdict(model, request, state, normalized, warnings, record, segment)
                 if retry_normalized["verdict"] is not None:
                     normalized.update(retry_normalized)
                     return cost
+        except MaxCallsReached:
+            state.stop("max_calls")
         except BudgetExceeded:
-            state.stop_reason = "budget_exceeded"
+            state.stop("budget_exceeded")
     normalized["verdict"] = _fallback_verdict(segment)
     warnings.append(f"{record['file']} {segment['id']}: model gave no verdict; geometry kept")
     return cost
@@ -960,14 +1022,16 @@ def _fallback_verdict(segment):
 
 
 def _call_model(model, request, state):
+    if not state.reserve_call():
+        raise MaxCallsReached("max_calls reached")
     response = model.describe(request)
-    state.calls += 1
-    state.cost_usd += response.cost_usd
+    state.add_cost(response.cost_usd)
     return response
 
 
 def _calls_available(state):
-    return state.max_calls is None or state.calls < state.max_calls
+    with state._lock:
+        return state.max_calls is None or state.calls < state.max_calls
 
 
 def _context(segment):

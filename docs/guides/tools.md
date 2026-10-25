@@ -148,7 +148,10 @@ All three analysis tools accept `--json`, re-run safely (existing outputs are
 skipped, `--force` re-analyses) and validate their output against `schemas/`.
 `quality.py` prefers a matching `ws/motion/<stem>.json` and falls back to coarse
 frame-diff segmentation without it. `eval_labels.py` reads the workspace only and
-writes nothing unless `--out` is given.
+writes nothing unless `--out` is given. The vision stage `describe.py` (D1b)
+describes the kept segments and the still photos; its per-clip model calls run in
+a small worker pool (`--workers`, default 4, `1` = sequential) and the outputs
+are written in the original order.
 
 ---
 
@@ -172,7 +175,7 @@ Skill: `yt-director`.
 |:---|:---|:---|
 | `director.py` | `ws/ingest.json` + `ws/motion/*.json` + `ws/quality/*.json` | `ws/edit.json` — video slots (clip, in/out, score, reason) + audio/captions/graphics plan |
 
-The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate. The three role prompts (screenwriter, editor, reviewer) share the standard playbook in `prompts/playbook.md` — the editing techniques the director knows, pointing to `docs/RULES.md` for the grammar. The director-facing capability list (`prompts/tools.md`) goes only to the chat prompt (`--interpret-feedback`).
+The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate. The screenwriter is offered a shortlist of the eligible candidates — every star plus the top-K by score (K = 2 × the plan's slot count, min 24, max 60) in the shotlog's chronological order — instead of the whole pool. The three role prompts (screenwriter, editor, reviewer) share the standard playbook in `prompts/playbook.md` — the editing techniques the director knows, pointing to `docs/RULES.md` for the grammar. The director-facing capability list (`prompts/tools.md`) goes only to the chat prompt (`--interpret-feedback`).
 
 The agent mode splits the loop in two so a host coding agent can direct the edit without an OpenRouter key. `--prepare` writes `<workspace>/director/inputs.md` — the brief, the brief settings, the editing rules, the eligible shots and their shot facts, plus the two output shapes — and makes no model call. The host agent writes `<workspace>/shot_plan.json` and `<workspace>/edit.json` (the editor answer shape), then `--apply` validates both against the schemas and the editing grammar, repairs mechanical faults with the same machinery the loop uses and writes the final `edit.json` with `meta.director.by = "agent"`. `--prepare` and `--apply` are mutually exclusive with each other, `--interpret-feedback` and `--dry-run`; the OpenRouter three-role loop stays the default.
 

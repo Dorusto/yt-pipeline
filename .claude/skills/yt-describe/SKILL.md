@@ -19,6 +19,7 @@ yt describe --workspace /path/to/workspace
 - `--backend` (`mock` or `openrouter`) overrides `llm_backend` from the config; `--model` overrides `models.vision`; `--config` points at another config file. The default model id is `models.vision`.
 - `--frame-width` (default 640) is the width frames are resized to before sending in `legacy` mode; mosaic tiles are always 480 px wide. JPEG quality is 85.
 - `--frame-mode` (`mosaic` or `legacy`, default `mosaic`) chooses how frames reach the model: `mosaic` tiles 6–9 event-picked frames per image, `legacy` sends the old fixed-position frames as separate images.
+- `--workers` (default 4, minimum 1) is the size of the worker pool that describes the clips and photos: the selected clips and the photos that need work run concurrently, and the outputs are written in the original order, so `--workers 1` is the sequential behaviour and the result is the same whatever the pool size.
 - `--force` re-describes a clip or photo whose output already exists. Without it, a clip or photo whose JSON exists and validates against the `describe` schema is skipped.
 - On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing workspace, unreadable quality file, missing clip, broken config) or `3` (runtime failure after work started: model call, encode, disk write). It never asks questions.
 
@@ -39,7 +40,7 @@ yt describe --workspace /path/to/workspace --backend mock --photos-only
 yt describe --workspace /path/to/workspace --json
 ```
 
-The `--json` output is a single object, e.g. `{"clips": 4, "described": 4, "skipped": 0, "segments_described": 23, "segments_skipped": 0, "beats": 5, "photos": 3, "model": "deepseek/deepseek-v4.1-flash", "frame_mode": "mosaic", "frames_sampled": 141, "mosaics_sent": 21, "wall_time_s": 13.49, "llm_cost_usd": 0.0}`. `photos` is the number of photo records written this run; `frames_sampled` counts the tiles and `mosaics_sent` the model images (equal in `legacy` mode). Read `DIR/describe/<stem>.json` for the per-clip or per-photo detail; it is validated against `schemas/describe.schema.json` and written atomically, so a run leaves a complete valid file or none.
+The `--json` output is a single object, e.g. `{"clips": 4, "described": 4, "skipped": 0, "segments_described": 23, "segments_skipped": 0, "beats": 5, "photos": 3, "model": "deepseek/deepseek-v4.1-flash", "frame_mode": "mosaic", "workers": 4, "frames_sampled": 141, "mosaics_sent": 21, "wall_time_s": 13.49, "llm_cost_usd": 0.0}`. `photos` is the number of photo records written this run; `frames_sampled` counts the tiles and `mosaics_sent` the model images (equal in `legacy` mode). Read `DIR/describe/<stem>.json` for the per-clip or per-photo detail; it is validated against `schemas/describe.schema.json` and written atomically, so a run leaves a complete valid file or none.
 
 ## What the fields mean
 

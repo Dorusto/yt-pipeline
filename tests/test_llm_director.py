@@ -2578,3 +2578,140 @@ def test_cli_interpret_feedback_json(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     for key in ("reply", "can_do", "missing_tool", "estimate_usd", "estimate_s", "wall_time_s", "llm_cost_usd"):
         assert key in out
+
+
+def build_many_workspace(root, count=100, stars=5):
+    clips = []
+    for index in range(count):
+        name = f"clip_{index:04d}_x.mp4"
+        clips.append(
+            {
+                "file": name,
+                "path": f"/media/{name}",
+                "duration_s": 60.0,
+                "creation_time": f"2026-01-01T10:{index // 60:02d}:{index % 60:02d}",
+            }
+        )
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    shots = []
+    for index, clip in enumerate(clips):
+        stem = Path(clip["file"]).stem
+        write_json(
+            root / "quality" / f"{stem}.json",
+            quality_doc(clip["file"], 60.0, [segment("s1", 0.0, 20.0, "hold")]),
+        )
+        write_json(root / "motion" / f"{stem}.json", motion_doc(clip["file"], 60.0))
+        shots.append(
+            shotlog_shot(
+                f"{index:04d}/s1",
+                clip["file"],
+                "s1",
+                0.0,
+                20.0,
+                True,
+                0.5 + (index % 30) / 100.0,
+                f"shot {index}",
+                f"interest {index}",
+                hero=index < stars,
+            )
+        )
+    write_json(
+        root / "shotlog.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "weights": {"vision": 0.55, "labels": 0.45},
+            "shots": shots,
+        },
+    )
+    return root
+
+
+def test_approved_on_round_one_stops_early(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["rounds_used"] == 1
+    assert summary["approved"] is True
+    assert len(client.calls) == 3
+
+
+def test_default_rounds_cap_at_two(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            plan_answer(),
+            editor_answer(),
+            reviewer_not_approved(),
+            editor_answer(),
+            reviewer_not_approved(),
+        ]
+    )
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert summary["rounds_used"] == 2
+    assert summary["approved"] is False
+
+
+def test_rounds_three_runs_three_rounds(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            plan_answer(),
+            editor_answer(),
+            reviewer_not_approved(),
+            editor_answer(),
+            reviewer_not_approved(),
+            editor_answer(),
+            reviewer_not_approved(),
+        ]
+    )
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=3)
+    assert code == 0
+    assert summary["rounds_used"] == 3
+    assert summary["approved"] is False
+
+
+def test_shortlist_rows_keeps_stars_and_top_scores_in_order():
+    rows = [
+        {"key": f"{index:04d}/s1", "score": 0.5 + (index % 30) / 100.0, "hero": index < 5}
+        for index in range(100)
+    ]
+    result = llm_director.shortlist_rows(rows, 25)
+    assert len(result) <= llm_director.SHORTLIST_MAX
+    assert len(result) < len(rows)
+    keys = [row["key"] for row in result]
+    assert keys == [row["key"] for row in rows if row["key"] in set(keys)]
+    for index in range(5):
+        assert f"{index:04d}/s1" in keys
+
+
+def test_screenwriter_message_uses_the_shortlist(tmp_path):
+    workspace = build_many_workspace(tmp_path / "ws")
+    shotlog = llm_director.load_shotlog(workspace)
+    context = llm_director._agent_context(workspace, shotlog, BRIEF, None, None, None, None)
+    shortlist_keys = {row["key"] for row in context["shortlist"]}
+    assert len(shortlist_keys) < len(context["shotlog_rows"])
+    client = StubClient([plan_answer()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, dry_run=True)
+    assert code == 0
+    user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
+    payload = user.split("Eligible shotlog rows:", 1)[1].strip()
+    rows = json.loads(payload)
+    assert {row["key"] for row in rows} == shortlist_keys
+    assert summary["shortlist"] == len(shortlist_keys)
+    assert summary["candidates"] == len(context["shotlog_rows"])
+
+
+def test_json_summary_has_shortlist_and_candidates(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    assert "shortlist" in summary
+    assert "candidates" in summary
+    assert summary["shortlist"] <= summary["candidates"]
+

@@ -4,6 +4,20 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Faster holiday edits (V030 lot c18)
+
+**Context:** Issue #94. A holiday run on this host took about half an hour before the first edit: the three-role loop ran the reviewer for all three rounds, the screenwriter prompt carried every eligible segment (106 candidates, a 32 k-token prompt), and `describe` sent its per-clip model calls one after another (1731.1 s cold). The edit quality was fine; the wall time was not.
+
+**Options:** (A) leave the loop as it is and only speed up `describe`; (B) cap the reviewer rounds, send the screenwriter a shortlist of the eligible candidates ranked by the existing scores, and run the `describe` per-clip calls in a small worker pool.
+
+**Decision:** B, three changes. (1) The reviewer runs at most `DEFAULT_ROUNDS` 2 rounds by default (`--rounds`, still capped at `MAX_ROUNDS` 3); the early stop when the reviewer approves with no violations is kept. (2) The screenwriter gets `shortlist_rows`: every star (`common.moves.is_star`) plus the top-K rows by score (ties by key), K = `SHORTLIST_FACTOR` 2 × the plan's slot count clamped to `SHORTLIST_MIN` 24 and `SHORTLIST_MAX` 60, returned in the shotlog's chronological order; the `--json` summary reports the shortlist size as `shortlist` and the full eligible count as `candidates`. (3) `describe` gains `--workers` (default 4, minimum 1): the selected clips and the photos that need work become one job list, run through a `ThreadPoolExecutor`, and the main thread validates, writes and counts the futures in submission order, so the outputs and the summary match a sequential run; `RunState` is thread-safe (`reserve_call`, `add_cost`, `note_frames`, `note_mosaics`, `stop`, `stopped`) and `_call_model` reserves the call before it runs, raising `MaxCallsReached` past `--max-calls`.
+
+**Why not A:** the reviewer rounds and the oversized screenwriter prompt were the two biggest fixed costs of the loop, and the `describe` calls are independent per clip, so all three are safe to cut without touching the editing grammar, the star definition or the pacing.
+
+**Consequence:** Files touched: `scripts/llm_director.py`, `scripts/describe.py`, `tests/test_llm_director.py`, `tests/test_describe.py`, `docs/RULES.md`, `docs/DECISIONS.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-describe/SKILL.md`, `docs/guides/tools.md`. No change to the editing grammar, the chronological-order rules, the star definition, the pacing table, the beat snap, `scripts/director.py`, the stable files (`serve.py`, `recap.py`, `common/versions.py`, `quality.py`) or `schemas/`. Measured on `/root/media/projects/kotor-demo` (numbers only, no clip text; full report in `/root/reports/94.md`): the director step went from 7 calls and a 32.2 k-token screenwriter prompt to 5 calls and 20.6 k tokens (2 fewer calls, 36 % smaller prompt; the wall time is dominated by the model's completion tokens, which vary run to run, so the two after samples 361.3 s and 537.5 s sit inside the before range around 459.5 s); `describe` on the same 4 clips went from 288.3 s sequential to 134.8 s with `--workers 4` (2.14×, the pool bounded by the longest clip); `eval_edit` on the same workspace went from 2/3 to 3/3 (the after edit keeps both heroes and lands inside the brief's length window).
+
+---
+
 ## [2026-10-24] A typed MCP server per plugin (V030 lot c13)
 
 **Context:** Issue #82. The pipeline's tools were reachable only through the `yt` dispatcher and the skills, so an agent had to read a skill to learn a tool's flags and could not call a tool as a typed function. The FilmCraft MCP server shows the pattern: a small stdio server that exposes a tool group directly. The five plugins already group the skills, but nothing turned that grouping into callable tools.

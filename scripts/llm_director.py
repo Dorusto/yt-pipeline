@@ -67,6 +67,10 @@ PROMPTS_DIR = REPO_ROOT / "prompts"
 DIRECTOR_SCRIPT = REPO_ROOT / "scripts" / "director.py"
 
 MAX_ROUNDS = 3
+DEFAULT_ROUNDS = 2
+SHORTLIST_FACTOR = 2
+SHORTLIST_MIN = 24
+SHORTLIST_MAX = 60
 MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
 LONG_CUT_PACING_S = 180.0
@@ -182,7 +186,7 @@ def build_parser():
     parser.add_argument("--brief-file", default=None, help="path to a file holding the brief")
     parser.add_argument("--out", default=None, help="edit list to write (default WORKSPACE/edit.json)")
     parser.add_argument("--plan-out", default=None, help="shot plan to write (default WORKSPACE/shot_plan.json)")
-    parser.add_argument("--rounds", type=int, default=MAX_ROUNDS, help="review rounds (default 3, max 3)")
+    parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS, help="review rounds (default 2, max 3)")
     parser.add_argument("--dry-run", action="store_true", help="run only the screenwriter and print the rule-based baseline")
     parser.add_argument(
         "--prepare",
@@ -274,6 +278,16 @@ def build_parser():
 
 def clamp(value, low, high):
     return max(low, min(high, value))
+
+
+def shortlist_rows(rows, n_slots):
+    """The screenwriter's menu: every star plus the top-K rows by score, in shotlog order."""
+    stars = [row for row in rows if is_star(row)]
+    k = int(clamp(n_slots * SHORTLIST_FACTOR, SHORTLIST_MIN, SHORTLIST_MAX))
+    ranked = sorted(rows, key=lambda row: (-float(row.get("score") or 0.0), row.get("key") or ""))
+    keep = {id(row) for row in stars}
+    keep.update(id(row) for row in ranked[:k])
+    return [row for row in rows if id(row) in keep]
 
 
 def parse_time(value):
@@ -2732,7 +2746,7 @@ def is_up_to_date(out_path, workspace, brief_path, plan_path, beats_path=None, s
     return True
 
 
-def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, slots, total, violations, warnings, started, cost_usd, candidates=0, beat_snap=None):
+def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, slots, total, violations, warnings, started, cost_usd, candidates=0, beat_snap=None, shortlist=0):
     return {
         "status": status,
         "out": str(out_path) if out_path is not None else None,
@@ -2742,6 +2756,7 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
         "fallback": fallback,
         "slots": slots,
         "candidates": candidates,
+        "shortlist": shortlist,
         "total_duration_s": round(total, 2),
         "validator_violations": violations,
         "warnings": warnings,
@@ -2775,7 +2790,7 @@ def run(
     brief_file=None,
     out=None,
     plan_out=None,
-    rounds=MAX_ROUNDS,
+    rounds=DEFAULT_ROUNDS,
     dry_run=False,
     fallback_rules=True,
     model=None,
@@ -2830,7 +2845,7 @@ def _run_loop(
     brief_file=None,
     out=None,
     plan_out=None,
-    rounds=MAX_ROUNDS,
+    rounds=DEFAULT_ROUNDS,
     dry_run=False,
     fallback_rules=True,
     model=None,
@@ -2905,6 +2920,7 @@ def _run_loop(
     fact_warnings = context["fact_warnings"]
     sources = context["sources"]
     shotlog_rows = context["shotlog_rows"]
+    shortlist = context["shortlist"]
     brief_obj = context["brief_obj"]
     drop_reasons = context["drop_reasons"]
     warnings.extend(fact_warnings)
@@ -2938,13 +2954,13 @@ def _run_loop(
     record = None
     plan = None
     try:
-        plan = screenwriter(client, screenwriter_prompt, prompt_brief, content_type, hints, shotlog_rows, state, effective_important_max_s, feedback_block, notebook_text)
+        plan = screenwriter(client, screenwriter_prompt, prompt_brief, content_type, hints, shortlist, state, effective_important_max_s, feedback_block, notebook_text)
         if plan is None:
             raise LoopFailure("screenwriter produced no valid plan")
         write_plan(plan_path, plan, started, state.cost_usd)
         if dry_run:
             baseline = run_baseline(workspace_path, prompt_brief, hints, beats_path, music, ambient_under_music_db, speed_ramp)
-            summary = base_summary("written", None, plan_path, 0, None, None, 0, 0.0, 0, warnings, started, state.cost_usd, candidates)
+            summary = base_summary("written", None, plan_path, 0, None, None, 0, 0.0, 0, warnings, started, state.cost_usd, candidates, shortlist=len(shortlist))
             summary["baseline"] = baseline
             summary["dry_run"] = True
             return summary, 0
@@ -3003,7 +3019,7 @@ def _run_loop(
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
-        return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap), 0
+        return base_summary("written", out_path, plan_path, rounds_used, True, None, len(slots), total, len(violations), warnings, started, state.cost_usd, candidates, beat_snap, shortlist=len(shortlist)), 0
 
     if violations:
         added = ensure_all_planned_slots(record, plan, facts, shotlog, effective_important_max_s)
@@ -3038,7 +3054,7 @@ def _run_loop(
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates)
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
-        return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap), 0
+        return base_summary("written", out_path, plan_path, rounds_used, False, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, beat_snap, shortlist=len(shortlist)), 0
 
     warnings.append("reviewer did not approve and the draft still has violations")
     for item in violations:
@@ -3097,6 +3113,7 @@ def _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_
         for clip, _ in clips
     ]
     shotlog_rows = [shot for key, shot in shotlog.items() if key in facts]
+    shortlist = shortlist_rows(shotlog_rows, pacing_row["n_slots"])
     brief_obj = {
         "text": brief_text,
         "target_duration_s": hints.get("target_duration_s"),
@@ -3114,6 +3131,7 @@ def _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_
         "fact_warnings": fact_warnings,
         "sources": sources,
         "shotlog_rows": shotlog_rows,
+        "shortlist": shortlist,
         "brief_obj": brief_obj,
         "drop_reasons": drop_reasons,
     }
@@ -3201,7 +3219,7 @@ def _agent_inputs_text(
             ]
         )
     )
-    parts.append("## The eligible shots\n\n```json\n" + json.dumps(context["shotlog_rows"], indent=2) + "\n```")
+    parts.append("## The eligible shots\n\n```json\n" + json.dumps(context["shortlist"], indent=2) + "\n```")
     parts.append("## The shot facts\n\n```json\n" + json.dumps(context["facts"], indent=2) + "\n```")
     apply_flags = []
     if beat_grid is not None:
