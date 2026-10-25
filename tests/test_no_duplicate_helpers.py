@@ -85,3 +85,17 @@ def test_no_new_duplicate_helpers():
 
 def test_baseline_has_no_stale_entries():
     assert BASELINE - duplicate_names() == set()
+
+
+def test_no_hand_rolled_worker_pool():
+    offenders = []
+    for path in sorted((ROOT / "scripts").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in {
+                "ThreadPoolExecutor",
+                "ProcessPoolExecutor",
+            }:
+                offenders.append(path.name)
+                break
+    assert offenders == []

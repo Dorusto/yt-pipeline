@@ -28,7 +28,6 @@ Sources are read-only; outputs are written atomically.
 """
 
 import argparse
-import concurrent.futures
 import json
 import math
 import os
@@ -50,6 +49,7 @@ from common.frames import read_frame_pairs
 from common.llm import BudgetExceeded, LLMError
 from common.peak import valid_vision_peak
 from common.photos import PHOTO_FLAWS, PhotoError, jpeg_bytes, open_photo, sharpness
+from common.pool import ordered_map
 from common.schema import SchemaError, validate, validate_or_raise
 from common.vision import VisionFrame, VisionRequest, make_vision_model
 
@@ -884,28 +884,25 @@ def run(
         return describe_photo(item, model, model_id, photo_prompt, frame_width, state)
 
     photos_described = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(run_job, job) for job in jobs]
-        for job, future in zip(jobs, futures):
-            record = future.result()
-            if record is None:
-                continue
-            kind, _, output_path = job
-            validate_or_raise(record, "describe")
-            _atomic_write_json(output_path, record)
-            if kind == "clip":
-                described += 1
-                beats_found += sum(
-                    len(segment.get("beats") or []) for segment in record["segments"]
-                )
-            else:
-                photos_described += 1
-            segments_described += sum(
-                1 for segment in record["segments"] if segment["status"] == "described"
+    for job, record in zip(jobs, ordered_map(run_job, jobs, workers)):
+        if record is None:
+            continue
+        kind, _, output_path = job
+        validate_or_raise(record, "describe")
+        _atomic_write_json(output_path, record)
+        if kind == "clip":
+            described += 1
+            beats_found += sum(
+                len(segment.get("beats") or []) for segment in record["segments"]
             )
-            segments_skipped += sum(
-                1 for segment in record["segments"] if segment["status"] == "skipped"
-            )
+        else:
+            photos_described += 1
+        segments_described += sum(
+            1 for segment in record["segments"] if segment["status"] == "described"
+        )
+        segments_skipped += sum(
+            1 for segment in record["segments"] if segment["status"] == "skipped"
+        )
     summary = {
         "clips": len(selected),
         "described": described,

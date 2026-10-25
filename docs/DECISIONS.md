@@ -4,6 +4,37 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] One shared ordered worker pool (V030 audit lot a5, F4)
+
+**Context:** The v0.3.0 audit (F4) found the bounded worker pool hand-rolled in
+two tools: `scripts/describe.py` and `scripts/translate_srt.py` each built their
+own `ThreadPoolExecutor` with their own worker-count handling.
+`tests/test_no_duplicate_helpers.py` missed it because the two blocks are inline
+code, not same-named top-level functions, so the shared-code rule (RULES,
+2026-10-12) was not enforced.
+
+**Options:** (A) leave the two pools in place; (B) move the pool into one helper
+in `scripts/common/` and use it from both tools.
+
+**Decision:** B. `scripts/common/pool.py` gains `ordered_map(fn, items, workers=4)`,
+a generator that runs `fn(item)` for every item in a bounded `ThreadPoolExecutor`
+and yields the results in the input order (inline, no thread, when `workers` is 1
+or there is at most one item; `workers` below 1 raises `ValueError`).
+`describe.py` and `translate_srt.py` call it instead of their own pools; the
+outputs, the submission order and the costs ledger are unchanged.
+`tests/test_no_duplicate_helpers.py` gains a test that no top-level
+`scripts/*.py` names `ThreadPoolExecutor` or `ProcessPoolExecutor` directly, so
+the pool can only live in `common/pool.py`.
+
+**Why not A:** the shared-code rule says shared code lives only in
+`scripts/common/`; two copies of the same pool drift apart and the existing
+duplicate test cannot see inline code.
+
+**Consequence:** New `scripts/common/pool.py` and `tests/test_common_pool.py`;
+`scripts/describe.py` and `scripts/translate_srt.py` drop their
+`concurrent.futures` imports; `tests/test_no_duplicate_helpers.py` gains the
+guard test. No CLI flag, schema, summary key or behaviour change.
+
 ## [2026-10-25] Notebook waiting cap on an over-limit file (V030 lot a3)
 
 **Context:** The v0.3.0 audit (F10) found that a hand-edited notebook holding
