@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: "Delete this version" is a normal secondary button with the bin icon, and the first version can be deleted too while another version stays (only the latest and a version during a run are refused).
 - Web app: the Director tab opens at the newest message (`#chat-latest`).
 - Notebook: a lesson is a general rule and may not name a shot id, a clip number or a project name; the learn pass skips such a lesson with a `[warn]` line and still succeeds.
+- Director: the neighbour check compares the frames inside each slot's `in_s..out_s` (the windows actually in the edit) with the same MobileNetV2 embedding, cached per window key in `similarity_windows.json`; whole-segment similarity stays in `similarity.json` for the menu the model sees.
 
 ### Fixed
 
@@ -55,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An empty or duplicate `channel.style.description_order` is a config error; `recap_meta.py` no longer receives `description_order`.
 - A defect the intent rule waives (shake on a deliberate move) is no longer given as "defect: ..." in the edit's reasons; the shot gets its real reason (low score / did not fit the length).
 - An explicit request to add a named shot is followed even when the shot has minor defects — the reply says which defects it has; only an `accidental`/`setup`/`teardown` role or a whip short-hold stays refused.
+- Director: a shot the owner asked to drop, and every member of its star group, is never put back by a repair, the star rule or the reviewer, and the group requires no star in that run; the star repair swaps a missing required star in for the weakest compatible slot again, but never drops a shot the owner named or a member of the owner's dropped group.
+- Director: after a repair moves a cut, the edit is re-snapped to the beat grid, so every cut still lands on a beat.
 
 ## [0.2.0] - 2026-10-24
 

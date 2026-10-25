@@ -632,6 +632,23 @@ def test_required_star_keys_collapses_a_similar_chain():
     assert llm_director.required_star_keys(facts, 5) == ["0002/s1"]
 
 
+def test_required_star_keys_dropped_group_is_not_required():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.95, hero=True, segment_id="s7"),
+        "0072/s7b5": fact("0072/s7b5", "clip_0072_x.mp4", 12.0, 24.0, score=0.97, hero=True, segment_id="s7"),
+    }
+    assert llm_director.required_star_keys(facts, 5, frozenset({"0072/s7b5"})) == []
+    assert llm_director.required_star_keys(facts, 5) == ["0072/s7b5"]
+
+
+def test_star_group_keys_returns_the_whole_group():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.95, hero=True, segment_id="s7"),
+        "0072/s7b5": fact("0072/s7b5", "clip_0072_x.mp4", 12.0, 24.0, score=0.97, hero=True, segment_id="s7"),
+    }
+    assert llm_director.star_group_keys(facts, {"0072/s7b5"}) == {"0072/s7b1", "0072/s7b5"}
+
+
 def test_hero_missing_not_fired_when_the_better_of_a_similar_pair_is_planned():
     facts = {
         "0081/s5": fact("0081/s5", "clip_0081_x.mp4", 0.0, 12.0, score=0.8722, hero=True, similar_to=["0081/s7"]),
@@ -841,6 +858,68 @@ def test_repair_keeps_chronological_order():
     assert llm_director.blocking(llm_director.validate_edit(record, plan, facts)) == []
 
 
+def test_repair_missing_stars_swaps_the_star_in_for_the_weakest_victim():
+    facts = star_facts()
+    plan = star_plan(["0001/s1", "0003/s1", "0004/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0003_x.mp4"),
+        ("v3", "clip_0004_x.mp4"),
+    ])
+    notes = []
+    llm_director.repair_missing_stars(record, plan, facts, {}, 6.0, notes)
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert "0002/s1" in used
+    assert "0003/s1" not in used
+    assert any("swapped 0002/s1 in for 0003/s1" in note for note in notes)
+
+
+def test_repair_missing_stars_never_drops_a_shot_the_owner_named():
+    facts = star_facts()
+    plan = star_plan(["0001/s1", "0003/s1", "0004/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0003_x.mp4"),
+        ("v3", "clip_0004_x.mp4"),
+    ])
+    notes = []
+    llm_director.repair_missing_stars(record, plan, facts, {}, 6.0, notes, drop_keys=frozenset({"0003/s1"}))
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert "0002/s1" in used
+    assert "0003/s1" in used
+    assert "0004/s1" not in used
+    assert any("swapped 0002/s1 in for 0004/s1" in note for note in notes)
+
+
+def test_repair_missing_stars_never_picks_a_victim_in_the_owner_dropped_group():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.30),
+        "0002/s1": fact(
+            "0002/s1", "clip_0002_x.mp4", 0.0, 12.0,
+            keep_whole=True, score=0.95, hero=True, role="move", motion_label="travel_forward",
+        ),
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.10, hero=True, segment_id="s7"),
+        "0072/s7b5": fact("0072/s7b5", "clip_0072_x.mp4", 12.0, 24.0, score=0.97, hero=True, segment_id="s7"),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 12.0, score=0.25),
+    }
+    plan = star_plan(["0001/s1", "0072/s7b1", "0003/s1"])
+    plan["brief"]["target_duration_s"] = 6.0
+    record = star_record([
+        ("v1", "clip_0001_x.mp4"),
+        ("v2", "clip_0072_x.mp4"),
+        ("v3", "clip_0003_x.mp4"),
+    ])
+    notes = []
+    llm_director.repair_missing_stars(record, plan, facts, {}, 6.0, notes, drop_keys=frozenset({"0072/s7b5"}))
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert "0002/s1" in used
+    assert "0072/s7b1" in used
+    assert "0003/s1" not in used
+    assert any("swapped 0002/s1 in for 0003/s1" in note for note in notes)
+
+
 def test_resort_resets_transitions_without_beat_grid():
     facts = {
         "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
@@ -894,6 +973,63 @@ def test_fill_to_target_adds_slots_until_the_brief_length():
     assert any("added 0002/s1" in note for note in notes)
     total = sum(llm_director.slot_duration(row) for row in record["video"])
     assert total >= 12.0 - llm_director.TARGET_SLACK_S
+
+
+def test_fill_to_target_never_adds_a_dropped_group_member():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 12.0, score=0.97, hero=True, segment_id="s7"),
+        "0072/s7b5": fact("0072/s7b5", "clip_0072_x.mp4", 12.0, 24.0, score=0.95, hero=True, segment_id="s7"),
+    }
+    plan = star_plan(["0001/s1"])
+    plan["brief"]["target_duration_s"] = 12.0
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0001_x.mp4", "in_s": 8.0, "out_s": 11.0, "shot_key": "0001/s1", "score": 0.3},
+        ]
+    }
+    notes = llm_director.fill_to_target(record, plan, facts, {}, 6.0, [], frozenset({"0072/s7b5"}))
+    used = [row.get("shot_key") for row in plan.get("slot_plan") or []]
+    assert "0072/s7b1" not in used
+    assert "0072/s7b5" not in used
+    assert notes == []
+
+
+def test_validate_edit_uses_similar_fn():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.4),
+    }
+    plan = star_plan(["0001/s1", "0002/s1"])
+    record = star_record([("v1", "clip_0001_x.mp4"), ("v2", "clip_0002_x.mp4")])
+    assert [item for item in llm_director.validate_edit(record, plan, facts) if item["rule"] == "similar"] == []
+    flagged = llm_director.validate_edit(record, plan, facts, similar_fn=lambda a, b, c, d: True)
+    assert [item["slot"] for item in flagged if item["rule"] == "similar"] == ["v2"]
+
+
+def test_photo_pair_linked_by_similar_to_is_flagged_through_a_stub_embedder():
+    class StubEmbedder:
+        def similar(self, first, second):
+            return False
+
+    facts = {
+        "photo_01/p1": fact(
+            "photo_01/p1", "photo_01.jpg", 0.0, 0.04, score=0.6, media_type="photo", similar_to=["photo_02/p1"]
+        ),
+        "photo_02/p1": fact(
+            "photo_02/p1", "photo_02.jpg", 0.0, 0.04, score=0.6, media_type="photo", similar_to=["photo_01/p1"]
+        ),
+    }
+    plan = star_plan(["photo_01/p1", "photo_02/p1"])
+    record = {
+        "video": [
+            {"id": "v1", "kind": "photo", "clip": "photo_01.jpg", "duration_s": 3.0},
+            {"id": "v2", "kind": "photo", "clip": "photo_02.jpg", "duration_s": 3.0},
+        ]
+    }
+    similar_fn = llm_director.make_window_similar(StubEmbedder())
+    violations = llm_director.validate_edit(record, plan, facts, similar_fn=similar_fn)
+    assert [item["slot"] for item in violations if item["rule"] == "similar"] == ["v2"]
 
 
 def test_validator_catches_rule_break(tmp_path):
@@ -2158,6 +2294,39 @@ def test_beat_snap_prefers_downbeats():
     for slot, cut in zip(record["video"], record_cuts(record)):
         if slot.get("beat_grid") == "downbeat":
             assert min(abs(cut - downbeat) for downbeat in downbeat_s) <= 0.02
+
+
+def test_finish_record_resnaps_after_a_similar_drop():
+    facts = {
+        "0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, score=0.3, similar_to=["0002/s1"]),
+        "0002/s1": fact("0002/s1", "clip_0002_x.mp4", 0.0, 20.0, score=0.4, similar_to=["0001/s1"]),
+        "0003/s1": fact("0003/s1", "clip_0003_x.mp4", 0.0, 20.0, score=0.35),
+    }
+    plan = star_plan(["0003/s1", "0001/s1", "0002/s1"])
+    plan["brief"]["order"] = "chronological"
+    plan["brief"]["target_duration_s"] = 90.0
+    record = star_record([
+        ("v1", "clip_0003_x.mp4"),
+        ("v2", "clip_0001_x.mp4"),
+        ("v3", "clip_0002_x.mp4"),
+    ])
+    grid = {
+        "beat_s": [round(0.5 * index, 4) for index in range(200)],
+        "downbeat_s": [round(2.0 * index, 4) for index in range(50)],
+        "beat_period_s": 0.5,
+    }
+
+    def similar_fn(first, second, first_fact, second_fact):
+        return {first.get("shot_key"), second.get("shot_key")} == {"0001/s1", "0002/s1"}
+
+    warnings = []
+    llm_director.finish_record(record, plan, facts, {}, grid, warnings, 6.0, similar_fn=similar_fn)
+    assert len(record["video"]) == 2
+    cuts = record_cuts(record)
+    assert cuts
+    tolerance = llm_director.BEAT_SNAP_FRACTION * grid["beat_period_s"]
+    for cut in cuts:
+        assert min(abs(cut - beat) for beat in grid["beat_s"]) <= tolerance + 1e-6
 
 
 def test_run_with_beats_writes_cut_transitions(tmp_path):

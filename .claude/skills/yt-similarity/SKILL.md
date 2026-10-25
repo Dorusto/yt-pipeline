@@ -8,6 +8,8 @@ compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with 
 
 Embed every quality segment and still photo of a workspace and list the visually similar pairs before any editing decision. The director uses the pairs to refuse near-duplicate shots ("no two similar segments in the edit unless the brief asks for it, never back to back") and the index uses them to suppress photo bursts. The output is **one file per workspace** (`WORKSPACE/similarity.json`), not per clip, because pairs cross clips and photos. **Frames are never written to disk** — the repo is public. All commands run through `yt <tool>`.
 
+`similarity.json` scores whole segments and is the **menu** the director's model sees (the `similar_to` field) and the index uses for burst suppression. The director's neighbour check does **not** use these whole-segment scores: it embeds the frames inside each slot's `in_s..out_s` (the windows actually in the edit) with the same MobileNetV2 embedding and the same 3-frame interior spacing, caches them per window key in `<workspace>/similarity_windows.json` and flags a neighbouring pair at or over the threshold (0.90). A new camera angle right after is fine — only what is on screen counts.
+
 ## Step 1: embed a workspace
 
 ```bash

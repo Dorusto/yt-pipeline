@@ -4,6 +4,68 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Owner removals stick, similarity on the windows in the edit (V030 lot c28)
+
+**Context:** The owner's end-to-end test on a copy of `kotor-demo` (v017,
+`by: llm`). The owner asked to drop `0072/s7b5` and add `0091/s2`; both happened,
+but the star repair swapped `0072/s7b1` in for `0063/s1`, so slots 7 and 8
+(`0072/s5`, `0072/s7b1`) are near-identical back to back. `0072/s7b1` and
+`0072/s7b5` are both beats of segment `s7` (same clip, same `segment_id`), so
+they are one star group; `required_star_keys` excluded the dropped key from the
+star list *before* collapsing groups, so `0072/s7b1` stayed required and the
+repair put it back. The neighbour check also compared whole segments:
+`similarity.json` scores `0072/s5` vs `0072/s7` at **0.567** (below 0.90), while
+the windows actually in the edit (`0072/s5` 23.148–26.515 s vs `0072/s7b1`
+36.13–40.054 s) score **0.933** with the same MobileNetV2 embedding and the same
+3-frame interior spacing, over the threshold. The v017 notes also showed two cuts
+0.6 s off the beat after the repairs.
+
+**Options:** (A) keep the strict "never drop a shot the owner did not name"
+reading of the star repair, so a missing required star is only swapped in when
+the owner asked to add it; (B) let the star repair drop a victim again, but never
+a shot the owner named (add or drop) and never a member of the owner's dropped
+group; (C) compare whole segments in the neighbour check; (D) compare the frames
+inside each slot's `in_s..out_s` with the same embedding, cached per window key,
+and re-snap the cuts after a repair moves one.
+
+**Decision:** B and D. `required_star_keys` and `star_group_keys` exclude a group
+that contains any of the owner's drop keys, so an owner removal sticks through
+the star rule, the repairs and the reviewer. `pick_swap_victim` skips a victim
+whose key is in `drop_keys` or in `star_group_keys(facts_by_key, drop_keys)`
+(the owner's dropped group) as well as the owner's added shots and `keep_whole`
+slots, so the star repair swaps a missing required star in for the weakest
+compatible slot and never drops a named shot. The neighbour check embeds the
+frames inside each slot's `in_s..out_s` (`common/window_similarity.py`,
+`WindowEmbedder`, cache `<workspace>/similarity_windows.json`) with the same
+backend and spacing `similarity.py` uses; whole-segment similarity stays in
+`similarity.json` for the menu the model sees. After a repair moves a cut the
+edit is re-snapped to the beat grid with the same per-slot caps.
+
+**Why not A:** the strict reading disables the hero repair and makes every run
+where the model leaves out a required star fall back to the rule director — the
+acceptance (`by: llm`) fails. The shipped rule is "never drop a shot the owner
+named or a member of the owner's dropped group", which keeps the hero repair
+alive and still honours the owner. **Why not C:** whole-segment scores miss what
+is on screen — the 0.567 vs 0.933 pair above is exactly the near-duplicate the
+owner saw, and the whole-segment score would let it through.
+
+**Numbers:** the acceptance run on a fresh copy of `kotor-demo`
+(`/root/media/projects/kotor-c28`) with the same feedback text: `llm_director`
+359.2 s and 0.0348 USD, `meta.director.by = "llm"` (no fallback), `0091/s2` in,
+`0072/s7b5` out, no other `0072/s7` beat back, `0063/s1` still in, worst
+neighbour window score 0.7997 (below 0.90) and every cut within 0.005 s of a
+beat. The reviewer did not approve the last draft (five length objections), so
+the run kept the last valid draft; `by` is still `llm`.
+
+**Consequence:** files touched — `scripts/common/embed.py` (new),
+`scripts/common/window_similarity.py` (new), `scripts/similarity.py`,
+`scripts/llm_director.py`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`,
+`docs/plans/v0.3.0.md`, the `yt-llm-director`, `yt-director` and `yt-similarity`
+skills, `tests/test_llm_director.py`, `tests/test_common_window_similarity.py`.
+No change to `scripts/director.py`, `scripts/quality.py`, the web app, the
+schemas or the prompts; the threshold stays 0.90 and the embedding stays
+MobileNetV2. No real footage, clip text or private paths in the repo.
+
 ## [2026-10-25] Delete-version button and review follow-ups (V030 lot c27)
 
 **Context:** The owner's phone test showed "Delete this version" as a full-width
