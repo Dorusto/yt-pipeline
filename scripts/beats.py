@@ -14,7 +14,9 @@ beat tracking (Ellis 2007) for the beat grid, four-four downbeats and a per-0.5 
 RMS energy curve. With ``--target-duration-s`` the tool also returns a cut grid:
 edit-time boundaries snapped to the music's beats so an edit's cuts land on the
 music. The source is read only; ``--out`` is written atomically. No model service
-is called, so ``llm_cost_usd`` is always 0.0.
+is called, so ``llm_cost_usd`` is always 0.0. With ``--engine beat_this`` the beat
+grid and the downbeats come from the optional Beat This! model instead of the
+numpy heuristic; the energy curve and the cut grid are unchanged.
 """
 
 import argparse
@@ -65,6 +67,28 @@ class BeatsRuntimeError(BeatsError):
     """Raised when ffmpeg or ffprobe fails after the run started."""
 
 
+_BEAT_THIS_MODEL = None
+
+
+def beat_this_beats(samples, rate=ANALYSIS_RATE):
+    """Return (beat_s, downbeat_s) from the Beat This! model, or raise BeatsError."""
+    global _BEAT_THIS_MODEL
+    try:
+        from beat_this.inference import Audio2Beats
+    except ImportError as exc:
+        raise BeatsError(
+            "the beat_this engine needs the beat-this package: "
+            "pip install beat-this tqdm einops soxr rotary-embedding-torch"
+        ) from exc
+    try:
+        if _BEAT_THIS_MODEL is None:
+            _BEAT_THIS_MODEL = Audio2Beats(checkpoint_path="final0", device="cpu", dbn=False)
+        beats, downbeats = _BEAT_THIS_MODEL(samples, rate)
+    except Exception as exc:
+        raise BeatsRuntimeError(f"the beat_this engine failed: {exc}") from exc
+    return np.asarray(beats, dtype=float), np.asarray(downbeats, dtype=float)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="beats.py",
@@ -109,6 +133,12 @@ def build_parser():
         type=float,
         default=2.0,
         help="longest plausible beat period in seconds (default: 2.0)",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=("numpy", "beat_this"),
+        default="numpy",
+        help="beat and downbeat detection engine (default: numpy)",
     )
     parser.add_argument("--force", action="store_true", help="rewrite --out when it exists")
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
@@ -371,21 +401,26 @@ def energy_curve(samples, rate=ANALYSIS_RATE, window_s=ENERGY_WINDOW_S):
     return curve
 
 
-def measure(samples, min_beat_s=0.25, max_beat_s=2.0):
+def measure(samples, min_beat_s=0.25, max_beat_s=2.0, engine="numpy"):
     """Measure tempo, beats, downbeats and energy of mono samples."""
     duration_s = len(samples) / ANALYSIS_RATE
-    envelope = onset_envelope(samples)
-    onsets = pick_onsets(envelope, min_beat_s=min_beat_s)
     warnings = []
-    if envelope.size and envelope.max() > 0 and len(onsets):
-        period, _ = estimate_beat_period(envelope, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
-        period = refine_period(envelope, period, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
-        beat_s, period = track_beats(envelope, period, duration_s)
+    if engine == "beat_this":
+        beat_s, downbeat_s = beat_this_beats(samples)
+        period = float(np.median(np.diff(beat_s))) if len(beat_s) >= 2 else 0.0
         bpm = min(MAX_BPM, max(MIN_BPM, 60.0 / period)) if period > 0 else 0.0
     else:
-        period, bpm, beat_s = 0.0, 0.0, np.zeros(0)
-        warnings.append("no onsets detected; tempo is not reported")
-    downbeat_s = find_downbeats(beat_s, envelope)
+        envelope = onset_envelope(samples)
+        onsets = pick_onsets(envelope, min_beat_s=min_beat_s)
+        if envelope.size and envelope.max() > 0 and len(onsets):
+            period, _ = estimate_beat_period(envelope, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
+            period = refine_period(envelope, period, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
+            beat_s, period = track_beats(envelope, period, duration_s)
+            bpm = min(MAX_BPM, max(MIN_BPM, 60.0 / period)) if period > 0 else 0.0
+        else:
+            period, bpm, beat_s = 0.0, 0.0, np.zeros(0)
+            warnings.append("no onsets detected; tempo is not reported")
+        downbeat_s = find_downbeats(beat_s, envelope)
     curve = energy_curve(samples)
     db_values = [window["dbfs"] for window in curve]
     return {
@@ -553,6 +588,7 @@ def run(
     min_beat_s=0.25,
     max_beat_s=2.0,
     force=False,
+    engine="numpy",
 ):
     """Measure a music file and return the summary, writing ``--out`` when given."""
     started = time.monotonic()
@@ -573,7 +609,7 @@ def run(
     warnings = []
     with tempfile.TemporaryDirectory(prefix="beats_") as temporary_dir:
         samples = decode_mono(input_path, temporary_dir)
-        measurement = measure(samples, min_beat_s=min_beat_s, max_beat_s=max_beat_s)
+        measurement = measure(samples, min_beat_s=min_beat_s, max_beat_s=max_beat_s, engine=engine)
 
     warnings.extend(measurement.pop("warnings"))
     cut_grid, music_shorter, grid_warnings = build_cut_grid(
@@ -606,6 +642,7 @@ def main(argv=None):
             min_beat_s=args.min_beat_s,
             max_beat_s=args.max_beat_s,
             force=args.force,
+            engine=args.engine,
         )
     except BeatsRuntimeError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)

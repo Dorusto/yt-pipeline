@@ -24,6 +24,7 @@ The credits and the required notices are in [`NOTICE.md`](../NOTICE.md).
 | torchaudio | BSD-2-Clause | linked library — WhisperX audio |
 | torchvision | BSD-3-Clause | linked library — WhisperX / model helpers |
 | whisperx | BSD-2-Clause | linked library — forced alignment (word timestamps) |
+| beat-this | MIT | optional linked library — Beat This! downbeat engine (`beats.py --engine beat_this`), not in `requirements.txt` |
 | pytest | MIT | dev dependency — test runner |
 | pytest-timeout | MIT | dev dependency — per-test timeout |
 
@@ -50,6 +51,7 @@ The credits and the required notices are in [`NOTICE.md`](../NOTICE.md).
 | RNNoise model `arnndn.rnnn` | BSD-3-Clause | downloaded at first run, never committed — audio noise reduction |
 | BiRefNet portrait model (rembg) | MIT | downloaded at first run, never committed — thumbnail cut-out |
 | RobustVideoMatting (RVM) | GPL-3.0 | fetched through `torch.hub` at first run, never vendored — background removal |
+| Beat This! model weights (`final0`) | MIT | downloaded at first run, never committed — optional downbeat engine (`beats.py --engine beat_this`) |
 | MatAnyone2 | NTU S-Lab 1.0, non-commercial | optional personal backend only, never shipped, never the default |
 | YuE2 / ACE-Step 1.5 / Stable Audio Open | see the notes below | planned music models (D6, not used yet) |
 
@@ -71,6 +73,10 @@ The credits and the required notices are in [`NOTICE.md`](../NOTICE.md).
 - **MatAnyone2 (NTU S-Lab 1.0, non-commercial):** never the default, never used
   for paid work without written permission from its authors, not shipped in the
   repo.
+- **Beat This! (MIT):** the code and the published weights are MIT, but the
+  upstream README warns that some *training* files are copyrighted or under
+  limited CC licences; it is the user's responsibility to assess their use case.
+  The package is optional and not in `requirements.txt`.
 - **ffmpeg:** a build with GPL components (`libx264`, `vidstab`) is GPL; calling
   it as a separate program is fine, but shipping a GPL ffmpeg build inside a
   proprietary product needs care. AGPL-3.0 is compatible with GPL-3.0.
