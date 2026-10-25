@@ -3284,8 +3284,10 @@ pass and writes at most 3 short lessons through `notebook.py`.
 plus the existing lessons, the new feedback rows and the current `edit.json`
 brief, and makes one `metadata`-class call through `common/llm.py`. The answer
 `{"lessons": [...], "remove": [...]}` is applied with `next_id`/`make_lesson`;
-when the result would pass the 40-lesson limit the oldest lessons are dropped
-first, then the document is validated and written atomically. With no new
+when the result would pass the 40-lesson limit the pass asks the model once to
+merge overlapping lessons or remove stale ones and retries; lessons that still
+do not fit wait in the file as `waiting` lessons (never dropped); then the
+document is validated and written atomically. With no new
 feedback the pass is skipped, makes no model call and writes nothing. `serve.py`
 spawns the pass in the background (`start_learn`) after a re-edit, a chat
 approval, a shot removed or trimmed, and a version deleted — never on a first
@@ -3306,6 +3308,17 @@ already gives; a hand-written notebook would stay empty in practice.
 the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
 `schemas/notebook.schema.json` (the marker lives in the workspace), no shared
 notebook between instances and no new web route or UI control.
+
+**c10c review fixes:** the review of the c10b pass found three faults, fixed in
+V030 lot c10c. `read_learn_prompt` reads the prompt through the shared
+`common.text.read_text` instead of its own reader. A learn pass that still does
+not fit after the merge call keeps the new lessons as `waiting` lessons in the
+file (never dropped) and promotes them into `lessons` as soon as there is room;
+`schemas/notebook.schema.json` gains the optional `waiting` array and the web app
+shows the waiting lessons with the same delete form. The learn-pass model cost is
+charged to a notebook ledger next to the notebook file (`notebook.spend.json`,
+via `common.notebook.notebook_ledger_path`) and counted in the instance total
+model cost on the Costs page, never in the per-clip list.
 
 ## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
 

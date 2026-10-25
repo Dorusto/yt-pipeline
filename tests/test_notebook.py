@@ -8,7 +8,7 @@ from pathlib import Path
 import llm_director
 import notebook
 import serve
-from common.llm import MockClient
+from common.llm import JSONResponse
 from common.notebook import notebook_block
 from common.schema import validate
 
@@ -28,12 +28,13 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def write_notebook(path, lessons):
+def write_notebook(path, lessons, waiting=None):
     document = {
         "schema_version": "1",
         "generated_at": "2026-10-24T00:00:00+00:00",
         "tool": "notebook",
         "lessons": lessons,
+        "waiting": waiting or [],
     }
     Path(path).write_text(json.dumps(document), encoding="utf-8")
 
@@ -48,12 +49,30 @@ def make_workspace(tmp_path, ts="2020-01-01T00:00:00+00:00"):
     return workspace
 
 
-def stub_learn_client(monkeypatch, answer, cost=0.01):
+def stub_learn_client(monkeypatch, answer, merge_answer=None, cost=0.01):
     calls = []
+
+    class StubClient:
+        def __init__(self):
+            self.count = 0
+
+        def complete_json(self, role, messages, model=None, **kwargs):
+            self.count += 1
+            payload = answer if self.count == 1 else (
+                merge_answer if merge_answer is not None else answer
+            )
+            return JSONResponse(
+                data=payload,
+                text="",
+                model="stub-model",
+                role=role,
+                cost_usd=cost,
+                attempts=1,
+            )
 
     def fake_make_client(config=None, ledger_path=None):
         calls.append(config)
-        return MockClient(text=json.dumps(answer), cost_per_call=cost)
+        return StubClient()
 
     monkeypatch.setattr(notebook, "make_client", fake_make_client)
     return calls
@@ -169,13 +188,14 @@ def test_learn_skips_when_there_is_no_new_feedback(tmp_path, monkeypatch):
     assert notebook_file.read_text(encoding="utf-8") == before
 
 
-def test_learn_drops_the_oldest_lessons_to_fit_the_limit(tmp_path, monkeypatch):
+def test_learn_merges_when_over_the_limit(tmp_path, monkeypatch):
     notebook_file = tmp_path / "notebook.json"
     write_notebook(
         notebook_file,
         [
             {"id": "l001", "text": "old one", "kind": "lesson", "created_at": "2026-01-01T00:00:00+00:00"},
             {"id": "l002", "text": "old two", "kind": "lesson", "created_at": "2026-01-02T00:00:00+00:00"},
+            {"id": "l003", "text": "old three", "kind": "lesson", "created_at": "2026-01-03T00:00:00+00:00"},
         ],
     )
     workspace = make_workspace(tmp_path)
@@ -187,13 +207,136 @@ def test_learn_drops_the_oldest_lessons_to_fit_the_limit(tmp_path, monkeypatch):
         ],
         "remove": [],
     }
-    stub_learn_client(monkeypatch, answer)
+    merge_answer = {
+        "merge": [{"ids": ["l001", "l002", "l003"], "text": "the three old lessons merged"}],
+        "remove": [],
+    }
+    stub_learn_client(monkeypatch, answer, merge_answer=merge_answer)
+    summary = notebook.learn(str(workspace), str(notebook_file), 4)
+    assert summary["status"] == "written"
+    assert summary["count"] == 4
+    assert summary["waiting"] == 0
+    assert summary["removed"] == ["l001", "l002", "l003"]
+    document = read_json(notebook_file)
+    texts = [lesson["text"] for lesson in document["lessons"]]
+    assert "the three old lessons merged" in texts
+    assert "new one" in texts and "new two" in texts and "new three" in texts
+    assert document["waiting"] == []
+
+
+def test_learn_keeps_new_lessons_waiting_when_still_over(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "old one", "kind": "lesson", "created_at": "2026-01-01T00:00:00+00:00"},
+            {"id": "l002", "text": "old two", "kind": "lesson", "created_at": "2026-01-02T00:00:00+00:00"},
+            {"id": "l003", "text": "old three", "kind": "lesson", "created_at": "2026-01-03T00:00:00+00:00"},
+        ],
+    )
+    workspace = make_workspace(tmp_path)
+    answer = {
+        "lessons": [
+            {"text": "new one", "kind": "lesson", "part": None},
+            {"text": "new two", "kind": "lesson", "part": None},
+            {"text": "new three", "kind": "lesson", "part": None},
+        ],
+        "remove": [],
+    }
+    merge_answer = {"merge": [], "remove": []}
+    stub_learn_client(monkeypatch, answer, merge_answer=merge_answer)
+    summary = notebook.learn(str(workspace), str(notebook_file), 3)
+    assert summary["status"] == "written"
+    assert summary["count"] == 3
+    assert summary["waiting"] == 3
+    assert summary["removed"] == []
+    document = read_json(notebook_file)
+    assert [lesson["id"] for lesson in document["lessons"]] == ["l001", "l002", "l003"]
+    assert [lesson["text"] for lesson in document["waiting"]] == ["new one", "new two", "new three"]
+    assert validate(document, "notebook") == []
+
+
+def test_learn_keeps_the_merged_lesson_and_waits_the_new_ones(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "old one", "kind": "lesson", "created_at": "2026-01-01T00:00:00+00:00"},
+            {"id": "l002", "text": "old two", "kind": "lesson", "created_at": "2026-01-02T00:00:00+00:00"},
+            {"id": "l003", "text": "old three", "kind": "lesson", "created_at": "2026-01-03T00:00:00+00:00"},
+        ],
+    )
+    workspace = make_workspace(tmp_path)
+    answer = {
+        "lessons": [
+            {"text": "new one", "kind": "lesson", "part": None},
+            {"text": "new two", "kind": "lesson", "part": None},
+            {"text": "new three", "kind": "lesson", "part": None},
+        ],
+        "remove": [],
+    }
+    merge_answer = {"merge": [{"ids": ["l001", "l002"], "text": "merged old"}], "remove": []}
+    stub_learn_client(monkeypatch, answer, merge_answer=merge_answer)
     summary = notebook.learn(str(workspace), str(notebook_file), 3)
     assert summary["status"] == "written"
     assert summary["count"] == 3
     assert summary["removed"] == ["l001", "l002"]
     document = read_json(notebook_file)
-    assert [lesson["id"] for lesson in document["lessons"]] == ["l003", "l004", "l005"]
+    lesson_texts = [lesson["text"] for lesson in document["lessons"]]
+    waiting_texts = [lesson["text"] for lesson in document["waiting"]]
+    assert "merged old" in lesson_texts
+    assert "merged old" not in waiting_texts
+    assert set(lesson_texts) | set(waiting_texts) >= {
+        "old three",
+        "merged old",
+        "new one",
+        "new two",
+        "new three",
+    }
+    lesson_ids = {lesson["id"] for lesson in document["lessons"]}
+    assert all(lesson_id in lesson_ids for lesson_id in summary["added"])
+
+
+def test_removing_a_lesson_writes_a_waiting_lesson(tmp_path):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "one", "kind": "lesson"},
+            {"id": "l002", "text": "two", "kind": "lesson"},
+            {"id": "l003", "text": "three", "kind": "lesson"},
+        ],
+        waiting=[{"id": "l004", "text": "waiting one", "kind": "lesson"}],
+    )
+    result = run_notebook(
+        "--notebook", str(notebook_file), "--limit", "3", "--remove", "l001", "--json"
+    )
+    assert result.returncode == 0
+    summary = json.loads(result.stdout)
+    assert summary["count"] == 3
+    document = read_json(notebook_file)
+    assert [lesson["id"] for lesson in document["lessons"]] == ["l002", "l003", "l004"]
+    assert document["waiting"] == []
+
+
+def test_remove_can_discard_a_waiting_lesson(tmp_path):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "one", "kind": "lesson"},
+            {"id": "l002", "text": "two", "kind": "lesson"},
+            {"id": "l003", "text": "three", "kind": "lesson"},
+        ],
+        waiting=[{"id": "l004", "text": "waiting one", "kind": "lesson"}],
+    )
+    result = run_notebook("--notebook", str(notebook_file), "--remove", "l004", "--json")
+    assert result.returncode == 0
+    summary = json.loads(result.stdout)
+    assert summary["count"] == 3
+    document = read_json(notebook_file)
+    assert [lesson["id"] for lesson in document["lessons"]] == ["l001", "l002", "l003"]
+    assert document["waiting"] == []
 
 
 def test_learn_without_workspace_is_usage(tmp_path):

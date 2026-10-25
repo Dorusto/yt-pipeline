@@ -1,7 +1,7 @@
 ---
 name: yt-notebook
 description: Read and edit the instance's learning notebook — a small JSON file of short lessons the director keeps between edits, at most 40 of them — and run the learning pass that writes lessons from the feedback. Use when the user wants to see the lessons the director learned, add a lesson, remove a stale one, merge overlapping ones, propose moving a repeated sentence (for example the sponsor line) to channel.fixed, or make the notebook learn from the feedback after an edit. Trigger phrases - "ce lecții a învățat directorul", "adaugă o lecție", "scoate lecția veche", "combină lecțiile", "propune mutarea propoziției în channel.fixed", "fă notebook-ul să învețe", "the director's notebook", "add a lesson", "remove a stale lesson", "merge overlapping lessons", "propose moving a repeated sentence", "learn from the feedback". Not for building the edit (that is `yt-llm-director` / `yt-director`), not for writing the config (the owner says yes by editing channel.fixed) and not for the web app (that is `serve.py`).
-compatibility: Run with the `yt` entry point on PATH. Reads and writes one JSON file (the notebook path from --notebook, else YT_PIPELINE_NOTEBOOK, else notebook.path in the config; no personal default). The read/edit commands make no model call and no spend; `--learn` makes one cheap metadata-class model call charged to the ledger. Safe to re-run; a write past the 40-lesson limit is refused and nothing is written.
+compatibility: Run with the `yt` entry point on PATH. Reads and writes one JSON file (the notebook path from --notebook, else YT_PIPELINE_NOTEBOOK, else notebook.path in the config; no personal default). The read/edit commands make no model call and no spend; `--learn` makes one cheap metadata-class model call charged to the notebook ledger next to the notebook file (`notebook.spend.json`), plus one more merge call when the notebook is full. Safe to re-run; a write past the 40-lesson limit is refused and nothing is written.
 ---
 
 # yt-notebook
@@ -40,9 +40,9 @@ yt notebook --notebook /path/to/notebook.json --propose members_sentence --text 
 yt notebook --notebook /path/to/notebook.json --learn --workspace /path/to/workspace
 ```
 
-- `--learn` reads the workspace's `feedback.jsonl` rows newer than the `last_learn_at` in the machine-owned marker `<workspace>/.learn.json` (all rows when the marker is absent), makes **one cheap `metadata`-class model call** through `common/llm.py` (the cost is charged to the ledger) and writes at most 3 short lessons. When the 40-lesson limit would be passed it drops the oldest lessons first, then writes.
+- `--learn` reads the workspace's `feedback.jsonl` rows newer than the `last_learn_at` in the machine-owned marker `<workspace>/.learn.json` (all rows when the marker is absent), makes **one cheap `metadata`-class model call** through `common/llm.py` (the cost is charged to the notebook ledger next to the notebook file) and writes at most 3 short lessons. When the 40-lesson limit would be passed it makes **one more merge call** (`prompts/notebook_merge.md`) to merge overlapping lessons or remove stale ones; lessons that still do not fit are kept as `waiting` lessons in the file (never dropped) and promoted into `lessons` as soon as there is room.
 - `--workspace PATH` is required with `--learn` and only valid with it; a missing workspace is a usage error. With no new feedback the pass is skipped, makes no model call and writes nothing (the marker stays).
-- The model answer is `{"lessons": [{"text", "kind", "part"}], "remove": ["lNNN"]}`; a `proposal` needs a `part` in `channel.fixed`. An unknown id in `remove` is ignored with a warning.
+- The model answer is `{"lessons": [{"text", "kind", "part"}], "remove": ["lNNN"]}`; a `proposal` needs a `part` in `channel.fixed`. An unknown id in `remove` is ignored with a warning. The merge answer is `{"merge": [{"ids": ["l001", "l002"], "text": "..."}], "remove": ["lNNN"]}`; a merge with fewer than 2 known ids is skipped with a warning.
 - After a successful write the marker `<workspace>/.learn.json` records `{"last_learn_at": ...}`. The web app runs this pass in the background after each new version it makes.
 
 ## Step 4: read the result
@@ -52,10 +52,11 @@ yt notebook --notebook /path/to/notebook.json --add "..." --json
 yt notebook --notebook /path/to/notebook.json --learn --workspace /path/to/workspace --json
 ```
 
-The `--json` output is a single object. For a read/edit command, e.g. `{"ok": true, "notebook": "...", "count": 3, "limit": 40, "changed": {"added": ["l003"], "removed": [], "merged": []}, "lessons": [...], "wall_time_s": 0.0, "llm_cost_usd": 0.0}`. For `--learn`, e.g. `{"ok": true, "status": "written", "notebook": "...", "count": 3, "limit": 40, "added": ["l003"], "removed": [], "model": "...", "wall_time_s": 0.0, "llm_cost_usd": 0.01}`; a skipped pass has `"status": "skipped"`, `"reason": "no new feedback"` and `llm_cost_usd` 0.0.
+The `--json` output is a single object. For a read/edit command, e.g. `{"ok": true, "notebook": "...", "count": 3, "limit": 40, "waiting": 0, "changed": {"added": ["l003"], "removed": [], "merged": [], "promoted": []}, "lessons": [...], "wall_time_s": 0.0, "llm_cost_usd": 0.0}`. For `--learn`, e.g. `{"ok": true, "status": "written", "notebook": "...", "count": 3, "limit": 40, "waiting": 0, "added": ["l003"], "removed": [], "model": "...", "wall_time_s": 0.0, "llm_cost_usd": 0.01}`; a skipped pass has `"status": "skipped"`, `"reason": "no new feedback"` and `llm_cost_usd` 0.0.
 
 ## Notes
 
 - Exit codes: `0` success (written or skipped); `2` usage (no command, unknown id, limit reached, bad notebook JSON, no path, bad `--propose` part, `--learn` without `--workspace`, missing workspace, missing `OPENROUTER_API_KEY`); `3` runtime (model call failed, unparseable answer, write failure). Every failure with `--json` prints one `{"ok": false, "error": ..., "exit_code": N}` object.
+- A learn pass that still does not fit after the merge call keeps the new lessons as `waiting` lessons in the file (never dropped); the web app shows them with the same delete form and the director never sees them. The learn-pass cost is charged to the notebook ledger next to the notebook file (`notebook.spend.json`) and counted in the instance total model cost, never in the per-clip list.
 - Related skills: `yt-llm-director` (the director reads the notebook before every edit and the host agent runs the learn pass after `--apply`) and `yt-director` (the rule-based edit).
 - The notebook is per instance and optional: with no path set the director reads nothing and the web app shows no section.

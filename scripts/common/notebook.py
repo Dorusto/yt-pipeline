@@ -10,6 +10,8 @@ a ``channel.fixed`` part to move a repeated sentence to; the code never writes
 the config, the owner says yes.
 """
 
+from pathlib import Path
+
 from common.jsonio import load_json
 
 NOTEBOOK_LIMIT = 40
@@ -32,6 +34,22 @@ def notebook_lessons(path):
     if not isinstance(lessons, list):
         return []
     return [lesson for lesson in lessons if isinstance(lesson, dict)]
+
+
+def notebook_waiting(path):
+    """Return the list of waiting lesson dicts, or [] when there is none."""
+    document = load_notebook(path)
+    if document is None:
+        return []
+    waiting = document.get("waiting")
+    if not isinstance(waiting, list):
+        return []
+    return [lesson for lesson in waiting if isinstance(lesson, dict)]
+
+
+def notebook_ledger_path(path):
+    """The learn-pass spend ledger next to the notebook file."""
+    return Path(path).with_suffix(".spend.json")
 
 
 def notebook_block(path):

@@ -4074,3 +4074,60 @@ def test_reedit_chains_the_learn_pass(tmp_path, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_notebook_panel_shows_waiting_lessons(tmp_path):
+    root = make_root(tmp_path)
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "generated_at": "2026-10-24T00:00:00+00:00",
+                "tool": "notebook",
+                "lessons": [{"id": "l001", "text": "keep the tunnel longer", "kind": "lesson"}],
+                "waiting": [{"id": "l002", "text": "waiting lesson text", "kind": "lesson"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        page = body.decode()
+        assert "The notebook is full. Remove a lesson to make room for a new one." in page
+        assert "waiting lesson text" in page
+        assert 'action="/2026-10-14/notebook-delete"' in page
+        assert 'name="id" value="l002"' in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_friend_costs_total_includes_the_notebook_ledger(tmp_path, monkeypatch):
+    monkeypatch.setattr(serve, "EUR_PER_USD", None)
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "llm_spend.json").write_text(
+        json.dumps({"entries": [{"cost_usd": 1.0}]}), encoding="utf-8"
+    )
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(json.dumps({"lessons": []}), encoding="utf-8")
+    (tmp_path / "notebook.spend.json").write_text(
+        json.dumps({"entries": [{"cost_usd": 0.5}]}), encoding="utf-8"
+    )
+    server = start_server(
+        root, project_totals_url="https://example.org/costs.json", notebook=notebook
+    )
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        assert status == 200
+        page = body.decode()
+        assert "$1,50" in page
+        table = page[page.index("Model cost of your clips"):]
+        assert "$1,00" in table
+        assert "$1,50" not in table
+    finally:
+        server.shutdown()
+        server.server_close()

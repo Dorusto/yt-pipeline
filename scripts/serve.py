@@ -79,7 +79,7 @@ from common.excluded import exclude_name, include_name, is_excluded, load_exclud
 from common.feedback import append_feedback, read_feedback
 from common.jsonio import load_json, write_json
 from common.media import clip_kind, earliest_creation_date, video_files
-from common.notebook import notebook_lessons
+from common.notebook import notebook_ledger_path, notebook_lessons, notebook_waiting
 from common.openrouter import key_info
 from common.photos import is_photo
 from common.edit_timeline import edit_summary as edit_summary_document
@@ -1371,6 +1371,11 @@ def render_costs(server, thanks=False):
             f'<td class="num">{versions} version{"s" if versions != 1 else ""}</td>'
             f'<td class="num cost">{format_cost(cost)}</td></tr>'
         )
+    if server.notebook is not None:
+        try:
+            rows_cost.append(read_ledger(notebook_ledger_path(server.notebook))["total_usd"])
+        except LLMError:
+            pass
     if rows:
         per_clip = (
             '<table class="clip-costs"><caption>Model cost per clip</caption>'
@@ -2286,20 +2291,30 @@ def render_notebook_panel(notebook, name):
     if notebook is None:
         return ""
     lessons = notebook_lessons(notebook)
-    rows = []
-    for lesson in lessons:
+    waiting = notebook_waiting(notebook)
+
+    def lesson_row(lesson):
         lesson_id = html_escape(str(lesson.get("id") or ""))
         text = html_escape(str(lesson.get("text") or ""))
         label = ""
         if lesson.get("kind") == "proposal" and lesson.get("part"):
             label = f' <span class="proposal">\u2192 channel.fixed.{html_escape(str(lesson["part"]))}</span>'
-        rows.append(
+        return (
             f'<li><span><span class="lesson-id">{lesson_id}</span> {text}{label}</span>'
             f'<form method="post" action="/{html_escape(name)}/notebook-delete">'
             f'<input type="hidden" name="id" value="{lesson_id}">'
             f'<button type="submit">Delete</button></form></li>'
         )
+
+    rows = [lesson_row(lesson) for lesson in lessons]
     inner = "<ul>" + "".join(rows) + "</ul>" if rows else '<p class="empty">No lessons yet.</p>'
+    if waiting:
+        waiting_rows = "".join(lesson_row(lesson) for lesson in waiting)
+        inner += (
+            '<p class="notebook-full">The notebook is full. Remove a lesson to make room '
+            "for a new one.</p>"
+            f'<ul class="waiting">{waiting_rows}</ul>'
+        )
     return (
         f'<details class="notebook" id="notebook">'
         f'<summary>Notebook ({len(lessons)} lessons)</summary>{inner}</details>'
