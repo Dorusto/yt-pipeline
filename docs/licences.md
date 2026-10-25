@@ -30,30 +30,30 @@ The credits and the required notices are in [`NOTICE.md`](../NOTICE.md).
 
 ## External programs
 
-| Name | Licence | How it is used |
-|:---|:---|:---|
-| ffmpeg / ffprobe | LGPL-2.1-or-later or GPL-2.0-or-later (build-dependent) | called program — decode, encode, filters, loudness, noise reduction |
-| melt | MLT, LGPL-2.1-or-later | called program — optional Kdenlive project validation |
-| Kdenlive | GPL-3.0-or-later | optional external editor, the `.kdenlive` export target |
-| filmcraft-cli | FilmCraft, MIT OR Apache-2.0 | called program — colour and loudness recipes, PiP finishing |
-| node / npx | HyperFrames CLI, Apache-2.0 | called program — graphics engine |
-| git | GPL-2.0-only | called program — `check_public.py`, `common/git.py` |
-| Gyroflow | GPL-3.0-or-later | not called by the code, named in the guides as the stabiliser for DJI gyro footage |
-| vidstab | GPL-2.0-or-later | ffmpeg filter, part of a GPL ffmpeg build |
+| Name | Licence | How it is used | Source |
+|:---|:---|:---|:---|
+| ffmpeg / ffprobe | LGPL-2.1-or-later or GPL-2.0-or-later (build-dependent) | called program — decode, encode, filters, loudness, noise reduction | https://ffmpeg.org/ |
+| melt | MLT, LGPL-2.1-or-later | called program — optional Kdenlive project validation | https://github.com/mltframework/mlt |
+| Kdenlive | GPL-3.0-or-later | optional external editor, the `.kdenlive` export target | https://kdenlive.org/ |
+| filmcraft-cli | FilmCraft, MIT OR Apache-2.0 | called program — colour and loudness recipes, PiP finishing | https://github.com/storytold/filmcraft |
+| node / npx | HyperFrames CLI, Apache-2.0 | called program — graphics engine | https://github.com/heygen-com/hyperframes |
+| git | GPL-2.0-only | called program — `check_public.py`, `common/git.py` | https://git-scm.com/ |
+| Gyroflow | GPL-3.0-or-later | not called by the code, named in the guides as the stabiliser for DJI gyro footage | https://github.com/gyroflow/gyroflow |
+| vidstab | GPL-2.0-or-later | ffmpeg filter, part of a GPL ffmpeg build | https://github.com/georgmartius/vid.stab |
 
 ## Models and weights
 
-| Name | Licence | How it is used |
-|:---|:---|:---|
-| Whisper model weights | MIT | downloaded at first run, never committed — transcription |
-| YuNet face detection ONNX (OpenCV Zoo) | Apache-2.0 | downloaded at first run, never committed — face detection for reframing |
-| MobileNetV2 ONNX (ONNX model zoo) | Apache-2.0 | downloaded at first run, never committed — image embeddings for similarity |
-| RNNoise model `arnndn.rnnn` | BSD-3-Clause | downloaded at first run, never committed — audio noise reduction |
-| BiRefNet portrait model (rembg) | MIT | downloaded at first run, never committed — thumbnail cut-out |
-| RobustVideoMatting (RVM) | GPL-3.0 | fetched through `torch.hub` at first run, never vendored — background removal |
-| Beat This! model weights (`final0`) | MIT | downloaded at first run, never committed — optional downbeat engine (`beats.py --engine beat_this`) |
-| MatAnyone2 | NTU S-Lab 1.0, non-commercial | optional personal backend only, never shipped, never the default |
-| YuE2 / ACE-Step 1.5 / Stable Audio Open | see the notes below | planned music models (D6, not used yet) |
+| Name | Licence | How it is used | Source |
+|:---|:---|:---|:---|
+| Whisper model weights | MIT | downloaded at first run, never committed — transcription | https://github.com/openai/whisper |
+| YuNet face detection ONNX (OpenCV Zoo) | MIT | downloaded at first run, never committed — face detection for reframing | https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE |
+| MobileNetV2 ONNX (ONNX model zoo) | Apache-2.0 | downloaded at first run, never committed — image embeddings for similarity | https://github.com/onnx/models/blob/main/validated/vision/classification/mobilenet/README.md |
+| RNNoise model `arnndn.rnnn` | not subject to copyright | downloaded at first run, never committed — audio noise reduction | https://github.com/GregorR/rnnoise-models |
+| BiRefNet portrait model (rembg) | MIT | downloaded at first run, never committed — thumbnail cut-out | https://github.com/ZhengPeng7/BiRefNet |
+| RobustVideoMatting (RVM) | GPL-3.0 | fetched through `torch.hub` at first run, never vendored — background removal | https://github.com/PeterL1n/RobustVideoMatting |
+| Beat This! model weights (`final0`) | MIT | downloaded at first run, never committed — optional downbeat engine (`beats.py --engine beat_this`) | https://github.com/CPJKU/beat_this |
+| MatAnyone2 | NTU S-Lab 1.0, non-commercial | optional personal backend only, never shipped, never the default | https://github.com/pq-yang/MatAnyone |
+| YuE2 / ACE-Step 1.5 / Stable Audio Open | see the notes below | planned music models (D6, not used yet) | https://github.com/multimodal-art-projection/YuE https://github.com/ace-step/ACE-Step https://huggingface.co/stabilityai/stable-audio-open-1.0 |
 
 ## Fonts and assets
 

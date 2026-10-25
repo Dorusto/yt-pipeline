@@ -33,14 +33,28 @@ through `torch.hub` and is never vendored into this repository.
 ffmpeg and ffprobe are licensed under LGPL-2.1-or-later or GPL-2.0-or-later,
 depending on the build. They are called as a separate program, not linked.
 
-## OpenCV, YuNet and MobileNetV2
+## OpenCV
 
-OpenCV, the OpenCV Zoo YuNet face detection model and the ONNX model zoo
-MobileNetV2 model are licensed under Apache-2.0.
+OpenCV (`opencv-python-headless`) is licensed under Apache-2.0.
+
+## YuNet
+
+The YuNet face detection model (OpenCV Zoo) is licensed under the MIT License,
+Copyright (c) 2020 Shiqi Yu. The full licence text is in the model's
+[LICENSE](https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE).
+
+## MobileNetV2
+
+The MobileNetV2 ONNX model (ONNX model zoo) is licensed under Apache-2.0, as its
+[model README](https://github.com/onnx/models/blob/main/validated/vision/classification/mobilenet/README.md)
+states.
 
 ## RNNoise
 
-RNNoise is licensed under BSD-3-Clause.
+RNNoise is licensed under BSD-3-Clause. The noise-reduction model `arnndn.rnnn`
+(GregorR/rnnoise-models) is not subject to copyright: its
+[README](https://github.com/GregorR/rnnoise-models) says "none of this work is
+creative and thus none of it is subject to copyright".
 
 ## HyperFrames
 
