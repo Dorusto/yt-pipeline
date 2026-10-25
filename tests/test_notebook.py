@@ -51,6 +51,7 @@ def make_workspace(tmp_path, ts="2020-01-01T00:00:00+00:00"):
 
 def stub_learn_client(monkeypatch, answer, merge_answer=None, cost=0.01):
     calls = []
+    sent = []
 
     class StubClient:
         def __init__(self):
@@ -58,6 +59,7 @@ def stub_learn_client(monkeypatch, answer, merge_answer=None, cost=0.01):
 
         def complete_json(self, role, messages, model=None, **kwargs):
             self.count += 1
+            sent.append(messages)
             payload = answer if self.count == 1 else (
                 merge_answer if merge_answer is not None else answer
             )
@@ -75,7 +77,7 @@ def stub_learn_client(monkeypatch, answer, merge_answer=None, cost=0.01):
         return StubClient()
 
     monkeypatch.setattr(notebook, "make_client", fake_make_client)
-    return calls
+    return sent
 
 
 def test_add_then_list_increments_ids(tmp_path):
@@ -256,7 +258,7 @@ def test_learn_keeps_new_lessons_waiting_when_still_over(tmp_path, monkeypatch):
     assert validate(document, "notebook") == []
 
 
-def test_learn_keeps_the_merged_lesson_and_waits_the_new_ones(tmp_path, monkeypatch):
+def test_learn_moves_the_newest_lessons_to_waiting(tmp_path, monkeypatch):
     notebook_file = tmp_path / "notebook.json"
     write_notebook(
         notebook_file,
@@ -275,26 +277,17 @@ def test_learn_keeps_the_merged_lesson_and_waits_the_new_ones(tmp_path, monkeypa
         ],
         "remove": [],
     }
-    merge_answer = {"merge": [{"ids": ["l001", "l002"], "text": "merged old"}], "remove": []}
+    merge_answer = {"merge": [{"ids": ["l004", "l005"], "text": "merged new"}], "remove": []}
     stub_learn_client(monkeypatch, answer, merge_answer=merge_answer)
     summary = notebook.learn(str(workspace), str(notebook_file), 3)
     assert summary["status"] == "written"
     assert summary["count"] == 3
-    assert summary["removed"] == ["l001", "l002"]
+    assert summary["waiting"] == 2
     document = read_json(notebook_file)
-    lesson_texts = [lesson["text"] for lesson in document["lessons"]]
-    waiting_texts = [lesson["text"] for lesson in document["waiting"]]
-    assert "merged old" in lesson_texts
-    assert "merged old" not in waiting_texts
-    assert set(lesson_texts) | set(waiting_texts) >= {
-        "old three",
-        "merged old",
-        "new one",
-        "new two",
-        "new three",
-    }
-    lesson_ids = {lesson["id"] for lesson in document["lessons"]}
-    assert all(lesson_id in lesson_ids for lesson_id in summary["added"])
+    assert [lesson["id"] for lesson in document["lessons"]] == ["l001", "l002", "l003"]
+    assert [lesson["id"] for lesson in document["waiting"]] == ["l006", "l007"]
+    assert document["waiting"][1]["text"] == "merged new"
+    assert validate(document, "notebook") == []
 
 
 def test_merge_uses_the_next_id_across_waiting(tmp_path):
@@ -356,7 +349,7 @@ def test_learn_writes_nothing_when_waiting_is_full(tmp_path, monkeypatch):
     assert not (workspace / ".learn.json").exists()
 
 
-def test_learn_writes_nothing_when_waiting_would_pass_the_cap(tmp_path, monkeypatch):
+def test_learn_asks_for_only_the_remaining_room(tmp_path, monkeypatch):
     notebook_file = tmp_path / "notebook.json"
     write_notebook(
         notebook_file,
@@ -378,12 +371,15 @@ def test_learn_writes_nothing_when_waiting_would_pass_the_cap(tmp_path, monkeypa
         ],
         "remove": [],
     }
-    stub_learn_client(monkeypatch, answer, merge_answer={"merge": [], "remove": []})
-    before = notebook_file.read_text(encoding="utf-8")
+    sent = stub_learn_client(monkeypatch, answer, merge_answer={"merge": [], "remove": []})
     summary = notebook.learn(str(workspace), str(notebook_file), 2)
-    assert summary["status"] == "waiting_full"
-    assert notebook_file.read_text(encoding="utf-8") == before
-    assert not (workspace / ".learn.json").exists()
+    assert summary["status"] == "written"
+    assert summary["count"] == 2
+    assert summary["waiting"] == 3
+    assert "at most 1" in sent[0][0]["content"]
+    document = read_json(notebook_file)
+    assert [lesson["id"] for lesson in document["lessons"]] == ["l001", "l002"]
+    assert [lesson["id"] for lesson in document["waiting"]] == ["l003", "l004", "l005"]
 
 
 def test_removing_a_lesson_writes_a_waiting_lesson(tmp_path):

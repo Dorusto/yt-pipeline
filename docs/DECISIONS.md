@@ -3349,6 +3349,16 @@ already waiting the learn pass writes nothing and leaves the `.learn.json` marke
 where it was (the feedback is learned once room is made, nothing dropped) and
 `--json` reports `"status": "waiting_full"`.
 
+**c10e review fixes:** the review of the c10d pass found two faults, fixed in
+V030 lot c10e. The learn pass checks the waiting room before the model call:
+when 3 lessons already wait it returns `waiting_full` with no model call and
+`llm_cost_usd` 0.0 (the marker stays), and when some room is left it asks the
+model for at most the remaining room's worth of new lessons, so the same
+feedback is never learned or paid twice. After the merge step any lesson past
+the limit (merged ones included, not only the ids the pass just added) goes to
+`waiting`, newest first, so the written notebook never holds more than the
+limit.
+
 ## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
 
 **Context:** The friend's Costs page fetched the owner instance's `/costs.json`

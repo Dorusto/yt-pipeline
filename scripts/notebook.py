@@ -19,7 +19,10 @@ sentence to; the code never writes the config, the owner says yes.
 ``--learn`` runs the learning pass: one cheap model call reads the feedback the
 workspace gained since the last pass and writes at most 3 short lessons. When
 the notebook is full it makes one more call to merge or remove lessons; lessons
-that still do not fit are kept as ``waiting`` lessons, never dropped.
+that still do not fit are kept as ``waiting`` lessons, never dropped. When 3
+lessons already wait the pass makes no model call and reports ``waiting_full``;
+when some room is left it asks for at most the remaining room's worth of new
+lessons.
 """
 
 import argparse
@@ -129,14 +132,15 @@ def command_of(args):
     return commands[0]
 
 
+def lesson_id_number(lesson):
+    """The numeric part of a lesson's ``lNNN`` id, or 0 when it has none."""
+    match = ID_RE.match(str(lesson.get("id") or ""))
+    return int(match.group(1)) if match else 0
+
+
 def next_id(lessons):
     """The next free ``lNNN`` id: one past the highest number, never reused."""
-    numbers = [
-        int(match.group(1))
-        for lesson in lessons
-        if (match := ID_RE.match(str(lesson.get("id") or "")))
-    ]
-    return f"l{max(numbers, default=0) + 1:03d}"
+    return f"l{max((lesson_id_number(lesson) for lesson in lessons), default=0) + 1:03d}"
 
 
 def next_notebook_id(lessons, waiting):
@@ -297,9 +301,12 @@ def build_merge_message(prompt_text, lessons, limit):
     return "\n".join(lines)
 
 
-def build_learn_message(prompt_text, lessons, rows, brief_text):
+def build_learn_message(prompt_text, lessons, rows, brief_text, max_new=MAX_NEW_LESSONS):
     """The user message: the prompt, the existing lessons, the new feedback and the brief."""
-    lines = [prompt_text, "", "## Existing lessons"]
+    lines = [prompt_text]
+    if max_new < MAX_NEW_LESSONS:
+        lines += ["", f"Write at most {max_new} new lesson(s) this pass."]
+    lines += ["", "## Existing lessons"]
     if lessons:
         for lesson in lessons:
             part = lesson.get("part")
@@ -321,7 +328,7 @@ def build_learn_message(prompt_text, lessons, rows, brief_text):
     return "\n".join(lines)
 
 
-def normalize_learn_answer(answer):
+def normalize_learn_answer(answer, max_new=MAX_NEW_LESSONS):
     """Validate the model answer; return ``(lessons, remove_ids)`` or raise a runtime error."""
     if not isinstance(answer, dict):
         raise NotebookRuntimeError("model answer is not a JSON object")
@@ -330,7 +337,7 @@ def normalize_learn_answer(answer):
         raise NotebookRuntimeError("model answer 'lessons' must be a list")
     lessons = []
     for raw in raw_lessons:
-        if len(lessons) >= MAX_NEW_LESSONS:
+        if len(lessons) >= max_new:
             break
         if not isinstance(raw, dict):
             continue
@@ -388,7 +395,7 @@ def normalize_merge_answer(answer):
     return merges, remove
 
 
-def waiting_full_summary(path, count, waiting, limit, started, llm_cost=0.0, model=None):
+def waiting_full_summary(path, count, waiting, limit, started):
     """The summary of a learn pass that wrote nothing because the waiting list is full."""
     summary = {
         "ok": True,
@@ -400,9 +407,9 @@ def waiting_full_summary(path, count, waiting, limit, started, llm_cost=0.0, mod
         "waiting": waiting,
         "added": [],
         "removed": [],
-        "model": model,
+        "model": None,
     }
-    summary.update(summary_fields(started, llm_cost))
+    summary.update(summary_fields(started, 0.0))
     return summary
 
 
@@ -442,8 +449,10 @@ def learn(workspace, notebook, limit):
         }
         summary.update(summary_fields(started, 0.0))
         return summary
-    if len(waiting) >= MAX_WAITING:
+    room = MAX_WAITING - len(waiting)
+    if room <= 0:
         return waiting_full_summary(path, count_on_disk, waiting_on_disk, limit, started)
+    max_new = min(MAX_NEW_LESSONS, room + max(0, limit - len(lessons)))
     prompt_text = read_learn_prompt()
     edit = load_json(workspace_path / "edit.json")
     brief_text = ""
@@ -451,11 +460,11 @@ def learn(workspace, notebook, limit):
         brief = edit.get("brief")
         if isinstance(brief, dict) and isinstance(brief.get("text"), str):
             brief_text = brief["text"]
-    message = build_learn_message(prompt_text, lessons, new_rows, brief_text)
+    message = build_learn_message(prompt_text, lessons, new_rows, brief_text, max_new)
     client = make_client(load_config(), ledger_path=notebook_ledger_path(path))
     response = client.complete_json("metadata", [{"role": "user", "content": message}])
     llm_cost = response.cost_usd
-    new_lessons, remove_ids = normalize_learn_answer(response.data)
+    new_lessons, remove_ids = normalize_learn_answer(response.data, max_new)
     removed = []
     for lesson_id in remove_ids:
         index = find_index(lessons, lesson_id)
@@ -465,14 +474,12 @@ def learn(workspace, notebook, limit):
         lessons.pop(index)
         removed.append(lesson_id)
     added = []
-    new_ids = []
     for lesson in new_lessons:
         lesson_id = next_notebook_id(lessons, waiting)
         lessons.append(
             make_lesson(lesson_id, lesson["text"], kind=lesson["kind"], part=lesson["part"])
         )
         added.append(lesson_id)
-        new_ids.append(lesson_id)
     if len(lessons) > limit:
         merge_prompt = read_merge_prompt()
         merge_message = build_merge_message(merge_prompt, lessons, limit)
@@ -504,14 +511,12 @@ def learn(workspace, notebook, limit):
             removed.extend(merge_removed)
             added.append(new_id)
     if len(lessons) > limit:
-        new_id_set = set(new_ids)
-        overflow = [lesson for lesson in lessons if lesson.get("id") in new_id_set]
-        if len(waiting) + len(overflow) > MAX_WAITING:
-            return waiting_full_summary(
-                path, count_on_disk, waiting_on_disk, limit, started, llm_cost, response.model
-            )
+        excess = len(lessons) - limit
+        overflow = sorted(lessons, key=lesson_id_number, reverse=True)[:excess]
+        overflow_ids = {lesson.get("id") for lesson in overflow}
         waiting.extend(overflow)
-        lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in new_id_set]
+        waiting.sort(key=lesson_id_number)
+        lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in overflow_ids]
     promote_waiting(lessons, waiting, limit)
     present = {lesson.get("id") for lesson in lessons}
     added = [lesson_id for lesson_id in added if lesson_id in present]
