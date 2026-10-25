@@ -4,6 +4,34 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Render robustness: proxy skip notices new photos, missing-music exit code pinned (V030 audit lot a7, F13, F14, F3)
+
+**Context:** The v0.3.0 audit found (F14) that `recap.py` `is_up_to_date("proxy")`
+computed the source photos but never checked them, so a photo added after the last
+proxy run left the proxy station "up to date" and `render.py` failed on the missing
+photo proxy; and (F13/F3) that the cold run's `@music@` render failure was
+historical — fixed by D2-7 and the 2026-10-23 exit-code table — and F3 is a false
+positive: the missing-music exit-code test already existed since D2-6, only its
+name was wrong.
+
+**Options:** (A) leave the proxy skip rule and let `render.py` fall back to the
+source photo with a warning; (B) make the proxy skip rule notice new photos.
+
+**Decision:** B. `common.photos.proxy_name(photo)` is the one place that maps a
+photo to its proxy file name (HEIC → `<stem>.jpg`, else the file name), used by
+`proxy.py` and by `recap.py`'s `is_up_to_date("proxy")`, which now requires a
+proxy for every source clip and every source photo. The misleading test name is
+corrected and the missing-music message is pinned by the test; no behaviour change
+in `render.py`.
+
+**Why not A:** the proxy step is the one that knows the source; a render-time
+fallback would hide a stale proxy dir and re-introduce the failure on the next run.
+
+**Consequence:** files touched — `scripts/common/photos.py`, `scripts/proxy.py`,
+`scripts/recap.py`, `tests/test_recap.py`, `tests/test_render.py`,
+`docs/DECISIONS.md`. No CLI, schema, summary-key or exit-code change; no
+`docs/RULES.md` change.
+
 ## [2026-10-25] numpy declared and reference tests read the host path from an env var (V030 audit lot a6, F18, F16)
 
 **Context:** The v0.3.0 audit found (F18) `numpy` imported directly by 12 scripts

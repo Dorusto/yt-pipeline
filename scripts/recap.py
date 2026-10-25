@@ -32,7 +32,7 @@ from common.config import ConfigError, music_library, no_music_library_message
 from common.edit_timeline import edit_summary
 from common.jsonio import parse_child_json
 from common.media import video_files
-from common.photos import is_photo
+from common.photos import is_photo, proxy_name
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -300,7 +300,9 @@ def is_up_to_date(name, ctx):
         )
         if not clips and not photos:
             return bool(directory_files(proxy_dir))
-        return all((proxy_dir / clip.name).is_file() for clip in clips)
+        if not all((proxy_dir / clip.name).is_file() for clip in clips):
+            return False
+        return all((proxy_dir / proxy_name(photo)).is_file() for photo in photos)
     if name == "ingest":
         return all_newer(ws / "ingest.json", proxies)
     if name == "beats":

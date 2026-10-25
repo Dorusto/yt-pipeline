@@ -28,7 +28,7 @@ from common.excluded import filter_excluded, load_excluded_path
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path, pick_video_encoder, video_encode_args
-from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo
+from common.photos import PHOTO_EXTENSIONS, ensure_jpeg, is_photo, proxy_name
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".insv"}
 DEFAULT_HEIGHT = 720
@@ -308,7 +308,7 @@ def build_proxies(source, out, height, crf, force, exclude_file=None):
             print(f"[error] refusing to overwrite original: {target}", file=sys.stderr)
             failed.append(photo.name)
             continue
-        expected = photo.stem + ".jpg" if photo.suffix.lower() == ".heic" else photo.name
+        expected = proxy_name(photo)
         if (out / expected).exists() and not force:
             skipped.append(photo.name)
             continue

@@ -10,6 +10,7 @@ import pytest
 import common.notify as notify
 import recap
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
+from common.photos import proxy_name
 
 
 def make_clip(path, duration=1.0, size="160x120", rate=10, audio=True):
@@ -1000,3 +1001,26 @@ def test_thumbs_skip_rule(tmp_path):
     shot.write_bytes(b"jpg")
     os.utime(shot, (stamp, stamp))
     assert recap.is_up_to_date("thumbs", ctx) is True
+
+
+def test_proxy_skip_notices_photo_added_after_last_run(tmp_path):
+    ctx = make_context(tmp_path)
+    (ctx.source / "clip.mp4").write_bytes(b"clip")
+    (ctx.source / "photo.jpg").write_bytes(b"photo")
+    proxy_dir = ctx.workspace / "proxy"
+    proxy_dir.mkdir(parents=True, exist_ok=True)
+    (proxy_dir / "clip.mp4").write_bytes(b"proxy")
+    (proxy_dir / "photo.jpg").write_bytes(b"proxy")
+    assert recap.is_up_to_date("proxy", ctx) is True
+    (proxy_dir / "photo.jpg").unlink()
+    assert recap.is_up_to_date("proxy", ctx) is False
+    (proxy_dir / "photo.jpg").write_bytes(b"proxy")
+    (ctx.source / "photo2.heic").write_bytes(b"photo")
+    assert recap.is_up_to_date("proxy", ctx) is False
+
+
+def test_proxy_name_maps_heic_to_jpg():
+    assert proxy_name("photo.heic") == "photo.jpg"
+    assert proxy_name("photo.HEIC") == "photo.jpg"
+    assert proxy_name("photo.jpg") == "photo.jpg"
+    assert proxy_name("photo.jpeg") == "photo.jpeg"

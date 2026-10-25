@@ -876,12 +876,15 @@ def test_music_newer_than_output_rerenders(tmp_path, capsys):
     assert summary["status"] == "written"
 
 
-def test_missing_music_file_exits_1_without_output(tmp_path, capsys):
+def test_missing_music_file_exits_usage_without_output(tmp_path, capsys):
     edit = make_music_edit(tmp_path, tmp_path / "missing.wav")
     out = tmp_path / "out.mp4"
     assert render.main(["--edit", str(edit), "--out", str(out)]) == EXIT_USAGE
     assert not out.exists()
-    assert "[error]" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "[error]" in err
+    assert "music file not found" in err
+    assert "missing.wav" in err
 
 
 def test_music_without_audio_stream_exits_2(tmp_path, capsys):
