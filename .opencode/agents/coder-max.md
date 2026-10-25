@@ -3,7 +3,7 @@ description: Implements one brief for a hard lot, with the deepest reasoning; sl
 mode: subagent
 model: openrouter/deepseek/deepseek-v4.1-flash
 reasoning:
-  effort: xhigh
+  effort: max
 temperature: 0.1
 steps: 80
 permission:

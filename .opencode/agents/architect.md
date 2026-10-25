@@ -3,7 +3,7 @@ description: Plans and audits AI Director work in yt-pipeline. Splits a phase in
 mode: primary
 model: openrouter/deepseek/deepseek-v4.1-flash
 reasoning:
-  effort: high
+  effort: max
 temperature: 0.2
 steps: 150
 permission:
