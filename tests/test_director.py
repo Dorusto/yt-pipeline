@@ -1374,9 +1374,9 @@ def test_prompts_state_the_hero_cap_without_hardcoding_it():
     assert "hero cap" in editor
     assert "capped at 6.0 s" not in editor
     reviewer = (ROOT / "prompts" / "reviewer.md").read_text(encoding="utf-8")
-    assert "hero cap" in reviewer
     assert "up to 6 s" not in reviewer
-    assert "centred on the shot's `peak_s`" in reviewer
+    assert "centred on the shot's `peak_s`" not in reviewer
+    assert "within 3 s of the target duration" in reviewer
     screenwriter = (ROOT / "prompts" / "screenwriter.md").read_text(encoding="utf-8")
     assert "hero cap" in screenwriter
     assert "1.5" in screenwriter

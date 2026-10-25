@@ -19,6 +19,7 @@ read-only; outputs are written atomically.
 """
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -971,7 +972,7 @@ def build_interpret_user(text, workspace, edit_path=None):
     review = director_review(load_json(path))
     if review is not None:
         lines += ["", "The reviewer's last verdict on this edit (plain words):",
-                  json.dumps(review, indent=2, ensure_ascii=False)]
+                  json.dumps(review, ensure_ascii=False)]
     return "\n".join(lines)
 
 
@@ -1153,7 +1154,7 @@ def build_feedback_block(feedback, workspace, edit_path=None):
         lines.append("Previous edit: none (no previous edit.json; the feedback refers to no existing ids)")
         return "\n".join(lines)
     lines.append("Previous edit (the feedback refers to these ids):")
-    lines.append(json.dumps(previous["used"], indent=2, ensure_ascii=False))
+    lines.append(json.dumps(previous["used"], ensure_ascii=False))
     lines.append(
         "Rejected candidates the feedback may name: "
         + json.dumps(previous["rejected"], ensure_ascii=False)
@@ -1177,7 +1178,7 @@ def build_screenwriter_user(brief_text, content_type, hints, rows, important_max
     lines += [
         "",
         "Eligible shotlog rows:",
-        json.dumps(rows, indent=2),
+        json.dumps(rows),
     ]
     return "\n".join(lines)
 
@@ -1191,6 +1192,8 @@ def editor_facts(plan, facts):
         merged = dict(fact)
         merged["keep_whole"] = bool(fact.get("keep_whole"))
         merged["target_s"] = slot.get("target_s", fact.get("target_s"))
+        for key in ("faces_max", "face_size_max", "description", "reason"):
+            merged.pop(key, None)
         result.append(merged)
     return result
 
@@ -1216,15 +1219,25 @@ def build_editor_user(plan, facts, review, pacing=None, feedback_block=None, not
                 "slot_plan": plan.get("slot_plan"),
                 "notes": plan.get("notes"),
             },
-            indent=2,
         ),
         "",
         "Shot facts:",
-        json.dumps(editor_facts(plan, facts), indent=2),
+        json.dumps(editor_facts(plan, facts)),
     ]
     if review:
-        lines += ["", "Review fixes from the previous round:", json.dumps(review, indent=2)]
+        lines += ["", "Review fixes from the previous round:", json.dumps(review)]
     return "\n".join(lines)
+
+
+def reviewer_slots(record):
+    """The reviewer's view of the edit slots: no ``description`` and no ``reason``."""
+    slots = []
+    for slot in record.get("video") or []:
+        row = dict(slot)
+        row.pop("description", None)
+        row.pop("reason", None)
+        slots.append(row)
+    return slots
 
 
 def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedback_block=None, notebook_block=None):
@@ -1250,14 +1263,13 @@ def build_reviewer_user(brief_text, plan, record, violations, pacing=None, feedb
                 "slot_plan": plan.get("slot_plan"),
                 "notes": plan.get("notes"),
             },
-            indent=2,
         ),
         "",
         "Draft edit slots:",
-        json.dumps(record.get("video"), indent=2),
+        json.dumps(reviewer_slots(record)),
         "",
         "Validator violations:",
-        json.dumps(violations, indent=2),
+        json.dumps(violations),
     ]
     return "\n".join(lines)
 
@@ -2904,8 +2916,40 @@ def objection_text(problem, change):
     return problem or change
 
 
-def review_object(verdict, record):
-    """``meta.director.review`` from the reviewer's last verdict, or None when it is not a dict."""
+def annotate_review_slots(record, plan, facts_by_key, caps):
+    """Write ``keep_whole`` and ``max_screen_s`` on every slot the reviewer sees."""
+    plan_by_id = {slot.get("id"): slot for slot in plan.get("slot_plan") or []}
+    for slot in record.get("video") or []:
+        fact = facts_by_key.get((plan_by_id.get(slot.get("id")) or {}).get("shot_key")) or {}
+        slot["keep_whole"] = bool(keeps_whole(fact))
+        slot["max_screen_s"] = caps.get(slot.get("id"))
+
+
+def review_copy(record, plan, facts_by_key, shotlog_by_key, important_max_s, beat_grid, speed_ramp=False, drop_keys=frozenset(), add_keys=frozenset(), similar_fn=None, used_ids=None):
+    """A copy of the draft and its plan with the repair chain applied, for the reviewer.
+
+    The reviewer judges what ships: the copy has been through
+    ``ensure_all_planned_slots``, ``repair_draft`` and ``finish_record``, and each
+    video slot carries ``keep_whole`` and ``max_screen_s``.
+    """
+    record_copy = copy.deepcopy(record)
+    plan_copy = copy.deepcopy(plan)
+    scratch = []
+    ensure_all_planned_slots(record_copy, plan_copy, facts_by_key, shotlog_by_key, important_max_s)
+    violations = validate_edit(record_copy, plan_copy, facts_by_key, important_max_s, drop_keys, similar_fn)
+    if blocking(violations):
+        repair_draft(record_copy, plan_copy, facts_by_key, shotlog_by_key, violations, important_max_s, add_keys, drop_keys, similar_fn, set(used_ids or ()))
+    _, caps = finish_record(record_copy, plan_copy, facts_by_key, shotlog_by_key, beat_grid, scratch, important_max_s, speed_ramp, drop_keys, similar_fn, add_keys, set(used_ids or ()))
+    annotate_review_slots(record_copy, plan_copy, facts_by_key, caps)
+    return record_copy, plan_copy
+
+
+def review_object(verdict, record, seen_keys=None):
+    """``meta.director.review`` from the reviewer's last verdict, or None when it is not a dict.
+
+    An objection whose slot is gone from the shipped edit, or now holds another
+    shot than the reviewer saw, is dropped.
+    """
     if not isinstance(verdict, dict):
         return None
     approved = bool(verdict.get("approved"))
@@ -2914,6 +2958,7 @@ def review_object(verdict, record):
         shot_positions = {
             slot.get("id"): index + 1 for index, slot in enumerate(record.get("video") or [])
         }
+        current_keys = {slot.get("id"): slot.get("shot_key") for slot in record.get("video") or []}
         for fix in verdict.get("fixes") or []:
             if not isinstance(fix, dict):
                 continue
@@ -2922,9 +2967,19 @@ def review_object(verdict, record):
                 continue
             slot = fix.get("slot")
             slot = slot if isinstance(slot, str) and slot else None
+            if slot is not None:
+                if slot not in shot_positions:
+                    continue
+                if seen_keys is not None and seen_keys.get(slot) != current_keys.get(slot):
+                    continue
             objections.append(
                 {"slot": slot, "shot": shot_positions.get(slot) if slot is not None else None, "text": text}
             )
+        for note in verdict.get("notes") if isinstance(verdict.get("notes"), list) else []:
+            text = note.strip() if isinstance(note, str) else ""
+            if not text:
+                continue
+            objections.append({"slot": None, "shot": None, "text": text})
         if not objections:
             verdict_text = verdict.get("verdict")
             if isinstance(verdict_text, str) and verdict_text.strip():
@@ -3307,6 +3362,7 @@ def _run_loop(
 
             review = None
             last_verdict = None
+            last_review_keys = None
             previous_blocking = None
             used_ids = set()
             for round_index in range(rounds):
@@ -3315,11 +3371,14 @@ def _run_loop(
                 if record is None:
                     raise LoopFailure("editor produced no valid edit")
                 violations = validate_edit(record, plan, facts, effective_important_max_s, owner_drop_keys, window_similar)
-                verdict = reviewer(client, reviewer_prompt, prompt_brief, plan, record, violations, state, feedback_block, notebook_text)
+                review_record, review_plan = review_copy(record, plan, facts, shotlog, effective_important_max_s, beat_grid, speed_ramp, owner_drop_keys, owner_add_keys, window_similar, used_ids)
+                review_violations = validate_edit(review_record, review_plan, facts, effective_important_max_s, owner_drop_keys, window_similar)
+                verdict = reviewer(client, reviewer_prompt, prompt_brief, review_plan, review_record, review_violations, state, feedback_block, notebook_text)
                 if verdict is None:
                     raise LoopFailure("reviewer produced no valid answer")
                 last_verdict = verdict
-                if verdict.get("approved") is True and not violations:
+                last_review_keys = {slot.get("id"): slot.get("shot_key") for slot in review_record.get("video") or []}
+                if verdict.get("approved") is True and not review_violations:
                     approved = True
                     break
                 approved = False
@@ -3360,7 +3419,7 @@ def _run_loop(
             attach_decisions(record, facts, shotlog, drop_reasons)
             write_plan(plan_path, plan, started, state.cost_usd)
             try:
-                write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings, review_object(last_verdict, record)))
+                write_edit(out_path, record, started, state.cost_usd, director_info("llm", True, warnings, review_object(last_verdict, record, last_review_keys)))
             except SchemaError as exc:
                 warnings.append(str(exc))
                 if fallback_rules:
@@ -3403,7 +3462,7 @@ def _run_loop(
             attach_decisions(record, facts, shotlog, drop_reasons)
             write_plan(plan_path, plan, started, state.cost_usd)
             try:
-                write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings, review_object(last_verdict, record)))
+                write_edit(out_path, record, started, state.cost_usd, director_info("llm", False, warnings, review_object(last_verdict, record, last_review_keys)))
             except SchemaError as exc:
                 warnings.append(str(exc))
                 if fallback_rules:

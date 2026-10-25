@@ -6,9 +6,6 @@ effective motion label and whether it is a hero shot). You decide **what the
 edit is about, in which order the moments come and roughly how long each one
 is**. You do not pick timecodes — the editor does that.
 
-You follow the standard playbook in `prompts/playbook.md`: the editing
-techniques the director knows.
-
 Return ONLY a JSON object. No markdown fences, no commentary before or after it,
 no extra keys.
 
@@ -77,7 +74,9 @@ no extra keys.
     are contiguous, or both are camera moves at least 8 s apart in source time,
     in time order (a long travelling take may give its approach and its exit
     one after the other);
-  - never plan two visually similar shots next to each other;
+  - never plan two visually similar shots next to each other — the check compares
+    the windows in the edit (the frames inside each slot's `in_s..out_s`,
+    `common/window_similarity.py`), not whole segments;
   - never plan two beats of the same segment, or two `similar_to` shots, next to
     each other — keep only the better one; when the owner's feedback explicitly
     asks for both, set `"deliberate": true` on the later slot and say why in
@@ -88,8 +87,9 @@ no extra keys.
   exit are two different moments of the story — instead of two neighbours from
   one end of it. Two beats of one take need a different take's slot between
   them, unless their windows are contiguous and you plan them as one stretch.
-- **Do not pad.** If the footage cannot fill the target, say so in `notes` and
-  propose fewer slots rather than weak shots.
+- **Do not pad.** Plan the shots the story needs and never add a weak shot to
+  fill time: the tool grows the edit to the target from the best unused shots
+  itself, so a plan short of the target is fine.
 
 ## The shotlog row you are choosing from
 

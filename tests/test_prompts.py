@@ -61,3 +61,11 @@ def test_chat_prompt_gets_the_tool_list():
     prompt = llm_director.read_chat_prompt()
     assert "`yt quality`" in prompt
     assert "# Interpret feedback" in prompt
+
+
+def test_length_tolerance_matches_the_code():
+    for name in ("editor.md", "reviewer.md"):
+        text = (ROOT / "prompts" / name).read_text(encoding="utf-8")
+        match = re.search(r"within (\d+(?:\.\d+)?) s of the target duration", text)
+        assert match, name
+        assert float(match.group(1)) == llm_director.TARGET_SLACK_S

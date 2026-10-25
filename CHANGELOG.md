@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: the Director tab opens at the newest message (`#chat-latest`).
 - Notebook: a lesson is a general rule and may not name a shot id, a clip number or a project name; the learn pass skips such a lesson with a `[warn]` line and still succeeds.
 - Director: the neighbour check compares the frames inside each slot's `in_s..out_s` (the windows actually in the edit) with the same MobileNetV2 embedding, cached per window key in `similarity_windows.json`; whole-segment similarity stays in `similarity.json` for the menu the model sees.
+- Director: the reviewer judges the repaired copy of the draft (the windows that ship, each slot carrying `keep_whole` and `max_screen_s`) instead of the raw editor draft, its fixes cover only the brief, the story, the owner's request and lengths (a request for a different shot goes to `notes`), the role prompts no longer restate the rules the validator enforces, and the user messages are compact JSON without the unused fields.
 
 ### Fixed
 

@@ -4,6 +4,55 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] The reviewer judges what ships, prompts trimmed (V030 lot c29b)
+
+**Context:** The reviewer read the raw editor draft and the raw validator
+violations, so it judged windows the repair chain was about to change: it could
+send a fix for a cut the tool had already rebuilt, or approve a draft whose
+shipped windows broke a rule. The role prompts also restated rules the code
+validator already enforces (the window, the landing floor, the peak, the hero
+cap, the same-take rule, the similarity rule, the pacing limits, the photo
+length), and the user messages were pretty-printed JSON carrying fields no role
+used (`faces_max`, `face_size_max`, `description`, `reason`).
+
+**Options:** (A) leave the reviewer on the raw draft and only trim the prompts;
+(B) build a repaired copy of the draft and its plan for the reviewer, drop the
+restated rules from the prompts and send compact JSON without the unused fields;
+(C) move the repair chain before the reviewer and let the reviewer see the real
+record.
+
+**Decision:** B. `review_copy` deep-copies the record and the plan, runs
+`ensure_all_planned_slots`, `repair_draft` (only when the copy has blocking
+violations) and `finish_record` on the copies, and annotates every video slot
+with `keep_whole` and `max_screen_s`; the real record, plan and `used_ids` are
+never touched. The round loop computes `review_violations` on the copy, hands the
+copy to the reviewer and approves only when the verdict is `approved` and the
+copy has no violations; the raw `violations` still drive the repair control flow
+and the early stop. `review_object` drops an objection whose slot is gone from
+the shipped edit or now holds another shot than the reviewer saw (the loop
+remembers `last_review_keys`), and a `notes` entry becomes an objection about the
+edit as a whole. The prompts lose the playbook line (the playbook is prepended by
+`read_role_prompt`), the reviewer loses the list of rules the validator enforces
+and the "after two rounds" sentence, and the length tolerance is written as
+`TARGET_SLACK_S` seconds ("within 3 s of the target duration") in the editor and
+reviewer prompts. Every user message is compact JSON; `editor_facts` drops
+`faces_max`, `face_size_max`, `description` and `reason`, and `reviewer_slots`
+drops `description` and `reason` from the reviewer's payload.
+
+**Why not A:** the reviewer would keep judging windows that never ship, so its
+fixes and its approval would not describe the edit the owner gets. **Why not C:**
+the repair chain mutates the plan (`drop_from_plan`, `fill_to_target`) and the
+record, so running it on the real draft would change what the loop keeps and
+would make the reviewer's round the one that ships.
+
+**Consequence:** files touched — `scripts/llm_director.py`, `prompts/reviewer.md`,
+`prompts/editor.md`, `prompts/screenwriter.md`, `prompts/playbook.md`,
+`tests/test_llm_director.py`, `tests/test_prompts.py`, `tests/test_director.py`,
+`docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`, the
+`yt-llm-director` skill. The happy-path user messages shrank from 7022 to 5483
+characters (compact JSON plus the dropped fields). No `docs/RULES.md` change: the
+reviewer's role and the round cap are unchanged, only the prompt and the payload.
+
 ## [2026-10-25] Director repairs agree with each other and with the owner (V030 lot c29)
 
 **Context:** The read-only audit of `ef7d4d1` found the LLM director's repair

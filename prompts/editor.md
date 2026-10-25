@@ -7,9 +7,6 @@ The tool assembles the edit list from your answer and validates it against the
 rules — anything outside the window or outside the rules is rejected and sent
 back to you.
 
-You follow the standard playbook in `prompts/playbook.md`: the editing
-techniques the director knows.
-
 Return ONLY a JSON object. No markdown fences, no commentary before or after it,
 no extra keys.
 
@@ -77,8 +74,8 @@ no extra keys.
    while it passes the gate. The window is already the steady phase, never an
    acceleration ramp or aimless movement after the move, so a cut inside the
    window is a cut inside the steady phase.
-7. **Length.** The sum of the on-screen lengths (`out_s - in_s`) should reach the brief's target
-   duration within about 10%.
+7. **Length.** The sum of the on-screen lengths (`out_s - in_s`) should be
+   within 3 s of the target duration.
 8. **Photos.** A photo slot has no window and no landing: answer with
    `duration_s` between 2.0 and 4.0 s (3.0 is the default). Never give a photo
    `in_s`/`out_s`.

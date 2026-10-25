@@ -452,6 +452,11 @@ def calls_for(client, marker):
     return [call for call in client.calls if marker in call["messages"][0]["content"]]
 
 
+def reviewer_slots_from(user_message):
+    payload = user_message.split("Draft edit slots:", 1)[1].split("Validator violations:", 1)[0].strip()
+    return json.loads(payload)
+
+
 def test_happy_path(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()], cost_per_call=0.002)
@@ -1049,7 +1054,36 @@ def test_validator_catches_rule_break(tmp_path):
     assert summary["status"] == "written"
     assert summary["approved"] is True
     reviewer_calls = calls_for(client, "# Reviewer")
-    assert "outside the shot window" in reviewer_calls[0]["messages"][1]["content"]
+    first_user = reviewer_calls[0]["messages"][1]["content"]
+    assert "outside the shot window" not in first_user
+    slots = reviewer_slots_from(first_user)
+    first = next(slot for slot in slots if slot["id"] == "v1")
+    assert first["in_s"] >= 0.0 - llm_director.TOLERANCE_S
+    assert first["out_s"] <= 20.0 + llm_director.TOLERANCE_S
+
+
+def test_reviewer_sees_the_repaired_windows(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            plan_answer(),
+            editor_answer_out_of_window(),
+            reviewer_not_approved(),
+            editor_answer(),
+            reviewer_approved(),
+        ]
+    )
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    assert code == 0
+    reviewer_calls = calls_for(client, "# Reviewer")
+    slots = reviewer_slots_from(reviewer_calls[0]["messages"][1]["content"])
+    assert slots
+    for slot in slots:
+        assert "keep_whole" in slot
+        assert "max_screen_s" in slot
+    first = next(slot for slot in slots if slot["id"] == "v1")
+    assert first["in_s"] >= 0.0 - llm_director.TOLERANCE_S
+    assert first["out_s"] <= 20.0 + llm_director.TOLERANCE_S
 
 
 def test_ineligible_segment_not_in_screenwriter_menu(tmp_path):
@@ -1120,9 +1154,12 @@ def test_missing_editor_slot_is_violation(tmp_path):
     assert summary["approved"] is True
     reviewer_calls = calls_for(client, "# Reviewer")
     first_user = reviewer_calls[0]["messages"][1]["content"]
-    assert "missing" in first_user
-    assert "planned but the editor produced no cut window" in first_user
-    assert "v3" in first_user
+    assert "planned but the editor produced no cut window" not in first_user
+    slots = reviewer_slots_from(first_user)
+    assert {slot["id"] for slot in slots} == {"v1", "v2", "v3"}
+    third = next(slot for slot in slots if slot["id"] == "v3")
+    assert third["in_s"] is not None and third["out_s"] is not None
+    assert third["out_s"] > third["in_s"]
 
 
 def test_empty_editor_answer_falls_back(tmp_path):
@@ -2483,7 +2520,15 @@ def test_run_with_beats_writes_cut_transitions(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     beats_path = tmp_path / "beats.json"
     write_json(beats_path, beat_grid(top_level=True, count=80))
-    client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
+    client = StubClient(
+        [
+            plan_answer(),
+            editor_answer(),
+            reviewer_approved(),
+            editor_answer(),
+            reviewer_approved(),
+        ]
+    )
     summary, code = llm_director.run(workspace, brief=BRIEF, client=client, beats=str(beats_path))
     assert code == 0
     assert summary["status"] == "written"
@@ -3043,6 +3088,37 @@ def test_edit_records_the_objections(tmp_path):
     assert "too long" in objection["text"]
     assert "shorten to about 2.5 s" in objection["text"]
     assert validate(edit, "edit") == []
+
+
+def test_review_object_drops_stale_objections():
+    record = {
+        "video": [
+            {"id": "v1", "shot_key": "a/s1"},
+            {"id": "v2", "shot_key": "b/s1"},
+        ]
+    }
+    verdict = {
+        "approved": False,
+        "verdict": "x",
+        "fixes": [
+            {"slot": "v1", "problem": "kept", "change": "trim"},
+            {"slot": "v2", "problem": "changed", "change": "trim"},
+            {"slot": "v9", "problem": "gone", "change": "add"},
+            {"slot": None, "problem": "whole", "change": "tighten"},
+        ],
+        "notes": ["a different shot would land the ending"],
+    }
+    review = llm_director.review_object(verdict, record, {"v1": "a/s1", "v2": "c/s1"})
+    assert review["approved"] is False
+    assert [obj["slot"] for obj in review["objections"]] == ["v1", None, None]
+    texts = [obj["text"] for obj in review["objections"]]
+    assert "kept — trim" in texts
+    assert "changed — trim" not in texts
+    assert "gone — add" not in texts
+    assert "whole — tighten" in texts
+    assert "a different shot would land the ending" in texts
+    without_seen = llm_director.review_object(verdict, record)
+    assert [obj["slot"] for obj in without_seen["objections"]] == ["v1", "v2", None, None]
 
 
 def test_old_edit_without_review_still_validates(tmp_path):

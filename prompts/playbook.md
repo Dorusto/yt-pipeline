@@ -18,6 +18,4 @@ notebook.
 
 The grammar — the shot window, the landing floor, the hero cap, the same-take
 rule, the similarity rule and the pacing limits — lives in `docs/RULES.md` and
-in the role prompts. This playbook does not restate it. Where a rule is named
-here, the wording matches `docs/RULES.md`: no two visually similar segments in
-one edit unless the brief asks for it; never back to back.
+in the role prompts. This playbook does not restate it.
