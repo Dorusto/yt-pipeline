@@ -20,17 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Starting playbook: `prompts/playbook.md` holds the editing techniques and the director-facing tool list.
 - Fresh-container smoke test: `deploy/smoke_plugin.sh` and a checklist in `docs/AGENT_SETUP.md`.
 - Third-party licences: `NOTICE.md` and `docs/licences.md`.
+- Beats: an optional Beat This! downbeat engine (`beats.engine`, `numpy` | `beat_this`, default `numpy`; `--engine` or `YT_PIPELINE_BEATS_ENGINE` overrides it), so the cuts can land on the strongest beat of the bar.
+- Release: pushing a tag closes the open issues of the milestone named like the tag and the milestone itself.
 
 ### Changed
 
 - The project page's reviewer box is replaced by the chat in the Recap tab.
 - The metadata prompt no longer carries a built-in pinned-comment voice; it comes from `channel.style.pinned_comment_voice`.
 - `description_order` assembles the description in the configured order.
+- Director: the screenwriter gets a shortlist of the eligible candidates (every star plus the top-K by score) instead of the whole pool, the reviewer runs at most 2 rounds by default, and `describe` runs its per-clip model calls in a small worker pool (`--workers`, default 4), so a first edit is faster.
+- Web app: a friend's Costs page shows only that instance's own costs (its model cost to cover, its limits, its clips, the donation buttons and the line that anything paid above the model cost goes into building the app further) and no owner project totals or donations list; the UI label "New recap" becomes "New video".
+- Notebook: lessons that do not fit are kept as `waiting` lessons (never dropped, at most 3) and the learn-pass cost is counted in the instance total model cost.
 
 ### Fixed
 
 - `llm_director.py --prepare` together with `--force` is a usage error.
 - `notebook.py --merge` with a repeated id is a usage error.
+- An empty or duplicate `channel.style.description_order` is a config error; `recap_meta.py` no longer receives `description_order`.
 
 ## [0.2.0] - 2026-10-24
 

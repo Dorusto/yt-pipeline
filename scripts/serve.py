@@ -62,7 +62,6 @@ from common.config import (
     no_inbox_message,
     no_music_library_message,
     no_notebook_message,
-    no_project_totals_message,
     no_requests_message,
     no_storage_message,
     notebook_path,
@@ -4703,8 +4702,6 @@ def main(argv=None):
             print(f"[warn] {no_storage_message('--storage-gb')}", file=sys.stderr)
         warn_usd = credit_warn_usd()
         totals_url = project_totals_url(args.project_totals_url)
-        if totals_url is None:
-            print(f"[warn] {no_project_totals_message('--project-totals-url')}", file=sys.stderr)
         logo = brand_logo(args.brand_logo)
         try:
             server = build_server(

@@ -42,9 +42,10 @@ channel:
       en: "Channel formula: the subject, a real emotion and short text."
   # style is optional: the channel's own style instructions, one non-empty
   # string per part (not per language — the style is an instruction and the
-  # model writes in the language it is already writing in). The writing tools
-  # hand the present parts to the model in a ## Style section, one line per
-  # part; a missing part is left out, never replaced by built-in text.
+  # model writes in the language it is already writing in). Each writing tool
+  # hands the model the style parts that apply to it in a ## Style section, one
+  # line per part (recap_meta: title_style and pinned_comment_voice); a missing
+  # part is left out, never replaced by built-in text.
   # description_order is a comma-separated list of the description part names
   # (intro, github, members, previous, subscribe, promo, closing); unset keeps
   # the default order.
@@ -127,11 +128,13 @@ llm_backend: openrouter
 #   donation_links:
 #     - label: Support the project
 #       url: https://example.org/donate
-#   project_totals_url marks a friend instance: its Costs page shows only its
-#   own model cost to cover, its limits, its own clips and the requests form
-#   (no owner project totals and no donations list). Set it here, in the
-#   YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or pass
-#   --project-totals-url.
+#   project_totals_url marks a friend instance: its Costs page shows the
+#   donation buttons, then its own model cost to cover, then its limits, then
+#   the per-clip table ("Model cost of your clips"), then the line "Anything
+#   you pay above your model cost goes into building the app further.", then
+#   Feedback and requests — and no owner project totals and no donations list.
+#   Set it here, in the YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or
+#   pass --project-totals-url.
 #   project_totals_url: https://example.org/costs.json
 
 # Feedback/requests file for the web app's Costs page: one JSON line per

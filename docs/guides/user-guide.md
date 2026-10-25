@@ -349,9 +349,11 @@ and the app never handles payments.
 The owner instance serves `GET /costs.json` (the totals object, no notes and no
 requests). An instance with `costs.project_totals_url` (`--project-totals-url`,
 else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) is a friend instance:
-its Costs page shows only its own model cost to cover, its limits, its own clips
-and the requests form — it does not fetch the owner's totals and shows no
-donations list; the owner's page is unchanged.
+its Costs page leads with the donation buttons, then its own model cost to
+cover, then its limits, then the per-clip table ("Model cost of your clips") and
+one line saying anything paid above the model cost goes into building the app
+further — it does not fetch the owner's totals and shows no donations list; the
+owner's page is unchanged.
 
 ## How it learns
 

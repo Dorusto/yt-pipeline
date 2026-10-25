@@ -381,15 +381,6 @@ def no_storage_message(flag_name):
     )
 
 
-def no_project_totals_message(flag_name):
-    """The one usage error for an unconfigured project totals URL, naming the flag."""
-    return (
-        f"no project totals URL configured: pass {flag_name} URL, set the "
-        f"{PROJECT_TOTALS_URL_ENV} environment variable, or set "
-        f"costs.project_totals_url in the config"
-    )
-
-
 def music_library(cli_value=None, config=None):
     """The music library folder: CLI flag, else MUSIC_LIBRARY_ENV, else music.library.
 

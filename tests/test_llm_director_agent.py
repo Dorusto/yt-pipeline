@@ -167,6 +167,24 @@ def test_apply_agent_answer_has_no_notebook_parameter():
     assert "notebook" not in parameters
 
 
+def test_agent_summaries_carry_shortlist(tmp_path, capsys):
+    workspace = build_workspace(tmp_path / "ws")
+    code = llm_director.main(["--workspace", str(workspace), "--brief", BRIEF, "--prepare", "--json"])
+    assert code == 0
+    prepared = json.loads(capsys.readouterr().out.strip())
+    assert "shortlist" in prepared
+    assert isinstance(prepared["shortlist"], int)
+    (workspace / "shot_plan.json").write_text(plan_answer(), encoding="utf-8")
+    video = json.loads(editor_answer())["slots"]
+    (workspace / "edit.json").write_text(json.dumps({"video": video}), encoding="utf-8")
+    code = llm_director.main(["--workspace", str(workspace), "--brief", BRIEF, "--apply", "--json"])
+    assert code == 0
+    skipped = json.loads(capsys.readouterr().out.strip())
+    assert skipped["status"] == "skipped"
+    assert "shortlist" in skipped
+    assert isinstance(skipped["shortlist"], int)
+
+
 def test_prepare_writes_the_notebook_block(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     notebook_file = tmp_path / "notebook.json"

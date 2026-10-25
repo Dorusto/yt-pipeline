@@ -8,10 +8,10 @@ import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
 
-EXIT_OK = 0
-EXIT_USAGE = 2
-EXIT_RUNTIME = 3
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 
 
 def gh(args):
@@ -65,9 +65,8 @@ def parse_args(argv):
     parser.add_argument("--tag", required=True,
                         help="the milestone title and the release tag")
     parser.add_argument("--repo", default="", help="OWNER/REPO passed to gh")
-    parser.add_argument("--release-url", default="", help="override the release URL")
     parser.add_argument("--dry-run", action="store_true",
-                        help="print the actions, call nothing")
+                        help="print the actions and change nothing; without --issues-file it still reads the issues through gh")
     parser.add_argument("--issues-file", default="",
                         help="with --dry-run, read the issue list from a JSON file")
     return parser.parse_args(argv)
@@ -77,8 +76,7 @@ def main(argv=None):
     """Close the milestone's open issues and the milestone."""
     args = parse_args(argv)
     repo_path = args.repo or "{owner}/{repo}"
-    release_url = args.release_url or (
-        f"https://github.com/{args.repo}/releases/tag/{args.tag}" if args.repo else "")
+    release_url = f"https://github.com/{args.repo}/releases/tag/{args.tag}" if args.repo else ""
     comment = f"Shipped in {args.tag}: {release_url}"
 
     if args.dry_run and args.issues_file:

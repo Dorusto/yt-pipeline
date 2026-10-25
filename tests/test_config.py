@@ -370,14 +370,6 @@ def test_no_storage_message_names_the_flag():
     assert "limits.storage_gb" in message
 
 
-def test_no_project_totals_message_names_the_flag():
-    message = config.no_project_totals_message("--project-totals-url")
-    assert "no project totals URL configured" in message
-    assert "--project-totals-url" in message
-    assert config.PROJECT_TOTALS_URL_ENV in message
-    assert "costs.project_totals_url" in message
-
-
 def test_brand_logo_defaults_to_option_1(monkeypatch):
     monkeypatch.delenv(config.BRAND_LOGO_ENV, raising=False)
     assert config.brand_logo(config={}) == "option-1"

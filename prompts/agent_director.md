@@ -2,7 +2,7 @@
 
 You are the host coding agent. The `llm_director.py` tool prepared this file
 with everything you need to direct one edit: the brief, the brief settings, the
-editing rules, the eligible shots and their shot facts.
+editing rules, the shortlisted shots and their shot facts.
 
 Write the plan first to `<workspace>/shot_plan.json` (schema
 `schemas/shot_plan.schema.json`), then the editor answer to

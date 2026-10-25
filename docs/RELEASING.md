@@ -10,7 +10,7 @@ Rules for the owner and for every agent. A version is a tag on `master` plus a G
 4. Every feature that passed the real test has an automated regression test on synthetic data that fixes its behaviour.
 5. Release notes in [`CHANGELOG.md`](../CHANGELOG.md): new, stable, experimental, known problems.
 6. A coding agent writes "What's new" for the release page: 3 to 5 plain sentences for the people who use the app, no technical terms. The owner reads it before tagging.
-7. Tag `vX.Y.Z` on `master` and a GitHub Release. A tag is never moved or deleted. Pushing the tag runs `.github/workflows/release.yml`, which creates the release page from the "What's new" text and the `CHANGELOG.md` and `RELEASES.md` sections of that version (no build artefacts).
+7. Tag `vX.Y.Z` on `master` and a GitHub Release. A tag is never moved or deleted. Pushing the tag runs `.github/workflows/release.yml`, which creates the release page from the "What's new" text and the `CHANGELOG.md` and `RELEASES.md` sections of that version (no build artefacts). Pushing the tag also closes the open issues of the milestone named like the tag and the milestone itself, through `.github/scripts/close_milestone_issues.py` (a missing milestone is not an error).
 
 ## After a version
 

@@ -15,7 +15,13 @@ director says honestly what it can and cannot do and logs the tools it is
 missing. The channel's wording and style come from the instance's own settings,
 and the director keeps a small notebook of lessons (at most 40) that it reads
 before every edit and updates after each new version. Third-party licences are
-listed in `NOTICE.md` and `docs/licences.md`.
+listed in `NOTICE.md` and `docs/licences.md`. The director can cut on the beat
+with the optional Beat This! engine, and a first edit is faster (a shortlist for
+the screenwriter, at most 2 reviewer rounds, concurrent `describe` calls). A
+friend's Costs page shows only that instance's own costs and the label is "New
+video". The notebook keeps lessons that do not fit as waiting lessons and its
+cost counts in the instance total. Publishing a release closes the milestone's
+issues.
 
 **Stable candidate** — the holiday flow in the web app (as in v0.2.0).
 

@@ -2866,7 +2866,6 @@ def test_check_reports_the_limits_settings(tmp_path, capsys, monkeypatch):
     )
     captured = capsys.readouterr()
     assert "no storage limit configured" in captured.err
-    assert "no project totals URL configured" in captured.err
     summary = json.loads(captured.out)
     assert summary["storage_gb"] is None
     assert summary["project_totals_url"] is None

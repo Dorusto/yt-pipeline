@@ -34,7 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
-from common.config import ConfigError, beats_engine
+from common.config import BEATS_ENGINES, ConfigError, beats_engine
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.ffmpeg_tools import ffmpeg_path
@@ -139,7 +139,7 @@ def build_parser():
     )
     parser.add_argument(
         "--engine",
-        choices=("numpy", "beat_this"),
+        choices=BEATS_ENGINES,
         default=None,
         help="beat and downbeat detection engine; overrides beats.engine in the config (default: numpy)",
     )

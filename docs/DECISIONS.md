@@ -4,6 +4,88 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Notebook limit and ledger review fixes (V030 lot c10c)
+
+**Context:** The review of the c10b learn pass found three faults:
+`read_learn_prompt` read the prompt with its own file reader instead of the shared
+`common.text.read_text`; a learn pass that still did not fit after the merge call
+had no place to keep the new lessons; and the learn-pass model cost was not counted
+in the instance total model cost on the Costs page.
+
+**Options:** (A) drop the lessons that do not fit and leave the cost out of the
+instance total; (B) keep them as `waiting` lessons in the file (never dropped) and
+charge the learn-pass cost to a notebook ledger counted in the instance total.
+
+**Decision:** B. `read_learn_prompt` reads the prompt through the shared
+`common.text.read_text`. A learn pass that still does not fit after the merge call
+keeps the new lessons as `waiting` lessons in the file (never dropped) and promotes
+them into `lessons` as soon as there is room; `schemas/notebook.schema.json` gains
+the optional `waiting` array and the web app shows the waiting lessons with the same
+delete form. The learn-pass model cost is charged to a notebook ledger next to the
+notebook file (`notebook.spend.json`, via
+`common.notebook.notebook_ledger_path`) and counted in the instance total model cost
+on the Costs page, never in the per-clip list.
+
+**Why not A:** the issue asks that nothing be dropped and that the instance total
+show what the notebook costs.
+
+**Consequence:** `scripts/notebook.py` gains the `waiting` handling and the notebook
+ledger, `schemas/notebook.schema.json` gains `waiting`, `scripts/serve.py` shows the
+waiting lessons and adds the notebook ledger to the instance total, and
+`prompts/notebook_merge.md` is new. `docs/RULES.md` extends the notebook rule.
+
+**c10d review fixes:** the review of the c10c pass found two faults, fixed in V030
+lot c10d. `merge_lessons` takes the new id from `next_id(lessons + waiting)` through
+the one `next_notebook_id` helper, so a merge on a notebook with waiting lessons
+never reuses an id. The waiting list is capped at 3 lessons in total: when 3 are
+already waiting the learn pass writes nothing and leaves the `.learn.json` marker
+where it was (the feedback is learned once room is made, nothing dropped) and
+`--json` reports `"status": "waiting_full"`.
+
+**c10e review fixes:** the review of the c10d pass found two faults, fixed in
+V030 lot c10e. The learn pass checks the waiting room before the model call:
+when 3 lessons already wait it returns `waiting_full` with no model call and
+`llm_cost_usd` 0.0 (the marker stays), and when some room is left it asks the
+model for at most the remaining room's worth of new lessons, so the same
+feedback is never learned or paid twice. After the merge step any lesson past
+the limit (merged ones included, not only the ids the pass just added) goes to
+`waiting`, newest first, so the written notebook never holds more than the
+limit.
+
+---
+
+## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
+
+**Context:** The friend's Costs page fetched the owner instance's `/costs.json`
+and showed the owner's project totals as voluntary costs and the owner's donation
+list, which read as the owner's ledger on a friend's page. The owner decided a
+friend's page shows only that instance's own costs.
+
+**Options:** (A) keep fetching and showing the owner's totals and donations;
+(B) show only the friend's own model cost, limits, clips and requests, with one
+line that anything paid above the model cost goes into building the app further.
+
+**Decision:** B. `render_costs`'s friend branch (still marked by
+`costs.project_totals_url`) no longer fetches the owner's totals: it keeps the
+donation buttons, `instance_due_block`, the limits box and the per-clip table
+("Model cost of your clips"), adds the line "Anything you pay above your model
+cost goes into building the app further." and drops the owner's project totals
+and the donations list. `totals_rows` loses the `voluntary` parameter.
+`project_totals()`/`fetch_project_totals()` and their cache are removed; the
+owner's `GET /costs.json` route stays (the owner's side is unchanged). The UI
+label "New recap" becomes "New video" (top menu, page title, h1, the
+projects-page link, the mockup image); the `/upload` URL and the word "recap" in
+code stay.
+
+**Why not A:** the owner decided a friend's page shows only its own costs; the
+owner's ledger on a friend's page is confusing.
+
+**Consequence:** `costs.project_totals_url` is kept as the friend-instance marker
+(its help and the docs say so); RULES, the user guide, the pilot-host guide and
+`config.yaml.example` are updated; no schema change and no new tool.
+
+---
+
 ## [2026-10-25] Faster holiday edits (V030 lot c18)
 
 **Context:** Issue #94. A holiday run on this host took about half an hour before the first edit: the three-role loop ran the reviewer for all three rounds, the screenwriter prompt carried every eligible segment (106 candidates, a 32 k-token prompt), and `describe` sent its per-clip model calls one after another (1731.1 s cold). The edit quality was fine; the wall time was not.
@@ -15,6 +97,53 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 **Why not A:** the reviewer rounds and the oversized screenwriter prompt were the two biggest fixed costs of the loop, and the `describe` calls are independent per clip, so all three are safe to cut without touching the editing grammar, the star definition or the pacing.
 
 **Consequence:** Files touched: `scripts/llm_director.py`, `scripts/describe.py`, `tests/test_llm_director.py`, `tests/test_describe.py`, `docs/RULES.md`, `docs/DECISIONS.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-describe/SKILL.md`, `docs/guides/tools.md`. No change to the editing grammar, the chronological-order rules, the star definition, the pacing table, the beat snap, `scripts/director.py`, the stable files (`serve.py`, `recap.py`, `common/versions.py`, `quality.py`) or `schemas/`. Measured on `/root/media/projects/kotor-demo` (numbers only, no clip text; full report in `/root/reports/94.md`): the director step went from 7 calls and a 32.2 k-token screenwriter prompt to 5 calls and 20.6 k tokens (2 fewer calls, 36 % smaller prompt; the wall time is dominated by the model's completion tokens, which vary run to run, so the two after samples 361.3 s and 537.5 s sit inside the before range around 459.5 s); `describe` on the same 4 clips went from 288.3 s sequential to 134.8 s with `--workers 4` (2.14×, the pool bounded by the longest clip); `eval_edit` on the same workspace went from 2/3 to 3/3 (the after edit keeps both heroes and lands inside the brief's length window).
+
+---
+
+## [2026-10-25] Beat This! as an optional downbeat engine (V030 lot c17)
+
+**Context:** Issue #113 — the cuts land on the wrong beat of the bar: the bar
+phase is one beat off, and the owner noted the wrong beat is not always beat 2,
+so the bar start is guessed, not found. Lot c17 compared our downbeats with
+Beat This! (CPJKU, ISMIR 2024) on the three music tracks used in the projects and
+shipped it as an optional engine (`beats.py --engine beat_this`, default
+`numpy`). The review of `eb1d396` asked for this entry and for the engine to be
+config, not code (VISION principle 6).
+
+**Options:** (A) keep the engine as a code default and the `--engine` flag only;
+(B) make the engine a config value (`beats.engine`, `numpy` | `beat_this`, default
+`numpy`) with `--engine` and `YT_PIPELINE_BEATS_ENGINE` as overrides.
+
+**Decision:** B. The engine is a config value `beats.engine` (`numpy` |
+`beat_this`, default `numpy`); `--engine` overrides it and
+`YT_PIPELINE_BEATS_ENGINE` also sets it. `scripts/common/config.py` validates the
+`beats` section and exposes `beats_engine()`; `scripts/beats.py` resolves the
+engine through it and reports an unknown value as a usage error. `beat-this`
+stays out of `requirements.txt` (it is optional and CI does not need it), and the
+`beats.json` / `--json` shape is unchanged. The default stays `numpy` until the
+owner's tap test decides otherwise. The comparison: on the three tracks the beat
+grids agree (same tempo, matched beats within ~15–32 ms) but the bar phase differs
+by exactly one beat and the offset is constant (median +1.03 to +1.06 beats;
+98–100 % of downbeats within a quarter beat); Beat This! lands on the strongest
+kick phase (≤150 Hz) in all three tracks while our heuristic lands on a
+weak-kick phase; on a synthetic click track with a backbeat accent (beats 2 and 4
+loud) our heuristic picks beat 2 as the downbeat. Licence: the Beat This! code and
+its published weights are MIT; the upstream README warns that some *training*
+files are copyrighted or under limited CC licences — a caveat to record, not a
+blocker.
+
+**Why not A:** VISION principle 6 says model backends are config, not code; a
+code default would make the engine a code change instead of a setting, and the
+owner's tap test must be able to switch it without touching the code.
+
+**Consequence:** `scripts/common/config.py` gains `BEATS_ENGINE_ENV`,
+`BEATS_ENGINES`, `DEFAULT_BEATS_ENGINE`, the `beats` section validation and
+`beats_engine()`; `scripts/beats.py` resolves the engine from the config and
+`--engine` overrides it; `config.yaml.example` shows the key commented out;
+`docs/RULES.md` gains the engine rule; the `yt-beats` skill documents the config
+value and the install and weights lines actually run on the host. No change to
+the `beats.json` shape, no new summary key, no `beat-this` in `requirements.txt`
+and no new env var beyond `YT_PIPELINE_BEATS_ENGINE`.
 
 ---
 
@@ -34,6 +163,53 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] The notebook learns after each edit (V030 lot c10b)
+
+**Context:** Issue #106 point 4 and issue #96 point 3. The c10 notebook could be
+read and edited by hand, but nothing wrote a lesson from the feedback the person
+gave: the director kept no memory unless the owner typed a lesson himself. The
+review of `444fa92` (c10) also found four smaller faults: `--merge` with a
+repeated id crashed, `serve.py` had its own feedback reader, and
+`apply_agent_answer` carried an unused `notebook` parameter.
+
+**Options:** (A) the owner writes every lesson by hand; (B) after each new
+version the web app makes, one cheap model call reads the feedback since the last
+pass and writes at most 3 short lessons through `notebook.py`.
+
+**Decision:** B. `scripts/notebook.py` gains `--learn --workspace PATH`: it reads
+`<workspace>/feedback.jsonl` through the new shared `common.feedback.read_feedback`
+(rows strictly after the `last_learn_at` in the machine-owned marker
+`<workspace>/.learn.json`), builds a message from `prompts/notebook_learn.md`
+plus the existing lessons, the new feedback rows and the current `edit.json`
+brief, and makes one `metadata`-class call through `common/llm.py`. The answer
+`{"lessons": [...], "remove": [...]}` is applied with `next_id`/`make_lesson`;
+when the result would pass the 40-lesson limit the pass asks the model once to
+merge overlapping lessons or remove stale ones and retries; lessons that still
+do not fit wait in the file as `waiting` lessons (never dropped); then the
+document is validated and written atomically. With no new
+feedback the pass is skipped, makes no model call and writes nothing. `serve.py`
+spawns the pass in the background (`start_learn`) after a re-edit, a chat
+approval, a shot removed or trimmed, and a version deleted — never on a first
+upload, never blocking the request, a failure only logs. In agent mode the
+`yt-llm-director` skill tells the host agent to run the same pass after `--apply`.
+`--merge` with a repeated id is now a usage error, `serve.py`'s
+`read_feedback_lines` delegates to the shared reader, and the unused `notebook`
+parameter of `apply_agent_answer` is removed (`--prepare` already reads the
+notebook into `director/inputs.md`).
+
+**Why not A:** the issue asks the notebook to learn from the feedback the person
+already gives; a hand-written notebook would stay empty in practice.
+
+**Consequence:** `scripts/notebook.py` gains `--learn`/`--workspace` and the
+`learn()` function, `scripts/common/feedback.py` gains `read_feedback`,
+`scripts/serve.py` gains `start_learn` and the trigger points, and
+`prompts/notebook_learn.md` is new. `docs/RULES.md` extends the notebook rule and
+the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
+`schemas/notebook.schema.json` (the marker lives in the workspace), no shared
+notebook between instances and no new web route or UI control.
+
+---
+
 ## [2026-10-24] Style review fixes (V030 lot c9b)
 
 **Context:** The review of lot c9 (`e35ed6a`) found three problems. The metadata prompt still prescribed a built-in pinned comment voice ("in the creator's own plain first-person Romanian"), so the voice did not come only from `channel.style.pinned_comment_voice`. `channel.style.description_order` was handed to the model as an instruction but `build_description` still assembled the parts in a fixed order, so the setting did not actually change the description. And `docs/agents/rules-checked.md` had no row for the `channel.style` rule.
@@ -44,7 +220,51 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 **Why not A:** the review's point is that the channel's own settings must be the single source; a prompt that still prescribes a voice overrides the config, and a `description_order` that only reaches the model does not change the deterministic assembly the tool owns.
 
-**Consequence:** Files touched: `prompts/metadata.md`, `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/metadata.py`, `docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/guides/tools.md`, `.claude/skills/yt-publish/SKILL.md`, `config.yaml.example`, `docs/DECISIONS.md`, `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_docs_in_step.py`. No new tool, no new CLI flag, no schema change; `recap_meta.py` is untouched and the default order is unchanged.
+**Consequence:** Files touched: `prompts/metadata.md`, `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/metadata.py`, `docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/guides/tools.md`, `.claude/skills/yt-publish/SKILL.md`, `config.yaml.example`, `docs/DECISIONS.md`, `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_docs_in_step.py`. No new tool, no new CLI flag, no schema change; `recap_meta.py` is untouched and the default order is unchanged. The c9c review fixes: an empty or duplicate `description_order` is now rejected with a `ConfigError`, and `recap_meta.py` no longer receives `description_order` (it gets only `title_style` and `pinned_comment_voice`).
+
+---
+
+## [2026-10-24] Learning notebook with a 40-lesson limit (V030 lot c10)
+
+**Context:** Issue #106 points 3 and 4 and issue #96 point 3. The director kept
+no memory between edits: a lesson learned on one edit (a repeated sentence, a
+pacing that worked) was lost on the next, and a repeated sentence such as the
+sponsor line had no home outside the config. The owner wanted a small notebook
+the director keeps on this instance, with a size limit so it stays useful, and a
+way to record that a repeated sentence should move to `channel.fixed`.
+
+**Options:** (A) a per-workspace notebook with no limit; (B) a per-instance
+notebook file with a fixed 40-lesson limit, read by the director before each
+edit, shown in the web app, with a proposal lesson for a repeated sentence.
+
+**Decision:** B. `scripts/common/notebook.py` holds the shared loader and the
+`NOTEBOOK_LIMIT` of 40; `scripts/notebook.py` reads and edits the file
+(`--list`, `--add`, `--remove`, `--merge`, `--propose`) and validates it against
+`schemas/notebook.schema.json` before an atomic write. The path comes from
+`--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config;
+it is optional, so with none of the three set the director reads nothing and the
+web app shows no section — there is no personal default. The 40-lesson limit is
+a code rule, not a schema `maxItems`, so `--limit` stays a valid test override;
+a write past the limit fails with `EXIT_USAGE` and the caller merges overlapping
+lessons or removes stale ones first. A lesson of kind `proposal` names a
+`channel.fixed` part and the code never writes the config — the owner says yes
+by editing it. `llm_director.py` reads the notebook before every edit and hands
+it to the screenwriter, the editor and the reviewer (and to the host agent in
+`--prepare`); `serve.py` shows it as a collapsible section at the bottom of the
+project page with a delete form (`POST /<project>/notebook-delete`).
+
+**Why not A:** the issue asks for a per-instance notebook with a size limit and
+forced cleanup; a per-workspace notebook with no limit would grow without bound
+and would not carry a lesson from one edit to the next.
+
+**Consequence:** New `scripts/notebook.py`, `scripts/common/notebook.py`,
+`schemas/notebook.schema.json` and the `yt-notebook` skill; `llm_director.py`
+gains `--notebook` and the notebook block, `serve.py` gains `--notebook`, the
+panel and the delete route, and `scripts/common/config.py` gains
+`notebook_path()` and the `notebook.path` validation. `docs/RULES.md` gains the
+notebook rule and the `serve.py` → `notebook.py` subprocess entry. No automatic
+write to `channel.fixed`, no shared notebook between instances and no new web
+feature flag.
 
 ---
 
@@ -73,6 +293,91 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 **Why not A:** the owner cannot see a missing tool in a free-text reply, and the web app cannot tell a "cannot do" answer from a normal one; a structured answer is what the requests log needs.
 
 **Consequence:** Files touched: `prompts/interpret_feedback.md`, `scripts/llm_director.py`, `scripts/serve.py`, `docs/guides/user-guide.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `tests/test_llm_director.py`, `tests/test_serve_chat.py`. No new tool, no schema change, no change to `REQUEST_TYPES` or the Costs form; the exact user-facing sentence stays the model's, in the user's language.
+
+---
+
+## [2026-10-24] Director agent mode: prepare and apply without an OpenRouter key (V030 lot c5b)
+
+**Context:** the plugin lets a host coding agent direct the edit on its own
+subscription. The director needs a way to hand the agent the inputs and to take
+the agent's plan and answer back, with no OpenRouter call.
+
+**Decision:** `llm_director.py --prepare --workspace W` writes
+`<workspace>/director/inputs.md` (the brief, the brief settings, the editing
+techniques, the eligible shots and their shot facts, the beat grid and music
+facts when given, and the two output shapes) and makes no model call; the host
+agent writes `shot_plan.json` and `edit.json` (the editor answer shape);
+`llm_director.py --apply --workspace W` validates both against the schemas and
+the editing grammar, repairs mechanical faults with the same machinery the loop
+uses and writes the final `edit.json` with `meta.director.by = "agent"`.
+`--target-duration-s 0` ("All good shots") works in agent mode exactly as in the
+loop. `--apply --force` re-applies from the plan and the existing edit's slots
+when `edit.json` is already a complete edit. The OpenRouter three-role loop
+stays the default for the web app. The shared setup (`_resolve_workspace_brief`,
+`_agent_context`) is one place used by both the loop and the agent mode.
+
+---
+
+## [2026-10-24] yt dispatcher, structured errors and plugin descriptions (V030 lot c2b)
+
+**Context:** review of the v0.3.0 plan and lots c2, c3 and c4. `yt` was a
+dispatcher with its own `--list` flag and duplicated root/venv resolution in
+`bin/yt`; a `--json` failure printed only the human `[error]` line; the five
+plugins shared one marketplace description; and the c3 entry claimed "no tool,
+schema or route changes" although `scripts/yt.py` had changed.
+
+**Options:** (A) keep `--list` and the duplicated resolution in `bin/yt`; (B)
+make `yt` the single named dispatcher, move all root/venv resolution into
+`scripts/yt.py`, make `bin/yt` a thin launcher, print the structured error
+object on every `--json` failure, drop `--list`, and give each plugin its own
+description.
+
+**Decision:** B. `yt <tool> [args...]` runs `scripts/<tool>.py` and propagates
+the child's exit code unchanged; `yt --help` lists the tools and `yt --json` /
+`yt --help --json` print the same JSON. `bin/yt` only finds a Python and execs
+`scripts/yt.py`; all root and interpreter resolution (including the plugin venv
+under `CLAUDE_PLUGIN_DATA` and the `~/.claude/plugins/data/*/yt-pipeline-venv`
+marker) lives in `scripts/yt.py`. Every failure with `--json` in the arguments
+prints one `{"ok": false, "error": ..., "exit_code": N}` object on stdout via
+`report_error(..., json_out=True)`. `--list` is dropped. Each of the five
+plugins gets its own one-line factual description.
+
+**Why not A:** two sources of root/venv resolution drift apart, and a machine
+reading `--json` needs the same error shape from every tool.
+
+**Consequence:** the c3 entry's "no tool, schema or route changes" line was
+inaccurate — `scripts/yt.py` changed; the guide, the tools reference, the
+README and the 20 skills that said "from the repository root" are updated in the
+same commit.
+
+---
+
+## [2026-10-24] Claude Code plugin packaging and marketplace (V030 lot c3)
+
+**Context:** Issue #82 — the 34 skills in `.claude/skills/` load only when the
+agent starts inside the repository; the repository must be installable as a
+Claude Code plugin from any folder.
+
+**Options:** (A) keep telling the user to start the agent inside the repo or pass
+`--add-dir`; (B) package the repository as a Claude Code plugin with its own
+marketplace, so the skills load from any folder and `yt` is on the Bash tool's
+`PATH`.
+
+**Decision:** B. The repository root is both the plugin root and the marketplace
+root. `.claude-plugin/plugin.json` (name `yt-pipeline`, `skills:
+["./.claude/skills/"]`) and `.claude-plugin/marketplace.json` (one entry
+`{name: yt-pipeline, source: "./"}`) package it; `bin/yt` is on the Bash tool's
+`PATH`; a `SessionStart` hook creates the plugin's virtual environment in
+`${CLAUDE_PLUGIN_DATA}` from `requirements.txt` and `bin/yt`/`scripts/yt.py` find
+it through a marker file.
+
+**Why not A:** the official Claude Code plugin format is the supported way to
+ship skills from any folder; the plugin data directory survives updates and is
+removed on uninstall.
+
+**Consequence:** `claude plugin validate .` is Doru's manual check (the build
+host has no `claude` CLI); the plugin `version` is bumped with the release; no
+tool, schema or route changes.
 
 ---
 
@@ -3140,299 +3445,3 @@ buttons.
 **Consequence:** RULES gains the route and the versions rule; the user guide
 and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
 the commit carries `Stable-change: approved`.
-
-## [2026-10-24] Claude Code plugin packaging and marketplace (V030 lot c3)
-
-**Context:** Issue #82 — the 34 skills in `.claude/skills/` load only when the
-agent starts inside the repository; the repository must be installable as a
-Claude Code plugin from any folder.
-
-**Options:** (A) keep telling the user to start the agent inside the repo or pass
-`--add-dir`; (B) package the repository as a Claude Code plugin with its own
-marketplace, so the skills load from any folder and `yt` is on the Bash tool's
-`PATH`.
-
-**Decision:** B. The repository root is both the plugin root and the marketplace
-root. `.claude-plugin/plugin.json` (name `yt-pipeline`, `skills:
-["./.claude/skills/"]`) and `.claude-plugin/marketplace.json` (one entry
-`{name: yt-pipeline, source: "./"}`) package it; `bin/yt` is on the Bash tool's
-`PATH`; a `SessionStart` hook creates the plugin's virtual environment in
-`${CLAUDE_PLUGIN_DATA}` from `requirements.txt` and `bin/yt`/`scripts/yt.py` find
-it through a marker file.
-
-**Why not A:** the official Claude Code plugin format is the supported way to
-ship skills from any folder; the plugin data directory survives updates and is
-removed on uninstall.
-
-**Consequence:** `claude plugin validate .` is Doru's manual check (the build
-host has no `claude` CLI); the plugin `version` is bumped with the release; no
-tool, schema or route changes.
-
-## [2026-10-24] yt dispatcher, structured errors and plugin descriptions (V030 lot c2b)
-
-**Context:** review of the v0.3.0 plan and lots c2, c3 and c4. `yt` was a
-dispatcher with its own `--list` flag and duplicated root/venv resolution in
-`bin/yt`; a `--json` failure printed only the human `[error]` line; the five
-plugins shared one marketplace description; and the c3 entry claimed "no tool,
-schema or route changes" although `scripts/yt.py` had changed.
-
-**Options:** (A) keep `--list` and the duplicated resolution in `bin/yt`; (B)
-make `yt` the single named dispatcher, move all root/venv resolution into
-`scripts/yt.py`, make `bin/yt` a thin launcher, print the structured error
-object on every `--json` failure, drop `--list`, and give each plugin its own
-description.
-
-**Decision:** B. `yt <tool> [args...]` runs `scripts/<tool>.py` and propagates
-the child's exit code unchanged; `yt --help` lists the tools and `yt --json` /
-`yt --help --json` print the same JSON. `bin/yt` only finds a Python and execs
-`scripts/yt.py`; all root and interpreter resolution (including the plugin venv
-under `CLAUDE_PLUGIN_DATA` and the `~/.claude/plugins/data/*/yt-pipeline-venv`
-marker) lives in `scripts/yt.py`. Every failure with `--json` in the arguments
-prints one `{"ok": false, "error": ..., "exit_code": N}` object on stdout via
-`report_error(..., json_out=True)`. `--list` is dropped. Each of the five
-plugins gets its own one-line factual description.
-
-**Why not A:** two sources of root/venv resolution drift apart, and a machine
-reading `--json` needs the same error shape from every tool.
-
-**Consequence:** the c3 entry's "no tool, schema or route changes" line was
-inaccurate — `scripts/yt.py` changed; the guide, the tools reference, the
-README and the 20 skills that said "from the repository root" are updated in the
-same commit.
-
-## [2026-10-24] Director agent mode: prepare and apply without an OpenRouter key (V030 lot c5b)
-
-**Context:** the plugin lets a host coding agent direct the edit on its own
-subscription. The director needs a way to hand the agent the inputs and to take
-the agent's plan and answer back, with no OpenRouter call.
-
-**Decision:** `llm_director.py --prepare --workspace W` writes
-`<workspace>/director/inputs.md` (the brief, the brief settings, the editing
-techniques, the eligible shots and their shot facts, the beat grid and music
-facts when given, and the two output shapes) and makes no model call; the host
-agent writes `shot_plan.json` and `edit.json` (the editor answer shape);
-`llm_director.py --apply --workspace W` validates both against the schemas and
-the editing grammar, repairs mechanical faults with the same machinery the loop
-uses and writes the final `edit.json` with `meta.director.by = "agent"`.
-`--target-duration-s 0` ("All good shots") works in agent mode exactly as in the
-loop. `--apply --force` re-applies from the plan and the existing edit's slots
-when `edit.json` is already a complete edit. The OpenRouter three-role loop
-stays the default for the web app. The shared setup (`_resolve_workspace_brief`,
-`_agent_context`) is one place used by both the loop and the agent mode.
-
----
-
-## [2026-10-24] Learning notebook with a 40-lesson limit (V030 lot c10)
-
-**Context:** Issue #106 points 3 and 4 and issue #96 point 3. The director kept
-no memory between edits: a lesson learned on one edit (a repeated sentence, a
-pacing that worked) was lost on the next, and a repeated sentence such as the
-sponsor line had no home outside the config. The owner wanted a small notebook
-the director keeps on this instance, with a size limit so it stays useful, and a
-way to record that a repeated sentence should move to `channel.fixed`.
-
-**Options:** (A) a per-workspace notebook with no limit; (B) a per-instance
-notebook file with a fixed 40-lesson limit, read by the director before each
-edit, shown in the web app, with a proposal lesson for a repeated sentence.
-
-**Decision:** B. `scripts/common/notebook.py` holds the shared loader and the
-`NOTEBOOK_LIMIT` of 40; `scripts/notebook.py` reads and edits the file
-(`--list`, `--add`, `--remove`, `--merge`, `--propose`) and validates it against
-`schemas/notebook.schema.json` before an atomic write. The path comes from
-`--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config;
-it is optional, so with none of the three set the director reads nothing and the
-web app shows no section — there is no personal default. The 40-lesson limit is
-a code rule, not a schema `maxItems`, so `--limit` stays a valid test override;
-a write past the limit fails with `EXIT_USAGE` and the caller merges overlapping
-lessons or removes stale ones first. A lesson of kind `proposal` names a
-`channel.fixed` part and the code never writes the config — the owner says yes
-by editing it. `llm_director.py` reads the notebook before every edit and hands
-it to the screenwriter, the editor and the reviewer (and to the host agent in
-`--prepare`); `serve.py` shows it as a collapsible section at the bottom of the
-project page with a delete form (`POST /<project>/notebook-delete`).
-
-**Why not A:** the issue asks for a per-instance notebook with a size limit and
-forced cleanup; a per-workspace notebook with no limit would grow without bound
-and would not carry a lesson from one edit to the next.
-
-**Consequence:** New `scripts/notebook.py`, `scripts/common/notebook.py`,
-`schemas/notebook.schema.json` and the `yt-notebook` skill; `llm_director.py`
-gains `--notebook` and the notebook block, `serve.py` gains `--notebook`, the
-panel and the delete route, and `scripts/common/config.py` gains
-`notebook_path()` and the `notebook.path` validation. `docs/RULES.md` gains the
-notebook rule and the `serve.py` → `notebook.py` subprocess entry. No automatic
-write to `channel.fixed`, no shared notebook between instances and no new web
-feature flag.
-
----
-
-## [2026-10-24] The notebook learns after each edit (V030 lot c10b)
-
-**Context:** Issue #106 point 4 and issue #96 point 3. The c10 notebook could be
-read and edited by hand, but nothing wrote a lesson from the feedback the person
-gave: the director kept no memory unless the owner typed a lesson himself. The
-review of `444fa92` (c10) also found four smaller faults: `--merge` with a
-repeated id crashed, `serve.py` had its own feedback reader, and
-`apply_agent_answer` carried an unused `notebook` parameter.
-
-**Options:** (A) the owner writes every lesson by hand; (B) after each new
-version the web app makes, one cheap model call reads the feedback since the last
-pass and writes at most 3 short lessons through `notebook.py`.
-
-**Decision:** B. `scripts/notebook.py` gains `--learn --workspace PATH`: it reads
-`<workspace>/feedback.jsonl` through the new shared `common.feedback.read_feedback`
-(rows strictly after the `last_learn_at` in the machine-owned marker
-`<workspace>/.learn.json`), builds a message from `prompts/notebook_learn.md`
-plus the existing lessons, the new feedback rows and the current `edit.json`
-brief, and makes one `metadata`-class call through `common/llm.py`. The answer
-`{"lessons": [...], "remove": [...]}` is applied with `next_id`/`make_lesson`;
-when the result would pass the 40-lesson limit the pass asks the model once to
-merge overlapping lessons or remove stale ones and retries; lessons that still
-do not fit wait in the file as `waiting` lessons (never dropped); then the
-document is validated and written atomically. With no new
-feedback the pass is skipped, makes no model call and writes nothing. `serve.py`
-spawns the pass in the background (`start_learn`) after a re-edit, a chat
-approval, a shot removed or trimmed, and a version deleted — never on a first
-upload, never blocking the request, a failure only logs. In agent mode the
-`yt-llm-director` skill tells the host agent to run the same pass after `--apply`.
-`--merge` with a repeated id is now a usage error, `serve.py`'s
-`read_feedback_lines` delegates to the shared reader, and the unused `notebook`
-parameter of `apply_agent_answer` is removed (`--prepare` already reads the
-notebook into `director/inputs.md`).
-
-**Why not A:** the issue asks the notebook to learn from the feedback the person
-already gives; a hand-written notebook would stay empty in practice.
-
-**Consequence:** `scripts/notebook.py` gains `--learn`/`--workspace` and the
-`learn()` function, `scripts/common/feedback.py` gains `read_feedback`,
-`scripts/serve.py` gains `start_learn` and the trigger points, and
-`prompts/notebook_learn.md` is new. `docs/RULES.md` extends the notebook rule and
-the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
-`schemas/notebook.schema.json` (the marker lives in the workspace), no shared
-notebook between instances and no new web route or UI control.
-
-## [2026-10-25] Notebook limit and ledger review fixes (V030 lot c10c)
-
-**Context:** The review of the c10b learn pass found three faults:
-`read_learn_prompt` read the prompt with its own file reader instead of the shared
-`common.text.read_text`; a learn pass that still did not fit after the merge call
-had no place to keep the new lessons; and the learn-pass model cost was not counted
-in the instance total model cost on the Costs page.
-
-**Options:** (A) drop the lessons that do not fit and leave the cost out of the
-instance total; (B) keep them as `waiting` lessons in the file (never dropped) and
-charge the learn-pass cost to a notebook ledger counted in the instance total.
-
-**Decision:** B. `read_learn_prompt` reads the prompt through the shared
-`common.text.read_text`. A learn pass that still does not fit after the merge call
-keeps the new lessons as `waiting` lessons in the file (never dropped) and promotes
-them into `lessons` as soon as there is room; `schemas/notebook.schema.json` gains
-the optional `waiting` array and the web app shows the waiting lessons with the same
-delete form. The learn-pass model cost is charged to a notebook ledger next to the
-notebook file (`notebook.spend.json`, via
-`common.notebook.notebook_ledger_path`) and counted in the instance total model cost
-on the Costs page, never in the per-clip list.
-
-**Why not A:** the issue asks that nothing be dropped and that the instance total
-show what the notebook costs.
-
-**Consequence:** `scripts/notebook.py` gains the `waiting` handling and the notebook
-ledger, `schemas/notebook.schema.json` gains `waiting`, `scripts/serve.py` shows the
-waiting lessons and adds the notebook ledger to the instance total, and
-`prompts/notebook_merge.md` is new. `docs/RULES.md` extends the notebook rule.
-
-**c10d review fixes:** the review of the c10c pass found two faults, fixed in V030
-lot c10d. `merge_lessons` takes the new id from `next_id(lessons + waiting)` through
-the one `next_notebook_id` helper, so a merge on a notebook with waiting lessons
-never reuses an id. The waiting list is capped at 3 lessons in total: when 3 are
-already waiting the learn pass writes nothing and leaves the `.learn.json` marker
-where it was (the feedback is learned once room is made, nothing dropped) and
-`--json` reports `"status": "waiting_full"`.
-
-**c10e review fixes:** the review of the c10d pass found two faults, fixed in
-V030 lot c10e. The learn pass checks the waiting room before the model call:
-when 3 lessons already wait it returns `waiting_full` with no model call and
-`llm_cost_usd` 0.0 (the marker stays), and when some room is left it asks the
-model for at most the remaining room's worth of new lessons, so the same
-feedback is never learned or paid twice. After the merge step any lesson past
-the limit (merged ones included, not only the ids the pass just added) goes to
-`waiting`, newest first, so the written notebook never holds more than the
-limit.
-
-## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
-
-**Context:** The friend's Costs page fetched the owner instance's `/costs.json`
-and showed the owner's project totals as voluntary costs and the owner's donation
-list, which read as the owner's ledger on a friend's page. The owner decided a
-friend's page shows only that instance's own costs.
-
-**Options:** (A) keep fetching and showing the owner's totals and donations;
-(B) show only the friend's own model cost, limits, clips and requests, with one
-line that anything paid above the model cost goes into building the app further.
-
-**Decision:** B. `render_costs`'s friend branch (still marked by
-`costs.project_totals_url`) no longer fetches the owner's totals: it keeps the
-donation buttons, `instance_due_block`, the limits box and the per-clip table
-("Model cost of your clips"), adds the line "Anything you pay above your model
-cost goes into building the app further." and drops the owner's project totals
-and the donations list. `totals_rows` loses the `voluntary` parameter.
-`project_totals()`/`fetch_project_totals()` and their cache are removed; the
-owner's `GET /costs.json` route stays (the owner's side is unchanged). The UI
-label "New recap" becomes "New video" (top menu, page title, h1, the
-projects-page link, the mockup image); the `/upload` URL and the word "recap" in
-code stay.
-
-**Why not A:** the owner decided a friend's page shows only its own costs; the
-owner's ledger on a friend's page is confusing.
-
-**Consequence:** `costs.project_totals_url` is kept as the friend-instance marker
-(its help and the docs say so); RULES, the user guide, the pilot-host guide and
-`config.yaml.example` are updated; no schema change and no new tool.
-
----
-
-## [2026-10-25] Beat This! as an optional downbeat engine (V030 lot c17)
-
-**Context:** Issue #113 — the cuts land on the wrong beat of the bar: the bar
-phase is one beat off, and the owner noted the wrong beat is not always beat 2,
-so the bar start is guessed, not found. Lot c17 compared our downbeats with
-Beat This! (CPJKU, ISMIR 2024) on the three music tracks used in the projects and
-shipped it as an optional engine (`beats.py --engine beat_this`, default
-`numpy`). The review of `eb1d396` asked for this entry and for the engine to be
-config, not code (VISION principle 6).
-
-**Options:** (A) keep the engine as a code default and the `--engine` flag only;
-(B) make the engine a config value (`beats.engine`, `numpy` | `beat_this`, default
-`numpy`) with `--engine` and `YT_PIPELINE_BEATS_ENGINE` as overrides.
-
-**Decision:** B. The engine is a config value `beats.engine` (`numpy` |
-`beat_this`, default `numpy`); `--engine` overrides it and
-`YT_PIPELINE_BEATS_ENGINE` also sets it. `scripts/common/config.py` validates the
-`beats` section and exposes `beats_engine()`; `scripts/beats.py` resolves the
-engine through it and reports an unknown value as a usage error. `beat-this`
-stays out of `requirements.txt` (it is optional and CI does not need it), and the
-`beats.json` / `--json` shape is unchanged. The default stays `numpy` until the
-owner's tap test decides otherwise. The comparison: on the three tracks the beat
-grids agree (same tempo, matched beats within ~15–32 ms) but the bar phase differs
-by exactly one beat and the offset is constant (median +1.03 to +1.06 beats;
-98–100 % of downbeats within a quarter beat); Beat This! lands on the strongest
-kick phase (≤150 Hz) in all three tracks while our heuristic lands on a
-weak-kick phase; on a synthetic click track with a backbeat accent (beats 2 and 4
-loud) our heuristic picks beat 2 as the downbeat. Licence: the Beat This! code and
-its published weights are MIT; the upstream README warns that some *training*
-files are copyrighted or under limited CC licences — a caveat to record, not a
-blocker.
-
-**Why not A:** VISION principle 6 says model backends are config, not code; a
-code default would make the engine a code change instead of a setting, and the
-owner's tap test must be able to switch it without touching the code.
-
-**Consequence:** `scripts/common/config.py` gains `BEATS_ENGINE_ENV`,
-`BEATS_ENGINES`, `DEFAULT_BEATS_ENGINE`, the `beats` section validation and
-`beats_engine()`; `scripts/beats.py` resolves the engine from the config and
-`--engine` overrides it; `config.yaml.example` shows the key commented out;
-`docs/RULES.md` gains the engine rule; the `yt-beats` skill documents the config
-value and the install and weights lines actually run on the host. No change to
-the `beats.json` shape, no new summary key, no `beat-this` in `requirements.txt`
-and no new env var beyond `YT_PIPELINE_BEATS_ENGINE`.
-
