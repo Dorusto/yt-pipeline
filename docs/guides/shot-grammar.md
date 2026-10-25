@@ -15,7 +15,7 @@ Every technique has three columns: how it is filmed, how `motion` / `quality` / 
 
 ## 1. Core principle: label, never decide alone
 
-A segment is never thrown away by the analysis tools. They **label** it; the director (and Doru in the review UI) decides.
+A segment is never thrown away by the analysis tools. They **label** it; the director (and the owner in the review UI) decides.
 
 - **Intent and defect are separate fields.** Motion blur during a whip pan is intent; motion blur on a static shot is a defect. A fast rotation at the end of a take may be the first half of a transition, not junk. A fast move between short holds on people is a filming mistake (marked `whip: "short_hold"`, scores low), while a fast move between two long holds is a deliberate move (marked `whip: "deliberate"`) and its motion blur is not a defect; a deliberate move (orbit, pan, tilt, dolly, travel, truck) is not punished for shake the way a static hold is.
 - Each segment gets a **role** with a confidence: `move`, `hold`, `transition_out`, `transition_in`, `setup`, `teardown`, `accidental`, plus a list of **defects** (`blur`, `shake`, `exposure`, `obstruction`, `horizon`), each with a measured value.

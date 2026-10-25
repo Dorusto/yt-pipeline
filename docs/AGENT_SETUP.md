@@ -114,7 +114,7 @@ It works alone because it calls the tools only through `yt <tool>`, so it needs
 the `yt` entry point on `PATH` (section 5) and nothing else.
 
 `claude plugin validate .` checks the marketplace file and every entry. This is a
-manual step for Doru: the build host has no `claude` CLI.
+manual step for the owner: the build host has no `claude` CLI.
 
 ## Typed tools (MCP)
 

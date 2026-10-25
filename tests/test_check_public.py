@@ -58,6 +58,15 @@ def test_allows_private_ipv4_in_gitignored_files(tmp_path, monkeypatch):
     assert "private IPv4" in check_public.check_file("shared.md")[0]
 
 
+def test_blocks_the_owner_first_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    name = "Dor" + "u"
+    (tmp_path / "a.md").write_text(f"{name} filmed this\n", encoding="utf-8")
+    (tmp_path / "b.md").write_text("the Dorusto handle stays\n", encoding="utf-8")
+    assert "owner's first name" in check_public.check_file("a.md")[0]
+    assert check_public.check_file("b.md") == []
+
+
 def test_main_json_and_exit_code(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "ok.py").write_text("x = 1\n")

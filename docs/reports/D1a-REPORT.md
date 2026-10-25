@@ -12,10 +12,10 @@ record.
 
 ---
 
-# D1a-2 — eval-driven fixes after Doru's checkpoint
+# D1a-2 — eval-driven fixes after the owner's checkpoint
 
 Ground truth: [`eval/ground_truth_boat_2026-10-12.yaml`](../../eval/ground_truth_boat_2026-10-12.yaml)
-(6 clips Doru filmed). Scorer: `scripts/eval_labels.py` (`yt-eval` skill,
+(6 clips the owner filmed). Scorer: `scripts/eval_labels.py` (`yt-eval` skill,
 `schemas/eval.schema.json`). Scores are 0..1, higher is better; a component the
 ground truth does not ask for is `-`, never 0.
 
@@ -109,7 +109,7 @@ sources untouched.
 - **Gyro/telemetry path** — still optical flow only; the raw `djmd` streams are
   untouched for the later `telemetry-parser` upgrade.
 
-## Doru, check this
+## the owner, check this
 
 - `.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace ~/media/yt-test/workspace`
   → expect `TOTAL 0.53 1.00 0.97 1.00 0.69` (was 0.26 before the fixes).
@@ -209,7 +209,7 @@ defects (0..1) ; horizon`. `⏱` lines are detected scene events. `bob` is
 
 # D1a first round (pre-checkpoint, 2026-10-12) — historical record
 
-The sections below describe the outputs as they were when Doru reviewed them at
+The sections below describe the outputs as they were when the owner reviewed them at
 the checkpoint. The per-clip timelines at the end are superseded by the D1a-2
 timelines above for the six ground-truth clips; the `move · static` line for clip
 0080 is the contradiction the PR #7 audit flagged — D1a-2 forbids role `move` on
@@ -264,7 +264,7 @@ a `static` label, so a re-run cannot produce it again.
   the missing-`usage.cost` raise and the ledger are covered by injected fakes and
   the mock backend.
 
-## Doru, check this
+## the owner, check this
 
 - `.venv/bin/python -m pytest -q` → expect `188 passed`.
 - `cat ~/media/yt-test/workspace/ingest.json | head -40` → 21 clips, all gyro

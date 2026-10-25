@@ -14,7 +14,7 @@
 - With few slots `15 % (rounded)` allows more than 15 % (7 slots -> 2 = 28 %; 12 slots -> 2 = 16.7 %); the 80-90 % rule holds from about 14 slots up.
 - The synthetic target was 60 s but only about 38 s of edit came out (little distinct material); lengths below the target are a footage limit, not a policy effect.
 
-## Doru, check this
+## the owner, check this
 
 - `docs/DECISIONS.md` last two entries (move policy budget for ordinary moves; vertical format).
 - Run `scripts/recap.py --source <folder> --brief "..." --format both` on real footage and watch `recap_720p_9x16.mp4`: does the window stay on the subject?
@@ -24,4 +24,4 @@
 
 ## Reviewer changes (Claude)
 
-- Exception count is 15 % of the slots **rounded** (minimum 1), not ceil: with 7 slots ceil gave 2 (28.6 %), against Doru's 80–90 % rule; rounding gives 1 (14 %), 14 slots → 2, 20 → 3.
+- Exception count is 15 % of the slots **rounded** (minimum 1), not ceil: with 7 slots ceil gave 2 (28.6 %), against the owner's 80–90 % rule; rounding gives 1 (14 %), 14 slots → 2, 20 → 3.

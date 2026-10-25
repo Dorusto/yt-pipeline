@@ -72,7 +72,7 @@ Per segment, all cheap on CPU:
 
 Learned score (optional, later): **DOVER-Mobile** (~10M parameters, runs on CPU, reported ~1.4 s per video) gives separate technical and aesthetic quality; useful to rank among the "keep" segments, not to decide keep/discard.
 
-Defects are measured values, kept separate from intent: blur during a whip pan is intended, blur on a hold is a defect. Nothing is deleted — the review UI shows "setup? blur 0.21" and Doru or the director decides.
+Defects are measured values, kept separate from intent: blur during a whip pan is intended, blur on a hold is a defect. Nothing is deleted — the review UI shows "setup? blur 0.21" and the owner or the director decides.
 
 ## 6. Pacing — how long a move should be on screen
 

@@ -31,7 +31,7 @@
   (`FakeRun`, monkeypatched `run_steps`/`inspect_sequence`); no live FilmCraft was
   used here.
 
-**Doru, check this**
+**the owner, check this**
 - `finish_pip.py` now reports `keyframed: true` after a successful `--bridge` run
   even when the placed item's `effects` key is empty — the state is taken from the
   run, not a re-inspect (`scripts/finish_pip.py` `apply_run_state`).
@@ -70,7 +70,7 @@
 - The LLM pass ran on the mock backend only; the Shorts tab HTML is covered by the tests,
   no phone or browser was used here.
 
-**Doru, check this**
+**the owner, check this**
 - The intro rule is now "a candidate starts at or after 60 s of the edit, no exceptions"
   (your decision in the lot 7 review) — say if the old "different cut" clause should come
   back (`scripts/shorts_rank.py` `is_standalone`).
@@ -108,7 +108,7 @@
 - The web Upload → `recap.py` hand-off is covered by `build_recap_command` unit
   tests only; no full browser upload was run here.
 
-**Doru, check this**
+**the owner, check this**
 - `music_pick.py` exits 2 on a broken/missing config and 1 on its own errors
   (empty library, no track) — say if you want one code for both
   (`tests/test_music_pick.py::test_broken_config_is_one_error_line_and_exit_two`).
@@ -157,7 +157,7 @@
   only, and the BPM numbers on the synthetic WAVs are meaningless (the
   measurement path itself is `beats.py`, unchanged).
 
-**Doru, check this**
+**the owner, check this**
 - The rule and the tool split are in `docs/DECISIONS.md` (2026-10-22, S60 lot 8)
   and `docs/RULES.md` (music line) — confirm the `serve.py` choice: warn and
   serve no tracks instead of exiting when no library is configured.
@@ -199,7 +199,7 @@
 - The LLM pass ran on the mock backend only — no real model call, no real footage; the
   quality of the generated titles/descriptions is not judged here.
 
-**Doru, check this**
+**the owner, check this**
 - The intro rule asked here ("never the first 60 s of the edit unless it is a different
   cut") is decided and implemented since lot 7b: a candidate starts at or after 60 s of
   the edit, no exceptions (`scripts/shorts_rank.py` `is_standalone`, table in

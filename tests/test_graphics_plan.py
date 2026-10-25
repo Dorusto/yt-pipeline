@@ -158,7 +158,7 @@ def test_plan_normalisation(tmp_path, monkeypatch, capsys):
                     "time_s": 1.0,
                     "duration_s": 2.0,
                     "template": "lower_third",
-                    "props": {"name": "Doru", "role": "creator"},
+                    "props": {"name": "Name", "role": "creator"},
                     "reason": "the speaker is named",
                 },
             ]
@@ -226,7 +226,7 @@ def test_missing_props_caught(tmp_path, monkeypatch, capsys):
                     "time_s": 1.0,
                     "duration_s": 3.0,
                     "template": "lower_third",
-                    "props": {"name": "Doru"},
+                    "props": {"name": "Name"},
                     "reason": "x",
                 }
             ]
@@ -374,7 +374,7 @@ def test_chain_with_mock_llm(tmp_path):
                 "time_s": 1.0,
                 "duration_s": 3.0,
                 "template": "lower_third",
-                "props": {"name": "Doru", "role": "creator"},
+                "props": {"name": "Name", "role": "creator"},
                 "reason": "introduces the speaker",
             },
             {

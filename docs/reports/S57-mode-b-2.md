@@ -1,6 +1,6 @@
 # S57 — Mode B, second slice (lots 1-3)
 
-Draft report for Doru to confirm. Scope: the phone cut review (lot 1), topic
+Draft report for the owner to confirm. Scope: the phone cut review (lot 1), topic
 chapters (lot 2) and Shorts ranking (lot 3) on top of the S56 Mode B flow.
 
 ## Works
@@ -49,7 +49,7 @@ chapters (lot 2) and Shorts ranking (lot 3) on top of the S56 Mode B flow.
   and stopped before the render (the fixture has no real video); the derived
   segment list was verified, not the rendered Shorts.
 
-## Doru, check this
+## the owner, check this
 
 - The Cuts tab on the phone: `serve.py` → `?tab=cuts` on a Mode B project.
 - `rough_cut.py --review cut_review.yaml` rerun behaviour (a `keep` row stays in

@@ -195,7 +195,7 @@ Say what you want, not how to cut it. The router reads length, order, pacing, mu
 
 ## The web app (phone + desktop)
 
-`serve.py` is the app Doru uses from the phone. It is **tailnet-only** (one
+`serve.py` is the app the owner uses from the phone. It is **tailnet-only** (one
 bind address, never the wildcard) and it never exposes the footage beyond the
 finished recap, the explanation and the contact sheet.
 

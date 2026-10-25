@@ -6,7 +6,7 @@ tags: [yt-pipeline, research, rendering, web-editor, audio, music]
 
 # Rendering, web editing and audio generation
 
-Why this exists: Doru wants to drop the hard dependency on Kdenlive (it ties him to the PC), preview and lightly adjust an edit from the browser, add story graphics automatically (vacations, tutorials, talking-head), and make music and sound effects without paid services and without ComfyUI. This file records the options and the choice. Decision entry: `docs/DECISIONS.md`, 2026-10-13, *`edit.json` is the edit list*.
+Why this exists: the owner wants to drop the hard dependency on Kdenlive (it ties him to the PC), preview and lightly adjust an edit from the browser, add story graphics automatically (vacations, tutorials, talking-head), and make music and sound effects without paid services and without ComfyUI. This file records the options and the choice. Decision entry: `docs/DECISIONS.md`, 2026-10-13, *`edit.json` is the edit list*.
 
 ## 1. Programmatic video engines (graphics, animations, final render)
 
@@ -20,7 +20,7 @@ Why this exists: Doru wants to drop the hard dependency on Kdenlive (it ties him
 
 **Conclusion.**
 - Plain montage (cuts, transitions, music, captions) renders with **ffmpeg straight from `edit.json`** on the server. No browser engine needed, so Mode A does not depend on any of the engines above.
-- Graphics and story elements (titles, maps, counters, browser/terminal mockups, charts driven by what is said) go through a **graphics engine behind one interface**. Candidates for the bake-off at the start of D4: Remotion (reuse Hasan's kit, free for Doru) vs HyperFrames (Apache-2.0, agent-native). Revideo stays a fallback if its maintenance checks out.
+- Graphics and story elements (titles, maps, counters, browser/terminal mockups, charts driven by what is said) go through a **graphics engine behind one interface**. Candidates for the bake-off at the start of D4: Remotion (reuse Hasan's kit, free for the owner) vs HyperFrames (Apache-2.0, agent-native). Revideo stays a fallback if its maintenance checks out.
 - Remotion's licence is acceptable today (single creator). The interface keeps the exit open if the channel ever outgrows it.
 
 ## 2. Web editor — OpenCut as a candidate
@@ -31,7 +31,7 @@ Why this exists: Doru wants to drop the hard dependency on Kdenlive (it ties him
 - The default branch is a **ground-up rewrite at scaffold level**, with outside contributions paused. Its roadmap lists an *Editor API* (programmatic control of projects and renders) and headless batch rendering, neither shipped.
 - No documented project import format today. No mobile app.
 
-**Status: candidate, not chosen.** We cannot write an edit from the director into OpenCut yet. Re-evaluate when the Editor API ships: an `export_opencut` adapter (`edit.json` → OpenCut project) would then give Doru a full manual editor in the browser without building one.
+**Status: candidate, not chosen.** We cannot write an edit from the director into OpenCut yet. Re-evaluate when the Editor API ships: an `export_opencut` adapter (`edit.json` → OpenCut project) would then give the owner a full manual editor in the browser without building one.
 
 **Meanwhile (D3):** our own light web editor, phone first: play the edit from 720p proxies, reorder / trim / swap a slot, approve / reject / regenerate, then the server renders the final at full quality. Not a general timeline editor — anything heavier goes to the Kdenlive export, or to OpenCut later.
 
@@ -42,7 +42,7 @@ ComfyUI is a Python program: each node loads a model and passes tensors to the n
 | Tool | Job | Backends (config, not code) | License status |
 |---|---|---|---|
 | `audio_clean` | noise and wind reduction, loudness to −14 LUFS | ffmpeg `arnndn` (RNNoise model, CPU) + `loudnorm`; DeepFilterNet later if needed | free; no GPU |
-| `music` | background music from a mood/brief + target length + BPM | **YuE2** first (~3B parameters, under 8 GB VRAM, a 3.5 min song in about 2 min; writes an editable ABC score before audio, so tempo, structure and length can be set by the director), **ACE-Step 1.5** fallback only (MIT; Doru's test in ComfyUI had an audible noise floor), **Stable Audio Open** (short instrumental loops) | YuE2 outputs publishable and monetisable (checked in the vault); ACE-Step MIT; Stable Audio Open free under $1M yearly revenue |
+| `music` | background music from a mood/brief + target length + BPM | **YuE2** first (~3B parameters, under 8 GB VRAM, a 3.5 min song in about 2 min; writes an editable ABC score before audio, so tempo, structure and length can be set by the director), **ACE-Step 1.5** fallback only (MIT; the owner's test in ComfyUI had an audible noise floor), **Stable Audio Open** (short instrumental loops) | YuE2 outputs publishable and monetisable (checked in the vault); ACE-Step MIT; Stable Audio Open free under $1M yearly revenue |
 | `sfx` | whoosh, pop, click, ambience at transitions and on keywords (YuE2 is music only and does not make sound effects) | 1) own catalogued library (freesound.org CC0), 2) generation with Stable Audio Open (text → sound) to fill gaps, saved back into the library | CC0 / Stable Audio licence |
 | `beats` | beats, downbeats, energy of the chosen track | librosa (CPU) | ISC |
 
@@ -57,4 +57,4 @@ Each tool has `--help`, `--json`, skips work already done (cache key = prompt + 
 - HyperFrames — https://github.com/heygen-com/hyperframes, https://themenonlab.blog/blog/heygen-hyperframes-video-as-code
 - OpenCut — https://github.com/OpenCut-app/OpenCut, https://mer.vin/2026/07/opencut-explained-open-source-capcut-alternative-classic-editor-vs-ground-up-rewrite/
 - Video-to-audio licences (MMAudio, HunyuanVideo-Foley) — https://www.creativeainews.com/articles/how-to-add-sound-effects-to-ai-video-2026/
-- Music model licences — Doru's vault, `70_ai-youtube-automation-pipeline/NOTE_claude-code-remotion.md` and `20_TODO.md` (chunk 5)
+- Music model licences — the owner's vault, `70_ai-youtube-automation-pipeline/NOTE_claude-code-remotion.md` and `20_TODO.md` (chunk 5)

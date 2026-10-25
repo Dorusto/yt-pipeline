@@ -12,8 +12,6 @@ BANNED = (
     "~/yt-watchdog",
     "Dorusto/resurse",
     "~/ws",
-    '"name": "Doru"',
-    '"name":"Doru"',
     "Monschau",
 )
 

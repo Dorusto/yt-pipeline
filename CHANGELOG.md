@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code plugin: five plugins in one marketplace `yt-pipeline` (`yt-director`, `yt-publish`, `yt-shorts`, `yt-editor`, `yt-admin`), each installable alone; every skill works on its own through `yt <tool>`.
 - Typed tools (MCP): each plugin ships `scripts/yt_mcp.py` with `yt_list`, `yt_describe`, `yt_run` and `yt_preview`.
 - Director agent mode: `llm_director.py --prepare` writes the inputs and `--apply` validates and writes the edit with `meta.director.by = "agent"`, so a host agent can direct the edit on its own subscription with no OpenRouter key.
-- Director chat in the Recap tab: the reviewer's objections in plain words, a message in and a reply out with a cost/time estimate, and a Make-the-new-version button.
+- Director chat in the Director tab: the reviewer's objections in plain words, a message in and a reply out with a cost/time estimate, and a Make-the-new-version button.
 - The director is honest about its tools: when it cannot do something it says what it can do instead and the request is logged as a missing tool.
 - Per-instance style settings: `channel.style` (`title_style`, `description_order`, `pinned_comment_voice`).
 - Learning notebook: a per-instance file of at most 40 lessons, shown at the bottom of the project page; after each new version one cheap model call writes at most 3 lessons.
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The project page's reviewer box is replaced by the chat in the Recap tab.
+- The project page's reviewer box is replaced by the chat in the Director tab (the notebook too).
 - The metadata prompt no longer carries a built-in pinned-comment voice; it comes from `channel.style.pinned_comment_voice`.
 - `description_order` assembles the description in the configured order.
 - Director: the screenwriter gets a shortlist of the eligible candidates (every star plus the top-K by score) instead of the whole pool, the reviewer runs at most 2 rounds by default, and `describe` runs its per-clip model calls in a small worker pool (`--workers`, default 4), so a first edit is faster.
@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Run status trusts only our own live pid: a `.run.json` holding a live but unrelated pid reads done or stopped, never running.
+- The four web-app tool calls (feedback reply, rewrite metadata, drop/trim shot, notebook delete) answer 504 with plain text when the tool does not finish inside its timeout.
+- Version names are validated with `fullmatch`, so `v1\n`, `v00001` and `../v1` are refused.
+- The notebook survives a concurrent edit: the learn pass re-reads the file under a lock after the model call and applies removals and additions by id.
+- A version's model cost is stored in `version.json` at snapshot time, so deleting a middle version leaves the next version's cost unchanged.
+- The owner's first name is out of the repository; `scripts/check_public.py` enforces it (the GitHub handle `Dorusto` stays).
 - Stop button: the run's pid is killed only when its recorded start time or command line still matches, so a reused pid is never killed.
 - `llm_director.py --prepare` together with `--force` is a usage error.
 - `notebook.py --merge` with a repeated id is a usage error.

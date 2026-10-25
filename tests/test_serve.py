@@ -4491,3 +4491,90 @@ def test_start_recap_records_the_start_time_and_stop_run_ends_it(tmp_path):
     finally:
         if serve.pid_alive(pid):
             os.kill(pid, 9)
+
+
+def test_run_tool_command_raises_tool_timeout():
+    with pytest.raises(serve.ToolTimeout):
+        serve.run_tool_command(
+            [sys.executable, "-c", "import time; time.sleep(5)"], 0.2
+        )
+
+
+def test_feedback_reply_timeout_is_504(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 1))
+
+    monkeypatch.setattr(serve.subprocess, "run", timeout)
+    server = start_server(root)
+    try:
+        status, headers, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 504
+        assert headers["Content-Type"].startswith("text/plain")
+        assert b"did not finish" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_valid_version():
+    assert serve.valid_version("v12") is True
+    assert serve.valid_version("v1\n") is False
+    assert serve.valid_version("v00001") is False
+    assert serve.valid_version("../v1") is False
+
+
+def test_reedit_with_a_workspace_form_field_does_not_500(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    source = inbox / "kotor-day"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    (root / "2026-10-14" / ".run.json").write_text(
+        json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+    )
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body(
+                [
+                    ("workspace", None, "/etc"),
+                    ("approved", None, "1"),
+                    ("feedback", None, "drop 0071/s2"),
+                ]
+            ),
+        )
+        assert status == 303, body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_version_cost_reads_the_stored_cost_and_survives_a_delete(tmp_path):
+    project = tmp_path / "trip"
+    for number, cost in ((1, 0.04), (2, 0.02), (3, 0.03)):
+        directory = project / "versions" / f"v{number:03d}"
+        directory.mkdir(parents=True)
+        (directory / "version.json").write_text(
+            json.dumps({"created_at": f"2026-10-15T1{number}:00:00+0000", "cost_usd": cost}),
+            encoding="utf-8",
+        )
+    versions = serve.list_versions(project)
+    assert serve.version_cost(versions[0]) == 0.04
+    assert serve.version_cost(versions[2]) == 0.03
+    shutil.rmtree(project / "versions" / "v002")
+    versions = serve.list_versions(project)
+    assert serve.version_cost(versions[-1]) == 0.03

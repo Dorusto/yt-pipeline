@@ -22,7 +22,7 @@ clip can show the tool on a normal PC (Windows, macOS, Linux).
 - **`h264_nvenc` encode** — no GPU on the build machine (RULES), only the selection logic is tested.
 - **Windows symlink farms** in `inbox.py` (phone flow) — untouched; a Windows machine without symlink privilege will fail that path. Noted for the demo machine, out of D2-5 scope.
 
-## Doru, check this
+## the owner, check this
 
 - The PR's three CI jobs (macOS/Windows were never run before): `gh pr checks` on the D2-5 PR, or the Checks tab of the PR.
 - `.venv/bin/python -m pytest tests/ -q` → `742 passed` on this machine.

@@ -72,7 +72,7 @@ llm_backend: openrouter
 # Optional ntfy server URL for scripts/notify.py and the watchdog (also read
 # from the NTFY_URL environment variable; no built-in default). Never commit a
 # private address — this public repository only names `<ntfy-url>`.
-# ntfy_url: http://ntfy.example.invalid/opencode-doru
+# ntfy_url: http://ntfy.example.invalid/yt-pipeline
 
 # Optional per-project spend ledger (JSON) so llm_budget_usd caps a whole job
 # across separate tool runs. Prefer the workspace copy: <workspace>/llm_spend.json.

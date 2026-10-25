@@ -654,3 +654,59 @@ def test_serve_shows_the_notebook_and_deletes_a_lesson(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_learn_keeps_a_lesson_deleted_during_the_model_call(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "one", "kind": "lesson"},
+            {"id": "l002", "text": "two", "kind": "lesson"},
+        ],
+    )
+    workspace = make_workspace(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingClient:
+        def complete_json(self, role, messages, model=None, **kwargs):
+            started.set()
+            release.wait(timeout=10)
+            return JSONResponse(
+                data={
+                    "lessons": [{"text": "new one", "kind": "lesson", "part": None}],
+                    "remove": [],
+                },
+                text="",
+                model="stub-model",
+                role=role,
+                cost_usd=0.01,
+                attempts=1,
+            )
+
+    monkeypatch.setattr(
+        notebook, "make_client", lambda config=None, ledger_path=None: BlockingClient()
+    )
+    result = {}
+
+    def run_learn():
+        result["summary"] = notebook.learn(str(workspace), str(notebook_file), 40)
+
+    thread = threading.Thread(target=run_learn)
+    thread.start()
+    try:
+        assert started.wait(timeout=10)
+        removed = run_notebook("--notebook", str(notebook_file), "--remove", "l001", "--json")
+        assert removed.returncode == 0
+        release.set()
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    document = read_json(notebook_file)
+    ids = [lesson["id"] for lesson in document["lessons"]]
+    assert "l001" not in ids
+    assert "l002" in ids
+    assert result["summary"]["status"] == "written"

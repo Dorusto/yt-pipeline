@@ -4,6 +4,57 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Stop, learn and delete-version cleanup (V030 lot c30)
+
+**Context:** The read-only audit of the rest of v0.3.0 found several loose ends.
+`project_status` trusted any live pid in `.run.json`, so a reused pid read
+`running`; the four web-app tool calls (`feedback-reply`, `rewrite-meta`,
+`drop-shot`/`trim-shot`, `notebook-delete`) let a `subprocess.TimeoutExpired`
+escape as a 500; version names were checked with `match`/`fullmatch` in several
+places and `version_dirs` used `startswith("v") and isdigit()`; the feedback
+action took raw form fields as keyword arguments, so a field named `workspace`
+could reach `append_feedback`; the notebook's learn pass read the file, made the
+model call and wrote back without a lock, so a concurrent CLI edit was lost; a
+version's cost was recomputed from the spend ledger at display time, so deleting
+a middle version changed the next version's cost; and the owner's first name
+appeared in 63 tracked files.
+
+**Options:** (A) fix each finding in its own lot; (B) fix them together in one
+cleanup lot, with the name sweep enforced by `check_public.py`; (C) leave the
+name sweep to a manual pass and only fix the code.
+
+**Decision:** B. `project_status` checks `run_was_stopped` first and returns
+`running` only when `pid_alive(pid) and run_is_ours(directory, pid)`. A module
+`ToolTimeout` and `run_tool_command` turn a timeout into a 504 with plain text,
+used at the four call sites through named constants (`FEEDBACK_TIMEOUT_S`,
+`META_TIMEOUT_S`, `EDIT_DROP_TIMEOUT_S`, `NOTEBOOK_TIMEOUT_S`).
+`common/versions.valid_version` (`VERSION_NAME_RE.fullmatch`) is the one version
+check, used by `version_dirs` and every `serve.py` site. `append_feedback_action`
+takes `(workspace, action, text)`. `notebook.py` holds a `filelock` on
+`<notebook>.lock` around every read-modify-write; the learn pass makes the model
+call outside the lock, then re-reads and applies removals and additions by id.
+`recap.py` and `edit_drop.py` write `cost_usd` into the version meta and
+`version_cost` reads it first. `check_public.py` gains `OWNER_NAME` and the
+owner's first name is replaced with `the owner` in every tracked file (the
+GitHub handle `Dorusto` stays).
+
+**Why not A:** the findings are small and independent, but they share the same
+files (`serve.py`, `versions.py`, `notebook.py`) and the same audit, so one lot
+keeps the tests and the docs in step. **Why not C:** a manual sweep would drift
+again; the pre-commit hook and CI must enforce it.
+
+**Consequence:** files touched — `scripts/serve.py`,
+`scripts/common/versions.py`, `scripts/notebook.py`, `scripts/recap.py`,
+`scripts/edit_drop.py`, `scripts/check_public.py`,
+`assets/graphics/lower_third.html`, `config.yaml.example`, `CHANGELOG.md`,
+`docs/RULES.md`, `docs/DECISIONS.md`, the `yt-notebook` and `yt-recap` skills,
+the 63 files holding the owner's first name, and the tests
+`tests/test_serve.py`, `tests/test_serve_chat.py`, `tests/test_notebook.py`,
+`tests/test_versions.py`, `tests/test_check_public.py`, `tests/test_graphics.py`,
+`tests/test_graphics_plan.py`, `tests/test_no_personal_setup.py`. A version made
+before this lot has no `cost_usd` in its meta and keeps the `spend_between`
+fallback.
+
 ## [2026-10-25] The reviewer judges what ships, prompts trimmed (V030 lot c29b)
 
 **Context:** The reviewer read the raw editor draft and the raw validator
@@ -1056,7 +1107,7 @@ it through a marker file.
 ship skills from any folder; the plugin data directory survives updates and is
 removed on uninstall.
 
-**Consequence:** `claude plugin validate .` is Doru's manual check (the build
+**Consequence:** `claude plugin validate .` is the owner's manual check (the build
 host has no `claude` CLI); the plugin `version` is bumped with the release; no
 tool, schema or route changes.
 
@@ -1431,7 +1482,7 @@ level of each agent and when `coder-max` is used.
 
 ## [2026-10-21] Shorts layout policy auto/on/off and the web override (S59 follow-up 2)
 
-**Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. Doru asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.
+**Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. the owner asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.
 
 **Options:** (A) an extra field in the existing `director` scoring pass judging whether the screen is shown; (B) deterministic timeline signals — which angle each source clip is and what covers the candidate window; (C) decode sample frames of the screen file at candidate times and measure activity.
 
@@ -1439,7 +1490,7 @@ level of each agent and when `coder-max` is used.
 
 **Why not:** A) a model call to answer a fact the timeline already carries, and the pass would have to change shape; C) media decoding at ranking time for the same fact.
 
-**Consequence:** `shorts_candidates.json` always carries `layout: face|split`; camera-only and Mode A sessions never get `split`; the policy is one config key and one CLI flag. The split render's cell order is unchanged (S59 lot 3c: face cell over screen cell); Doru's note "(screen on top, camera below)" is an open question in the S59 follow-up 2 report.
+**Consequence:** `shorts_candidates.json` always carries `layout: face|split`; camera-only and Mode A sessions never get `split`; the policy is one config key and one CLI flag. The split render's cell order is unchanged (S59 lot 3c: face cell over screen cell); the owner's note "(screen on top, camera below)" is an open question in the S59 follow-up 2 report.
 
 ---
 
@@ -1479,7 +1530,7 @@ level of each agent and when `coder-max` is used.
 
 ## [2026-10-21] S59 follow-ups: shared media helpers, audio sync, screen checks (issue #60)
 
-**Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). Doru also asked whether a screen file was really a screen file.
+**Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). the owner also asked whether a screen file was really a screen file.
 
 **Options:** (A) keep per-tool copies and the name-only offset; (B) move the shared helpers to `scripts/common/media.py`, measure the camera-to-screen offset by sound in `rough_cut.py` and add a cheap screen-suspect check to `mode_b.py`; (C) also teach `mode_b.py` to write the offset.
 
@@ -1493,7 +1544,7 @@ level of each agent and when `coder-max` is used.
 
 ## [2026-10-21] Review fixes: one frame reader, one brand default, one colour parse, one keep rule (S59 review)
 
-**Context:** The lot 2/lot 3 reviews found shared logic written out per tool: the `VideoCapture` seek loop in `describe.py`, `similarity.py` and `mode_b.py` (three different contracts); `DEFAULT_BRAND` in `common/brand.py` plus `shorts_generator.py`, `thumbnail.py` and `graphics.py` (the `common` copy was dead); the `#RRGGBB` parse in `thumbnail.hex_to_rgb` and `shorts_generator.hex_to_ass_*`; the word-midpoint keep rule re-implemented in `shorts_generator.words_for_segment`; `PAUSE_SPLIT_S`, `TICKS_PER_SECOND`, `EPSILON`, `media_item_path` and `slot_length` duplicated across tools. The review also asked for a single source of truth for the word-to-edit mapping and for `chapters.json`/`shorts_candidates.json` to default to the clip's publish folder in `--fcproj` mode (Doru, 2026-10-21).
+**Context:** The lot 2/lot 3 reviews found shared logic written out per tool: the `VideoCapture` seek loop in `describe.py`, `similarity.py` and `mode_b.py` (three different contracts); `DEFAULT_BRAND` in `common/brand.py` plus `shorts_generator.py`, `thumbnail.py` and `graphics.py` (the `common` copy was dead); the `#RRGGBB` parse in `thumbnail.hex_to_rgb` and `shorts_generator.hex_to_ass_*`; the word-midpoint keep rule re-implemented in `shorts_generator.words_for_segment`; `PAUSE_SPLIT_S`, `TICKS_PER_SECOND`, `EPSILON`, `media_item_path` and `slot_length` duplicated across tools. The review also asked for a single source of truth for the word-to-edit mapping and for `chapters.json`/`shorts_candidates.json` to default to the clip's publish folder in `--fcproj` mode (the owner, 2026-10-21).
 
 **Decision:** `scripts/common/constants.py` holds `EPSILON`, `TICKS_PER_SECOND` and `PAUSE_SPLIT_S`; `scripts/common/frames.py` holds `read_frame_pairs` (near-seek retry option, strict or skip-on-missing, the caller's error class) used by `describe.py`, `similarity.py` and `mode_b.py`; `common/brand.DEFAULT_BRAND` is the only brand default and `common/brand.parse_hex_color` the only `#RRGGBB` parse (ASS colour formatting stays in `shorts_generator.py`); `common/timeline_words.word_in_window` is the keep rule used by `collect_words`, `map_words` and `words_for_segment`; `subs_from_edit.py` uses the shared `build_groups`/`map_words` (the crossfade overlap moved into `build_groups`); `mode_b.run_screen_checks` loads the YuNet detector only after readable screen frames were found; `mode_b.manifest_document` carries a recorded `sync_offset_s`/`sync_offset_confidence` over to a rewritten manifest (the skill's "the manifest value always wins" promise, kept after the lot 3 review); in `--fcproj` mode `chapters.py`/`shorts_rank.py` write `chapters.json`/`shorts_candidates.json` to the clip's publish folder (the parent of `--words-dir`), else next to the primary input.
 
@@ -1944,16 +1995,16 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-12] D1 split into D1a (motion + quality, CPU) and D1b (describe + index)
 
-**Context:** The first D1 plan sent every scene-detected shot to a vision model. Doru's test clips are continuous action-cam takes of 2–5 minutes with no hard cuts, full of deliberate camera moves (orbit, push/pull, pans) wrapped in setup and teardown motion (moving into position after pressing record, moving back before stopping), plus blurred and shaky stretches. Scene detection alone sees one shot per take; a vision model looking at three stills cannot reliably tell a pan from an orbit or find where a move starts and ends. Research: `docs/research/camera-motion-and-quality.md`.
+**Context:** The first D1 plan sent every scene-detected shot to a vision model. the owner's test clips are continuous action-cam takes of 2–5 minutes with no hard cuts, full of deliberate camera moves (orbit, push/pull, pans) wrapped in setup and teardown motion (moving into position after pressing record, moving back before stopping), plus blurred and shaky stretches. Scene detection alone sees one shot per take; a vision model looking at three stills cannot reliably tell a pan from an orbit or find where a move starts and ends. Research: `docs/research/camera-motion-and-quality.md`.
 
 **Options:**
 - A) Keep one D1: scene detection + fixed 5 s segments + vision descriptions
 - B) Separate tools: `motion` (optical flow / gyro, motion phases, CameraBench labels), `quality` (measured defects plus a role per segment: move, hold, transition in/out, setup, teardown, accidental — labels, never deletions), then `describe` only on kept segments; checkpoint after the CPU-only part
 - C) Use the CameraBench fine-tuned Qwen2.5-VL for all motion labels now
 
-**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a Doru checkpoint. The analysis tools label and never delete: one file can hold several intentional shots, and fast motion at the head or tail of a take may be half of an in-camera transition (whip pan, roll) rather than junk — the director pairs them. Techniques the tools must know are catalogued in `docs/guides/shot-grammar.md`.
+**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a the owner checkpoint. The analysis tools label and never delete: one file can hold several intentional shots, and fast motion at the head or tail of a take may be half of an in-camera transition (whip pan, roll) rather than junk — the director pairs them. Techniques the tools must know are catalogued in `docs/guides/shot-grammar.md`.
 
-**Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and Doru can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.
+**Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and the owner can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.
 
 ---
 
@@ -2014,7 +2065,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] Docstrings allowed, inline comments not
 
-**Context:** Rule 5 said "Comments in code → none". The D0 and D1a code has a docstring on every public function. The external audit flagged the mismatch and asked Doru to decide.
+**Context:** Rule 5 said "Comments in code → none". The D0 and D1a code has a docstring on every public function. The external audit flagged the mismatch and asked the owner to decide.
 
 **Decision:** Short docstrings on public functions and modules are allowed; inline comments stay out. CLAUDE.md rule 5 updated.
 
@@ -2024,7 +2075,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] D1a not approved at checkpoint; ground-truth eval before more tuning
 
-**Context:** Doru reviewed 6 clips against what he filmed (`eval/ground_truth_boat_2026-10-12.yaml`). The tools mislabel boat motion (wave bob as tilt, travel as dolly or complex), confuse pan with truck and orbit, report a tilted horizon on level shots, and see nothing inside a locked-off hold where another boat approaches. Details in `docs/reports/D1a-CHECKPOINT.md`.
+**Context:** the owner reviewed 6 clips against what he filmed (`eval/ground_truth_boat_2026-10-12.yaml`). The tools mislabel boat motion (wave bob as tilt, travel as dolly or complex), confuse pan with truck and orbit, report a tilted horizon on level shots, and see nothing inside a locked-off hold where another boat approaches. Details in `docs/reports/D1a-CHECKPOINT.md`.
 
 **Decision:** A D1a-2 round before D1b: first an eval tool that scores the tools against ground-truth YAML, then platform motion, parallax (pan vs truck, orbit candidates), a horizon measured only on the sea/sky line, scene activity and events inside holds, and the `accidental` role, each judged by the eval score.
 
@@ -2038,7 +2089,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 **Options:**
 - A) Fix the seven items directly and re-review by eye
-- B) Build `scripts/eval_labels.py` first, record a baseline score against Doru's ground-truth YAML, then require every fix to move the score
+- B) Build `scripts/eval_labels.py` first, record a baseline score against the owner's ground-truth YAML, then require every fix to move the score
 - C) Reuse an existing video-metric framework
 
 **Decision:** B. The scorer lives in `scripts/eval_labels.py` with `schemas/eval.schema.json` and the `yt-eval` skill. Scoring: interval overlap of expected vs predicted move/role with full credit for an exact label and 0.5 for a geometric look-alike (`dolly_in` for `travel_forward`, `pan_right` for `truck_right`, `pan_*` for `orbit`); horizon false positives against `horizon: level` truth (defect or |deg| > tol counts as a tilt claim, `null` abstains and never scores as success); event recall within ±3 s. `totals.overall` is the mean of the per-clip overalls. Baseline 0.26 → final 0.69 with every intermediate step recorded in `docs/reports/D1a-REPORT.md`.
@@ -2139,7 +2190,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] Packaging and publishing become D6; publish gate after D2
 
-**Context:** VISION listed auto-upload and voice cloning as out of scope. Doru's vault project (`70_ai-youtube-automation-pipeline/20_TODO.md`) already plans them, with Remotion motion graphics, thumbnails with a brand kit, audio/SFX/music and PeerTube, as chunks 3–7. His own rule is not to open the next chunk before the previous one is filmed and published.
+**Context:** VISION listed auto-upload and voice cloning as out of scope. the owner's vault project (`70_ai-youtube-automation-pipeline/20_TODO.md`) already plans them, with Remotion motion graphics, thumbnails with a brand kit, audio/SFX/music and PeerTube, as chunks 3–7. His own rule is not to open the next chunk before the previous one is filmed and published.
 
 **Decision:** These become phase D6, one standalone tool each, after D5. A publish gate sits after D2: once the director edits the Kotor footage on its own, the devlog clip is filmed and published before D3 starts.
 
@@ -2149,7 +2200,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] `edit.json` is the edit list; Kdenlive becomes an optional export; render and preview from the browser
 
-**Context:** VISION principle 4 made `fragments.yaml` → Kdenlive the output of the director. Doru edits from a phone while travelling and wants to drop the dependency on a desktop editor: preview the edit and make small adjustments in the browser, final render on the homelab. He also wants automatic story graphics for tutorials and talking-head (Hasan's MIT Remotion kit as a base, paid services swapped for ours), and music/SFX without ComfyUI. Research: `docs/research/rendering-and-audio.md`.
+**Context:** VISION principle 4 made `fragments.yaml` → Kdenlive the output of the director. the owner edits from a phone while travelling and wants to drop the dependency on a desktop editor: preview the edit and make small adjustments in the browser, final render on the homelab. He also wants automatic story graphics for tutorials and talking-head (Hasan's MIT Remotion kit as a base, paid services swapped for ours), and music/SFX without ComfyUI. Research: `docs/research/rendering-and-audio.md`.
 
 **Options:**
 - A) Keep `fragments.yaml` → Kdenlive as the main output, add an ffmpeg preview
@@ -2166,7 +2217,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] Time-box D1a-2, add slice S1 before D1b, and five plan additions
 
-**Context:** The plan now spans D0–D6 and about twenty tools. Doru's past projects sank in development without a deliverable. D1a-2 (motion/quality accuracy) could be polished indefinitely, yet nobody knows which analysis errors hurt an actual edit, because no edit exists yet.
+**Context:** The plan now spans D0–D6 and about twenty tools. the owner's past projects sank in development without a deliverable. D1a-2 (motion/quality accuracy) could be polished indefinitely, yet nobody knows which analysis errors hurt an actual edit, because no edit exists yet.
 
 **Decision:**
 - D1a-2 ends at ≥ 70% correct move type on ground-truth seconds plus 0051 = `accidental`, or after one pass over its eight items; leftovers become known issues.
@@ -2176,15 +2227,15 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - D3 adds a synced footage inbox that `ingest` picks up on its own (sync tool decided by its own entry).
 - Every `--json` summary reports wall time and LLM cost.
 - D6 capstone: Hermes (Telegram) as remote control.
-- Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in Doru's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
+- Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in the owner's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
 
-**Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how Doru actually films and travels.
+**Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how the owner actually films and travels.
 
 ---
 
 ## [2026-10-13] Agent watchdog: cron script for spend and stalls; the architect reports repeated failures
 
-**Context:** ntfy already reports permission requests, OpenCode errors, phase reports and the daily external check. It stays silent when the agent burns money in a loop, sits stuck for hours, or keeps failing audits — the cases Doru most needs to hear about while travelling.
+**Context:** ntfy already reports permission requests, OpenCode errors, phase reports and the daily external check. It stays silent when the agent burns money in a loop, sits stuck for hours, or keeps failing audits — the cases the owner most needs to hear about while travelling.
 
 **Options:**
 - A) Parse OpenCode logs for everything
@@ -2199,11 +2250,11 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] D1a approved after D1a-2; carried into S1
 
-**Context:** D1a-2 reached its time-box (all eight items done once; 0051 is `accidental`) with the ground-truth eval at 0.69 overall and 0.53 on move type. Doru approved D1a.
+**Context:** D1a-2 reached its time-box (all eight items done once; 0051 is `accidental`) with the ground-truth eval at 0.69 overall and 0.53 on move type. the owner approved D1a.
 
 **Decision:** Close D1a and start S1. Known issues carried as notes, not as another D1a round:
 - Scene events report many near-zero "subject_enters/leaves" (0072 has 11); the eval scores event recall only. S1 adds precision to `eval_labels.py` and a noise floor to events.
-- Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so Doru can spot overfitting while watching the recap.
+- Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so the owner can spot overfitting while watching the recap.
 - 0067 travel_backward (stern-facing camera, see the ground-truth note): measure radial contraction toward the vanishing point on the shore regions (the shores of the strait converge toward the centre) and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
 - 0081 interior horizon false positives and short orbit: D1b vision veto.
 
@@ -2299,11 +2350,11 @@ half of the same carry-over exists precisely because precision was invisible.
 
 ## [2026-10-13] No more hand rules per special case: `uncertain` labels go to vision; editor corrections grow the ground truth
 
-**Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. Doru: there will be many such shots; each would need another rule.
+**Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. the owner: there will be many such shots; each would need another rule.
 
 **Decision:**
 - `motion` and `quality` attach a `confidence` to each label and emit `uncertain` when their signals disagree or the frame has large self-moving regions (wake, traffic, water). In D1b, `describe` adjudicates every `uncertain` segment and its label wins in `shotlog.json`. Geometry measures; it does not guess.
-- In D3, every label Doru corrects in the web editor is appended to the ground-truth set, so `eval_labels.py` scores against real footage that grows with use.
+- In D3, every label the owner corrects in the web editor is appended to the ground-truth set, so `eval_labels.py` scores against real footage that grows with use.
 - New hand-written geometric rules are added only when a case recurs and the eval shows it hurts edits.
 
 **Rationale:** Matches CameraBench (geometry for primitives, VLMs for semantics) and turns the long tail of special cases into data instead of code. Gyro from SD-card originals remains the upgrade for rotation.
@@ -2312,7 +2363,7 @@ half of the same carry-over exists precisely because precision was invisible.
 
 ## [2026-10-13] S1 review: content score, diversity and shot length go into D1b
 
-**Context:** Doru watched the S1 recap (85 s, 18 slots, labels only, no vision). Verdict: static shots are chosen very well; some shots are too long, others too short; near-duplicate shots appear, sometimes after a gap; the best moments (orbit 0091, approaching boat 0083, cave 0081, tunnel 0072) are missing because the director only knows "stable", not "beautiful".
+**Context:** the owner watched the S1 recap (85 s, 18 slots, labels only, no vision). Verdict: static shots are chosen very well; some shots are too long, others too short; near-duplicate shots appear, sometimes after a gap; the best moments (orbit 0091, approaching boat 0083, cave 0081, tunnel 0072) are missing because the director only knows "stable", not "beautiful".
 
 **Decision:** D1b delivers, besides `describe` + `index` + the vision bake-off:
 - a content score per segment from the vision model (subject, scenery, interest, "hero shot" flag) feeding the shotlog score;
@@ -2344,7 +2395,7 @@ budget — it needs `max_tokens` 8000 per segment and still loses answers);
 0.0066 USD vs 0.0590 USD for the same 32 segments; verdicts on the three
 uncertain segments with clear ground truth that GLM got right and DeepSeek did
 not (0067 wake → `travel_backward`, 0081 s7 → `travel_forward`, 0081 s15 →
-`travel_backward`); GLM sets `hero` on the tunnel and cave moments Doru named
+`travel_backward`); GLM sets `hero` on the tunnel and cave moments the owner named
 in the S1 review, DeepSeek never sets it.
 
 **Rationale:** The whole point of `uncertain` is that vision adjudicates where
@@ -2460,9 +2511,9 @@ would throw away geometry-good shots because a model call failed.
 
 ---
 
-## [2026-10-13] D1b approved; Doru's recap feedback becomes the first D2 tasks
+## [2026-10-13] D1b approved; the owner's recap feedback becomes the first D2 tasks
 
-**Context:** Doru watched `recap_d1b_720p.mp4` next to S1 and read the 0067 and 0081 descriptions. Verdict: shorter shots are better; descriptions are correct. Problems:
+**Context:** the owner watched `recap_d1b_720p.mp4` next to S1 and read the 0067 and 0081 descriptions. Verdict: shorter shots are better; descriptions are correct. Problems:
 1. A slow pan left was cut mid-move and followed by the stable shot it was landing on — a jump cut. Some static holds should be kept longer.
 2. The describe JSON is dense; hard to see what the director should choose from.
 3. The orbit at the end shows only its start; 2–2.5 s is too short for a stable, important move.
@@ -2472,7 +2523,7 @@ would throw away geometry-good shots because a model call failed.
 - A move and the hold it lands on form one phrase: either keep the move through its landing (cut inside the hold), or use only the hold; never cut out of a move and into its own landing. Two slots from the same take need a different take between them unless they are contiguous.
 - Hero shots and complete semantic moves (orbit, reveal, travel through a cave/tunnel) get their whole steady range up to a cap (default 8 s); pacing shortening applies only to ordinary shots.
 - `describe` adds a one-line `summary` (≤ 12 words) and a short tag list; the full description stays for the LLM director.
-- `index` writes a `shotlog.html` contact sheet in the workspace (thumbnail, time range, summary, score, hero, eligibility), so Doru can review on the phone. Generated, never committed.
+- `index` writes a `shotlog.html` contact sheet in the workspace (thumbnail, time range, summary, score, hero, eligibility), so the owner can review on the phone. Generated, never committed.
 - `eval_labels.py` scores the final shotlog label (verdict when present), not only the geometric one.
 
 **Rationale:** The first two are classic editing grammar (cut on completion of action; avoid same-scene jump cuts) that the rule-based director lacked. The contact sheet turns checkpoints into a phone review instead of reading JSON.
@@ -2499,7 +2550,7 @@ survives `dedupe_candidates`):**
 
 **Decision:** C. Measured on the 33 landing pairs: the phrase wins when the move
 is the better part (0080 s1 0.911, 0072 s7 tunnel 0.895, 0081 s7 0.862) and the
-hold alone wins when the hold is (0060 s5 Doru's pan case, 0080 s6 hero static).
+hold alone wins when the hold is (0060 s5 the owner's pan case, 0080 s6 hero static).
 On an exact tie the phrase wins. Phrase length: the end cut always lands inside
 the hold (`out_s >= H.start_s + 0.75`), the head is trimmed to the pacing target
 but never before the move's handle-in — so a phrase is never longer than its
@@ -2521,7 +2572,7 @@ slot's `role`/`motion_label` follow it — only candidacy is decided here.
 
 **Rationale:** A is what the first implementation did and it puts junk on screen;
 B is what the second round did and it lost the best shot of the film. C is the
-reading of the rule that keeps both Doru's constraints: no jump cut, and the
+reading of the rule that keeps both the owner's constraints: no jump cut, and the
 motion worth showing is shown through its landing.
 
 ---
@@ -2564,16 +2615,16 @@ stays the default. `--out` inside the originals folder is refused.
 frame-inclusive `out` timecodes (`out_s - 1/fps`) so the fragment lengths match
 the edit. The edit list stays `edit.json`.
 
-**Known conflict reported to Doru:** the reviewer wants the closing orbit and
+**Known conflict reported to the owner:** the reviewer wants the closing orbit and
 the chapel walk shorter than the `keep_whole` rule allows (8 s vs 5–5.5 s). The
 rule wins — it is the D1b feedback ("2–2.5 s is too short for a stable,
 important move") — but the reviewer's taste point is in the D2 report.
 
 ---
 
-## [2026-10-14] D2 reviewed by Doru; small D2-2 round before the publish gate
+## [2026-10-14] D2 reviewed by the owner; small D2-2 round before the publish gate
 
-**Context:** Doru watched `recap_d2_720p.mp4`: "much better, everything else is very good". Two faults: (1) the approach into the submarine tunnel (0072, ~00:20–00:50) is missing, only the exit is used; (2) a closing shot is too long — the camera keeps moving without purpose. D2 report question 5 (vision rescuing a geometry `accidental`) was decided by Claude as architect.
+**Context:** the owner watched `recap_d2_720p.mp4`: "much better, everything else is very good". Two faults: (1) the approach into the submarine tunnel (0072, ~00:20–00:50) is missing, only the exit is used; (2) a closing shot is too long — the camera keeps moving without purpose. D2 report question 5 (vision rescuing a geometry `accidental`) was decided by Claude as architect.
 
 **Cause of (1):** `motion` labels 0072 00:28–02:42 as one 134 s `travel_forward` move. One segment gives one window (≤ 8 s), so approach, interior and exit compete inside the same segment and only one survives.
 
@@ -2584,7 +2635,7 @@ important move") — but the reviewer's taste point is in the D2 report.
 - Wire `audio_clean` into `render.py` (ambient bus) and fetch an RNNoise `.rnnn` model (licence check) into the model cache.
 - Beat-aligned cuts in the director stay for the first brief with a music file.
 
-**Rationale:** Both faults come from granularity, not taste: a long take holds several moments. Fine trims are D3's job (Doru trims in the web editor), so the defaults only need to be sensible.
+**Rationale:** Both faults come from granularity, not taste: a long take holds several moments. Fine trims are D3's job (the owner trims in the web editor), so the defaults only need to be sensible.
 
 ---
 
@@ -2648,14 +2699,14 @@ director run that takes both with another take between (covered by tests).
 
 ## [2026-10-14] Feedback storage and the rules digest
 
-**Context:** Doru asked how the system learns, where it is written, and whether those files grow too large. `DECISIONS.md` already passed 1 000 lines and every agent task re-reads it.
+**Context:** the owner asked how the system learns, where it is written, and whether those files grow too large. `DECISIONS.md` already passed 1 000 lines and every agent task re-reads it.
 
 **Decision:**
 - **Feedback (D3):** the web editor appends one JSON line per action to `<workspace>/feedback.jsonl` — `{ts, kind: label_fix|approve|reject|trim|regenerate, clip, start_s, end_s, before, after}`. No footage, frames or thumbnails. A compaction step folds all workspaces into a per-user profile (`~/.local/share/yt-pipeline/profile.sqlite`): label fixes become ground-truth items (dedup by clip + range, newest wins); approvals/rejections become counts per tag, motion label and length bucket for the scorer. Per-project files are kept; the profile is rebuilt from them, so it can always be regenerated. Expected size: ~200 bytes per action.
 - **Rules digest (D3-00):** the architect writes `docs/RULES.md`, the rules in force in one short file (editing grammar, defaults, thresholds, model routing). Agents read `RULES.md` plus the last 10 DECISIONS entries, not the whole log. Every new decision that changes a rule updates `RULES.md` in the same commit.
 - Risk register: `docs/RISKS.md`. User guide: `docs/guides/user-guide.md`.
 
-**Rationale:** Small append-only files are easy to inspect, back up and rebuild; a current-state digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state, history lives in git).
+**Rationale:** Small append-only files are easy to inspect, back up and rebuild; a current-state digest keeps agent context and cost flat as the history grows (same principle as the owner's vault: reference files hold the current state, history lives in git).
 
 ---
 
@@ -2665,7 +2716,7 @@ director run that takes both with another take between (covered by tests).
 
 **Options:** A) gitleaks (MIT, secrets only, extra binary on the LXC); B) detect-secrets (Apache, secrets only, baseline file to maintain); C) small `scripts/check_public.py` (stdlib) covering secrets **and** media/subtitles/model weights/large files/base64 images, run as a git hook and in CI, plus GitHub secret scanning with push protection on the server side.
 
-**Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by Doru in the GitHub settings (the API is not available from the agents).
+**Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by the owner in the GitHub settings (the API is not available from the agents).
 
 **Rationale:** Our main risk is personal media and transcripts, which secret scanners do not look for. The hook stops it before it exists in history; CI catches a skipped hook; push protection blocks known key formats even from other machines.
 
@@ -2683,13 +2734,13 @@ director run that takes both with another take between (covered by tests).
 - CI: `.github/workflows/tests.yml` runs the full pytest suite (golden next to the label eval) with the light dependencies (no torch/whisperx), alongside `public-check`.
 - `docs/RISKS.md` rows 1 and 3 updated; per-shoot golden edit sets on real test sets stay at D3.
 
-**Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.
+**Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as the owner's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.
 
 ---
 
 ## [2026-10-14] D2-3 "agent-ready": a fresh agent can go from folder + brief to MP4
 
-**Context:** Doru wants to demo, in the publish-gate clip, a fresh agent (Claude Code, OpenCode or Hermes) with no project knowledge turning a footage folder and one sentence into a recap. Gaps today: no tool makes the 720p proxies (they were made by hand), no single entry point chains the stations, no setup check, and the quickstart is spread across docs.
+**Context:** the owner wants to demo, in the publish-gate clip, a fresh agent (Claude Code, OpenCode or Hermes) with no project knowledge turning a footage folder and one sentence into a recap. Gaps today: no tool makes the 720p proxies (they were made by hand), no single entry point chains the stations, no setup check, and the quickstart is spread across docs.
 
 **Decision (small round before the clip, no new editing features):**
 - `scripts/proxy.py`: originals → 720p H.264 constant-frame-rate proxies with audio, skip existing, never touch originals.
@@ -2761,10 +2812,10 @@ i.e. re-encode noise).
 
 ## [2026-10-14] Demo scope before the clip: phone flow (D2-4) and cross-platform (D2-5)
 
-**Context:** Doru wants the publish-gate clip to show the tool used three ways: a fresh agent in a terminal (D2-3), phone only, and a normal PC (Windows, macOS, Linux). These are delivery work on top of D2, not new editing features.
+**Context:** the owner wants the publish-gate clip to show the tool used three ways: a fresh agent in a terminal (D2-3), phone only, and a normal PC (Windows, macOS, Linux). These are delivery work on top of D2, not new editing features.
 
 **Decision:**
-- **D2-4 phone flow, repo side.** `scripts/inbox.py`: watches an inbox folder (filled by a sync tool from the phone), groups new clips into a project per day, waits until the folder is quiet for N minutes, then runs `recap.py` with a default or per-folder brief (`brief.txt`). `scripts/serve.py`: read-only HTTP server for workspaces, bound to the tailnet address only, with an index page per project (recap, final, shotlog.html). `recap.py --notify` posts the preview link to ntfy. The `yt-recap` skill gains the phrases an assistant like Hermes receives from Telegram ("fă-mi un recap din clipurile de azi"). Installing the sync tool and wiring Hermes are system changes on Doru's machines: the repo ships instructions in `docs/guides/phone-flow.md`, Doru runs them.
+- **D2-4 phone flow, repo side.** `scripts/inbox.py`: watches an inbox folder (filled by a sync tool from the phone), groups new clips into a project per day, waits until the folder is quiet for N minutes, then runs `recap.py` with a default or per-folder brief (`brief.txt`). `scripts/serve.py`: read-only HTTP server for workspaces, bound to the tailnet address only, with an index page per project (recap, final, shotlog.html). `recap.py --notify` posts the preview link to ntfy. The `yt-recap` skill gains the phrases an assistant like Hermes receives from Telegram ("fă-mi un recap din clipurile de azi"). Installing the sync tool and wiring Hermes are system changes on the owner's machines: the repo ships instructions in `docs/guides/phone-flow.md`, the owner runs them.
 - **D2-5 cross-platform.** Replace the Unix-only pieces: `fcntl` ledger lock → a portable lock (choose by comparing at least two options), `pgrep` → `psutil` or a portable fallback, shell hook → Python hook. Paths through `pathlib` everywhere. CI matrix on ubuntu, macos and windows. Hardware encoders by platform: `h264_nvenc` (NVIDIA), `h264_videotoolbox` (macOS), else `libx264`. Install notes per OS in the quickstart.
 - Order: D2-5 can run in parallel with D2-3 (separate worktree, disjoint files); D2-4 starts after D2-3 is merged, because it builds on `recap.py`.
 
@@ -2858,7 +2909,7 @@ log spam); `--once` prints one line per group always.
 placeholder from the D3 plan). Phone = send-only camera folder, LXC =
 receive-only into `~/media/inbox`: nothing the pipeline does can delete clips
 from the phone. `docs/guides/phone-flow.md` carries the steps; installing it
-and wiring Hermes remain Doru's machine steps — the repo ships instructions
+and wiring Hermes remain the owner's machine steps — the repo ships instructions
 only.
 
 **Acceptance (2026-10-14, budget 1 USD):** 5 clips copied (never moved) from
@@ -2876,15 +2927,15 @@ $0. All 21 originals verified unchanged by md5.
 
 ## [2026-10-14] Demo scope extended: photos + music (D2-6) and the web app with explanations (D2-7)
 
-**Context:** Doru reviewed the D2-4 phone flow (link opens, quality fine for the demo) and wants the demo clip to beat DJI Mimo clearly: a day with more photos than clips, a soundtrack, and a view of *why* the edit looks the way it does. Spending stays paused after these phases until the Second Brain clip and the Facturi Agent demo are done.
+**Context:** the owner reviewed the D2-4 phone flow (link opens, quality fine for the demo) and wants the demo clip to beat DJI Mimo clearly: a day with more photos than clips, a soundtrack, and a view of *why* the edit looks the way it does. Spending stays paused after these phases until the Second Brain clip and the Facturi Agent demo are done.
 
-**D2-6 (running):** photos as candidates (EXIF time, describe, burst dedup, Ken Burns, portrait on a blurred background), `--music`, cuts on beats. Mix rule decided by Doru: the ambient sound stays under the music, quieter, never removed — default ambient 12 dB below the music, adjustable.
+**D2-6 (running):** photos as candidates (EXIF time, describe, burst dedup, Ken Burns, portrait on a blurred background), `--music`, cuts on beats. Mix rule decided by the owner: the ambient sound stays under the music, quieter, never removed — default ambient 12 dB below the music, adjustable.
 
 **D2-7 (after D2-6 merges), one agent, two parts in order:**
-1. *Explanations.* The director records a reason for every candidate it does not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length). `explain.html` per project: brief, screenwriter plan in words, the edit timeline (thumbnail, source in/out seconds versus the segment range, reason), every candidate with used / rejected and the reason, short IDs (`0071/s2`). A re-edit command takes feedback in plain words against those IDs ("drop 0071/s2, tunnel longer") and re-runs only the edit + render, so Doru can talk to the agent (Hermes or OpenCode) about its own analysis.
+1. *Explanations.* The director records a reason for every candidate it does not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length). `explain.html` per project: brief, screenwriter plan in words, the edit timeline (thumbnail, source in/out seconds versus the segment range, reason), every candidate with used / rejected and the reason, short IDs (`0071/s2`). A re-edit command takes feedback in plain words against those IDs ("drop 0071/s2, tunnel longer") and re-runs only the edit + render, so the owner can talk to the agent (Hermes or OpenCode) about its own analysis.
 2. *One web app with a menu,* served by `serve.py`, tailnet-only: Projects (list with status: done / running), Upload (clips + photos from the phone browser, project folder name, brief, options, Start → files land in the inbox, the recap starts), and per project the tabs Recap / Why? / Shots. Options menu, each defaulting to **Auto** (the agent decides from the brief and the footage): length (30 s / 60 s / 90 s / 3 min), order (chronological / best first), audio clean-up (yes / no), music (none / pick a track / auto from `~/media/music`), ambient level under the music. The same options appear on "re-edit" in the project page.
 
-**Pacing rule (D2-7, director):** shot length scales with the target length so a short recap carries more, shorter shots: ~20 s → 1.5–2.5 s per shot (≈8–10 shots), ~90 s → 2–5 s (≈20–25), 3 min → up to 6 s with whole moves. Hero and semantic moves stay the longest shots but shrink in proportion. Today's 20 s inbox recap had only 4 shots, which Doru finds too few.
+**Pacing rule (D2-7, director):** shot length scales with the target length so a short recap carries more, shorter shots: ~20 s → 1.5–2.5 s per shot (≈8–10 shots), ~90 s → 2–5 s (≈20–25), 3 min → up to 6 s with whole moves. Hero and semantic moves stay the longest shots but shrink in proportion. Today's 20 s inbox recap had only 4 shots, which the owner finds too few.
 
 **Later:** `--music auto` picks a track from `~/media/music` by brief and shot tags (needs the library analysed with `beats.py`); generated music (YuE2) waits for the 3090.
 
@@ -3039,7 +3090,7 @@ possible without re-deriving ids.
 
 ## [2026-10-15] D2-7 pacing table: shot length scales with the target length
 
-**Context:** the 20 s inbox recap had 4 shots of ~5 s; Doru wants a short recap
+**Context:** the 20 s inbox recap had 4 shots of ~5 s; the owner wants a short recap
 to carry more, shorter shots. The old rule sized the slot count as
 `clamp(round(T/6), 4, 24)` and fixed the slot band at 2–12 s, which cannot
 reach 8–10 shots in 20 s.
@@ -3076,7 +3127,7 @@ length options.
 
 ## [2026-10-15] D2-7 feedback loop: `--feedback` re-runs only the edit
 
-**Context:** Doru must be able to talk to the agent about its own analysis
+**Context:** the owner must be able to talk to the agent about its own analysis
 ("drop 0071/s2, tunnel longer"). The short ids exist since the decisions work;
 now the director has to accept them back.
 
@@ -3298,7 +3349,7 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 
 ## [2026-10-15] Web app look: one theme for the app, Why? and Shots (D2-9 design pass)
 
-**Context:** Doru's first look at the D2-7 web app on the phone: works, but looks like a test page, and the demo clip will show it.
+**Context:** the owner's first look at the D2-7 web app on the phone: works, but looks like a test page, and the demo clip will show it.
 
 **Decision:** one palette across `serve.py`, `explain.html` and `shotlog.html` (Kotor at night: deep water background, limestone text, sea-teal accent; green used / red left out / amber running), a serif for names and titles with the system sans for the interface, no web fonts (the app stays offline and private), 44 px touch targets. The memorable element is the edit strip under the player: the edit as proportional blocks (clip vs photo), tap a block to jump there, the current block lights up while playing. Plain labels: "New recap", "Clean the sound", "in the edit as v3" / "left out". Projects are ordered by last activity, not by name.
 
@@ -3306,7 +3357,7 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 
 ## [2026-10-15] Length "All good shots" and the estimate on the project page
 
-**Context:** Doru wants to say the length he wants and be told how long the edit would be with every good shot in it.
+**Context:** the owner wants to say the length he wants and be told how long the edit would be with every good shot in it.
 
 **Decision:** `scripts/common/pacing.estimate_all_good(shotlog)` counts every eligible, non-suppressed, non-duplicate shot with score ≥ 0.5 at the length a long cut gives it (static hold 4 s, move 5 s, hero/semantic move 6 s, photo 3 s, capped by its window). The project page shows "All good shots would make about N (M shots)". `--target-duration-s 0` (web: Length → All good shots) sets the target to that estimate and uses the long-cut pacing (the 180 s anchor) in both directors. A workspace moved to another folder still finds its proxies (index thumbnails, render) through `<workspace>/proxy/`.
 
@@ -3314,7 +3365,7 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 
 ## [2026-10-15] Shot length policy: static shots keep the time limit, camera moves keep the move (middle ramp up to 1.2x)
 
-**Context:** Doru's rule: static shots must respect the time limit; for a pivot, pan or orbit keep as much of the move as possible, the middle may be sped up, at most 1.2x; the seconds rule must hold for 80-90 % of the shots. Until now hero and semantic-move slots kept the last `hero_max` seconds of their window and everything else was capped at `slot_max`, so a static hero hold ran to 6 s and a pan was cut wherever its pacing target ended.
+**Context:** the owner's rule: static shots must respect the time limit; for a pivot, pan or orbit keep as much of the move as possible, the middle may be sped up, at most 1.2x; the seconds rule must hold for 80-90 % of the shots. Until now hero and semantic-move slots kept the last `hero_max` seconds of their window and everything else was capped at `slot_max`, so a static hero hold ran to 6 s and a pan was cut wherever its pacing target ended.
 
 **Options:** (A) a global speed-up of the whole slot (changes the look of the whole move, audio pitch/tempo audible); (B) a ramp: head and tail quarters in real time, middle half at `s` (the speed change sits in the part of a move where it is least visible); (C) no speed change, only longer moves (breaks the seconds rule more often).
 
@@ -3329,13 +3380,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Golden changes (intentional):** `hero_present` hero hold `26.5-30.0` becomes `27.5-30.0` (static hero clamped from 3.5 s to `slot_max` 2.5 s); `phrase_move_strong` clipA `8.75-10.75` becomes `6.932-10.75` (the move is the one exception: 3.5 s on screen, middle at 1.2x). Director tests that measured source length now measure on-screen length.
 
-**Consequence / open point:** an ordinary move only gains the ~9 % of source the ramp buys inside its pacing length; letting every move grow to `slot_max` would keep more of each move but lengthen a 90 s edit by about a fifth. Doru can change that budget in one line (`apply_move_policy`).
+**Consequence / open point:** an ordinary move only gains the ~9 % of source the ramp buys inside its pacing length; letting every move grow to `slot_max` would keep more of each move but lengthen a 90 s edit by about a fifth. the owner can change that budget in one line (`apply_move_policy`).
 
 ---
 
 ## [2026-10-15] Vertical 9:16 recap from the same edit (D2-11 part 2)
 
-**Context:** Doru wants a Shorts/Reels version of a recap without a second edit.
+**Context:** the owner wants a Shorts/Reels version of a recap without a second edit.
 
 **Options:** (A) a second edit for vertical; (B) the same `edit.json`, each slot cropped with a moving window from `reframe.py`; (C) a fixed centre crop.
 
@@ -3347,7 +3398,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Normal speed by default, cuts centred on the best moment (D2-12)
 
-**Context:** D2-11 sped every long move up to 1.2x by default and kept the end of the window for important shots. Doru's corrections: normal speed unless he asks for the ramp, and when a move is longer than its allowed on-screen length keep the part around its best moment (a push through a gate is best at the gate, usually the middle), not the start or the end.
+**Context:** D2-11 sped every long move up to 1.2x by default and kept the end of the window for important shots. the owner's corrections: normal speed unless he asks for the ramp, and when a move is longer than its allowed on-screen length keep the part around its best moment (a push through a gate is best at the gate, usually the middle), not the start or the end.
 
 **Options:** (A) keep the ramp default and add a peak only to the trim; (B) ramp optional, peak-centred trim with a layered peak source; (C) peak only from the vision model.
 
@@ -3355,7 +3406,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Why:** the vision model sees the subject, the motion signal is free and always available, the middle is a neutral fallback. Priority follows reliability of intent, then availability.
 
-**Landing phrases:** a move followed by its landing hold keeps the landing rule (the cut ends at or after the floor), so the peak can fall outside the cut; the director warns. Choosing the peak over the landing would drop the landing hold and is left to Doru.
+**Landing phrases:** a move followed by its landing hold keeps the landing rule (the cut ends at or after the floor), so the peak can fall outside the cut; the director warns. Choosing the peak over the landing would drop the landing hold and is left to the owner.
 
 **Golden changes (intentional):** nine fixtures changed only in `expected_slots`: windows that started at the head of the window are now centred on the peak, which is the window middle in the fixtures (for example hero 13.75-16.25); `phrase_move_strong` is 7.25-10.75 (ramp off, hero cap 3.5 s); in `photo_slots` the first photo now sorts before the video because the video slot's chronological key moved later.
 
@@ -3365,7 +3416,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Kept versions, honest run state, smooth Ken Burns, exact length (D2-13)
 
-**Context:** Doru's re-edit on the moved kotor-demo workspace failed at `render_vertical` (the photo path still pointed at the old `/tmp` folder). The page then showed the new strip over the old video and stayed `running`. He also asked to keep old edits next to new ones, for smooth photo zooms and for a typed length.
+**Context:** the owner's re-edit on the moved kotor-demo workspace failed at `render_vertical` (the photo path still pointed at the old `/tmp` folder). The page then showed the new strip over the old video and stayed `running`. He also asked to keep old edits next to new ones, for smooth photo zooms and for a typed length.
 
 **Options (versions):** (A) git-like history of `edit.json` only; (B) one folder per version with the edit, the renders made from it and a small `version.json`; (C) suffix files in the workspace root.
 
@@ -3391,7 +3442,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Best photo of a burst: no closed eyes, no blur (D2-15)
 
-**Context:** Doru takes several photos of one moment; the edit should keep the one where nobody blinks and nothing is blurred. The burst winner was the highest score only.
+**Context:** the owner takes several photos of one moment; the edit should keep the one where nobody blinks and nothing is blurred. The burst winner was the highest score only.
 
 **Options:** (A) OpenCV only: Haar eye cascades (not shipped with OpenCV 5) or YuNet landmarks (no eye openness) plus Laplacian blur; (B) ask the vision model, which already sees every photo, for a fixed list of flaws, plus a measured Laplacian sharpness; (C) a dedicated blink model (new dependency and download).
 
@@ -3427,7 +3478,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Edit expectations as a test; the model keeps the top heroes (D2-19)
 
-**Context:** On kotor-demo v4 the edit was "by: llm" (repair works) but the model dropped the top heroes 0072/s5 (0.91, the tunnel approach) and 0072/s7b1 (0.95, the bunker mouth). Doru wants his feedback turned into a file agents check, so they iterate without him, and the LLM director to keep the best shots the way the rule director already does.
+**Context:** On kotor-demo v4 the edit was "by: llm" (repair works) but the model dropped the top heroes 0072/s5 (0.91, the tunnel approach) and 0072/s7b1 (0.95, the bunker mouth). the owner wants his feedback turned into a file agents check, so they iterate without him, and the LLM director to keep the best shots the way the rule director already does.
 
 **Options (expectations):** (A) a new schema for edit expectations; (B) a small hand-written YAML checked by a standalone tool, no schema; (C) encode the checks in pytest fixtures only.
 
@@ -3437,35 +3488,35 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Why not schema (A):** two keys and a length do not need a schema yet; the YAML is the interface and stays safe to commit (shot keys and numbers only, no footage, no paths).
 
-**Consequence:** Doru's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.
+**Consequence:** the owner's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.
 
 ---
 
-## [2026-10-17] Thumbnail tool, brand kit and the PSD writer (D6-48, pulled forward by Doru)
+## [2026-10-17] Thumbnail tool, brand kit and the PSD writer (D6-48, pulled forward by the owner)
 
-**Context:** Doru pulled the D6 thumbnail tool forward (issue #48): one command must turn a portrait photo + a title into a branded 1280x720 YouTube thumbnail identical to his approved `DEPPSiT-template-v2` (kept locally, not in the repo). Two new dependencies were needed: a background-removal model and a PSD writer.
+**Context:** the owner pulled the D6 thumbnail tool forward (issue #48): one command must turn a portrait photo + a title into a branded 1280x720 YouTube thumbnail identical to his approved `DEPPSiT-template-v2` (kept locally, not in the repo). Two new dependencies were needed: a background-removal model and a PSD writer.
 
 **Options (PSD writer):** (A) `psd-tools` — MIT, actively maintained (1.25.0 released 2026-10-14), `PSDImage.new` / `create_pixel_layer` / `save`, negative layer offsets survive a round trip; (B) `pytoshop` — BSD, last release 1.2.1 in 2018 (Python 2.7/3.4-3.6 classifiers), read/write but unmaintained.
 
-**Options (cut-out):** (A) `rembg` 2.0.85 (MIT, maintained) with the `birefnet-portrait` session model, the one Doru tested on 2026-10-17 against PhotoCraft, `u2net` and `isnet-general-use` (only BiRefNet kept hair, both hands and all fingers with no haze); (B) PhotoCraft `layer.removeBackground` — rejected (poor edges, and no PhotoCraft dependency anywhere in the pipeline); (C) MatAnyone, the D6 video background remover, not applicable to stills yet.
+**Options (cut-out):** (A) `rembg` 2.0.85 (MIT, maintained) with the `birefnet-portrait` session model, the one the owner tested on 2026-10-17 against PhotoCraft, `u2net` and `isnet-general-use` (only BiRefNet kept hair, both hands and all fingers with no haze); (B) PhotoCraft `layer.removeBackground` — rejected (poor edges, and no PhotoCraft dependency anywhere in the pipeline); (C) MatAnyone, the D6 video background remover, not applicable to stills yet.
 
 **Decision:** A and A. `scripts/thumbnail.py` writes the PSD with psd-tools (one rasterized layer per element: background, portrait, title, keyword, kicker, tag — text layers cropped to their alpha bbox so each block moves in Photoshop) and cuts the portrait with rembg's Python API (`new_session("birefnet-portrait")`, lazy import, `requirements.txt` line `rembg[cpu]` since 2.0.85 ships without an ONNX backend in the base extra). pytoshop and PhotoCraft stay out. The model downloads on first run to `~/.rembg/models/birefnet-portrait/` (2.0.85; older rembg used `~/.u2net/` — the integration test checks both). On the 6 GB build LXC the BiRefNet inference is OOM-killed even at 450x600 input: the integration test runs the cut-out in a subprocess and skips on exit 137 instead of killing the suite.
 
 **Brand kit:** the look is data — `brand.json` at the repo root (re-included in `.gitignore`), validated by `schemas/brand.schema.json`: canvas, palette, font files (Montserrat Black + JetBrains Mono, SIL OFL, shipped in `assets/fonts/` so a fresh clone renders; paths are configurable and a missing font is a hard error naming the path, never a fallback), layout baselines, drop shadow, portrait margins/placement, the generated-background recipe (seed 7 grain) and the per-theme colour roles. `--brand` points at another kit.
 
-**Interpretations the brief left open (one-line changes in `brand.json`/`thumbnail.py` if Doru wants them different):** the title is one line that shrinks 4 px steps to a 40 px floor (a wrapped second line would collide with the keyword's first baseline); the kicker stays `warm` in both themes (the brief only fixes it for `tech`); `--background` given with `tech` replaces the generated background (darkened like `creator`); the outer glow is baked inside the PSD `portrait` layer (exactly the six listed layers, no seventh glow layer — in the JPG it is screen-blended as specified); the drop shadow follows the Photoshop angle convention (120° = light upper-left, shadow toward the lower right at +2.0, +3.46 px).
+**Interpretations the brief left open (one-line changes in `brand.json`/`thumbnail.py` if the owner wants them different):** the title is one line that shrinks 4 px steps to a 40 px floor (a wrapped second line would collide with the keyword's first baseline); the kicker stays `warm` in both themes (the brief only fixes it for `tech`); `--background` given with `tech` replaces the generated background (darkened like `creator`); the outer glow is baked inside the PSD `portrait` layer (exactly the six listed layers, no seventh glow layer — in the JPG it is screen-blended as specified); the drop shadow follows the Photoshop angle convention (120° = light upper-left, shadow toward the lower right at +2.0, +3.46 px).
 
-**Consequence:** `python scripts/thumbnail.py --photo ... --title ... --keyword ... --theme tech|creator [--psd]` produces the branded thumbnail from a brand file alone; Doru runs it once on a real photo (the one thing the build LXC cannot verify). PSD text is rasterized — retouching means moving/repainting layers, not editing type.
+**Consequence:** `python scripts/thumbnail.py --photo ... --title ... --keyword ... --theme tech|creator [--psd]` produces the branded thumbnail from a brand file alone; the owner runs it once on a real photo (the one thing the build LXC cannot verify). PSD text is rasterized — retouching means moving/repainting layers, not editing type.
 
 ---
 
 ## [2026-10-19] Video background removal: RVM by default, MatAnyone2 personal-use only (D6, issue #50)
 
-**Context:** Doru needs his talking-head footage cut out and placed over screen capture (first use: the Second Brain clip, edited in FilmCraft 0.9.0). He did it by hand in Sammie-Roto 2 (SAM2 + MatAnyone2, GUI clicks + export). The D6 roadmap and the thumbnail decision above named MatAnyone as the video background remover, but its licence (NTU S-Lab 1.0) allows non-commercial use only, and the pipeline may be sold later.
+**Context:** the owner needs his talking-head footage cut out and placed over screen capture (first use: the Second Brain clip, edited in FilmCraft 0.9.0). He did it by hand in Sammie-Roto 2 (SAM2 + MatAnyone2, GUI clicks + export). The D6 roadmap and the thumbnail decision above named MatAnyone as the video background remover, but its licence (NTU S-Lab 1.0) allows non-commercial use only, and the pipeline may be sold later.
 
-**Options (tested 2026-10-19 on the same 10.6 s 1080p25 clip, RTX 4070 Laptop 8 GB, full numbers in issue #50):** (A) SAM2 + MatAnyone2, the Sammie models driven from a script — best quality, 48 s, non-commercial; (B) EdgeTAM + ViTMatte-small (the stack of FilmCraft draft PR storytold/filmcraft#2122, run in Python on GPU) — Apache-2.0, 92 s, clearly worse in Doru's review; (C) RobustVideoMatting resnet50 — GPL-3.0, fully automatic, ~15 s, steadiest edges (`downsample_ratio` 0.6 steadier still); visibly behind A only on fast, motion-blurred hands. A permissive model matching A was searched for and not found (SAM2Matting, VideoMaMa, MaGGIe are all non-commercial).
+**Options (tested 2026-10-19 on the same 10.6 s 1080p25 clip, RTX 4070 Laptop 8 GB, full numbers in issue #50):** (A) SAM2 + MatAnyone2, the Sammie models driven from a script — best quality, 48 s, non-commercial; (B) EdgeTAM + ViTMatte-small (the stack of FilmCraft draft PR storytold/filmcraft#2122, run in Python on GPU) — Apache-2.0, 92 s, clearly worse in the owner's review; (C) RobustVideoMatting resnet50 — GPL-3.0, fully automatic, ~15 s, steadiest edges (`downsample_ratio` 0.6 steadier still); visibly behind A only on fast, motion-blurred hands. A permissive model matching A was searched for and not found (SAM2Matting, VideoMaMa, MaGGIe are all non-commercial).
 
-**Decision:** C by default, A as an optional backend for Doru's own videos only. Doru compared C and A side by side in FilmCraft and judged C "more than enough". Output is ProRes 4444 with alpha (`yuva444p10le`, `prores_ks -profile:v 4444`); FilmCraft 0.9.0 reads its alpha correctly. RVM code is never vendored into this repo: it is fetched at first run through `torch.hub` (GPL obligations then stay with the downloaded code; the videos produced are not GPL). MatAnyone2 is never the default and never used for paid work without written permission from its authors. MatAnyone2 gotcha: the first-frame mask goes in on a 0–255 scale, not 0–1, or the first frame comes out empty and tracking degrades.
+**Decision:** C by default, A as an optional backend for the owner's own videos only. the owner compared C and A side by side in FilmCraft and judged C "more than enough". Output is ProRes 4444 with alpha (`yuva444p10le`, `prores_ks -profile:v 4444`); FilmCraft 0.9.0 reads its alpha correctly. RVM code is never vendored into this repo: it is fetched at first run through `torch.hub` (GPL obligations then stay with the downloaded code; the videos produced are not GPL). MatAnyone2 is never the default and never used for paid work without written permission from its authors. MatAnyone2 gotcha: the first-frame mask goes in on a 0–255 scale, not 0–1, or the first frame comes out empty and tracking degrades.
 
 **Why not B:** permissive licence, but per-frame ViTMatte flickers (1.7x the edge noise of Sammie) and a temporal EMA that hides it leaves ghost halos around moving hands.
 
@@ -3519,7 +3570,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Superseded 2026-10-23** — the concepts moved to their own tool and file (`thumbnail_concepts.py` + `thumbnail.py --concepts`/`--pick`); see the V020N lot n10 entry above.
 
-**Context:** The lot 1 addendum to issue #51 (Doru, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
+**Context:** The lot 1 addendum to issue #51 (the owner, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
 
 **Options:** (A) the model writes the `## Thumbnail` section as free-form markdown in its JSON; (B) a structured `thumbnail_concepts` key (2-3 objects with `name`/`pose`/`emotion`/`text{title,keyword,kicker}`/`theme`/`source{kind,timecode}`) validated like `chapters` and rendered by the tool; (C) no section for now — frame picking is issue #52's vision pass.
 
@@ -3543,7 +3594,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Why not A:** `convert_video` owns its own reader and whole-file range, needs `av tqdm pims`, and still leaves the ProRes export to us. **Why not C:** no second model format is needed this sprint.
 
-**Consequence:** `python3 scripts/matte.py clip.mp4 [--start S] [--end E] [--ratio R] [--out FILE] [--json]` produces the composite-ready matte on GPU when present, on CPU otherwise (build LXC: 3 s 640x360 at ratio 0.6 in ~45 s). The settings used on the real Second Brain clip are added to issue #50 as a comment after Doru's run; MatAnyone2 stays out of the repo (scope 3, personal-use only).
+**Consequence:** `python3 scripts/matte.py clip.mp4 [--start S] [--end E] [--ratio R] [--out FILE] [--json]` produces the composite-ready matte on GPU when present, on CPU otherwise (build LXC: 3 s 640x360 at ratio 0.6 in ~45 s). The settings used on the real Second Brain clip are added to issue #50 as a comment after the owner's run; MatAnyone2 stays out of the repo (scope 3, personal-use only).
 
 ---
 
@@ -3575,9 +3626,9 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] S51 sprint order and caps (issue #51)
 
-**Context:** Issue #51 is the publish-kit sprint. It runs on one branch, `sprint-publish-kit`, with one PR to master at the end that Doru merges.
+**Context:** Issue #51 is the publish-kit sprint. It runs on one branch, `sprint-publish-kit`, with one PR to master at the end that the owner merges.
 
-**Decision:** Lots run 0 → 1 → 2 → 3 → 4 with per-lot caps of 1 / 6 / 4 / 8 / 1 USD and a ceiling of 25 USD. Lot 3 (HyperFrames graphics) was the first to be cut if the total ran short — it did not have to be. Doru added lots 5 (FilmCraft bridge, 5 USD) and 6 (publish kit for manual upload, 4 USD) on 2026-10-21; they run after lot 4 on the same branch and PR. Lot 6 is variant B per Doru's 2026-10-21 comment: the API upload is parked because an unaudited Google project cannot make videos public.
+**Decision:** Lots run 0 → 1 → 2 → 3 → 4 with per-lot caps of 1 / 6 / 4 / 8 / 1 USD and a ceiling of 25 USD. Lot 3 (HyperFrames graphics) was the first to be cut if the total ran short — it did not have to be. the owner added lots 5 (FilmCraft bridge, 5 USD) and 6 (publish kit for manual upload, 4 USD) on 2026-10-21; they run after lot 4 on the same branch and PR. Lot 6 is variant B per the owner's 2026-10-21 comment: the API upload is parked because an unaudited Google project cannot make videos public.
 
 **Why not split the sprint into separate PRs:** one branch and one PR keep the sprint reviewable as a whole and match the issue's plan.
 
@@ -3587,7 +3638,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Publish kit instead of API upload (S51 lot 6, variant B)
 
-**Context:** YouTube locks every video uploaded through the Data API from an **unaudited** Google project as private and it cannot go public before the project passes the YouTube API audit (same for TikTok's Content Posting API); Doru changed lot 6 on 2026-10-21 accordingly.
+**Context:** YouTube locks every video uploaded through the Data API from an **unaudited** Google project as private and it cannot go public before the project passes the YouTube API audit (same for TikTok's Content Posting API); the owner changed lot 6 on 2026-10-21 accordingly.
 
 **Decision:** No `yt_upload.py`; `publish.py --kit` writes `<project>/publish-kit/` (video + RO/EN SRTs + thumbnail + `studio.md` copy-ready blocks and a Studio-order checklist) with loud checks (title 100, description 5000, EN subtitles present, thumbnail <= 2 MB and 1280x720, tags <= 500); `metadata.py` writes `metadata.json` so the kit is deterministic from the validated model JSON; the lot 5 `loudness.py --video` pass is opt-in via `--kit-loudness`.
 
@@ -3603,7 +3654,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Options (destination):** (A) append the taps to the repo's `eval/<project>-edit.yaml`; (B) write a workspace-local `expectations.yaml` that `eval_edit.py --workspace WS --expect WS/expectations.yaml` reads; (C) only append to the existing `feedback.jsonl` action log.
 
-**Decision:** B, with one extra top-level key. `serve.py` gains a single write route `POST /<project>/expectations` (urlencoded `shot` / `kind` / `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET on that path stays 404) that appends to `<workspace>/expectations.yaml` in the exact shape `eval_edit.py` already reads: `must_include: [{any_of: [shot], note}]` for "must be in" and `wrong_label: [{shot, note}]` for "wrong label". Taps are idempotent per (shot, kind), the write is atomic and the file is machine-owned (rewritten with a header comment, so hand-written YAML comments are lost). `eval_edit.py` is unchanged and ignores `wrong_label` — those rows are the record Doru and the agents read before the next re-edit or re-analysis. The progress bar takes `brand.json` `colors.cool` through `progress::-webkit-progress-value` / `progress::-moz-progress-bar` (fallback `#57b8c4`, never a start-up failure).
+**Decision:** B, with one extra top-level key. `serve.py` gains a single write route `POST /<project>/expectations` (urlencoded `shot` / `kind` / `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET on that path stays 404) that appends to `<workspace>/expectations.yaml` in the exact shape `eval_edit.py` already reads: `must_include: [{any_of: [shot], note}]` for "must be in" and `wrong_label: [{shot, note}]` for "wrong label". Taps are idempotent per (shot, kind), the write is atomic and the file is machine-owned (rewritten with a header comment, so hand-written YAML comments are lost). `eval_edit.py` is unchanged and ignores `wrong_label` — those rows are the record the owner and the agents read before the next re-edit or re-analysis. The progress bar takes `brand.json` `colors.cool` through `progress::-webkit-progress-value` / `progress::-moz-progress-bar` (fallback `#57b8c4`, never a start-up failure).
 
 **Why not A:** live taps would mix into the committed regression fixtures. **Why not C:** the issue names the expectations file, and `eval_edit.py` must be able to check what the taps said.
 
@@ -3627,7 +3678,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Mode B cut rules: pauses, fillers, retakes (S56)
 
-**Context:** Issue #56 lot 1 turns talking-head + screen recording sessions into a rough cut a human finishes in FilmCraft; the reference is Doru's hand edit of the same material. The cut has to remove the dead air, the filler words and the restarted sentences without clipping words.
+**Context:** Issue #56 lot 1 turns talking-head + screen recording sessions into a rough cut a human finishes in FilmCraft; the reference is the owner's hand edit of the same material. The cut has to remove the dead air, the filler words and the restarted sentences without clipping words.
 
 **Options:** (A) cut silence by audio loudness (auto-editor's approach, `docs/research/prior-art.md` §2.6); (B) cut by the word timestamps Whisper already produced (gaps between words, filler tokens, restarted sentences); (C) let an LLM choose the cut list.
 
@@ -3655,7 +3706,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Unfinished reference: eval on the finished stretch; retake_similarity reverted (S56 follow-up)
 
-**Context:** Doru has edited only the first 150 s of the Second Brain reference; the lot 2 precision_used 0.64 was not a real ceiling and the tuned thresholds were fitted to partly uncut material. `eval_rough_cut.py --until-s S` was added (commit 3d269b4) and the two lot 2 threshold changes were re-checked on the `--until-s 150` slice: A1 (`retake_similarity` 0.75, `fillers.always` with `ok`) gives precision_used 0.5619, recall_used 0.9629, F1_used 0.7097; B (`retake_similarity` 0.55, `fillers.always` with `ok`) gives precision_used 0.5638, recall_used 0.9496, F1_used 0.7075.
+**Context:** the owner has edited only the first 150 s of the Second Brain reference; the lot 2 precision_used 0.64 was not a real ceiling and the tuned thresholds were fitted to partly uncut material. `eval_rough_cut.py --until-s S` was added (commit 3d269b4) and the two lot 2 threshold changes were re-checked on the `--until-s 150` slice: A1 (`retake_similarity` 0.75, `fillers.always` with `ok`) gives precision_used 0.5619, recall_used 0.9629, F1_used 0.7097; B (`retake_similarity` 0.55, `fillers.always` with `ok`) gives precision_used 0.5638, recall_used 0.9496, F1_used 0.7075.
 
 **Decision:** the headline numbers are the `--until-s 150` ones (precision_used 0.5619, recall_used 0.9629, F1_used 0.7097 for the final config); the full-sequence numbers are indicative only. `fillers.always` keeps `ok`; `retake_similarity` goes back to 0.75 because 0.55 costs 0.0133 recall_used for 0.0018 precision_used on the finished stretch.
 
@@ -3665,7 +3716,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Phone cut review writes cut_review.yaml (S57 lot 1)
 
-**Context:** Issue #57 lot 1 adds a Cuts view to the web app so Doru can approve or reject each automatic Mode B cut from the phone. The taps must feed back into `rough_cut.py` on a rerun and into `eval_rough_cut.py` as ground truth.
+**Context:** Issue #57 lot 1 adds a Cuts view to the web app so the owner can approve or reject each automatic Mode B cut from the phone. The taps must feed back into `rough_cut.py` on a rerun and into `eval_rough_cut.py` as ground truth.
 
 **Options:** (A) reuse `expectations.yaml`; (B) a workspace-local `cut_review.yaml` written by `serve.py` and read by both Mode B tools; (C) only a UI log with no tool integration.
 

@@ -5,7 +5,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]  # macOS and Windows parked by Doru (2026-10-21)
+        os: [ubuntu-latest]  # macOS and Windows parked by the owner (2026-10-21)
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
