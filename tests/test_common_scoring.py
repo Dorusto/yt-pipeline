@@ -1,4 +1,10 @@
-from common.scoring import label_score
+from common.scoring import counts_as_defect, label_score
+
+
+def test_counts_as_defect_waives_shake_on_a_deliberate_move():
+    assert counts_as_defect("shake", True) is False
+    assert counts_as_defect("shake", False) is True
+    assert counts_as_defect("blur", True) is True
 
 
 def test_base_plus_confidence_only():

@@ -33,6 +33,11 @@ no extra keys.
   order (`chronological` means the slots must follow the order the shots happen
   in the day) and its pacing (`calm-to-energy` means the opening slots are longer
   and calmer, the closing ones shorter and busier).
+- **An explicit request to add a named shot wins over its minor defects.** When
+  the brief or the feedback names a shot to add, plan it even when it has minor
+  defects and say which defects it has in `notes`; only a shot whose role is
+  `accidental`, `setup` or `teardown`, or a shot marked as a whip short-hold,
+  stays out.
 - **The shotlog is the menu.** Only propose `shot_key`s that exist there and are
   `eligible: true`. Rank by `score` but do not simply take the top N: the plan
   has to read as a story, so cover different moments and different takes. Never

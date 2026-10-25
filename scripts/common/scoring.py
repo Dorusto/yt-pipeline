@@ -14,6 +14,11 @@ DEFAULT_DEFECT_WEIGHT = 1.0
 MAX_DEFECT_PENALTY = 0.4
 
 
+def counts_as_defect(name, deliberate=False):
+    """True when a defect still counts: a deliberate move waives its shake."""
+    return not (deliberate and name == "shake")
+
+
 def label_score(role, confidence, steadiness, defects, whip=None, deliberate=False):
     """The label score for one segment: base + confidence, minus steadiness and defects.
 
@@ -28,7 +33,7 @@ def label_score(role, confidence, steadiness, defects, whip=None, deliberate=Fal
     scoring = [
         defect
         for defect in (defects or [])
-        if not (deliberate and defect.get("name") == "shake")
+        if counts_as_defect(defect.get("name"), deliberate)
     ]
     if scoring:
         penalty = sum(

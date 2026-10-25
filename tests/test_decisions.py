@@ -169,3 +169,21 @@ def test_an_eligible_photo_with_a_minor_flaw_is_not_called_a_defect():
 
     photo = {"media_type": "photo", "eligible": True, "defects": ["cut_off"], "score": 0.6}
     assert _reject_reason(photo, True, 0.5) == "did not fit the length (minor flaw: cut_off)"
+
+
+def test_a_deliberate_move_shake_is_not_reported_as_a_defect():
+    from common.decisions import _reject_reason
+
+    move = {"motion_label": "pan_left", "defects": ["shake"], "score": 0.4}
+    assert _reject_reason(move, True, 0.5) == "low score"
+    assert _reject_reason(move, False, 0.5) == "low score"
+    orbit = {"semantic_motion": "orbit", "defects": ["shake"], "score": 0.9}
+    assert _reject_reason(orbit, True, 0.5) == "did not fit the length"
+
+
+def test_a_static_hold_blur_is_still_a_defect():
+    from common.decisions import _reject_reason
+
+    hold = {"motion_label": "static", "defects": ["blur"], "score": 0.4}
+    assert _reject_reason(hold, True, 0.5) == "defect: blur"
+
