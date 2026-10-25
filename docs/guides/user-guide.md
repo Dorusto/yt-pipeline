@@ -250,11 +250,12 @@ finished recap, the explanation and the contact sheet.
   going the page shows the last finished version, the step it is on, and
   refreshes by itself; a failed run says where it failed and why. A **Stop**
   button on the progress card stops the run and its child processes and leaves
-  the previous version as the current one. A version that
-  is neither the latest nor the first shows a **Delete this version** button; it
+  the previous version as the current one. Any version
+  except the latest shows a **Delete this version** button; it
   asks once ("Delete version N? Its video and files are removed for good."),
   removes that version's folder for good and returns to the latest version. The
-  latest, the first and a version while a run is going cannot be deleted.
+  first can be deleted too while another version stays; the latest and a version
+  while a run is going cannot be deleted.
 - **Title, description and hashtags.** The Recap tab shows a box with the
   YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
   version, each with a **Copy** button. A **Rewrite** button opens the four

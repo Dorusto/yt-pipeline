@@ -43,10 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Director: the one jump-cut rule — a same-segment-beat or similar neighbour pair keeps only the better one unless the owner explicitly asked for both; the director never marks such a cut `deliberate` by itself.
 - Web app: the Director tab's chat shows the last 3 exchanges; older ones fold under a closed "Earlier messages (N)" section, and the input box and the button sit directly under the newest exchange.
 - Director: the LLM director reads the owner's `add_keys`/`drop_keys` from the last chat reply and passes them to the rule fallback, the star repair never swaps out an owner-added shot or a `keep_whole` slot, and the round loop stops early when a round makes no progress (the same blocking `(slot, rule)` set as the previous round); the required top stars count once per group (a `similar_to` pair or beats of one segment), so the star repair and the pointless-neighbour rule no longer fight.
+- Web app: "Delete this version" is a normal secondary button with the bin icon, and the first version can be deleted too while another version stays (only the latest and a version during a run are refused).
+- Web app: the Director tab opens at the newest message (`#chat-latest`).
 - Notebook: a lesson is a general rule and may not name a shot id, a clip number or a project name; the learn pass skips such a lesson with a `[warn]` line and still succeeds.
 
 ### Fixed
 
+- Stop button: the run's pid is killed only when its recorded start time or command line still matches, so a reused pid is never killed.
 - `llm_director.py --prepare` together with `--force` is a usage error.
 - `notebook.py --merge` with a repeated id is a usage error.
 - An empty or duplicate `channel.style.description_order` is a config error; `recap_meta.py` no longer receives `description_order`.

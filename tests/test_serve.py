@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 import serve
+import common.theme as theme
 import common.config as config
 from common.costs import connect, insert_entry
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -218,6 +219,7 @@ def test_stop_run_kills_the_group_and_marks_the_run_stopped(tmp_path, monkeypatc
         alive["value"] = False
 
     monkeypatch.setattr(serve, "_terminate_group", fake_terminate)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
     server = start_server(root)
     try:
         status, headers, _ = request(server, "POST", "/2026-10-14/stop-run")
@@ -414,7 +416,7 @@ def test_tab_bar_has_director_and_recap_off_hides_it(tmp_path):
     server = start_server(root)
     try:
         _, _, body = request(server, "GET", "/2026-10-14/")
-        assert b'href="/2026-10-14/?tab=director"' in body
+        assert b'href="/2026-10-14/?tab=director#chat-latest"' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -422,7 +424,7 @@ def test_tab_bar_has_director_and_recap_off_hides_it(tmp_path):
     try:
         status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
-        assert b'href="/2026-10-14/?tab=director"' not in body
+        assert b'href="/2026-10-14/?tab=director#chat-latest"' not in body
         assert b'<iframe src="explain.html"' in body
     finally:
         server.shutdown()
@@ -3247,7 +3249,7 @@ def test_delete_version_removes_the_folder(tmp_path):
         server.server_close()
 
 
-def test_delete_version_refuses_latest_and_first(tmp_path):
+def test_delete_version_refuses_the_latest_but_allows_the_first(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     write_version(project, 1, "first", "2026-10-15T10:00:00")
@@ -3264,16 +3266,18 @@ def test_delete_version_refuses_latest_and_first(tmp_path):
         )
         assert status == 409
         assert b"cannot delete the latest version" in body
-        status, _, body = request(
+        assert (project / "versions" / "v003").is_dir()
+        status, headers, _ = request(
             server,
             "POST",
             "/2026-10-14/delete-version",
             headers=form_headers(),
             body=urllib.parse.urlencode({"version": "v001"}),
         )
-        assert status == 409
-        assert b"cannot delete the first version" in body
-        assert (project / "versions" / "v001").is_dir()
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert not (project / "versions" / "v001").exists()
+        assert (project / "versions" / "v002").is_dir()
         assert (project / "versions" / "v003").is_dir()
     finally:
         server.shutdown()
@@ -3338,7 +3342,18 @@ def test_recap_panel_shows_the_delete_version_button(tmp_path):
     assert 'value="v002"' in page
     assert "Delete version 2? Its video and files are removed for good." in page
     assert "delete-version" not in serve.render_recap_panel(project, wanted=3)
-    assert "delete-version" not in serve.render_recap_panel(project, wanted=1)
+    first = serve.render_recap_panel(project, wanted=1)
+    assert 'action="/2026-10-14/delete-version"' in first
+    assert 'value="v001"' in first
+
+
+def test_delete_version_button_is_a_bin_icon_button_not_a_bar():
+    form = serve.render_delete_version_form("2026-10-14", {"number": 2, "name": "v002"})
+    assert '<button type="button" class="version-del"' in form
+    assert "<svg" in form and "Delete this version" in form
+    css = theme.THEME_CSS
+    assert ".version-del{" in css and "form.delete-version{display:flex" in css
+    assert "width:100%" not in css.split(".version-del{", 1)[1].split("}", 1)[0]
 
 
 def test_delete_version_script():
@@ -4363,3 +4378,92 @@ def test_friend_costs_total_includes_the_notebook_ledger(tmp_path, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def spawn_sleeper(seconds="30"):
+    return subprocess.Popen(["sleep", seconds], start_new_session=True)
+
+
+def wait_gone(pid, limit=5.0):
+    deadline = time.time() + limit
+    while time.time() < deadline:
+        if not serve.pid_alive(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_terminate_group_stops_a_real_process_group():
+    child = subprocess.Popen(
+        ["sh", "-c", "sleep 30 & echo $!; wait"],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    grandchild = int(child.stdout.readline())
+    try:
+        assert serve.pid_alive(grandchild)
+        serve._terminate_group(child.pid)
+        assert child.wait(timeout=5) != 0
+        assert wait_gone(grandchild)
+    finally:
+        child.stdout.close()
+        if child.poll() is None:
+            child.kill()
+
+
+def test_stop_run_kills_only_the_recorded_run(tmp_path):
+    import psutil
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    process = spawn_sleeper()
+    try:
+        started = psutil.Process(process.pid).create_time()
+        marker = workspace / ".run.json"
+        marker.write_text(json.dumps({"pid": process.pid, "pid_started": started - 3600}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is False
+        assert serve.stop_run(workspace) is True
+        time.sleep(0.3)
+        assert process.poll() is None
+        marker.write_text(json.dumps({"pid": process.pid, "pid_started": started}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is True
+        assert serve.stop_run(workspace) is True
+        assert process.wait(timeout=5) != 0
+        assert json.loads(marker.read_text(encoding="utf-8"))["stopped"] is True
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def test_run_is_ours_falls_back_to_the_command_line(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    process = spawn_sleeper()
+    try:
+        marker = workspace / ".run.json"
+        marker.write_text(json.dumps({"pid": process.pid, "command": ["sleep", "30"]}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is True
+        marker.write_text(json.dumps({"pid": process.pid, "command": ["sleep", "31"]}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is False
+        marker.write_text(json.dumps({"pid": process.pid}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is False
+    finally:
+        process.kill()
+        process.wait()
+
+
+def test_start_recap_records_the_start_time_and_stop_run_ends_it(tmp_path):
+    workspace = tmp_path / "ws"
+    pid = serve.start_recap(["sleep", "30"], workspace, tmp_path, {})
+    try:
+        record = json.loads((workspace / ".run.json").read_text(encoding="utf-8"))
+        assert record["pid"] == pid
+        assert isinstance(record["pid_started"], float)
+        assert serve.run_is_ours(workspace, pid) is True
+        assert serve.stop_run(workspace) is True
+        assert wait_gone(pid)
+    finally:
+        if serve.pid_alive(pid):
+            os.kill(pid, 9)

@@ -138,6 +138,13 @@ background:var(--surface);color:var(--muted);padding:0 var(--sp-3);font:inherit;
 display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
 vertical-align:middle;margin-left:10px}
 .project-del svg{width:16px;height:16px;fill:#fff}
+form.delete-version{display:flex;max-width:none;margin:0 0 var(--sp-3)}
+.version-del{display:inline-flex;align-items:center;gap:var(--sp-2);min-height:var(--tap);padding:0 var(--sp-4);
+border:1px solid var(--line);border-radius:var(--radius-pill);background:transparent;color:var(--text);
+font:inherit;cursor:pointer}
+.version-del svg{width:16px;height:16px;fill:currentColor}
+.version-del:hover{border-color:var(--danger);color:var(--danger)}
+#chat-latest{scroll-margin-top:var(--sp-4)}
 .player{margin-bottom:var(--sp-5)}
 .player h2{font-family:var(--font-display);font-weight:500;font-size:var(--fs-l);margin:0 0 var(--sp-2)}
 .vmeta{color:var(--muted);font-size:var(--fs-s);margin:6px 0 0;overflow-wrap:anywhere}

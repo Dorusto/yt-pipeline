@@ -4,6 +4,31 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Delete-version button and review follow-ups (V030 lot c27)
+
+**Context:** The owner's phone test showed "Delete this version" as a full-width
+grey bar that did not match the page, and the first version could not be
+deleted although it is just another version once a later one exists. The c25
+review also found three loose ends: the general similar-segments rule had been
+merged away, the Director tab opened at the top of a long chat, and `stop_run`
+signalled whatever process held the pid in `.run.json`, which could be an
+unrelated process after a pid reuse.
+
+**Decision:** The button is a normal secondary button with the bin icon; only
+the latest version and a version during a run are refused, so the first can be
+deleted while another stays. `docs/RULES.md` has the general rule again ("No two
+visually similar segments in one edit unless the brief or the owner asks for
+it") next to the neighbour rule. The newest chat exchange carries
+`id="chat-latest"`, and the Director tab link and the redirect after a message go
+to `?tab=director#chat-latest`. `start_recap` records the process start time in
+`.run.json` and `stop_run` kills the group only when the pid's start time (or,
+for a record without one, its command line) still matches.
+
+**Consequence:** files touched: `scripts/serve.py`, `scripts/common/theme.py`,
+`docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/guides/user-guide.md`, `docs/guides/phone-flow.md`, the `yt-recap` skill,
+the tests (a short real `sleep` process group). No model call; no real footage.
+
 ## [2026-10-25] A feedback run does what the owner asked, or says it did not (V030 lot c26)
 
 **Context:** The owner's phone test. On the Kotor workspace the owner asked "add
@@ -94,7 +119,8 @@ they are; (B) add a Stop button on the progress card, fold the chat to the last
    writes `"stopped": true` into `.run.json`; `project_status` returns
    `"stopped"` for a dead pid with that flag; the progress card shows a **Stop**
    button while running and "Stopped. The previous version is still here." after.
-   The version is snapshotted by `recap.py` only at the end of a run, so a stop
+   The version is snapshotted by `recap.py` at the start of the first run (the
+   workspace's existing recap becomes v1) and at the end of every run, so a stop
    leaves the previous version and writes nothing half-made into `versions/`.
 2. The Director tab's chat shows the last 3 exchanges; older ones fold under a
    closed `<details class="chat-earlier">` "Earlier messages (N)" above them, and

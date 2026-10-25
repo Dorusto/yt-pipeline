@@ -196,7 +196,7 @@ def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatc
             body=multipart_body([("feedback", None, "drop 0071/s2")]),
         )
         assert status == 303, body
-        assert headers["Location"] == "/2026-10-14/?tab=director#chat"
+        assert headers["Location"] == "/2026-10-14/?tab=director#chat-latest"
         assert calls == []
     finally:
         server.shutdown()
@@ -466,6 +466,25 @@ def test_chat_panel_shows_only_the_last_three_exchanges(tmp_path):
         assert "request 0" in earlier and "request 1" in earlier
         assert "request 2" not in earlier
         assert "request 2" in page and "request 3" in page and "request 4" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_newest_exchange_carries_the_chat_latest_anchor(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_replies(project, [reply_row(index) for index in range(5)])
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert page.count('id="chat-latest"') == 1
+        anchored = page.split('id="chat-latest"', 1)[1]
+        assert anchored.index("request 4") < anchored.index('class="chat-form"')
+        assert "request 3" not in anchored.split('class="chat-form"', 1)[0]
+        assert 'href="/2026-10-14/?tab=director#chat-latest"' in page
     finally:
         server.shutdown()
         server.server_close()

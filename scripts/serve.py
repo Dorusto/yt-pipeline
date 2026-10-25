@@ -698,6 +698,30 @@ def run_was_stopped(directory):
     return isinstance(data, dict) and data.get("stopped") is True
 
 
+def run_is_ours(directory, pid):
+    """True when ``pid`` is still the run recorded in ``.run.json``, not a reused pid.
+
+    Compares the process start time recorded at spawn, or the command line when
+    no start time was recorded; with neither, the pid cannot be trusted.
+    """
+    import psutil
+
+    try:
+        data = json.loads((Path(directory) / ".run.json").read_text(encoding="utf-8"))
+        process = psutil.Process(pid)
+        if not isinstance(data, dict):
+            return False
+        started = data.get("pid_started")
+        if isinstance(started, (int, float)) and not isinstance(started, bool):
+            return abs(process.create_time() - float(started)) < 2.0
+        command = data.get("command")
+        if isinstance(command, list) and command and all(isinstance(part, str) for part in command):
+            return process.cmdline() == command
+    except (OSError, ValueError, psutil.Error):
+        return False
+    return False
+
+
 def _terminate_group(pid):
     """Terminate a run's whole process group: SIGTERM, wait up to 5 s, then SIGKILL."""
     try:
@@ -727,7 +751,8 @@ def stop_run(workspace):
     pid = read_run_pid(workspace)
     if pid is None:
         return False
-    _terminate_group(pid)
+    if run_is_ours(workspace, pid):
+        _terminate_group(pid)
     marker = workspace / ".run.json"
     try:
         data = json.loads(marker.read_text(encoding="utf-8"))
@@ -2035,6 +2060,10 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
             f'<div class="chat-msg user"><p>{html_escape(text)}</p></div>'
             f'<div class="chat-msg director"><p>{html_escape(reply)}</p>{estimate_html}</div>'
         )
+    if exchanges:
+        exchanges[-1] = exchanges[-1].replace(
+            '<div class="chat-msg user">', '<div class="chat-msg user" id="chat-latest">', 1
+        )
     older = exchanges[:-3]
     recent = exchanges[-3:]
     if older:
@@ -2109,7 +2138,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     if compare is not None and compare["number"] == shown["number"]:
         compare = None
     parts.append(render_version_links(name or directory.name, versions, shown))
-    if status != "running" and shown is not versions[-1] and shown is not versions[0]:
+    if status != "running" and shown is not versions[-1]:
         parts.append(render_delete_version_form(name or directory.name, shown))
     if status != "running" and has_video(shown):
         parts.append(render_drop_form(name or directory.name, shown))
@@ -2464,7 +2493,8 @@ def _render_tabs(name, enabled, tab):
     labels = dict(TABS)
     def link(key):
         active = ' class="active"' if key == tab else ""
-        return f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(labels[key])}</a>'
+        anchor = "#chat-latest" if key == "director" else ""
+        return f'<a href="/{html_escape(name)}/?tab={key}{anchor}"{active}>{html_escape(labels[key])}</a>'
 
     parts = []
     if "recap" in enabled:
@@ -2729,14 +2759,14 @@ def render_delete_form(name):
 
 
 def render_delete_version_form(name, version):
-    """A small form that deletes one version (never the latest or the first)."""
+    """A small form that deletes one version (never the latest)."""
     number = version["number"]
     question = f"Delete version {number}? Its video and files are removed for good."
     return (
         f'<form class="delete-version" method="post" action="/{html_escape(name)}/delete-version">'
         f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
         f'<button type="button" class="version-del" data-question="{html_escape(question)}">'
-        "Delete this version</button></form>"
+        f"{BIN_ICON}<span>Delete this version</span></button></form>"
     )
 
 
@@ -3591,6 +3621,16 @@ def _reap_recap(handle, workspace, notebook):
         start_learn(workspace, notebook)
 
 
+def _process_start_time(pid):
+    """The start time psutil reports for ``pid``, or None when it cannot be read."""
+    import psutil
+
+    try:
+        return psutil.Process(pid).create_time()
+    except psutil.Error:
+        return None
+
+
 def start_recap(command, workspace, source, options, notebook=None):
     """Spawn the recap in the background, record ``.run.json`` and return the pid."""
     workspace.mkdir(parents=True, exist_ok=True)
@@ -3606,6 +3646,7 @@ def start_recap(command, workspace, source, options, notebook=None):
         )
     record = {
         "pid": handle.pid,
+        "pid_started": _process_start_time(handle.pid),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "label": "recap",
         "source": str(source),
@@ -3909,7 +3950,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         location = f"/{project}/?tab=director"
         if VERSION_RE.match(version):
             location += f"&v={int(version.lstrip('v'))}"
-        self.send_redirect(location + "#chat")
+        self.send_redirect(location + "#chat-latest")
 
     def handle_rewrite_meta(self, project):
         """Save the four facts and rewrite the shown version's title and description."""
@@ -4134,7 +4175,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         self.send_redirect("/")
 
     def handle_delete_version(self, project):
-        """Delete one version folder; refuse the latest, the first and while a run is going."""
+        """Delete one version folder; refuse the latest and while a run is going."""
         workspace = self.server.root / project
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
@@ -4157,9 +4198,6 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if version == versions[-1]["name"]:
             self.send_error_text(409, "cannot delete the latest version")
-            return
-        if version == versions[0]["name"]:
-            self.send_error_text(409, "cannot delete the first version")
             return
         root = (workspace / "versions").resolve()
         target = (workspace / "versions" / version).resolve()
