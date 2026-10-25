@@ -149,10 +149,26 @@ def test_run_json_alone_is_a_project(tmp_path):
 
 
 def test_project_status_running_for_live_pid(tmp_path):
+    import psutil
+
     folder = tmp_path / "2026-10-14"
     folder.mkdir()
-    (folder / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    started = psutil.Process(os.getpid()).create_time()
+    (folder / ".run.json").write_text(
+        json.dumps({"pid": os.getpid(), "pid_started": started}), encoding="utf-8"
+    )
     assert serve.project_status(folder) == "running"
+
+
+def test_project_status_done_for_a_live_unrelated_pid(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / "recap_720p.mp4").write_bytes(b"x")
+    (folder / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    assert serve.project_status(folder) in ("done", "stopped")
+    assert serve.project_status(folder) != "running"
+    serve.stop_run(folder)
+    assert serve.project_status(folder) == "stopped"
 
 
 def test_project_status_failed_for_dead_pid_without_recap(tmp_path):
@@ -193,6 +209,7 @@ def test_project_page_shows_the_stop_button_while_running(tmp_path, monkeypatch)
     project = root / "2026-10-14"
     (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
     monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
@@ -266,9 +283,14 @@ def test_index_lists_project_with_done_badge(tmp_path):
 
 
 def test_index_shows_running_badge(tmp_path):
+    import psutil
+
     root = make_root(tmp_path)
     project = root / "2026-10-14"
-    (project / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    started = psutil.Process(os.getpid()).create_time()
+    (project / ".run.json").write_text(
+        json.dumps({"pid": os.getpid(), "pid_started": started}), encoding="utf-8"
+    )
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/")
@@ -1304,6 +1326,7 @@ def test_running_project_shows_progress_and_refreshes(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
     page = serve.render_project("2026-10-14", project, "recap")
     assert "8 of 11 steps done" in page
     assert 'http-equiv="refresh"' in page
@@ -1348,6 +1371,7 @@ def test_run_notice_shows_the_current_station_and_progress(tmp_path, monkeypatch
         encoding="utf-8",
     )
     monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
     page = serve.render_project("2026-10-14", project, "recap")
     assert "Now: checking quality" in page
     assert "step 3 of 11</span>" in page

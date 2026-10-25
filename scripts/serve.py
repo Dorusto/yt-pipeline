@@ -87,7 +87,7 @@ from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, 
 from common.sizes import BYTES_PER_GB, format_gb, format_size_short
 from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
-from common.versions import list_versions
+from common.versions import list_versions, valid_version
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 from common.llm import LLMError, read_ledger
@@ -102,6 +102,10 @@ STORAGE_WARN_RATIO = 0.8
 CREDIT_CACHE_SECONDS = 600
 FAILURE_CACHE_SECONDS = 120
 HTTP_TIMEOUT_SECONDS = 3
+FEEDBACK_TIMEOUT_S = 180
+META_TIMEOUT_S = 180
+EDIT_DROP_TIMEOUT_S = 900
+NOTEBOOK_TIMEOUT_S = 60
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BRIEF_MAX_CHARS = 4000
@@ -163,7 +167,6 @@ SHORTS_LAYOUT_POLICIES = ("auto", "on", "off")
 SHORTS_LAYOUTS = ("face", "split")
 SHORTS_CANDIDATES_FILE = "shorts_candidates.json"
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
-VERSION_RE = re.compile(r"^v\d{1,4}$")
 PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
 STEP_SECONDS_RE = re.compile(r"(\d+(?:\.\d+)?)s\b")
 LENGTH_MIN_S = 5
@@ -1105,10 +1108,10 @@ def project_status(directory):
     pid = read_run_pid(directory)
     if pid is None:
         return "done"
-    if pid_alive(pid):
-        return "running"
     if run_was_stopped(directory):
         return "stopped"
+    if pid_alive(pid) and run_is_ours(directory, pid):
+        return "running"
     report = run_report(directory)
     if report["outcome"] == "done":
         return "done"
@@ -1589,14 +1592,9 @@ def append_request(path, line):
         handle.write(json.dumps(line) + "\n")
 
 
-def append_feedback_action(workspace, action, **fields):
+def append_feedback_action(workspace, action, text):
     """Append one feedback action line to the workspace's feedback.jsonl."""
-    append_feedback(workspace, action, text=fields.get("feedback") or "", tool=TOOL)
-
-
-def read_feedback_lines(directory):
-    """The workspace's feedback.jsonl rows, oldest first; [] when absent or unreadable."""
-    return read_feedback(directory)
+    append_feedback(workspace, action, text=text, tool=TOOL)
 
 
 def render_strip(summary, prefix="", thumbs=()):
@@ -1675,6 +1673,9 @@ def render_player(directory, prefix="", heading=None, meta_line=None, trust_edit
 
 def version_cost(version):
     """Model spend of the run that made this version: since the version before it."""
+    stored = version["meta"].get("cost_usd")
+    if isinstance(stored, (int, float)) and not isinstance(stored, bool):
+        return stored
     path = Path(version["path"])
     made = epoch_of(version["meta"].get("created_at"))
     if made is None:
@@ -1735,7 +1736,6 @@ def running_step_text(report):
     current = report.get("current")
     if current:
         name = html_escape(STATION_PLAIN_NAMES.get(current, current))
-        step = report.get("current_step") or 0
         return f"Now: {name}"
     if report["total"]:
         return (
@@ -2012,7 +2012,7 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
     base = Path(version_path) if version_path else directory
     parts = ['<section class="chat" id="chat"><h2>Chat with the director</h2>']
     edit = load_json(base / "edit.json")
-    replies = [row for row in read_feedback_lines(directory) if row.get("action") == "reply"]
+    replies = [row for row in read_feedback(directory) if row.get("action") == "reply"]
     notice = director_fallback_notice(edit, replies[-1] if replies else None)
     if notice is not None:
         parts.append(
@@ -3631,6 +3631,18 @@ def _process_start_time(pid):
         return None
 
 
+class ToolTimeout(Exception):
+    """A tool subprocess did not finish inside its timeout."""
+
+
+def run_tool_command(command, timeout):
+    """Run a tool subprocess with a timeout; raise ToolTimeout when it does not finish."""
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise ToolTimeout(f"the tool did not finish within {timeout:g} s") from exc
+
+
 def start_recap(command, workspace, source, options, notebook=None):
     """Spawn the recap in the background, record ``.run.json`` and return the pid."""
     workspace.mkdir(parents=True, exist_ok=True)
@@ -3653,7 +3665,7 @@ def start_recap(command, workspace, source, options, notebook=None):
         "options": options,
         "command": command,
     }
-    (workspace / ".run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    write_text_atomic(workspace / ".run.json", json.dumps(record, indent=2) + "\n")
     threading.Thread(
         target=_reap_recap, args=(handle, workspace, notebook), daemon=True
     ).start()
@@ -3863,6 +3875,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             if not marker.is_file():
                 raise UploadError(409, "no recorded source for this project")
             data = json.loads(marker.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise UploadError(409, "unreadable .run.json")
             source = Path(data.get("source") or "")
             if not source.is_dir():
                 raise UploadError(409, "recorded source is gone")
@@ -3875,7 +3889,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if fields.get("approved"):
             try:
-                append_feedback_action(workspace, "approved", **fields)
+                append_feedback_action(workspace, "approved", fields.get("feedback") or "")
             except OSError:
                 pass
         self._start_for(fields, source, project, reedit=True)
@@ -3915,9 +3929,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             "--json",
         ]
         version = (fields.get("version") or "").strip()
-        if VERSION_RE.match(version):
+        if valid_version(version):
             command += ["--version", version]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        result = self.run_tool(command, FEEDBACK_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the director could not answer"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
@@ -3948,7 +3964,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 pass
         location = f"/{project}/?tab=director"
-        if VERSION_RE.match(version):
+        if valid_version(version):
             location += f"&v={int(version.lstrip('v'))}"
         self.send_redirect(location + "#chat-latest")
 
@@ -3965,7 +3981,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         version = (fields.get("version") or "").strip()
         target = workspace / "versions" / version
-        if not (VERSION_RE.match(version) and target.is_dir()):
+        if not (valid_version(version) and target.is_dir()):
             target = workspace
             version = ""
         facts = facts_from_fields(fields)
@@ -3978,7 +3994,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             "--force",
             "--json",
         ]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        result = self.run_tool(command, META_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the title could not be rewritten"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
@@ -4019,9 +4037,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
                    "--workspace", str(workspace), "--json", *extra]
         version = fields.get("version") or ""
-        if re.fullmatch(r"v\d+", version):
+        if valid_version(version):
             command += ["--version", version]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        result = self.run_tool(command, EDIT_DROP_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
@@ -4139,7 +4159,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             "--remove", lesson_id,
             "--json",
         ]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        result = self.run_tool(command, NOTEBOOK_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the lesson could not be removed"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
@@ -4159,7 +4181,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         marker = workspace / ".run.json"
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
-            source = Path(data.get("source") or "")
+            source = Path(data.get("source") or "") if isinstance(data, dict) else None
         except (OSError, ValueError):
             source = None
         try:
@@ -4189,7 +4211,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(exc.status, exc.message)
             return
         version = (fields.get("version") or "").strip()
-        if not VERSION_RE.fullmatch(version):
+        if not valid_version(version):
             self.send_error_text(400, "invalid version")
             return
         versions = list_versions(workspace)
@@ -4400,6 +4422,14 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         self.send_redirect(f"/{folder}/")
 
+    def run_tool(self, command, timeout):
+        """Run a tool subprocess; a timeout is a 504 with plain text."""
+        try:
+            return run_tool_command(command, timeout)
+        except ToolTimeout as exc:
+            self.send_error_text(504, str(exc))
+            return None
+
     def send_error_text(self, status, message):
         body = (message + "\n").encode("utf-8")
         self.send_response(status)
@@ -4586,7 +4616,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.send_file(target, send_body)
             return
-        if len(segments) == 4 and segments[1] == "versions" and VERSION_RE.match(segments[2]):
+        if len(segments) == 4 and segments[1] == "versions" and valid_version(segments[2]):
             artifact = segments[3]
             part = ARTIFACT_FEATURES.get(artifact)
             if part is not None and not feature_on(features, part):
@@ -4605,7 +4635,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if (
             len(segments) == 5
             and segments[1] == "versions"
-            and VERSION_RE.match(segments[2])
+            and valid_version(segments[2])
             and segments[3] == "thumbs"
         ):
             self.handle_thumb(root / segments[0] / "versions" / segments[2], segments[4], send_body)

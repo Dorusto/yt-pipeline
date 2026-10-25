@@ -968,6 +968,7 @@ def keep_version(ctx, entries, failed_name):
         "speed_ramp": ctx.speed_ramp,
         "status": "failed" if failed_name else "done",
         "failed_at": failed_name,
+        "cost_usd": round(sum(entry["llm_cost_usd"] for entry in entries), 8),
     }
     try:
         directory = versions.snapshot(ctx.workspace, meta)

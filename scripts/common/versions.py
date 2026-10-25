@@ -12,11 +12,13 @@ is left out.
 
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
 
 VERSIONS_DIR = "versions"
+VERSION_NAME_RE = re.compile(r"v\d{1,4}")
 META_NAME = "version.json"
 EDIT_NAME = "edit.json"
 THUMBS_DIR = "thumbs"
@@ -48,6 +50,11 @@ def thumbs_are_fresh(thumbs_dir, recap, shots):
     return True
 
 
+def valid_version(name):
+    """True when ``name`` is a version folder name (``v`` and 1-4 digits), nothing else."""
+    return isinstance(name, str) and VERSION_NAME_RE.fullmatch(name) is not None
+
+
 def version_dirs(workspace):
     """The version folders of ``workspace``, oldest first."""
     root = Path(workspace) / VERSIONS_DIR
@@ -55,7 +62,7 @@ def version_dirs(workspace):
         return []
     found = []
     for child in root.iterdir():
-        if child.is_dir() and child.name.startswith("v") and child.name[1:].isdigit():
+        if child.is_dir() and valid_version(child.name):
             found.append(child)
     return sorted(found, key=lambda path: int(path.name[1:]))
 

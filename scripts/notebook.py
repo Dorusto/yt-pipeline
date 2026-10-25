@@ -30,7 +30,10 @@ import json
 import re
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+from filelock import FileLock
 
 from common.channel import CHANNEL_FIXED_PARTS
 from common.config import ConfigError, load_config, no_notebook_message, notebook_path
@@ -175,15 +178,27 @@ def make_lesson(lesson_id, text, kind="lesson", part=None):
     return lesson
 
 
-def remove_lessons(lessons, ids):
-    """Remove each id from ``lessons``; return the removed ids, or raise on an unknown id."""
+def remove_ids(lessons, waiting, ids, strict):
+    """Remove each id from ``lessons`` or ``waiting``; return the removed ids.
+
+    With ``strict`` an unknown id raises a usage error; otherwise it prints a
+    ``[warn]`` line and is skipped.
+    """
     removed = []
     for lesson_id in ids:
         index = find_index(lessons, lesson_id)
-        if index is None:
+        if index is not None:
+            lessons.pop(index)
+            removed.append(lesson_id)
+            continue
+        waiting_index = find_index(waiting, lesson_id)
+        if waiting_index is not None:
+            waiting.pop(waiting_index)
+            removed.append(lesson_id)
+            continue
+        if strict:
             raise NotebookError(f"unknown lesson id: {lesson_id}")
-        lessons.pop(index)
-        removed.append(lesson_id)
+        print(f"[warn] unknown lesson id in remove: {lesson_id}", file=sys.stderr)
     return removed
 
 
@@ -194,7 +209,7 @@ def merge_lessons(lessons, waiting, ids, text):
     for lesson_id in ids:
         if find_index(lessons, lesson_id) is None:
             raise NotebookError(f"unknown lesson id: {lesson_id}")
-    removed = remove_lessons(lessons, ids)
+    removed = remove_ids(lessons, waiting, ids, strict=True)
     new_id = next_notebook_id(lessons, waiting)
     lessons.append(make_lesson(new_id, text))
     return removed, new_id
@@ -222,17 +237,7 @@ def apply_command(args, lessons, waiting):
             changed["added"].append(lesson_id)
         return changed
     if args.remove:
-        for lesson_id in args.remove:
-            index = find_index(lessons, lesson_id)
-            if index is not None:
-                lessons.pop(index)
-                changed["removed"].append(lesson_id)
-                continue
-            waiting_index = find_index(waiting, lesson_id)
-            if waiting_index is None:
-                raise NotebookError(f"unknown lesson id: {lesson_id}")
-            waiting.pop(waiting_index)
-            changed["removed"].append(lesson_id)
+        changed["removed"].extend(remove_ids(lessons, waiting, args.remove, strict=True))
         return changed
     if args.merge is not None:
         if args.text is None:
@@ -255,22 +260,22 @@ def apply_command(args, lessons, waiting):
     return changed
 
 
-def read_lessons(path):
-    """The notebook's lessons; a missing file is empty, a bad one is a usage error."""
-    if not path.exists():
-        return []
-    if load_notebook(path) is None:
-        raise NotebookError(f"notebook is not valid JSON: {path}")
-    return notebook_lessons(path)
+@contextmanager
+def notebook_lock(path):
+    """Hold an exclusive cross-process lock on a sidecar lock file for one notebook."""
+    lock = Path(path).with_name(Path(path).name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(lock)):
+        yield
 
 
-def read_waiting(path):
-    """The notebook's waiting lessons; a missing file is empty, a bad one is a usage error."""
+def read_notebook(path):
+    """The notebook's ``(lessons, waiting)``; a missing file is empty, a bad one is a usage error."""
     if not path.exists():
-        return []
+        return [], []
     if load_notebook(path) is None:
         raise NotebookError(f"notebook is not valid JSON: {path}")
-    return notebook_waiting(path)
+    return notebook_lessons(path), notebook_waiting(path)
 
 
 def build_document(lessons, waiting):
@@ -440,8 +445,7 @@ def learn(workspace, notebook, limit):
     workspace_path = Path(workspace).expanduser()
     if not workspace_path.is_dir():
         raise NotebookError(f"workspace is not a directory: {workspace_path}")
-    lessons = notebook_lessons(path)
-    waiting = notebook_waiting(path)
+    lessons, waiting = read_notebook(path)
     count_on_disk = len(lessons)
     waiting_on_disk = len(waiting)
     marker = read_learn_marker(workspace_path)
@@ -491,70 +495,59 @@ def learn(workspace, notebook, limit):
     client = make_client(load_config(), ledger_path=notebook_ledger_path(path))
     response = client.complete_json("metadata", [{"role": "user", "content": message}])
     llm_cost = response.cost_usd
-    new_lessons, remove_ids = normalize_learn_answer(response.data, max_new, workspace_path.name)
-    removed = []
-    for lesson_id in remove_ids:
-        index = find_index(lessons, lesson_id)
-        if index is None:
-            print(f"[warn] unknown lesson id in remove: {lesson_id}", file=sys.stderr)
-            continue
-        lessons.pop(index)
-        removed.append(lesson_id)
-    added = []
-    for lesson in new_lessons:
-        lesson_id = next_notebook_id(lessons, waiting)
-        lessons.append(
-            make_lesson(lesson_id, lesson["text"], kind=lesson["kind"], part=lesson["part"])
-        )
-        added.append(lesson_id)
-    if len(lessons) > limit:
-        merge_prompt = read_merge_prompt()
-        merge_message = build_merge_message(merge_prompt, lessons, limit)
-        merge_response = client.complete_json(
-            "metadata", [{"role": "user", "content": merge_message}]
-        )
-        llm_cost += merge_response.cost_usd
-        merges, merge_remove = normalize_merge_answer(merge_response.data)
-        for lesson_id in merge_remove:
-            index = find_index(lessons, lesson_id)
-            if index is None:
-                print(f"[warn] unknown lesson id in remove: {lesson_id}", file=sys.stderr)
-                continue
-            lessons.pop(index)
-            removed.append(lesson_id)
-        for merge in merges:
-            known = [
-                lesson_id
-                for lesson_id in merge["ids"]
-                if find_index(lessons, lesson_id) is not None
-            ]
-            if len(known) < 2:
-                print(
-                    f"[warn] skipping a merge with fewer than 2 known ids: {merge['ids']}",
-                    file=sys.stderr,
-                )
-                continue
-            merge_removed, new_id = merge_lessons(lessons, waiting, known, merge["text"])
-            removed.extend(merge_removed)
-            added.append(new_id)
-    if len(lessons) > limit:
-        room = MAX_WAITING - len(waiting)
-        move_count = min(len(lessons) - limit, max(0, room))
-        if move_count > 0:
-            overflow = sorted(lessons, key=lesson_id_number, reverse=True)[:move_count]
-            overflow_ids = {lesson.get("id") for lesson in overflow}
-            waiting.extend(overflow)
-            waiting.sort(key=lesson_id_number)
-            lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in overflow_ids]
-    promote_waiting(lessons, waiting, limit)
-    present = {lesson.get("id") for lesson in lessons}
-    added = [lesson_id for lesson_id in added if lesson_id in present]
-    document = build_document(lessons, waiting)
-    validate_or_raise(document, "notebook")
-    try:
-        write_json(path, document)
-    except OSError as exc:
-        raise NotebookRuntimeError(f"could not write {path}: {exc}") from exc
+    new_lessons, model_remove = normalize_learn_answer(response.data, max_new, workspace_path.name)
+    with notebook_lock(path):
+        lessons, waiting = read_notebook(path)
+        removed = remove_ids(lessons, waiting, model_remove, strict=False)
+        added = []
+        for lesson in new_lessons:
+            lesson_id = next_notebook_id(lessons, waiting)
+            lessons.append(
+                make_lesson(lesson_id, lesson["text"], kind=lesson["kind"], part=lesson["part"])
+            )
+            added.append(lesson_id)
+        if len(lessons) > limit:
+            merge_prompt = read_merge_prompt()
+            merge_message = build_merge_message(merge_prompt, lessons, limit)
+            merge_response = client.complete_json(
+                "metadata", [{"role": "user", "content": merge_message}]
+            )
+            llm_cost += merge_response.cost_usd
+            merges, merge_remove = normalize_merge_answer(merge_response.data)
+            removed.extend(remove_ids(lessons, waiting, merge_remove, strict=False))
+            for merge in merges:
+                known = [
+                    lesson_id
+                    for lesson_id in merge["ids"]
+                    if find_index(lessons, lesson_id) is not None
+                ]
+                if len(known) < 2:
+                    print(
+                        f"[warn] skipping a merge with fewer than 2 known ids: {merge['ids']}",
+                        file=sys.stderr,
+                    )
+                    continue
+                merge_removed, new_id = merge_lessons(lessons, waiting, known, merge["text"])
+                removed.extend(merge_removed)
+                added.append(new_id)
+        if len(lessons) > limit:
+            room = MAX_WAITING - len(waiting)
+            move_count = min(len(lessons) - limit, max(0, room))
+            if move_count > 0:
+                overflow = sorted(lessons, key=lesson_id_number, reverse=True)[:move_count]
+                overflow_ids = {lesson.get("id") for lesson in overflow}
+                waiting.extend(overflow)
+                waiting.sort(key=lesson_id_number)
+                lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in overflow_ids]
+        promote_waiting(lessons, waiting, limit)
+        present = {lesson.get("id") for lesson in lessons}
+        added = [lesson_id for lesson_id in added if lesson_id in present]
+        document = build_document(lessons, waiting)
+        validate_or_raise(document, "notebook")
+        try:
+            write_json(path, document)
+        except OSError as exc:
+            raise NotebookRuntimeError(f"could not write {path}: {exc}") from exc
     try:
         write_learn_marker(workspace_path)
     except OSError as exc:
@@ -625,22 +618,22 @@ def main(argv=None):
         path = notebook_path(args.notebook)
         if path is None:
             raise NotebookError(no_notebook_message("--notebook"))
-        lessons = read_lessons(path)
-        waiting = read_waiting(path)
-        changed = apply_command(args, lessons, waiting)
-        if len(lessons) > args.limit:
-            raise NotebookError(
-                f"notebook is full ({args.limit} lessons): merge overlapping lessons "
-                "or remove stale ones first, then retry"
-            )
-        if not args.list:
-            changed["promoted"] = promote_waiting(lessons, waiting, args.limit)
-            document = build_document(lessons, waiting)
-            validate_or_raise(document, "notebook")
-            try:
-                write_json(path, document)
-            except OSError as exc:
-                raise NotebookRuntimeError(f"could not write {path}: {exc}") from exc
+        with notebook_lock(path):
+            lessons, waiting = read_notebook(path)
+            changed = apply_command(args, lessons, waiting)
+            if len(lessons) > args.limit:
+                raise NotebookError(
+                    f"notebook is full ({args.limit} lessons): merge overlapping lessons "
+                    "or remove stale ones first, then retry"
+                )
+            if not args.list:
+                changed["promoted"] = promote_waiting(lessons, waiting, args.limit)
+                document = build_document(lessons, waiting)
+                validate_or_raise(document, "notebook")
+                try:
+                    write_json(path, document)
+                except OSError as exc:
+                    raise NotebookRuntimeError(f"could not write {path}: {exc}") from exc
         summary = {
             "ok": True,
             "notebook": str(path),
