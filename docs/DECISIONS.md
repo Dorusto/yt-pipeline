@@ -3307,3 +3307,33 @@ the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
 `schemas/notebook.schema.json` (the marker lives in the workspace), no shared
 notebook between instances and no new web route or UI control.
 
+## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
+
+**Context:** The friend's Costs page fetched the owner instance's `/costs.json`
+and showed the owner's project totals as voluntary costs and the owner's donation
+list, which read as the owner's ledger on a friend's page. The owner decided a
+friend's page shows only that instance's own costs.
+
+**Options:** (A) keep fetching and showing the owner's totals and donations;
+(B) show only the friend's own model cost, limits, clips and requests, with one
+line that anything paid above the model cost goes into building the app further.
+
+**Decision:** B. `render_costs`'s friend branch (still marked by
+`costs.project_totals_url`) no longer fetches the owner's totals: it keeps the
+donation buttons, `instance_due_block`, the limits box and the per-clip table
+("Model cost of your clips"), adds the line "Anything you pay above your model
+cost goes into building the app further." and drops the owner's project totals
+and the donations list. `totals_rows` loses the `voluntary` parameter.
+`project_totals()`/`fetch_project_totals()` and their cache are removed; the
+owner's `GET /costs.json` route stays (the owner's side is unchanged). The UI
+label "New recap" becomes "New video" (top menu, page title, h1, the
+projects-page link, the mockup image); the `/upload` URL and the word "recap" in
+code stay.
+
+**Why not A:** the owner decided a friend's page shows only its own costs; the
+owner's ledger on a friend's page is confusing.
+
+**Consequence:** `costs.project_totals_url` is kept as the friend-instance marker
+(its help and the docs say so); RULES, the user guide, the pilot-host guide and
+`config.yaml.example` are updated; no schema change and no new tool.
+

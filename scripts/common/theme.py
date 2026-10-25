@@ -199,6 +199,7 @@ font-size:clamp(3.4rem,14vw,5.6rem);line-height:.95}
 .clip-costs .cost{text-align:right;padding-right:0}
 .cost-lines .why{display:block;color:var(--muted);font-size:var(--fs-xs);font-weight:400;margin-top:2px}
 .cost-lines tfoot th,.cost-lines tfoot td{font-weight:700;font-size:var(--fs-m);border-bottom:0}
+.costs-note{color:var(--muted);max-width:60ch;margin:var(--sp-3) 0 0}
 .donation-list{list-style:none;margin:0;padding:0}
 .donation-list li{display:grid;grid-template-columns:auto 1fr auto;gap:var(--sp-3);padding:var(--sp-3) 0;
 border-bottom:1px solid var(--line);font-size:var(--fs-s)}

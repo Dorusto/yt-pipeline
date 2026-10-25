@@ -100,7 +100,6 @@ DEFAULT_MAX_TOTAL_MB = 20480
 UPLOAD_CHUNK = 65536
 STORAGE_WARN_RATIO = 0.8
 CREDIT_CACHE_SECONDS = 600
-TOTALS_CACHE_SECONDS = 600
 FAILURE_CACHE_SECONDS = 120
 HTTP_TIMEOUT_SECONDS = 3
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
@@ -582,7 +581,8 @@ def build_parser():
     parser.add_argument(
         "--project-totals-url",
         default=None,
-        help="URL of the owner instance's /costs.json, shown on the Costs page as the project's own costs "
+        help="the owner instance's /costs.json URL; set on a friend's instance to mark it as one — "
+             "its Costs page then shows only its own costs "
              "(or YT_PIPELINE_PROJECT_TOTALS_URL, or costs.project_totals_url in the config)",
     )
     parser.add_argument(
@@ -876,55 +876,13 @@ def credit_warning(server):
     )
 
 
-def fetch_project_totals(url, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
-    """GET the owner instance's /costs.json; return the totals dict or raise."""
-    opener = opener or urllib.request.urlopen
-    with opener(url, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    if not isinstance(data, dict) or not isinstance(data.get("balance_usd"), (int, float)):
-        raise ValueError("project totals must be a JSON object with a numeric balance_usd")
-    return data
-
-
-_totals_cache = {"at": 0.0, "url": None, "value": None, "failed_at": 0.0}
-
-
-def project_totals(url, now=None, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
-    """Cached project totals from the owner instance, or None when unavailable."""
-    now = time.monotonic() if now is None else now
-    if (
-        _totals_cache["url"] == url
-        and _totals_cache["value"] is not None
-        and now - _totals_cache["at"] < TOTALS_CACHE_SECONDS
-    ):
-        return _totals_cache["value"]
-    if (
-        _totals_cache["url"] == url
-        and _totals_cache["value"] is None
-        and now - _totals_cache["failed_at"] < FAILURE_CACHE_SECONDS
-    ):
-        return None
-    try:
-        value = fetch_project_totals(url, timeout=timeout, opener=opener)
-    except (OSError, ValueError, KeyError):
-        value = None
-    _totals_cache["at"] = now
-    _totals_cache["url"] = url
-    _totals_cache["value"] = value
-    _totals_cache["failed_at"] = now if value is None else 0.0
-    return value
-
-
 def signed_cost(usd):
     """A cost with a real minus sign in front of the dollar sign."""
     return ("\u2212" if usd < 0 else "") + format_cost(abs(usd))
 
 
-def totals_rows(totals, fixed_notes=(), voluntary=False):
-    """The ledger totals: the balance as the headline, then what the project has cost, line by line.
-
-    With `voluntary` (a friend's instance) only the cost lines are shown, small, as the owner's costs anyone may help with.
-    """
+def totals_rows(totals, fixed_notes=()):
+    """The ledger totals: the balance as the headline, then what the project has cost, line by line."""
     balance = totals["balance_usd"]
     state = "plus" if balance >= 0 else "minus"
     by_kind = totals.get("by_kind") or {}
@@ -952,16 +910,6 @@ def totals_rows(totals, fixed_notes=(), voluntary=False):
         for name, value, why in lines
     )
     total = totals.get("total_cost_usd", api + totals.get("fixed_total_usd", 0.0))
-    if voluntary:
-        return (
-            '<section class="voluntary"><h2>The project\'s own costs</h2>'
-            "<p>Voluntary. Building and running the app costs the owner this much so far; "
-            "anything you give beyond your own model cost goes to developing the project.</p>"
-            '<table class="clip-costs cost-lines"><caption>What the project has cost</caption>'
-            f"<tbody>{rows}</tbody>"
-            f'<tfoot><tr><th scope="row">Total</th><td class="num cost">{format_cost(total)}</td></tr></tfoot>'
-            "</table></section>"
-        )
     return (
         f'<div class="balance {state}">'
         f'<span class="balance-label">Balance</span>'
@@ -1303,7 +1251,7 @@ def render_page(title, body, active=None, script="", refresh=None, features=None
     nav = []
     for key, href, label in (
         ("projects", "/", "Projects"),
-        ("upload", "/upload", "New recap"),
+        ("upload", "/upload", "New video"),
         ("costs", "/costs", "Costs"),
     ):
         if key != "projects" and not feature_on(features, key):
@@ -1397,7 +1345,7 @@ def render_index(entries, features=None, brand_logo=DEFAULT_BRAND_LOGO):
         body = f'<ul class="projects">{"".join(rows)}</ul>'
     else:
         body = ('<p class="empty">No projects yet. Start one from '
-                '<a href="/upload">New recap</a>.</p>')
+                '<a href="/upload">New video</a>.</p>')
     return render_page(
         "Projects",
         f'<h1>Projects</h1><p class="lede">Every folder you sent, newest first.</p>{body}',
@@ -1491,8 +1439,8 @@ def render_costs(server, thanks=False):
     else:
         request_form = '<p class="empty">Requests are not set up.</p>'
 
-    # A friend's instance shows the shared project costs and donations from the
-    # owner's instance, and only its own projects in the per-clip table.
+    # A friend's instance shows only its own model cost to cover, its limits and
+    # its own clips; the owner's project totals and donations are not fetched.
     parts = []
     limits = f"{storage_line(server)}{credit_line(server)}"
     limits_box = f"<div class=limits>{limits}</div>" if limits else ""
@@ -1504,15 +1452,13 @@ def render_costs(server, thanks=False):
         parts.append(donation)
         parts.append(instance_due_block(spent, instance_paid(server.ledger), limit_usd))
         parts.append(limits_box)
-        fetched = project_totals(server.project_totals_url)
-        if fetched is None:
-            parts.append('<p class="empty">Project costs are unavailable.</p>')
-            donation_entries = None
-        else:
-            parts.append(totals_rows(fetched, fetched.get("fixed_notes") or (), voluntary=True))
-            donation_entries = fetched.get("donations") or []
         parts.append(per_clip.replace("Model cost per clip", "Model cost of your clips"))
-        lede = "What your edits cost in AI models, and how to help with the rest."
+        parts.append(
+            '<p class="costs-note">Anything you pay above your model cost goes into '
+            "building the app further.</p>"
+        )
+        donation_entries = None
+        lede = "What your edits cost in AI models."
     else:
         parts.append("".join(ledger_parts) + owner_time_block(owner_time()) + per_clip)
         parts.append(limits_box)
@@ -2710,7 +2656,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         )
         start_disabled = " disabled"
     body = (
-        "<h1>New recap</h1>"
+        "<h1>New video</h1>"
         '<p class="lede">Add the clips of one day, say what you want, and start.</p>'
         '<form class="upload-form" method="post" action="/upload" enctype="multipart/form-data">'
         f"{drop}"
@@ -2729,7 +2675,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         '<p class="upload-status" aria-live="polite"></p></div>'
         "</form>"
     )
-    return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
+    return render_page("New video", f"<style>{DROP_STYLE}</style>{body}", active="upload",
                        script=page_script(LENGTH_SCRIPT, DROP_SCRIPT, UPLOAD_PROGRESS_SCRIPT,
                                           BRIEF_HINTS_SCRIPT, CONSENT_SCRIPT),
                        features=features, brand_logo=brand_logo)

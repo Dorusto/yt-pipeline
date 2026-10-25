@@ -23,7 +23,6 @@ from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 def _no_network(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     serve._credit_cache.update({"at": 0.0, "value": None, "failed_at": 0.0})
-    serve._totals_cache.update({"at": 0.0, "url": None, "value": None, "failed_at": 0.0})
 
 
 def make_root(tmp_path):
@@ -2624,17 +2623,6 @@ def test_fetch_model_credit_parses_the_key_endpoint():
     assert no_limit["remaining"] is None
 
 
-def test_fetch_project_totals_parses_the_json():
-    payload = {"balance_usd": 12.5, "monthly_running_usd": 3.0}
-    assert serve.fetch_project_totals(
-        "https://example.org/costs.json", opener=fake_opener(payload)
-    ) == payload
-    with pytest.raises(ValueError):
-        serve.fetch_project_totals(
-            "https://example.org/costs.json", opener=fake_opener({"nope": 1})
-        )
-
-
 def test_costs_page_shows_storage_and_credit(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
@@ -2808,15 +2796,8 @@ def test_costs_json_without_a_ledger_is_404(tmp_path):
         server.server_close()
 
 
-def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
+def test_friend_costs_page_shows_only_its_own_costs(tmp_path, monkeypatch):
     root = make_root(tmp_path)
-    totals = {
-        "balance_usd": 7.5,
-        "monthly_running_usd": 3.0,
-        "development_total_usd": 2.0,
-        "donations_usd": 10.0,
-    }
-    monkeypatch.setattr(serve, "fetch_project_totals", lambda *a, **k: totals)
     server = start_server(root, project_totals_url="https://example.org/costs.json")
     try:
         status, _, body = request(server, "GET", "/costs")
@@ -2824,28 +2805,12 @@ def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
         assert status == 200
         assert "Model cost of your clips" in page
         assert "Your model cost to cover" in page
-        assert "The project's own costs" in page
-        assert "$2,00" in page
-        assert page.index("Your model cost to cover") < page.index("The project's own costs")
+        assert "What your edits cost in AI models." in page
+        assert "Anything you pay above your model cost goes into building the app further." in page
+        assert "The project's own costs" not in page
+        assert "Project costs are unavailable." not in page
         assert "Donations minus everything" not in page
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_costs_page_project_totals_unavailable(tmp_path, monkeypatch):
-    root = make_root(tmp_path)
-
-    def boom(*a, **k):
-        raise OSError("no network")
-
-    monkeypatch.setattr(serve, "fetch_project_totals", boom)
-    server = start_server(root, project_totals_url="https://example.org/costs.json")
-    try:
-        status, _, body = request(server, "GET", "/costs")
-        page = body.decode()
-        assert status == 200
-        assert "Project costs are unavailable." in page
+        assert "<h2>Donations</h2>" not in page
     finally:
         server.shutdown()
         server.server_close()
@@ -2916,6 +2881,35 @@ def test_upload_page_shows_the_consent_checkbox(tmp_path):
         assert b"I own this footage." in body
         assert b'name="consent"' in body
         assert b"required" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_menu_shows_new_video(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        page = body.decode()
+        assert status == 200
+        assert ">New video</a>" in page
+        assert "New recap" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_is_titled_new_video(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "<h1>New video</h1>" in page
+        assert "<title>New video</title>" in page
+        assert "New recap" not in page
     finally:
         server.shutdown()
         server.server_close()
@@ -3898,23 +3892,9 @@ def test_credit_failure_is_cached_for_two_minutes(monkeypatch):
     assert len(calls) == 2
 
 
-def test_totals_failure_is_cached_for_two_minutes(monkeypatch):
-    calls = []
-
-    def boom(*args, **kwargs):
-        calls.append(1)
-        raise OSError("down")
-
-    monkeypatch.setattr(serve, "fetch_project_totals", boom)
-    assert serve.project_totals("http://x/costs.json", now=1000.0) is None
-    assert serve.project_totals("http://x/costs.json", now=1001.0) is None
-    assert len(calls) == 1
-
-
 def test_http_timeout_is_three_seconds():
     assert serve.HTTP_TIMEOUT_SECONDS == 3
     assert serve.fetch_model_credit.__defaults__[0] == 3
-    assert serve.fetch_project_totals.__defaults__[0] == 3
 
 
 def test_reedit_form_carries_the_shown_version():

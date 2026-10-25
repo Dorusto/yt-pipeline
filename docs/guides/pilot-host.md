@@ -134,11 +134,11 @@ of each instance shows that instance's own spend.
 The owner's instance serves `GET /costs.json` (the totals from
 `compute_totals`, the fixed-cost notes and the donation list; no requests). An
 instance with `costs.project_totals_url` (`--project-totals-url`, else
-`YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it. Its Costs page
-shows, in order: the donation buttons, the person's own model cost to cover (the
+`YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) is a friend instance: its
+Costs page shows the donation buttons, the person's own model cost to cover (the
 key usage minus the donations recorded in that instance's ledger, red while some
-is open), the project's costs as voluntary, their clips and the donation list. A
-failed fetch shows the project part as unavailable. Record a payment from that
+is open), its limits, its own clips and one line saying anything paid above the
+model cost goes into building the app further. Record a payment from that
 person on their container with `costs.py add --kind donation`.
 
 ## Reaching the app over Tailscale

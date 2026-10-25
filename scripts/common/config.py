@@ -634,8 +634,9 @@ def credit_warn_usd(config=None):
 def project_totals_url(cli_value=None, config=None):
     """The project totals URL: CLI flag, else PROJECT_TOTALS_URL_ENV, else costs.project_totals_url.
 
-    Returns None when none of the three is set — the page then shows only this
-    instance. There is no personal default.
+    Setting it marks a friend's instance: its Costs page shows only its own
+    costs and no longer fetches the owner's totals. Returns None when none of
+    the three is set. There is no personal default.
     """
     if cli_value:
         return cli_value
