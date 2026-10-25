@@ -44,7 +44,7 @@ for the rules that depend on review alone (no program can check them).
 | Defaults and thresholds — scene activity band and events | `tests/test_motion.py` |
 | Defaults and thresholds — accidental run rule | `tests/test_quality.py` |
 | Defaults and thresholds — quality segments head/tail and slivers | `tests/test_quality.py` |
-| Defaults and thresholds — shotlog score formula | `tests/test_index.py` |
+| Defaults and thresholds — shotlog score formula | `tests/test_index.py`, `tests/test_common_scoring.py` |
 | Defaults and thresholds — whip and faces | `tests/test_quality.py`, `tests/test_index.py`, `tests/test_director.py` |
 | Defaults and thresholds — confident skip roles are ineligible | `tests/test_index.py` |
 | Defaults and thresholds — similarity backend and threshold | `tests/test_similarity.py` |
