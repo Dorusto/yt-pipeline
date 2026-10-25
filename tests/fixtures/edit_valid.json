@@ -11,17 +11,17 @@
   "sources": [
     {
       "file": "dji_mimo_20261012_134720_0083_1791817176821_video.mp4",
-      "path": "/root/media/yt-test/proxy/dji_mimo_20261012_134720_0083_1791817176821_video.mp4",
+      "path": "/path/to/project/proxy/dji_mimo_20261012_134720_0083_1791817176821_video.mp4",
       "duration_s": 38.76
     },
     {
       "file": "dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
-      "path": "/root/media/yt-test/proxy/dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
+      "path": "/path/to/project/proxy/dji_mimo_20261012_141906_0091_1791817158650_video.mp4",
       "duration_s": 15.56
     },
     {
       "file": "dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
-      "path": "/root/media/yt-test/proxy/dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
+      "path": "/path/to/project/proxy/dji_mimo_20261012_120102_0068_1791817288111_photo.jpg",
       "duration_s": null,
       "media_type": "photo"
     }

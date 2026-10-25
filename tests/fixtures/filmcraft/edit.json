@@ -93,7 +93,7 @@
       "id": "g1",
       "template": "lower_third",
       "props": {
-        "name": "Doru",
+        "name": "Host",
         "role": "creator"
       },
       "slot": "v1"
