@@ -20,6 +20,11 @@ def is_deliberate_move(label):
     return label in DELIBERATE_MOVE_LABELS
 
 
+def is_deliberate_shot(motion_label, semantic_motion):
+    """True when a shot's move is deliberate: a deliberate camera move or a semantic orbit."""
+    return is_deliberate_move(motion_label) or semantic_motion == "orbit"
+
+
 def is_whip_short_hold(segment):
     """True when the segment carries the whip short-hold mark."""
     return bool(segment) and segment.get("whip") == "short_hold"

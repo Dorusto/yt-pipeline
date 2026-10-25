@@ -41,7 +41,7 @@ from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
 from common.html import open_state_script
-from common.intent import is_deliberate_move
+from common.intent import is_deliberate_shot
 from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
@@ -299,7 +299,7 @@ def _build_shot(
     defects = list(segment.get("defects") or [])
     eligible = _is_eligible(role, uncertainty)
     semantic_motion = vision.get("semantic_motion") if vision else None
-    deliberate = is_deliberate_move(motion_label) or semantic_motion == "orbit"
+    deliberate = is_deliberate_shot(motion_label, semantic_motion)
     labels = label_score(role, confidence, steadiness, defects, segment.get("whip"), deliberate)
     vision_score = _vision_score(vision)
     if eligible:

@@ -234,7 +234,10 @@ finished recap, the explanation and the contact sheet.
   button until the owner sends another message. When the director cannot do what
   the user asked, it says so in plain words (what it can do instead) and the
   request is noted in the requests file as a missing tool (`type: missing_tool`),
-  so the owner sees which tools the director needs next. The director's reasoning
+  so the owner sees which tools the director needs next. The chat shows the last
+  3 exchanges; older ones sit in a closed **Earlier messages (N)** section above
+  them, and the message box and the approve/disabled button sit directly under
+  the newest exchange. The director's reasoning
   effort — how much hidden reasoning the model spends on every call — comes from
   `--reasoning-effort` (`low`, `medium`, `high` or `off`), else
   `director.reasoning_effort` in the config, else `medium`. From the command line:
@@ -242,7 +245,9 @@ finished recap, the explanation and the contact sheet.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
   (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is
   going the page shows the last finished version, the step it is on, and
-  refreshes by itself; a failed run says where it failed and why. A version that
+  refreshes by itself; a failed run says where it failed and why. A **Stop**
+  button on the progress card stops the run and its child processes and leaves
+  the previous version as the current one. A version that
   is neither the latest nor the first shows a **Delete this version** button; it
   asks once ("Delete version N? Its video and files are removed for good."),
   removes that version's folder for good and returns to the latest version. The

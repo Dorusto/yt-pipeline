@@ -10,7 +10,7 @@ Code plugins in one marketplace (`yt-director`, `yt-publish`, `yt-shorts`,
 `yt-editor`, `yt-admin`), each installable alone; every plugin also brings typed
 MCP tools. A host agent can direct the edit on its own subscription with no
 OpenRouter key (`--prepare` and `--apply`). In the web app the director now has a
-chat in the Recap tab, where the reviewer's objections appear in plain words; the
+chat in the **Director** tab, where the reviewer's objections appear in plain words; the
 director says honestly what it can and cannot do and logs the tools it is
 missing. The channel's wording and style come from the instance's own settings,
 and the director keeps a small notebook of lessons (at most 40) that it reads

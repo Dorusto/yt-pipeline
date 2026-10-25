@@ -26,7 +26,7 @@ from pathlib import Path
 
 from common.constants import SNAP_MIN_SLOT_S
 from common.decisions import build_decisions
-from common.intent import is_deliberate_move
+from common.intent import is_deliberate_shot
 from common.moves import (
     STAR_MIN_SCORE,
     STAR_SHARE,
@@ -142,6 +142,11 @@ def build_parser():
         help="target length of the closing slots in calm-to-energy (default: from the pacing table)",
     )
     parser.add_argument("--allow-similar", action="store_true", help="let visually similar shots into the same edit (never adjacent)")
+    parser.add_argument(
+        "--keep-shots",
+        default="",
+        help="comma-separated shot keys the owner asked to keep next to each other",
+    )
     parser.add_argument("--xfade-s", type=float, default=0.3, help="crossfade duration for non-first slots")
     parser.add_argument(
         "--beats",
@@ -174,6 +179,11 @@ def build_parser():
 
 def clamp(value, low, high):
     return max(low, min(high, value))
+
+
+def parse_keep_shots(value):
+    """The set of shot keys from a comma-separated ``--keep-shots`` value."""
+    return {key.strip() for key in (value or "").split(",") if key.strip()}
 
 
 def parse_time(value):
@@ -509,7 +519,7 @@ def pacing_bonus(candidate, position):
 
 def score_candidate(candidate, pacing):
     segment = candidate["segment"]
-    deliberate = is_deliberate_move(candidate.get("motion_label")) or candidate.get("semantic_motion") == "orbit"
+    deliberate = is_deliberate_shot(candidate.get("motion_label"), candidate.get("semantic_motion"))
     score = label_score(
         candidate["role"],
         segment.get("confidence", 0.0),
@@ -1715,7 +1725,9 @@ def run(args, started):
     )
     slots = merge_contiguous(slots)
 
-    slots, pointless_dropped = drop_pointless_neighbours(slots, slots_similar)
+    slots, pointless_dropped = drop_pointless_neighbours(
+        slots, slots_similar, keep_keys=parse_keep_shots(args.keep_shots)
+    )
     for slot, reason in pointless_dropped:
         key = slot.get("shot_key") or candidate_key(slot)
         drop_reasons.setdefault(key, reason)

@@ -89,3 +89,24 @@ def test_drop_pointless_neighbours_tie_keeps_the_earlier():
     kept, dropped = neighbours.drop_pointless_neighbours(slots, lambda a, b: False)
     assert [row["shot_key"] for row in kept] == ["0072/s7b1"]
     assert dropped[0][0]["shot_key"] == "0072/s7b2"
+
+
+def test_owner_asked_keys_returns_both_keys_of_a_deliberate_pair():
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1"},
+            {"id": "v2", "shot_key": "0072/s7b2", "deliberate": True},
+        ]
+    }
+    assert neighbours.owner_asked_keys(plan) == {"0072/s7b1", "0072/s7b2"}
+
+
+def test_owner_asked_keys_empty_without_a_deliberate_slot():
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1"},
+            {"id": "v2", "shot_key": "0072/s7b2"},
+        ]
+    }
+    assert neighbours.owner_asked_keys(plan) == set()
+

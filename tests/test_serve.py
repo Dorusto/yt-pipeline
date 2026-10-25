@@ -178,6 +178,74 @@ def test_project_status_ignores_malformed_run_json(tmp_path):
     assert serve.project_status(folder) == "done"
 
 
+def test_project_status_stopped_for_dead_pid_marked_stopped(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(
+        json.dumps({"pid": 2**31 - 1, "stopped": True}), encoding="utf-8"
+    )
+    assert serve.project_status(folder) == "stopped"
+
+
+def test_project_page_shows_the_stop_button_while_running(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
+        assert status == 200
+        page = body.decode()
+        assert 'class="stop-run"' in page
+        assert 'action="/2026-10-14/stop-run"' in page
+        assert ">Stop<" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stop_run_kills_the_group_and_marks_the_run_stopped(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    alive = {"value": True}
+    killed = []
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: alive["value"])
+
+    def fake_terminate(pid):
+        killed.append(pid)
+        alive["value"] = False
+
+    monkeypatch.setattr(serve, "_terminate_group", fake_terminate)
+    server = start_server(root)
+    try:
+        status, headers, _ = request(server, "POST", "/2026-10-14/stop-run")
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert killed == [4242]
+        marker = json.loads((project / ".run.json").read_text(encoding="utf-8"))
+        assert marker["stopped"] is True
+        _, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
+        assert b"Stopped. The previous version is still here." in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stop_run_without_a_run_is_409(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: False)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "POST", "/2026-10-14/stop-run")
+        assert status == 409
+        assert b"nothing is running" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_index_lists_project_with_done_badge(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)

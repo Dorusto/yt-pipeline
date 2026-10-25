@@ -4,6 +4,64 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Stop button, short chat, review follow-ups (V030 lot c25)
+
+**Context:** The owner's phone test of v030 and the reviews of `e61eac0` (c23)
+and `b04e4a0` (c24) filed follow-ups. A running edit could not be stopped from
+the phone. The Director tab's chat grew without bound, so the newest message and
+the input box were far down the page. The one jump-cut rule was written twice in
+`docs/RULES.md` and the two lines contradicted each other ("never back to back,
+even with `--allow-similar`"). An old `feedback.jsonl` line stored `can_do` as a
+bool, which the web app read as `"all"`. The "deliberate move or orbit" check was
+copied inline in three tools.
+
+**Options:** (A) leave the run, the chat, the rule and the old `can_do` form as
+they are; (B) add a Stop button on the progress card, fold the chat to the last
+3 exchanges, merge the two jump-cut bullets into one rule, read the old bool
+`can_do` form, and share the deliberate-shot check.
+
+**Decision:** B, with these parts:
+
+1. `scripts/serve.py` gets `POST /<project>/stop-run` (part of the `recap`
+   feature): `stop_run` terminates the run's whole process group (`SIGTERM`,
+   wait up to 5 s, then `SIGKILL`; `os.killpg` with an `os.kill` fallback) and
+   writes `"stopped": true` into `.run.json`; `project_status` returns
+   `"stopped"` for a dead pid with that flag; the progress card shows a **Stop**
+   button while running and "Stopped. The previous version is still here." after.
+   The version is snapshotted by `recap.py` only at the end of a run, so a stop
+   leaves the previous version and writes nothing half-made into `versions/`.
+2. The Director tab's chat shows the last 3 exchanges; older ones fold under a
+   closed `<details class="chat-earlier">` "Earlier messages (N)" above them, and
+   the input box with Send and the "Make the new version" / disabled "Answer the
+   director first" button sit directly under the newest exchange. No scroll box.
+3. The one jump-cut rule: two neighbouring slots that are beats of the same
+   segment, or a `similar_to` pair, keep only the better one (a tie keeps the
+   earlier), unless the owner explicitly asked for both. The director never marks
+   such a cut `deliberate` by itself; `deliberate` is set only when the owner's
+   feedback asks for both shots next to each other. `scripts/director.py` gains
+   `--keep-shots` and passes it as `keep_keys`; `scripts/llm_director.py` uses
+   `common/neighbours.py` (`drop_pointless_cuts`) instead of its own
+   `drop_jump_cuts` / `weaker_of_pair`.
+4. `normalise_can_do` reads the old bool form: `false` → `"none"`, `true` →
+   `"all"`; the `missing_tool` request line is still written for `"none"`.
+5. `scripts/common/intent.py` gains `is_deliberate_shot`, used by
+   `common/decisions.py`, `director.py` and `index.py`.
+
+**Why not A:** the owner could not stop a run from the phone, the chat pushed the
+input box off the screen, the two rule lines contradicted each other, and the old
+`can_do` form silently promised a version the director had said it could not make.
+
+**Consequence:** files touched — `scripts/serve.py`, `scripts/common/theme.py`,
+`scripts/common/intent.py`, `scripts/common/decisions.py`, `scripts/director.py`,
+`scripts/index.py`, `scripts/common/neighbours.py`, `scripts/llm_director.py`,
+`prompts/screenwriter.md`, `prompts/reviewer.md`, `schemas/shot_plan.schema.json`,
+`docs/RULES.md`, `docs/RELEASES.md`, `docs/guides/shot-grammar.md`,
+`docs/guides/user-guide.md`, `docs/plans/v0.3.0.md`,
+`CHANGELOG.md`, `.claude/skills/yt-recap/SKILL.md`,
+`.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-director/SKILL.md`,
+the tests. No OpenRouter model call in the tests; no real footage or private
+paths.
+
 ## [2026-10-25] Plain requests and no pointless jump cuts (V030 lot c24)
 
 **Context:** The owner's phone test of v030 (after c23) filed three fixes. The
@@ -38,8 +96,9 @@ of every pointless neighbouring pair in both directors.
    is not `"all"`. `scripts/serve.py` logs one `missing_tool` line when `can_do`
    is not `"all"` and replaces the "Make the new version" form with a disabled
    "Answer the director first" button until the owner sends another message.
-3. `previous_edit_context` enriches the used and rejected rows with the shotlog's
-   `summary`, `subject` and `tags`, so the interpret call sees the words the
+3. `previous_edit_context` enriches the used rows with the shotlog's `summary`,
+   `subject` and `tags`, and the rejected rows with `summary` and `subject` (the
+   rejected rows do not carry `tags`), so the interpret call sees the words the
    owner used.
 
 **Why not A:** the owner's phone test showed the director could not act on the

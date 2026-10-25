@@ -97,7 +97,7 @@
           },
           "deliberate": {
             "type": "boolean",
-            "description": "true when the cut into this slot is deliberate (the owner asked for both shots, or the story needs it); the reviewer allows a same-segment-beat or similar neighbour pair only then"
+            "description": "true when the owner's feedback explicitly asked for both shots next to each other; the reviewer allows a same-segment-beat or similar neighbour pair only then"
           }
         }
       }

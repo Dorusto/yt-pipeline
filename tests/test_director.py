@@ -1206,6 +1206,20 @@ def test_two_adjacent_beats_of_one_segment_keep_only_the_better(tmp_path):
     assert rejected["clipA/s1b2"].startswith("pointless jump cut")
 
 
+def test_keep_shots_keeps_both_beats_of_one_segment(tmp_path):
+    workspace = build_beats_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "12", "--order", "chronological", "--pacing", "uniform",
+        "--keep-shots", "clipA/s1b1,clipA/s1b2", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "clipA/s1b1" in keys
+    assert "clipA/s1b2" in keys
+
+
 def test_window_ends_at_the_steady_motion_end():
     clip = {"file": "clipA.mp4"}
     quality = quality_doc("clipA.mp4", 30.0, [segment("s1", 0.0, 30.0, "move", motion_label="pan_right")])

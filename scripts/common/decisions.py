@@ -7,7 +7,7 @@ id (``0071/s2``) with a plain-word reason, which ``scripts/explain.py`` renders
 and feedback refers to. Sources are read only; nothing here writes files.
 """
 
-from common.intent import is_deliberate_move
+from common.intent import is_deliberate_shot
 from common.scoring import counts_as_defect
 
 ROLE_REJECT_REASONS = {
@@ -57,7 +57,7 @@ def _reject_reason(shot, in_pool, used_floor, used_ids=()):
     for other in shot.get("similar_to") or ():
         if other in used_ids:
             return f"near-duplicate of {other}"
-    deliberate = is_deliberate_move(shot.get("motion_label")) or shot.get("semantic_motion") == "orbit"
+    deliberate = is_deliberate_shot(shot.get("motion_label"), shot.get("semantic_motion"))
     defects = [
         name
         for name in (shot.get("defects") or [])

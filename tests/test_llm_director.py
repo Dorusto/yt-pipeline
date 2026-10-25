@@ -1148,6 +1148,64 @@ def test_repair_drops_the_weaker_same_segment_beat():
     assert any("0072/s7b1" in note for note in notes)
 
 
+def test_drop_pointless_cuts_drops_the_weaker_same_segment_beat():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 20.0, score=0.3, segment_id="s7"),
+        "0072/s7b2": fact("0072/s7b2", "clip_0072_x.mp4", 0.0, 20.0, score=0.8, segment_id="s7"),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0072/s7b2", "target_s": 4.0, "why": "b", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.3},
+            {"id": "v2", "clip": "clip_0072_x.mp4", "in_s": 4.0, "out_s": 8.0, "score": 0.8},
+        ]
+    }
+    shotlog = {"0072/s7b1": {"score": 0.3}, "0072/s7b2": {"score": 0.8}}
+    notes = []
+    llm_director.drop_pointless_cuts(
+        record, plan, facts, shotlog, llm_director.DEFAULT_IMPORTANT_MAX_S, notes
+    )
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert used == {"0072/s7b2"}
+    assert any("0072/s7b1" in note for note in notes)
+
+
+def test_drop_pointless_cuts_keeps_a_deliberate_same_segment_pair():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 20.0, score=0.3, segment_id="s7"),
+        "0072/s7b2": fact("0072/s7b2", "clip_0072_x.mp4", 0.0, 20.0, score=0.8, segment_id="s7"),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0072/s7b2", "target_s": 4.0, "why": "b", "keep_whole": False, "deliberate": True},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.3},
+            {"id": "v2", "clip": "clip_0072_x.mp4", "in_s": 4.0, "out_s": 8.0, "score": 0.8},
+        ]
+    }
+    shotlog = {"0072/s7b1": {"score": 0.3}, "0072/s7b2": {"score": 0.8}}
+    notes = []
+    llm_director.drop_pointless_cuts(
+        record, plan, facts, shotlog, llm_director.DEFAULT_IMPORTANT_MAX_S, notes
+    )
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert used == {"0072/s7b1", "0072/s7b2"}
+
+
+def test_drop_jump_cuts_and_weaker_of_pair_are_gone():
+    assert not hasattr(llm_director, "drop_jump_cuts")
+    assert not hasattr(llm_director, "weaker_of_pair")
+
+
 def test_validator_catches_keep_whole_and_length():
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, keep_whole=True)}
     facts["0001/s1"].update({"role": "move", "motion_label": "pan_right"})

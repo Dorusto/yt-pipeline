@@ -56,7 +56,7 @@ from common.moves import (
     slot_screen_length,
 )
 from common.overlap import overlap_seconds
-from common.neighbours import same_segment_beats
+from common.neighbours import drop_pointless_neighbours, owner_asked_keys, same_segment_beats
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -211,7 +211,7 @@ def build_parser():
         default=None,
         help=(
             "director reasoning effort sent to OpenRouter on every call "
-            "(default: director.reasoning_effort in the config, else low)"
+            "(default: director.reasoning_effort in the config, else medium)"
         ),
     )
     parser.add_argument(
@@ -1942,7 +1942,7 @@ def finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_
 def finish_record(record, plan, facts_by_key, shotlog_by_key, beat_grid, warnings, important_max_s, speed_ramp=False):
     """Length policy, then grow back to the brief length, then police the added slots."""
     if enforce_chronological_order(record, plan, facts_by_key, warnings, beat_grid):
-        drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings)
+        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, warnings)
     beat_snap = finalize_lengths(record, plan, facts_by_key, beat_grid, warnings, important_max_s, speed_ramp)
     fill_notes = fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, [])
     for note in fill_notes:
@@ -2213,20 +2213,73 @@ def swap_star_in(record, plan, facts_by_key, shotlog_by_key, star_key, victim_id
     notes.append(f"repaired: swapped {star_key} in for {victim_key} (top star left out)")
 
 
-def drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
+def neighbour_rows(plan, facts_by_key, shotlog_by_key):
+    """The plan's slots as neighbour rows for the shared pointless-neighbour rule."""
+    rows = []
+    for slot in plan.get("slot_plan") or []:
+        key = slot.get("shot_key")
+        fact = facts_by_key.get(key) or {}
+        shot = shotlog_by_key.get(key) or {}
+        rows.append(
+            {
+                "shot_key": key,
+                "clip": fact.get("clip"),
+                "segment_id": fact.get("segment_id"),
+                "score": shot.get("score"),
+                "similar_to": fact.get("similar_to"),
+            }
+        )
+    return rows
+
+
+def drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
     """Drop the weaker shot of every pointless jump-cut pair until none is left."""
     for _ in range(len(plan.get("slot_plan") or [])):
         pairs = [
             item for item in validate_edit(record, plan, facts_by_key, important_max_s)
-            if item.get("rule") in {"same_take", "similar", "same_segment"}
+            if item.get("rule") == "same_take"
         ]
         if not pairs:
             break
         plan_by_id = {slot["id"]: slot for slot in plan.get("slot_plan") or []}
-        weaker = weaker_of_pair(record, pairs[0].get("slot"), plan_by_id, shotlog_by_key)
+        video = record.get("video") or []
+        index = next(
+            (position for position, slot in enumerate(video) if slot.get("id") == pairs[0].get("slot")),
+            None,
+        )
+        if index is None or index == 0:
+            break
+        pair = [video[index - 1], video[index]]
+
+        def score(slot):
+            key = (plan_by_id.get(slot.get("id")) or {}).get("shot_key")
+            return float((shotlog_by_key.get(key) or {}).get("score") or slot.get("score") or 0.0), key
+
+        weaker = min((score(slot) for slot in pair), key=lambda item: item[0])[1]
         if weaker is None:
             break
         drop_from_plan(plan, {weaker}, "pointless jump cut with its neighbour", notes)
+        planned = {row["id"] for row in plan.get("slot_plan") or []}
+        record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
+        ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
+    rows = neighbour_rows(plan, facts_by_key, shotlog_by_key)
+
+    def similar_fn(first, second):
+        return shots_similar(
+            first.get("shot_key"),
+            first.get("similar_to"),
+            second.get("shot_key"),
+            second.get("similar_to"),
+        )
+
+    _, dropped = drop_pointless_neighbours(rows, similar_fn, keep_keys=owner_asked_keys(plan))
+    if dropped:
+        drop_from_plan(
+            plan,
+            {row.get("shot_key") for row, _ in dropped},
+            "pointless jump cut with its neighbour",
+            notes,
+        )
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
@@ -2503,13 +2556,13 @@ def repair_draft(record, plan, facts_by_key, shotlog_by_key, violations, importa
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
-    drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     repair_missing_stars(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
-    drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     fill_to_target(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
-    drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+    drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     if enforce_chronological_order(record, plan, facts_by_key, notes):
-        drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
+        drop_pointless_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes)
     return notes
 
 
@@ -2519,21 +2572,6 @@ def drop_from_plan(plan, keys, why, notes):
         return
     plan["slot_plan"] = [row for row in plan.get("slot_plan") or [] if row.get("shot_key") not in keys]
     notes.extend(f"repaired: dropped {key} from the plan ({why})" for key in sorted(keys))
-
-
-def weaker_of_pair(record, slot_id, plan_by_id, shotlog_by_key):
-    """The shot key of the lower-scoring slot of a same-take pair ending at ``slot_id``."""
-    video = record.get("video") or []
-    index = next((position for position, slot in enumerate(video) if slot.get("id") == slot_id), None)
-    if index is None or index == 0:
-        return None
-    pair = [video[index - 1], video[index]]
-
-    def score(slot):
-        key = (plan_by_id.get(slot.get("id")) or {}).get("shot_key")
-        return float((shotlog_by_key.get(key) or {}).get("score") or slot.get("score") or 0.0), key
-
-    return min((score(slot) for slot in pair), key=lambda item: item[0])[1]
 
 
 def blocking(violations):
@@ -2725,7 +2763,7 @@ def hint_flags(hints, music=None, ambient_under_db=None, speed_ramp=False):
     return flags
 
 
-def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False):
+def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, keep_keys=frozenset()):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir) / "rules_edit.json"
         command = [
@@ -2739,6 +2777,8 @@ def run_rules_director(workspace, brief_text, hints, out_path, beats_path=None, 
             str(tmp),
             "--json",
         ] + hint_flags(hints, music, ambient_under_db, speed_ramp)
+        if keep_keys:
+            command += ["--keep-shots", ",".join(sorted(keep_keys))]
         if beats_path is not None:
             command += ["--beats", str(beats_path)]
         result = subprocess.run(command, capture_output=True, text=True)
@@ -2829,9 +2869,9 @@ def base_summary(status, out_path, plan_path, rounds_used, approved, fallback, s
     }
 
 
-def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, shortlist=0):
+def fallback_result(workspace, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates=0, beats_path=None, music=None, ambient_under_db=None, speed_ramp=False, shortlist=0, keep_keys=frozenset()):
     try:
-        data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db, speed_ramp)
+        data, beat_snap = run_rules_director(workspace, brief_text, hints, out_path, beats_path, music, ambient_under_db, speed_ramp, keep_keys)
         data.setdefault("meta", {})["director"] = director_info("rules", approved, warnings)
         validate_or_raise(data, "edit")
         atomic_write_json(out_path, data)
@@ -3059,12 +3099,12 @@ def _run_loop(
     except BudgetExceeded as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
     except LoopFailure as exc:
         warnings.append(str(exc))
         if fallback_rules:
-            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
         return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
     if approved:
@@ -3083,7 +3123,7 @@ def _run_loop(
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
-                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
@@ -3118,7 +3158,7 @@ def _run_loop(
         except SchemaError as exc:
             warnings.append(str(exc))
             if fallback_rules:
-                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+                return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
             return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
         slots = record["video"]
         total = sum(slot_duration(slot) for slot in slots)
@@ -3130,7 +3170,7 @@ def _run_loop(
         if note not in warnings:
             warnings.append(note)
     if fallback_rules:
-        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+        return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, rounds_used, approved, violations, started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist), keep_keys=owner_asked_keys(plan) if plan else frozenset())
     return stop_result(out_path, plan_path, warnings, state, rounds_used, approved, violations, started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
 
 

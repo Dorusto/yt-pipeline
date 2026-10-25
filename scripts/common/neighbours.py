@@ -76,3 +76,18 @@ def drop_pointless_neighbours(slots, similar, keep_keys=frozenset()):
         if not removed:
             break
     return kept, dropped
+
+
+def owner_asked_keys(plan):
+    """The shot keys of the pairs the owner explicitly asked to keep next to each other.
+
+    A plan slot marked ``deliberate`` is the later slot of such a pair; both keys
+    of the pair are returned.
+    """
+    slots = plan.get("slot_plan") or []
+    keys = set()
+    for index, slot in enumerate(slots):
+        if slot.get("deliberate") is True and index > 0:
+            keys.add(slot.get("shot_key"))
+            keys.add(slots[index - 1].get("shot_key"))
+    return keys

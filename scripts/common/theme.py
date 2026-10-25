@@ -67,6 +67,7 @@ font-size:var(--fs-xs);font-weight:600}
 .state{font-size:var(--fs-s);display:inline-flex;align-items:center;gap:6px}
 .state::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
 .badge-done{color:var(--ok)}.badge-running{color:var(--warn)}.badge-failed{color:var(--danger)}
+.badge-stopped{color:var(--muted)}
 .badge-running::before{animation:pulse 1.6s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.badge-running::before{animation:none}}
@@ -260,6 +261,9 @@ form label.check input{width:20px;height:20px;min-height:0;accent-color:var(--ac
 .chat-estimate{color:var(--muted);font-size:var(--fs-xs)}
 .chat-form,.chat-approve{display:flex;gap:var(--sp-2);align-items:flex-end;margin-top:var(--sp-3)}
 .chat-form textarea{flex:1}
+.chat-earlier{margin:var(--sp-2) 0}
+.chat-earlier summary{cursor:pointer;color:var(--muted)}
+.stop-run{margin-top:var(--sp-3)}
 """
 
 PROGRESS_CSS = (

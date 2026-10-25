@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quality: faces are counted per segment and the whip pattern is marked, and the score uses both — a fast move next to a short hold on people scores low, while a deliberate move is not punished for its shake.
 - Director speed: `director.reasoning_effort` (`low`, `medium`, `high` or `off`, default `medium`) and `--reasoning-effort` set how much hidden reasoning the model spends on every `llm_director` call, sent as OpenRouter's `reasoning` body; the spend ledger records the reasoning tokens of each call.
 - Web app: a **Director** tab holds the chat with the director and, under it, the collapsible notebook.
+- Web app: a **Stop** button on the progress card of a running edit stops the run and its child processes and leaves the previous version as the current one.
 
 ### Changed
 
@@ -38,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: the chat with the director and the notebook moved out of the Recap tab and the bottom of the project page into the **Director** tab.
 - Web app: the run progress card shows "Total so far" only when it differs from the current step's time, and a skipped step shows "already done" instead of "0 s".
 - Director: a plain-word request is resolved against the shot descriptions and clip numbers and the reply names the shots it means; the reply's `can_do` is `all`/`part`/`none` and a reply that cannot do everything replaces "Make the new version" with a disabled "Answer the director first" button; two neighbouring slots that are beats of one segment, or a similar pair, keep only the better one.
+- Director: the one jump-cut rule — a same-segment-beat or similar neighbour pair keeps only the better one unless the owner explicitly asked for both; the director never marks such a cut `deliberate` by itself.
+- Web app: the Director tab's chat shows the last 3 exchanges; older ones fold under a closed "Earlier messages (N)" section, and the input box and the button sit directly under the newest exchange.
 
 ### Fixed
 

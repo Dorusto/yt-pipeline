@@ -432,3 +432,112 @@ def test_reedit_fields_are_all_read():
         command = serve.build_recap_command("py", "src", "ws", brief, fields, "/lib")
         facts = serve.facts_from_fields(fields)
         assert command != base_command or facts != base_facts, name
+
+
+def reply_row(index, can_do=None):
+    row = {
+        "ts": f"2026-10-24T10:0{index}:00+00:00",
+        "action": "reply",
+        "text": f"request {index}",
+        "reply": f"answer {index}",
+    }
+    if can_do is not None:
+        row["can_do"] = can_do
+    return row
+
+
+def write_replies(project, rows):
+    (project / "feedback.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+
+def test_chat_panel_shows_only_the_last_three_exchanges(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_replies(project, [reply_row(index) for index in range(5)])
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert '<details class="chat-earlier"><summary>Earlier messages (2)</summary>' in page
+        earlier = page.split('<details class="chat-earlier">', 1)[1].split("</details>", 1)[0]
+        assert "request 0" in earlier and "request 1" in earlier
+        assert "request 2" not in earlier
+        assert "request 2" in page and "request 3" in page and "request 4" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_form_and_button_come_after_the_newest_exchange(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_replies(project, [reply_row(index, can_do="all") for index in range(5)])
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        newest = page.index('<div class="chat-msg director"><p>answer 4</p></div>')
+        assert page.index('class="chat-form"') > newest
+        assert page.index('class="chat-approve"') > newest
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_has_no_scroll_box(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        rule = page.split(".chat{", 1)[1].split("}", 1)[0]
+        assert "max-height" not in rule
+        assert "overflow" not in rule
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_panel_disables_the_button_when_can_do_false(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_replies(project, [reply_row(0, can_do=False)])
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "Answer the director first" in page
+        assert "Make the new version" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_panel_keeps_the_button_when_can_do_true(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_replies(project, [reply_row(0, can_do=True)])
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "Make the new version" in page
+        assert "Answer the director first" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_normalise_can_do_reads_the_old_bool_and_the_enum():
+    assert serve.normalise_can_do(False) == "none"
+    assert serve.normalise_can_do(True) == "all"
+    assert serve.normalise_can_do("part") == "part"
+    assert serve.normalise_can_do("none") == "none"
+    assert serve.normalise_can_do(None) == "all"

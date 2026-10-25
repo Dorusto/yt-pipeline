@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -687,6 +688,58 @@ def pid_alive(pid):
         return False
 
 
+def run_was_stopped(directory):
+    """True when ``.run.json`` marks the run as stopped by the owner."""
+    path = Path(directory) / ".run.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("stopped") is True
+
+
+def _terminate_group(pid):
+    """Terminate a run's whole process group: SIGTERM, wait up to 5 s, then SIGKILL."""
+    try:
+        pgid = os.getpgid(pid)
+    except OSError:
+        pgid = None
+    kill = os.killpg if pgid is not None else os.kill
+    target = pgid if pgid is not None else pid
+    try:
+        kill(target, signal.SIGTERM)
+    except OSError:
+        return
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not pid_alive(pid):
+            return
+        time.sleep(0.1)
+    try:
+        kill(target, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def stop_run(workspace):
+    """Stop the run recorded in ``.run.json`` and mark it stopped; False when nothing runs."""
+    workspace = Path(workspace)
+    pid = read_run_pid(workspace)
+    if pid is None:
+        return False
+    _terminate_group(pid)
+    marker = workspace / ".run.json"
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data["stopped"] = True
+    write_text_atomic(marker, json.dumps(data, indent=2) + "\n")
+    return True
+
+
 def run_report(directory):
     """What the latest run did: outcome, progress, the station running now and the error."""
     lines = last_run_lines(directory)
@@ -1022,13 +1075,15 @@ def failure_text(lines):
 
 
 def project_status(directory):
-    """Return running, failed or done for one project workspace."""
+    """Return running, stopped, failed or done for one project workspace."""
     directory = Path(directory)
     pid = read_run_pid(directory)
     if pid is None:
         return "done"
     if pid_alive(pid):
         return "running"
+    if run_was_stopped(directory):
+        return "stopped"
     report = run_report(directory)
     if report["outcome"] == "done":
         return "done"
@@ -1711,7 +1766,7 @@ def render_step_list(report):
     return f'<details class="run-steps"><summary>Steps done</summary><ol>{"".join(rows)}</ol></details>'
 
 
-def render_run_notice(status, report, has_previous=False):
+def render_run_notice(status, report, has_previous=False, name=None):
     """The banner about the run in progress or the run that failed; empty otherwise."""
     if status == "running":
         bar = ""
@@ -1744,10 +1799,18 @@ def render_run_notice(status, report, has_previous=False):
         hint = "This page refreshes by itself."
         if has_previous:
             hint = "The previous version stays below until the new one is ready. " + hint
+        stop = ""
+        if name:
+            stop = (
+                f'<form class="stop-run" method="post" action="/{html_escape(name)}/stop-run">'
+                '<button class="go" type="submit">Stop</button></form>'
+            )
         return (
             f'<div class="notice"><strong>Making a new edit</strong>{step_line}{bar}{total_line}'
-            f'{render_step_list(report)}<p class="run-hint">{hint}</p></div>'
+            f'{render_step_list(report)}<p class="run-hint">{hint}</p>{stop}</div>'
         )
+    if status == "stopped":
+        return '<div class="notice"><strong>Stopped. The previous version is still here.</strong></div>'
     if status == "failed":
         where = html_escape(report["failed_at"] or "an unknown step")
         error = f"<br><code>{html_escape(report['error'])}</code>" if report["error"] else ""
@@ -1881,6 +1944,17 @@ def last_run_options(directory):
     return options if isinstance(options, dict) else {}
 
 
+def normalise_can_do(value):
+    """The can_do enum from a stored value; the old bool form reads false -> none, true -> all."""
+    if value is False:
+        return "none"
+    if value is True:
+        return "all"
+    if value in ("part", "none"):
+        return value
+    return "all"
+
+
 def render_chat_panel(directory, name, version_path=None, version_name=""):
     """The chat with the director: the reviewer's objections and the conversation."""
     directory = Path(directory)
@@ -1903,6 +1977,7 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
                 f'<div class="chat-msg director">{shot_html}<p>{html_escape(text)}</p></div>'
             )
     replies = [row for row in read_feedback_lines(directory) if row.get("action") == "reply"]
+    exchanges = []
     for row in replies:
         text = row.get("text")
         reply = row.get("reply")
@@ -1910,16 +1985,24 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
             continue
         if not isinstance(reply, str) or not reply.strip():
             continue
-        parts.append(f'<div class="chat-msg user"><p>{html_escape(text)}</p></div>')
         estimate = row.get("estimate")
         estimate_html = ""
         if isinstance(estimate, dict):
             estimate_text = format_estimate(estimate.get("usd"), estimate.get("s"))
             if estimate_text:
                 estimate_html = f'<p class="chat-estimate">{html_escape(estimate_text)}</p>'
-        parts.append(
+        exchanges.append(
+            f'<div class="chat-msg user"><p>{html_escape(text)}</p></div>'
             f'<div class="chat-msg director"><p>{html_escape(reply)}</p>{estimate_html}</div>'
         )
+    older = exchanges[:-3]
+    recent = exchanges[-3:]
+    if older:
+        parts.append(
+            f'<details class="chat-earlier"><summary>Earlier messages ({len(older)})</summary>'
+            f'{"".join(older)}</details>'
+        )
+    parts.extend(recent)
     version_field = (
         f'<input type="hidden" name="version" value="{html_escape(version_name)}">'
         if version_name
@@ -1936,9 +2019,7 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
     )
     if replies:
         last = replies[-1]
-        can_do = last.get("can_do")
-        if can_do not in ("part", "none"):
-            can_do = "all"
+        can_do = normalise_can_do(last.get("can_do"))
         if can_do == "all":
             hint = last["text"] + "\n\nDirector's reading: " + last["reply"]
             parts.append(
@@ -1969,7 +2050,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     has_previous = any(has_video(version) for version in versions) or (
         (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
     )
-    parts = [render_run_notice(status, report, has_previous=has_previous)]
+    parts = [render_run_notice(status, report, has_previous=has_previous, name=name)]
     shown = pick_version(versions, wanted)
     if shown is None:
         has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
@@ -3524,6 +3605,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.handle_reedit(segments[0])
             return
+        if len(segments) == 2 and segments[1] == "stop-run":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_stop_run(segments[0])
+            return
         if len(segments) == 2 and segments[1] == "feedback-reply":
             if not feature_on(features, "recap"):
                 self.send_not_found()
@@ -3712,6 +3799,18 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 pass
         self._start_for(fields, source, project, reedit=True)
 
+    def handle_stop_run(self, project):
+        """Stop the run in progress and show the previous version."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        if project_status(workspace) != "running":
+            self.send_error_text(409, "nothing is running")
+            return
+        stop_run(workspace)
+        self.send_redirect(f"/{project}/?tab=recap")
+
     def handle_feedback_reply(self, project):
         """The chat with the director: how it reads a feedback request; start no run."""
         workspace = self.server.root / project
@@ -3750,9 +3849,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(reply, str) or not reply.strip():
             self.send_error_text(500, "the director gave no answer")
             return
-        can_do = summary.get("can_do")
-        if can_do not in ("part", "none"):
-            can_do = "all"
+        can_do = normalise_can_do(summary.get("can_do"))
         missing_tool = summary.get("missing_tool")
         missing_tool = missing_tool if isinstance(missing_tool, str) and missing_tool.strip() else None
         if can_do in ("part", "none") and missing_tool is not None and self.server.requests is not None:
