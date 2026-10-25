@@ -38,6 +38,8 @@ A video slot with `middle_speed` above 1 (schema range 1.0-1.25, the directors w
 
 `--format 16x9` (default, nothing changes), `9x16` or `both`. For `9x16` each video slot gets a moving `crop` that follows its clip's reframe path: `scripts/reframe.py` runs once per source clip as a subprocess (on the proxy when one exists; the path is rescaled to the file that is rendered) and the crop path is cached as `<workspace>/reframe/<clip stem>_reframe.json` (reused while newer than the clip). The crop runs on source time before the trim, so a `middle_speed` ramp keeps the window on the subject. If reframe fails for a clip (for example the YuNet model cannot download) that clip gets a centred crop and a warning; the render still finishes. Photo slots keep the Ken Burns move: a portrait photo sits on the blurred background, a landscape photo is cropped to 9:16 around its `ken_burns.focus_x` subject position. Output is 720x1280 for a preview and 1080x1920 with `--originals-dir`; `--width/--height` override. With `both`, `--out` is the 16:9 file and the vertical one is written next to it as `<name>_9x16.mp4`; the JSON summary gets `format` and, for `both`, a `vertical` object. Both formats have the same duration.
 
+- The moving crop is the `yt-reframe` skill's contract: `scripts/reframe.py` writes the crop path this section reads. See the `yt-reframe` skill for the path format and the model it needs.
+
 ## Photo slots
 
 A photo slot holds a still for its `duration_s` (2–4 s) with a slow Ken Burns move. The render:

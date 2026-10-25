@@ -355,6 +355,31 @@ def test_real_execute_parses_child_json(tmp_path):
     assert (workspace / "proxy" / "clip.mp4").is_file()
 
 
+def test_execute_reports_a_missing_interpreter_as_runtime(tmp_path):
+    source = make_source(tmp_path, names=("clip.mp4",))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    ctx = recap.Context(
+        source=source,
+        workspace=workspace,
+        brief_text="brief",
+        final=False,
+        budget_usd=None,
+        force=False,
+        json_mode=True,
+        python=sys.executable,
+        repo_root=recap.REPO_ROOT,
+    )
+    result = recap.execute(
+        {"name": "proxy", "argv": ["/nonexistent/interpreter-xyz"]},
+        ["/nonexistent/interpreter-xyz"],
+        ctx,
+    )
+    assert result["status"] == "FAIL"
+    assert result["detail"] == "exit 3"
+    assert result["returncode"] == 3
+
+
 def test_refuses_workspace_inside_source(tmp_path, capsys):
     source = make_source(tmp_path, names=("clip.mp4",))
     workspace = source / "workspace"

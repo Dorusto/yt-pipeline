@@ -4,6 +4,38 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Small contract and skill fixes: yt-render names yt-reframe, recap reports a missing interpreter as runtime, host-only tests listed (V030 audit lot a8, F1, F2, F15)
+
+**Context:** The v0.3.0 audit found (F1) the `yt-render` skill's Vertical 9:16
+section runs `scripts/reframe.py` as a subprocess but never names the `yt-reframe`
+skill it depends on, so the skill is not self-contained when installed alone; (F2)
+`recap.py`'s `execute()` catches `OSError` (a command that cannot be started, e.g.
+a missing interpreter) and returns a hardcoded `"detail": "exit 1"`,
+`"returncode": 1`, while the exit-code table calls a failure of the work it started
+a runtime failure (`EXIT_RUNTIME` = 3); and (F15) `docs/agents/testing.md` does not
+list the tests that never run in CI or say why they skip.
+
+**Options:** (A) leave the three findings; (B) fix all three: add the `yt-reframe`
+pointer, use `EXIT_RUNTIME` in the `OSError` branch with a test, and document the
+host-only tests.
+
+**Decision:** B. F1 adds one line to the `yt-render` skill naming the `yt-reframe`
+skill and its crop-path contract. F2 changes the `OSError` branch of `recap.py`
+`execute()` to `"detail": f"exit {EXIT_RUNTIME}"` and `"returncode": EXIT_RUNTIME`
+(the constant is already imported), with a new test
+`test_execute_reports_a_missing_interpreter_as_runtime`. F15 adds a **Host-only
+tests** subsection to `docs/agents/testing.md` listing the reference-material,
+FilmCraft and optional model/package tests and why they skip, with no code change.
+
+**Why not A:** a skill that does not name the skill it needs breaks the
+install-alone contract, a hardcoded exit 1 contradicts the exit-code table, and
+undocumented host-only tests hide the code that has no CI coverage.
+
+**Consequence:** files touched — `.claude/skills/yt-render/SKILL.md`,
+`scripts/recap.py`, `tests/test_recap.py`, `docs/agents/testing.md`,
+`docs/DECISIONS.md`. No CLI, schema, summary-key or exit-code-table change; no
+`docs/RULES.md` change.
+
 ## [2026-10-25] Render robustness: proxy skip notices new photos, missing-music exit code pinned (V030 audit lot a7, F13, F14, F3)
 
 **Context:** The v0.3.0 audit found (F14) that `recap.py` `is_up_to_date("proxy")`

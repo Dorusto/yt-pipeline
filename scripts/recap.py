@@ -736,8 +736,8 @@ def execute(station, argv, ctx):
                 "status": "FAIL",
                 "wall_time_s": round(time.monotonic() - started, 3),
                 "llm_cost_usd": 0.0,
-                "detail": "exit 1",
-                "returncode": 1,
+                "detail": f"exit {EXIT_RUNTIME}",
+                "returncode": EXIT_RUNTIME,
                 "stderr": str(exc),
             }
         returncode = result.returncode
