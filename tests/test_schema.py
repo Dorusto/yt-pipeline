@@ -229,6 +229,18 @@ def test_shot_plan_requires_why():
     assert any("why" in e for e in schema.validate(data, "shot_plan"))
 
 
+def test_shot_plan_accepts_a_deliberate_slot():
+    data = load("shot_plan_valid.json")
+    data["slot_plan"][0]["deliberate"] = True
+    assert schema.validate(data, "shot_plan") == []
+
+
+def test_shot_plan_rejects_an_unknown_slot_key():
+    data = load("shot_plan_valid.json")
+    data["slot_plan"][0]["unknown_key"] = True
+    assert any("unknown_key" in e for e in schema.validate(data, "shot_plan"))
+
+
 def test_edit_middle_speed_is_optional_and_bounded():
     data = load("edit_valid.json")
     video = next(item for item in data["video"] if item.get("kind") != "photo")

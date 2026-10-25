@@ -224,13 +224,17 @@ finished recap, the explanation and the contact sheet.
 - **Chat with the director.** The chat sits in the **Director** tab (it is no
   longer in the Recap tab). The reviewer's objections appear in it as the
   reviewer's own sentences, each naming the shot by its number on the timeline.
-  The user writes what they like and what they do not, the director answers how
-  it reads the request with a cost/time estimate (one cheap model call, no new
-  version), and **Make the new version** starts the re-edit with the feedback;
-  no new version starts without the click. When the director cannot do what the
-  user asked, it says so in plain words (what it can do instead) and the request
-  is noted in the requests file as a missing tool (`type: missing_tool`), so the
-  owner sees which tools the director needs next. The director's reasoning
+  The user writes what they like and what they do not, the director resolves the
+  plain-word request against the shot descriptions and clip numbers and answers
+  how it reads it, naming the shots it means, with a cost/time estimate (one
+  cheap model call, no new version), and **Make the new version** starts the
+  re-edit with the feedback; no new version starts without the click. The reply
+  carries `can_do` (`all`, `part` or `none`); when it is not `all` the **Make the
+  new version** button is replaced by a disabled **Answer the director first**
+  button until the owner sends another message. When the director cannot do what
+  the user asked, it says so in plain words (what it can do instead) and the
+  request is noted in the requests file as a missing tool (`type: missing_tool`),
+  so the owner sees which tools the director needs next. The director's reasoning
   effort — how much hidden reasoning the model spends on every call — comes from
   `--reasoning-effort` (`low`, `medium`, `high` or `off`), else
   `director.reasoning_effort` in the config, else `medium`. From the command line:

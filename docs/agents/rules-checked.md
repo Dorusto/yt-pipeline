@@ -14,6 +14,7 @@ for the rules that depend on review alone (no program can check them).
 | Editing grammar — same-take slots need a different take between | `tests/test_director.py` |
 | Editing grammar — one candidate contributes at most one slot | `tests/test_director.py` |
 | Editing grammar — no two similar segments in one edit | `tests/test_director.py` |
+| Editing grammar — no pointless jump cuts (same-segment beats or similar neighbours) | `tests/test_common_neighbours.py`, `tests/test_director.py`, `tests/test_llm_director.py` |
 | Editing grammar — hero and semantic moves keep their range | `tests/test_director.py` |
 | Editing grammar — length policy and speed ramp | `tests/test_moves.py` |
 | Editing grammar — on-screen length formula | `tests/test_moves.py` |
@@ -70,7 +71,7 @@ for the rules that depend on review alone (no program can check them).
 | Costs — instance limits and shared project costs | `tests/test_serve.py` |
 | Costs — costs page read-only | `tests/test_serve.py` |
 | Costs — feedback.jsonl and requests file separate | `tests/test_feedback.py` |
-| Costs — LLM director reviewer verdict | `tests/test_llm_director.py` |
+| Costs — LLM director reviewer verdict | `tests/test_llm_director.py`, `tests/test_serve_chat.py` |
 | Safety rules — originals read-only | `tests/test_render.py` |
 | Safety rules — private by default, tailnet-only | `tests/test_serve.py` |
 | Safety rules — never commit footage, keys or private IPs | `tests/test_check_public.py` |

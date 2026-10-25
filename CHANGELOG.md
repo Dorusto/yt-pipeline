@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Director: the screenwriter's shortlist now also sends every clip's best eligible segment, and the label score no longer rewards clean-but-dull shots (steadiness and a defect-free segment add nothing; only unsteady levels and real defects subtract).
 - Web app: the chat with the director and the notebook moved out of the Recap tab and the bottom of the project page into the **Director** tab.
 - Web app: the run progress card shows "Total so far" only when it differs from the current step's time, and a skipped step shows "already done" instead of "0 s".
+- Director: a plain-word request is resolved against the shot descriptions and clip numbers and the reply names the shots it means; the reply's `can_do` is `all`/`part`/`none` and a reply that cannot do everything replaces "Make the new version" with a disabled "Answer the director first" button; two neighbouring slots that are beats of one segment, or a similar pair, keep only the better one.
 
 ### Fixed
 

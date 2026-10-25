@@ -64,7 +64,7 @@ def test_apply_repairs_an_invalid_edit(tmp_path):
     assert any("repaired" in warning for warning in summary["warnings"])
 
 
-def test_apply_rejects_an_unrepairable_edit(tmp_path, capsys):
+def test_apply_repairs_a_similar_pair(tmp_path, capsys):
     workspace = build_workspace(tmp_path / "ws")
     shotlog_path = workspace / "shotlog.json"
     data = json.loads(shotlog_path.read_text(encoding="utf-8"))
@@ -75,9 +75,9 @@ def test_apply_rejects_an_unrepairable_edit(tmp_path, capsys):
     (workspace / "shot_plan.json").write_text(plan_answer(), encoding="utf-8")
     (workspace / "edit.json").write_text(editor_answer(), encoding="utf-8")
     code = llm_director.main(["--workspace", str(workspace), "--brief", BRIEF, "--apply", "--json"])
-    assert code == 2
+    assert code == 0
     captured = capsys.readouterr()
-    assert "similar" in captured.err
+    assert "pointless jump cut" in captured.out
 
 
 def test_apply_skips_when_already_applied(tmp_path):

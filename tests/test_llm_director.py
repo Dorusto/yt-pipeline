@@ -1081,6 +1081,73 @@ def test_validator_catches_similar():
     assert any(item["rule"] == "similar" for item in violations)
 
 
+def test_validator_catches_same_segment_beats():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 20.0, segment_id="s7"),
+        "0072/s7b2": fact("0072/s7b2", "clip_0072_x.mp4", 0.0, 20.0, segment_id="s7"),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0072/s7b2", "target_s": 4.0, "why": "b", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0},
+            {"id": "v2", "clip": "clip_0072_x.mp4", "in_s": 4.0, "out_s": 8.0},
+        ]
+    }
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "same_segment" for item in violations)
+
+
+def test_validator_allows_a_deliberate_same_segment_cut():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 20.0, segment_id="s7"),
+        "0072/s7b2": fact("0072/s7b2", "clip_0072_x.mp4", 0.0, 20.0, segment_id="s7"),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0072/s7b2", "target_s": 4.0, "why": "b", "keep_whole": False, "deliberate": True},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0},
+            {"id": "v2", "clip": "clip_0072_x.mp4", "in_s": 4.0, "out_s": 8.0},
+        ]
+    }
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert not any(item["rule"] == "same_segment" for item in violations)
+
+
+def test_repair_drops_the_weaker_same_segment_beat():
+    facts = {
+        "0072/s7b1": fact("0072/s7b1", "clip_0072_x.mp4", 0.0, 20.0, score=0.3, segment_id="s7"),
+        "0072/s7b2": fact("0072/s7b2", "clip_0072_x.mp4", 0.0, 20.0, score=0.8, segment_id="s7"),
+    }
+    plan = {
+        "slot_plan": [
+            {"id": "v1", "shot_key": "0072/s7b1", "target_s": 4.0, "why": "a", "keep_whole": False},
+            {"id": "v2", "shot_key": "0072/s7b2", "target_s": 4.0, "why": "b", "keep_whole": False},
+        ]
+    }
+    record = {
+        "video": [
+            {"id": "v1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0, "score": 0.3},
+            {"id": "v2", "clip": "clip_0072_x.mp4", "in_s": 4.0, "out_s": 8.0, "score": 0.8},
+        ]
+    }
+    violations = llm_director.validate_edit(record, plan, facts)
+    assert any(item["rule"] == "same_segment" for item in violations)
+    notes = llm_director.repair_draft(record, plan, facts, {}, violations)
+    used = {slot.get("shot_key") for slot in plan.get("slot_plan") or []}
+    assert used == {"0072/s7b2"}
+    assert any("0072/s7b1" in note for note in notes)
+
+
 def test_validator_catches_keep_whole_and_length():
     facts = {"0001/s1": fact("0001/s1", "clip_0001_x.mp4", 0.0, 20.0, keep_whole=True)}
     facts["0001/s1"].update({"role": "move", "motion_label": "pan_right"})
@@ -1096,10 +1163,11 @@ def test_validator_catches_keep_whole_and_length():
     assert any(item["rule"] == "length" for item in violations)
 
 
-def fact(key, clip, window_in, window_out, keep_whole=False, similar_to=None, score=0.5, hero=False, role="hold", motion_label="static", media_type=None):
+def fact(key, clip, window_in, window_out, keep_whole=False, similar_to=None, score=0.5, hero=False, role="hold", motion_label="static", media_type=None, segment_id=None):
     row = {
         "shot_key": key,
         "clip": clip,
+        "segment_id": segment_id,
         "window_in_s": window_in,
         "window_out_s": window_out,
         "landing_at_s": None,
@@ -2500,17 +2568,93 @@ def test_build_interpret_user_without_a_review(tmp_path):
     assert "reviewer's last verdict" not in user
 
 
+def test_previous_edit_context_carries_the_shot_words(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    write_json(
+        workspace / "shotlog.json",
+        {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "weights": {"vision": 0.55, "labels": 0.45},
+            "shots": [
+                {
+                    "key": "0072/s7b1",
+                    "clip": "clip_0072_x.mp4",
+                    "segment_id": "s7",
+                    "summary": "the bunker entrance",
+                    "subject": "a concrete bunker",
+                    "tags": ["bunker", "entrance"],
+                },
+                {
+                    "key": "0072/s7b2",
+                    "clip": "clip_0072_x.mp4",
+                    "segment_id": "s7",
+                    "summary": "inside the bunker",
+                    "subject": "the dark corridor",
+                    "tags": ["bunker", "inside"],
+                },
+            ],
+        },
+    )
+    write_json(
+        workspace / "edit.json",
+        {
+            "video": [
+                {
+                    "id": "v1",
+                    "shot_key": "0072/s7b1",
+                    "clip": "clip_0072_x.mp4",
+                    "in_s": 0.0,
+                    "out_s": 4.0,
+                    "reason": "the bunker entrance",
+                }
+            ],
+            "decisions": [
+                {"id": "0072/s7b2", "status": "rejected", "reason": "pointless jump cut: another beat of 0072/s7b1"}
+            ],
+        },
+    )
+    context = llm_director.previous_edit_context(workspace)
+    used = context["used"][0]
+    assert used["summary"] == "the bunker entrance"
+    assert used["subject"] == "a concrete bunker"
+    assert used["tags"] == ["bunker", "entrance"]
+    rejected = context["rejected"][0]
+    assert rejected["summary"] == "inside the bunker"
+    assert rejected["subject"] == "the dark corridor"
+
+
+def test_previous_edit_context_without_a_shotlog_never_raises(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    write_json(
+        workspace / "edit.json",
+        {
+            "video": [
+                {"id": "v1", "shot_key": "0072/s7b1", "clip": "clip_0072_x.mp4", "in_s": 0.0, "out_s": 4.0, "reason": "a"}
+            ],
+            "decisions": [{"id": "0072/s7b2", "status": "rejected", "reason": "low score"}],
+        },
+    )
+    context = llm_director.previous_edit_context(workspace)
+    assert context["used"][0]["summary"] is None
+    assert context["used"][0]["subject"] is None
+    assert context["used"][0]["tags"] == []
+    assert context["rejected"][0]["summary"] is None
+    assert context["rejected"][0]["subject"] is None
+
+
 def test_interpret_feedback_returns_a_reply(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(
-        [json.dumps({"reply": "I will drop 0071/s2 and make the tunnel longer.", "can_do": True, "missing_tool": None})]
+        [json.dumps({"reply": "I will drop 0071/s2 and make the tunnel longer.", "can_do": "all", "missing_tool": None})]
     )
     summary, code = llm_director.interpret_feedback(
         workspace, "drop 0071/s2, tunnel longer", client=client
     )
     assert code == 0
     assert summary["reply"] == "I will drop 0071/s2 and make the tunnel longer."
-    assert summary["can_do"] is True
+    assert summary["can_do"] == "all"
     assert summary["missing_tool"] is None
     assert summary["estimate_usd"] is None
     assert summary["estimate_s"] is None
@@ -2522,7 +2666,7 @@ def test_interpret_feedback_returns_a_reply(tmp_path):
     assert rows[0]["action"] == "reply"
     assert rows[0]["text"] == "drop 0071/s2, tunnel longer"
     assert rows[0]["reply"] == "I will drop 0071/s2 and make the tunnel longer."
-    assert rows[0]["can_do"] is True
+    assert rows[0]["can_do"] == "all"
     assert rows[0]["missing_tool"] is None
     assert rows[0]["estimate"] == {"usd": None, "s": None}
     assert rows[0]["tool"] == "scripts/llm_director.py"
@@ -2535,7 +2679,7 @@ def test_interpret_feedback_reports_a_missing_tool(tmp_path):
             json.dumps(
                 {
                     "reply": "I cannot add subtitles; I can drop or trim shots. Noted.",
-                    "can_do": False,
+                    "can_do": "none",
                     "missing_tool": "add subtitles",
                 }
             )
@@ -2543,13 +2687,48 @@ def test_interpret_feedback_reports_a_missing_tool(tmp_path):
     )
     summary, code = llm_director.interpret_feedback(workspace, "add subtitles", client=client)
     assert code == 0
-    assert summary["can_do"] is False
+    assert summary["can_do"] == "none"
     assert summary["missing_tool"] == "add subtitles"
     rows = feedback_jsonl_rows(workspace)
     assert len(rows) == 1
     assert rows[0]["action"] == "reply"
-    assert rows[0]["can_do"] is False
+    assert rows[0]["can_do"] == "none"
     assert rows[0]["missing_tool"] == "add subtitles"
+
+
+def test_interpret_feedback_part_keeps_the_missing_tool(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [
+            json.dumps(
+                {
+                    "reply": "I can drop the shot but I cannot add subtitles.",
+                    "can_do": "part",
+                    "missing_tool": "add subtitles",
+                }
+            )
+        ]
+    )
+    summary, code = llm_director.interpret_feedback(workspace, "drop 0071/s2 and add subtitles", client=client)
+    assert code == 0
+    assert summary["can_do"] == "part"
+    assert summary["missing_tool"] == "add subtitles"
+    rows = feedback_jsonl_rows(workspace)
+    assert rows[0]["can_do"] == "part"
+    assert rows[0]["missing_tool"] == "add subtitles"
+
+
+def test_interpret_feedback_all_clears_the_missing_tool(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient(
+        [json.dumps({"reply": "I will drop 0071/s2.", "can_do": "all", "missing_tool": "add subtitles"})]
+    )
+    summary, code = llm_director.interpret_feedback(workspace, "drop 0071/s2", client=client)
+    assert code == 0
+    assert summary["can_do"] == "all"
+    assert summary["missing_tool"] is None
+    rows = feedback_jsonl_rows(workspace)
+    assert rows[0]["missing_tool"] is None
 
 
 def test_interpret_feedback_retries_then_errors(tmp_path):
@@ -2591,7 +2770,7 @@ def test_last_director_estimate_reads_run_log_and_spend(tmp_path):
 
 def test_cli_interpret_feedback_json(tmp_path, monkeypatch, capsys):
     workspace = build_workspace(tmp_path / "ws")
-    client = StubClient([json.dumps({"reply": "ok", "can_do": True, "missing_tool": None})])
+    client = StubClient([json.dumps({"reply": "ok", "can_do": "all", "missing_tool": None})])
     monkeypatch.setattr(llm_director, "make_client", lambda **kwargs: client)
     code = llm_director.main(["--workspace", str(workspace), "--interpret-feedback", "x", "--json"])
     assert code == 0
@@ -2661,7 +2840,7 @@ def test_run_rejects_an_unknown_reasoning_effort(tmp_path):
 
 def test_interpret_feedback_sends_the_reasoning_effort(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
-    client = StubClient([json.dumps({"reply": "ok", "can_do": True, "missing_tool": None})])
+    client = StubClient([json.dumps({"reply": "ok", "can_do": "all", "missing_tool": None})])
     summary, code = llm_director.interpret_feedback(
         workspace, "x", client=client, reasoning_effort="off"
     )

@@ -56,6 +56,7 @@ from common.moves import (
     slot_screen_length,
 )
 from common.overlap import overlap_seconds
+from common.neighbours import same_segment_beats
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate, validate_or_raise
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -632,6 +633,7 @@ def make_fact(candidate, important_max_s, slot_min_s=MIN_SHOT_LENGTH_S, slot_max
     return {
         "shot_key": candidate.get("shot_key"),
         "clip": candidate["clip"],
+        "segment_id": (candidate.get("segment") or {}).get("id"),
         "window_in_s": round(float(candidate["in_s"]), 3),
         "window_out_s": round(float(candidate["out_s"]), 3),
         "peak_s": candidate.get("peak_s"),
@@ -987,7 +989,7 @@ def request_reply(client, prompt, user, state):
         reply = answer.get("reply")
         if not isinstance(reply, str) or not reply.strip():
             continue
-        if not isinstance(answer.get("can_do"), bool):
+        if answer.get("can_do") not in ("all", "part", "none"):
             continue
         return {
             "reply": reply.strip(),
@@ -997,7 +999,7 @@ def request_reply(client, prompt, user, state):
     raise LLMDirectorRuntimeError("model produced no usable reply after one retry")
 
 
-def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do=True, missing_tool=None):
+def append_reply_line(workspace, text, reply, estimate_usd, estimate_s, can_do="all", missing_tool=None):
     """Append one ``action: reply`` line to WORKSPACE/feedback.jsonl (append-only)."""
     append_feedback(
         workspace,
@@ -1041,7 +1043,7 @@ def interpret_feedback(workspace, text, version=None, model=None, budget_usd=Non
     answer = request_reply(client, prompt, build_interpret_user(text, workspace_path, edit_path), state)
     can_do = answer["can_do"]
     missing_tool = answer.get("missing_tool")
-    if can_do is False and isinstance(missing_tool, str) and missing_tool.strip():
+    if can_do != "all" and isinstance(missing_tool, str) and missing_tool.strip():
         missing_tool = missing_tool.strip()
     else:
         missing_tool = None
@@ -1067,6 +1069,7 @@ def previous_edit_context(workspace, edit_path=None):
     data = load_json(path)
     if not isinstance(data, dict):
         return None
+    shotlog = load_shotlog(Path(workspace))
     used = []
     for slot in data.get("video") or []:
         row = {"id": slot.get("id"), "shot_key": slot.get("shot_key")}
@@ -1078,12 +1081,24 @@ def previous_edit_context(workspace, edit_path=None):
             row["in_s"] = slot.get("in_s")
             row["out_s"] = slot.get("out_s")
         row["reason"] = slot.get("reason")
+        shot = shotlog.get(slot.get("shot_key")) if shotlog else None
+        row["summary"] = shot.get("summary") if shot else None
+        row["subject"] = shot.get("subject") if shot else None
+        row["tags"] = list(shot.get("tags") or []) if shot else []
         used.append(row)
-    rejected = [
-        {"id": row.get("id"), "reason": row.get("reason")}
-        for row in data.get("decisions") or []
-        if isinstance(row, dict) and row.get("status") == "rejected"
-    ]
+    rejected = []
+    for row in data.get("decisions") or []:
+        if not isinstance(row, dict) or row.get("status") != "rejected":
+            continue
+        shot = shotlog.get(row.get("id")) if shotlog else None
+        rejected.append(
+            {
+                "id": row.get("id"),
+                "reason": row.get("reason"),
+                "summary": shot.get("summary") if shot else None,
+                "subject": shot.get("subject") if shot else None,
+            }
+        )
     return {"used": used, "rejected": rejected}
 
 
@@ -1495,9 +1510,23 @@ def validate_edit(record, plan, facts_by_key, important_max_s=DEFAULT_IMPORTANT_
             second_fact.get("shot_key"),
             second_fact.get("similar_to"),
         ):
+            if plan_by_id.get(second["id"], {}).get("deliberate") is True:
+                continue
             violations.append(
                 violation(second["id"], "similar", f"visually similar to {first['id']}")
             )
+    for first, second in zip(slots, slots[1:]):
+        first_fact = slot_fact(first, plan_by_id, facts_by_key)
+        second_fact = slot_fact(second, plan_by_id, facts_by_key)
+        if first_fact is None or second_fact is None:
+            continue
+        if not same_segment_beats(first_fact, second_fact):
+            continue
+        if plan_by_id.get(second["id"], {}).get("deliberate") is True:
+            continue
+        violations.append(
+            violation(second["id"], "same_segment", f"another beat of the same segment as {first['id']}")
+        )
     return violations
 
 
@@ -2185,11 +2214,11 @@ def swap_star_in(record, plan, facts_by_key, shotlog_by_key, star_key, victim_id
 
 
 def drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, notes):
-    """Drop the weaker shot of every same-take jump-cut pair until none is left."""
+    """Drop the weaker shot of every pointless jump-cut pair until none is left."""
     for _ in range(len(plan.get("slot_plan") or [])):
         pairs = [
             item for item in validate_edit(record, plan, facts_by_key, important_max_s)
-            if item.get("rule") == "same_take"
+            if item.get("rule") in {"same_take", "similar", "same_segment"}
         ]
         if not pairs:
             break
@@ -2197,7 +2226,7 @@ def drop_jump_cuts(record, plan, facts_by_key, shotlog_by_key, important_max_s, 
         weaker = weaker_of_pair(record, pairs[0].get("slot"), plan_by_id, shotlog_by_key)
         if weaker is None:
             break
-        drop_from_plan(plan, {weaker}, "jump cut with its neighbour from the same take", notes)
+        drop_from_plan(plan, {weaker}, "pointless jump cut with its neighbour", notes)
         planned = {row["id"] for row in plan.get("slot_plan") or []}
         record["video"] = [slot for slot in record.get("video") or [] if slot.get("id") in planned]
         ensure_all_planned_slots(record, plan, facts_by_key, shotlog_by_key, important_max_s)
@@ -3540,7 +3569,7 @@ def print_human(summary, record):
 
 def print_interpret(summary):
     print(summary["reply"])
-    if summary.get("can_do") is False and summary.get("missing_tool"):
+    if summary.get("can_do") != "all" and summary.get("missing_tool"):
         print(f"missing tool: {summary['missing_tool']}")
     estimate = []
     if summary["estimate_usd"] is not None:

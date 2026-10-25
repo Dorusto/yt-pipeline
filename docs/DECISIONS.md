@@ -4,6 +4,59 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Plain requests and no pointless jump cuts (V030 lot c24)
+
+**Context:** The owner's phone test of v030 (after c23) filed three fixes. The
+director's interpret reply only understood short ids, so a plain-word request
+("the bunker shots that come one after another", "the camera circles the group")
+was not resolved against the shot descriptions, subjects and clip numbers it
+already had. The reply's `can_do` was a bool, so the web app could not tell a
+request it could do in part from one it could not do at all, and it always kept
+the "Make the new version" button. Two neighbouring slots that are beats of one
+segment, or a `similar_to` pair, could both stay in an edit as a pointless jump
+cut.
+
+**Options:** (A) leave the interpret reply, the button and the neighbour rule as
+they are; (B) resolve plain-word requests against the shot descriptions and clip
+numbers, make `can_do` an `"all" | "part" | "none"` enum with a disabled
+"Answer the director first" button when it is not `"all"`, and drop the weaker
+of every pointless neighbouring pair in both directors.
+
+**Decision:** B, with these parts:
+
+1. `scripts/common/neighbours.py` holds the neighbour rule: two slots are beats
+   of one segment when they share a clip and a segment id but not a shot key;
+   `drop_pointless_neighbours` drops the lower-scoring slot of every pointless
+   pair (a tie keeps the earlier), unless the owner asked for both
+   (`keep_keys`). `scripts/director.py` calls it after assembly and records each
+   drop in `decisions[]`; `scripts/llm_director.py`'s validator raises
+   `same_segment`/`similar` and the repair drops the weaker one, unless the plan
+   marks the later slot `deliberate`.
+2. `prompts/interpret_feedback.md` resolves the request by its words against the
+   shot summaries, subjects, tags and clip numbers and names the shots it means;
+   `can_do` is `"all" | "part" | "none"` and `missing_tool` is kept only when it
+   is not `"all"`. `scripts/serve.py` logs one `missing_tool` line when `can_do`
+   is not `"all"` and replaces the "Make the new version" form with a disabled
+   "Answer the director first" button until the owner sends another message.
+3. `previous_edit_context` enriches the used and rejected rows with the shotlog's
+   `summary`, `subject` and `tags`, so the interpret call sees the words the
+   owner used.
+
+**Why not A:** the owner's phone test showed the director could not act on the
+words a person actually writes, the button promised a version the director had
+said it could not make, and the same-segment neighbour pair was a visible jump
+cut.
+
+**Consequence:** files touched — `scripts/common/neighbours.py`,
+`scripts/director.py`, `scripts/llm_director.py`, `scripts/serve.py`,
+`prompts/interpret_feedback.md`, `prompts/reviewer.md`,
+`prompts/screenwriter.md`, `schemas/shot_plan.schema.json`, `docs/RULES.md`,
+`docs/guides/shot-grammar.md`, `docs/agents/rules-checked.md`,
+`docs/guides/user-guide.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/DECISIONS.md`, `.claude/skills/yt-llm-director/SKILL.md`,
+`.claude/skills/yt-recap/SKILL.md`, `.claude/skills/yt-director/SKILL.md`, the
+tests. No OpenRouter model call in the tests; no real footage or private paths.
+
 ## [2026-10-25] Director tab, honest reasons, progress card and director speed (V030 lot c23)
 
 **Context:** The owner's phone test of v030 filed issues #118 (the Director tab),

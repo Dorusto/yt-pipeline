@@ -96,6 +96,79 @@ def test_chat_approve_carries_the_reedit_options(tmp_path):
         server.server_close()
 
 
+def test_chat_panel_keeps_the_button_when_can_do_all(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "drop 0071/s2",
+        "reply": "I read this as: drop 0071/s2.",
+        "can_do": "all",
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert 'class="chat-approve"' in page
+        assert "Make the new version" in page
+        assert "Answer the director first" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_panel_disables_the_button_when_can_do_part(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "drop 0071/s2 and add subtitles",
+        "reply": "I can drop the shot but I cannot add subtitles.",
+        "can_do": "part",
+        "missing_tool": "add subtitles",
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "Answer the director first" in page
+        assert 'class="chat-approve"' not in page
+        assert "Make the new version" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_panel_disables_the_button_when_can_do_none(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add subtitles",
+        "reply": "I cannot add subtitles.",
+        "can_do": "none",
+        "missing_tool": "add subtitles",
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "Answer the director first" in page
+        assert 'class="chat-approve"' not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     calls = stub_recap(monkeypatch, tmp_path)
@@ -136,7 +209,7 @@ def test_chat_missing_tool_is_logged(tmp_path, monkeypatch):
     stdout = json.dumps(
         {
             "reply": "I cannot add subtitles; I can drop or trim shots. Noted.",
-            "can_do": False,
+            "can_do": "none",
             "missing_tool": "add subtitles",
             "estimate_usd": None,
             "estimate_s": None,
@@ -175,13 +248,56 @@ def test_chat_missing_tool_is_logged(tmp_path, monkeypatch):
         server.server_close()
 
 
+def test_chat_part_missing_tool_is_logged(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+    stdout = json.dumps(
+        {
+            "reply": "I can drop the shot but I cannot add subtitles.",
+            "can_do": "part",
+            "missing_tool": "add subtitles",
+            "estimate_usd": None,
+            "estimate_s": None,
+            "wall_time_s": 1.0,
+            "llm_cost_usd": 0.0003,
+        }
+    )
+    monkeypatch.setattr(
+        serve.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
+    )
+    requests_path = tmp_path / "requests.jsonl"
+    server = start_server(root, requests=requests_path)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2 and add subtitles")]),
+        )
+        assert status == 303, body
+        lines = [
+            json.loads(line)
+            for line in requests_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(lines) == 1
+        assert lines[0]["type"] == "missing_tool"
+        assert lines[0]["text"] == "add subtitles: drop 0071/s2 and add subtitles"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_chat_can_do_logs_nothing(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     stub_recap(monkeypatch, tmp_path)
     stdout = json.dumps(
         {
             "reply": "I will drop 0071/s2.",
-            "can_do": True,
+            "can_do": "all",
             "missing_tool": None,
             "estimate_usd": 0.05,
             "estimate_s": 12.3,

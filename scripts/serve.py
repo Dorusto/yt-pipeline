@@ -1936,17 +1936,25 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
     )
     if replies:
         last = replies[-1]
-        hint = last["text"] + "\n\nDirector's reading: " + last["reply"]
-        parts.append(
-            f'<form class="chat-approve" method="post" action="/{html_escape(name)}/re-edit" '
-            'enctype="multipart/form-data">'
-            f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
-            '<input type="hidden" name="approved" value="1">'
-            '<input type="hidden" name="submit" value="reedit">'
-            f"{reedit_hidden_fields(last_run_options(directory))}"
-            '<button class="go" type="submit">Make the new version</button>'
-            "</form>"
-        )
+        can_do = last.get("can_do")
+        if can_do not in ("part", "none"):
+            can_do = "all"
+        if can_do == "all":
+            hint = last["text"] + "\n\nDirector's reading: " + last["reply"]
+            parts.append(
+                f'<form class="chat-approve" method="post" action="/{html_escape(name)}/re-edit" '
+                'enctype="multipart/form-data">'
+                f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
+                '<input type="hidden" name="approved" value="1">'
+                '<input type="hidden" name="submit" value="reedit">'
+                f"{reedit_hidden_fields(last_run_options(directory))}"
+                '<button class="go" type="submit">Make the new version</button>'
+                "</form>"
+            )
+        else:
+            parts.append(
+                '<button class="go" type="button" disabled>Answer the director first</button>'
+            )
     parts.append("</section>")
     return "".join(parts)
 
@@ -3743,10 +3751,11 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(500, "the director gave no answer")
             return
         can_do = summary.get("can_do")
-        can_do = can_do is not False
+        if can_do not in ("part", "none"):
+            can_do = "all"
         missing_tool = summary.get("missing_tool")
         missing_tool = missing_tool if isinstance(missing_tool, str) and missing_tool.strip() else None
-        if can_do is False and missing_tool is not None and self.server.requests is not None:
+        if can_do in ("part", "none") and missing_tool is not None and self.server.requests is not None:
             try:
                 append_request(
                     self.server.requests,

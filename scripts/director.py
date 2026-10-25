@@ -38,6 +38,7 @@ from common.moves import (
     screen_factor,
     slot_screen_length,
 )
+from common.neighbours import drop_pointless_neighbours
 from common.overlap import overlap_seconds
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred
@@ -1714,9 +1715,11 @@ def run(args, started):
     )
     slots = merge_contiguous(slots)
 
-    for first, second in zip(slots, slots[1:]):
-        if slots_similar(first, second):
-            warnings.append(f"adjacent similar shots: {first['shot_key']} and {second['shot_key']}")
+    slots, pointless_dropped = drop_pointless_neighbours(slots, slots_similar)
+    for slot, reason in pointless_dropped:
+        key = slot.get("shot_key") or candidate_key(slot)
+        drop_reasons.setdefault(key, reason)
+        warnings.append(f"dropped {key}: {reason}")
 
     if not slots:
         raise DirectorError("no usable candidates")

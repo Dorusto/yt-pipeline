@@ -77,7 +77,11 @@ no extra keys.
     are contiguous, or both are camera moves at least 8 s apart in source time,
     in time order (a long travelling take may give its approach and its exit
     one after the other);
-  - never plan two visually similar shots next to each other.
+  - never plan two visually similar shots next to each other;
+  - never plan two beats of the same segment, or two `similar_to` shots, next to
+    each other — keep only the better one; when the owner's feedback explicitly
+    asks for both, or the cut is deliberate for the story, set
+    `"deliberate": true` on the later slot and say why in `why`.
 - **Long takes are several moments.** When the menu splits one take into content
   beats (`beat_of` set: `approach`, `inside`, `exit`, `enter`, `leave`, ...),
   each beat is its own shot. Cover the arc of the take — its approach and its

@@ -64,6 +64,7 @@ The director pairs `transition_out` with `transition_in` of matching type and di
 - **Coverage sequence:** wide (where) → medium (who / what) → close (detail) → reaction. A good place has at least one of each.
 - **Screen direction:** keep movement direction consistent across cuts (boat moving right keeps moving right), unless the change is the point.
 - **Cut on motion:** cut inside the steady phase of a move; a pan right into a pan right reads as one movement.
+- **No pointless jump cuts:** two neighbouring slots that are beats of one segment, or a `similar_to` pair, are a pointless jump cut; keep only the better one unless the cut is deliberate.
 - **Handles:** never start or end a used segment inside an acceleration ramp; keep a few frames of steady motion on each side.
 - **Shot length follows pacing:** relaxed 4–8 s or longer, energetic 1–3 s; with music, lengths in whole beats or bars.
 - **Audio:** ambient sound is kept under picture; J/L cuts (sound of the next shot starts early) smooth scene changes.

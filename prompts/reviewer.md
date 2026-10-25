@@ -41,7 +41,7 @@ no extra keys.
    kept whole: it follows the slot maximum like any static shot; a camera move may
    run past the slot maximum on at most 15% of the slots; playback is at normal
    speed and any optional ramp is written by the tool, do not ask for it); no two slots from the same take back to back unless their
-   windows touch or both are camera moves at least 8 s apart, in time order; no two similar shots next to each other; ordinary slots follow
+   windows touch or both are camera moves at least 8 s apart, in time order; no two similar shots next to each other; two neighbouring slots that are beats of the same segment, or a `similar_to` pair, are a pointless jump cut — only one may stay, unless the plan marks the later slot `deliberate` (and says why) or the owner's feedback asks for both; ordinary slots follow
    the pacing limits stated in the user message; **photo slots last 2-4 s and carry a Ken Burns move** —
    a photo has no window, no landing and no same-take rule, and a planned hero
    photo must not be dropped.

@@ -94,6 +94,10 @@
           "keep_whole": {
             "type": "boolean",
             "description": "true when the shot is a hero or a complete semantic move and must keep its whole window up to the cap"
+          },
+          "deliberate": {
+            "type": "boolean",
+            "description": "true when the cut into this slot is deliberate (the owner asked for both shots, or the story needs it); the reviewer allows a same-segment-beat or similar neighbour pair only then"
           }
         }
       }
