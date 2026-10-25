@@ -276,7 +276,9 @@ the architect and `steps: 80` for the coder (at the limit opencode makes the
 agent stop and summarise what is left), `doom_loop: deny` (an unattended run
 cannot answer an "agent seems stuck" prompt, so the repeat is refused instead of
 hanging), and the watchdog's hard stops below. To change the reasoning level,
-edit the `reasoning:` block in the agent file.
+edit the `reasoning:` block in the agent file. Host-specific folders (for example
+a media or cache directory under the agent's home) go in the global opencode
+config (`~/.config/opencode/opencode.json`), never in the tracked one.
 
 To run the pipeline itself, the default `build` agent is enough: it already
 loads the skills.

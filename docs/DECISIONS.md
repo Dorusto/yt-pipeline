@@ -4,6 +4,24 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] Personal paths out of the tracked `opencode.json` (V030 audit lot a10, F17)
+
+**Context:** The v0.3.0 audit (F17) found the tracked `opencode.json` carried
+four `/root/...` permission paths, which are personal to this host.
+
+**Decision:** The four `/root/...` lines are removed from the tracked
+`opencode.json`; the host keeps them in its global opencode config
+(`~/.config/opencode/opencode.json`). `docs/AGENT_SETUP.md` says host-specific
+folders go in the global config, never in the tracked one.
+
+**Why:** The tracked file is public and must carry no personal path (RULES
+2026-10-23, "docs and examples use placeholders, never personal paths"); the
+global config is the right home for a host's own folders.
+
+**Consequence:** Files touched — `opencode.json`, `docs/AGENT_SETUP.md`,
+`docs/DECISIONS.md`. No code, CLI, schema, exit-code or test change; no
+`docs/RULES.md` change.
+
 ## [2026-10-25] Small contract and skill fixes: yt-render names yt-reframe, recap reports a missing interpreter as runtime, host-only tests listed (V030 audit lot a8, F1, F2, F15)
 
 **Context:** The v0.3.0 audit found (F1) the `yt-render` skill's Vertical 9:16

@@ -20,11 +20,7 @@
     "external_directory": {
       "*": "ask",
       "/tmp/**": "allow",
-      "~/media/**": "allow",
-      "/root/media/**": "allow",
-      "/root/projects/yt-pipeline/**": "allow",
-      "/root/.cache/yt-pipeline/**": "allow",
-      "/root/.local/**": "allow"
+      "~/media/**": "allow"
     },
     "doom_loop": "deny"
   },
