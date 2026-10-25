@@ -297,6 +297,95 @@ def test_learn_keeps_the_merged_lesson_and_waits_the_new_ones(tmp_path, monkeypa
     assert all(lesson_id in lesson_ids for lesson_id in summary["added"])
 
 
+def test_merge_uses_the_next_id_across_waiting(tmp_path):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "one", "kind": "lesson"},
+            {"id": "l002", "text": "two", "kind": "lesson"},
+            {"id": "l003", "text": "three", "kind": "lesson"},
+        ],
+        waiting=[
+            {"id": "l004", "text": "waiting one", "kind": "lesson"},
+            {"id": "l005", "text": "waiting two", "kind": "lesson"},
+        ],
+    )
+    result = run_notebook(
+        "--notebook",
+        str(notebook_file),
+        "--limit",
+        "3",
+        "--merge",
+        "l001,l002",
+        "--text",
+        "merged",
+        "--json",
+    )
+    assert result.returncode == 0
+    summary = json.loads(result.stdout)
+    assert summary["changed"]["added"] == ["l006"]
+    document = read_json(notebook_file)
+    ids = [lesson["id"] for lesson in document["lessons"] + document["waiting"]]
+    assert len(ids) == len(set(ids))
+
+
+def test_learn_writes_nothing_when_waiting_is_full(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [{"id": "l001", "text": "one", "kind": "lesson"}],
+        waiting=[
+            {"id": "l002", "text": "waiting one", "kind": "lesson"},
+            {"id": "l003", "text": "waiting two", "kind": "lesson"},
+            {"id": "l004", "text": "waiting three", "kind": "lesson"},
+        ],
+    )
+    workspace = make_workspace(tmp_path)
+    before = notebook_file.read_text(encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the waiting-full pass must not call the model")
+
+    monkeypatch.setattr(notebook, "make_client", boom)
+    summary = notebook.learn(str(workspace), str(notebook_file), 40)
+    assert summary["status"] == "waiting_full"
+    assert summary["llm_cost_usd"] == 0.0
+    assert summary["added"] == [] and summary["removed"] == []
+    assert notebook_file.read_text(encoding="utf-8") == before
+    assert not (workspace / ".learn.json").exists()
+
+
+def test_learn_writes_nothing_when_waiting_would_pass_the_cap(tmp_path, monkeypatch):
+    notebook_file = tmp_path / "notebook.json"
+    write_notebook(
+        notebook_file,
+        [
+            {"id": "l001", "text": "one", "kind": "lesson"},
+            {"id": "l002", "text": "two", "kind": "lesson"},
+        ],
+        waiting=[
+            {"id": "l003", "text": "waiting one", "kind": "lesson"},
+            {"id": "l004", "text": "waiting two", "kind": "lesson"},
+        ],
+    )
+    workspace = make_workspace(tmp_path)
+    answer = {
+        "lessons": [
+            {"text": "new one", "kind": "lesson", "part": None},
+            {"text": "new two", "kind": "lesson", "part": None},
+            {"text": "new three", "kind": "lesson", "part": None},
+        ],
+        "remove": [],
+    }
+    stub_learn_client(monkeypatch, answer, merge_answer={"merge": [], "remove": []})
+    before = notebook_file.read_text(encoding="utf-8")
+    summary = notebook.learn(str(workspace), str(notebook_file), 2)
+    assert summary["status"] == "waiting_full"
+    assert notebook_file.read_text(encoding="utf-8") == before
+    assert not (workspace / ".learn.json").exists()
+
+
 def test_removing_a_lesson_writes_a_waiting_lesson(tmp_path):
     notebook_file = tmp_path / "notebook.json"
     write_notebook(

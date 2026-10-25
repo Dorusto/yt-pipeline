@@ -55,6 +55,7 @@ DEFAULT_LEARN_PROMPT = REPO_ROOT / "prompts" / "notebook_learn.md"
 DEFAULT_MERGE_PROMPT = REPO_ROOT / "prompts" / "notebook_merge.md"
 LEARN_MARKER = ".learn.json"
 MAX_NEW_LESSONS = 3
+MAX_WAITING = 3
 
 
 class NotebookError(RuntimeError):
@@ -138,6 +139,11 @@ def next_id(lessons):
     return f"l{max(numbers, default=0) + 1:03d}"
 
 
+def next_notebook_id(lessons, waiting):
+    """The next free ``lNNN`` id across the notebook's lessons and waiting lessons."""
+    return next_id(lessons + waiting)
+
+
 def find_index(lessons, lesson_id):
     """The index of the lesson with ``lesson_id``, or None."""
     for index, lesson in enumerate(lessons):
@@ -165,7 +171,7 @@ def remove_lessons(lessons, ids):
     return removed
 
 
-def merge_lessons(lessons, ids, text):
+def merge_lessons(lessons, waiting, ids, text):
     """Replace the named lessons with one new lesson; return ``(removed_ids, new_id)``."""
     if len(set(ids)) != len(ids):
         raise NotebookError("--merge lists the same lesson id twice")
@@ -173,7 +179,7 @@ def merge_lessons(lessons, ids, text):
         if find_index(lessons, lesson_id) is None:
             raise NotebookError(f"unknown lesson id: {lesson_id}")
     removed = remove_lessons(lessons, ids)
-    new_id = next_id(lessons)
+    new_id = next_notebook_id(lessons, waiting)
     lessons.append(make_lesson(new_id, text))
     return removed, new_id
 
@@ -195,7 +201,7 @@ def apply_command(args, lessons, waiting):
         return changed
     if args.add:
         for text in args.add:
-            lesson_id = next_id(lessons)
+            lesson_id = next_notebook_id(lessons, waiting)
             lessons.append(make_lesson(lesson_id, text))
             changed["added"].append(lesson_id)
         return changed
@@ -218,7 +224,7 @@ def apply_command(args, lessons, waiting):
         ids = [part.strip() for part in args.merge.split(",") if part.strip()]
         if not ids:
             raise NotebookError("--merge needs at least one lesson id")
-        removed, new_id = merge_lessons(lessons, ids, args.text)
+        removed, new_id = merge_lessons(lessons, waiting, ids, args.text)
         changed["removed"].extend(removed)
         changed["merged"].extend(removed)
         changed["added"].append(new_id)
@@ -226,7 +232,7 @@ def apply_command(args, lessons, waiting):
     if args.propose is not None:
         if args.text is None:
             raise NotebookError("--propose requires --text")
-        lesson_id = next_id(lessons)
+        lesson_id = next_notebook_id(lessons, waiting)
         lessons.append(make_lesson(lesson_id, args.text, kind="proposal", part=args.propose))
         changed["added"].append(lesson_id)
         return changed
@@ -382,6 +388,24 @@ def normalize_merge_answer(answer):
     return merges, remove
 
 
+def waiting_full_summary(path, count, waiting, limit, started, llm_cost=0.0, model=None):
+    """The summary of a learn pass that wrote nothing because the waiting list is full."""
+    summary = {
+        "ok": True,
+        "status": "waiting_full",
+        "reason": "waiting lessons are full",
+        "notebook": str(path),
+        "count": count,
+        "limit": limit,
+        "waiting": waiting,
+        "added": [],
+        "removed": [],
+        "model": model,
+    }
+    summary.update(summary_fields(started, llm_cost))
+    return summary
+
+
 def learn(workspace, notebook, limit):
     """Run the learning pass: read new feedback, ask the model, write at most 3 lessons."""
     started = time.monotonic()
@@ -393,6 +417,8 @@ def learn(workspace, notebook, limit):
         raise NotebookError(f"workspace is not a directory: {workspace_path}")
     lessons = notebook_lessons(path)
     waiting = notebook_waiting(path)
+    count_on_disk = len(lessons)
+    waiting_on_disk = len(waiting)
     marker = read_learn_marker(workspace_path)
     last_learn_at = marker.get("last_learn_at")
     rows = read_feedback(workspace_path)
@@ -416,6 +442,8 @@ def learn(workspace, notebook, limit):
         }
         summary.update(summary_fields(started, 0.0))
         return summary
+    if len(waiting) >= MAX_WAITING:
+        return waiting_full_summary(path, count_on_disk, waiting_on_disk, limit, started)
     prompt_text = read_learn_prompt()
     edit = load_json(workspace_path / "edit.json")
     brief_text = ""
@@ -439,7 +467,7 @@ def learn(workspace, notebook, limit):
     added = []
     new_ids = []
     for lesson in new_lessons:
-        lesson_id = next_id(lessons + waiting)
+        lesson_id = next_notebook_id(lessons, waiting)
         lessons.append(
             make_lesson(lesson_id, lesson["text"], kind=lesson["kind"], part=lesson["part"])
         )
@@ -472,18 +500,18 @@ def learn(workspace, notebook, limit):
                     file=sys.stderr,
                 )
                 continue
-            merge_removed, new_id = merge_lessons(lessons, known, merge["text"])
+            merge_removed, new_id = merge_lessons(lessons, waiting, known, merge["text"])
             removed.extend(merge_removed)
             added.append(new_id)
     if len(lessons) > limit:
         new_id_set = set(new_ids)
-        kept = []
-        for lesson in lessons:
-            if lesson.get("id") in new_id_set:
-                waiting.append(lesson)
-            else:
-                kept.append(lesson)
-        lessons[:] = kept
+        overflow = [lesson for lesson in lessons if lesson.get("id") in new_id_set]
+        if len(waiting) + len(overflow) > MAX_WAITING:
+            return waiting_full_summary(
+                path, count_on_disk, waiting_on_disk, limit, started, llm_cost, response.model
+            )
+        waiting.extend(overflow)
+        lessons[:] = [lesson for lesson in lessons if lesson.get("id") not in new_id_set]
     promote_waiting(lessons, waiting, limit)
     present = {lesson.get("id") for lesson in lessons}
     added = [lesson_id for lesson_id in added if lesson_id in present]
@@ -515,6 +543,9 @@ def learn(workspace, notebook, limit):
 def print_learn(summary):
     if summary["status"] == "skipped":
         print(f"skipped: {summary['reason']}")
+        return
+    if summary["status"] == "waiting_full":
+        print(f"waiting_full: {summary['waiting']} waiting lessons (the notebook is full)")
         return
     for lesson_id in summary["added"]:
         print(f"added {lesson_id}")

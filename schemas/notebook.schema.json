@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/notebook.schema.json",
   "title": "notebook",
-  "description": "The instance's learning notebook written by scripts/notebook.py: short lessons the director keeps between edits, at most 40 of them (the limit is a code rule, not a schema rule, so --limit stays a valid test override). A lesson is a plain lesson or a proposal to move a repeated sentence to a channel.fixed part; the code never writes the config, the owner says yes. The optional waiting array holds lessons a learn pass could not fit; the director never sees them and they are promoted into lessons when room appears.",
+  "description": "The instance's learning notebook written by scripts/notebook.py: short lessons the director keeps between edits, at most 40 of them (the limit is a code rule, not a schema rule, so --limit stays a valid test override). A lesson is a plain lesson or a proposal to move a repeated sentence to a channel.fixed part; the code never writes the config, the owner says yes. The optional waiting array holds lessons a learn pass could not fit; the director never sees them and they are promoted into lessons when room appears. At most 3 lessons wait at a time (a code rule, not a schema rule).",
   "type": "object",
   "additionalProperties": false,
   "required": [

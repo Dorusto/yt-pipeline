@@ -3311,16 +3311,43 @@ the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
 `schemas/notebook.schema.json` (the marker lives in the workspace), no shared
 notebook between instances and no new web route or UI control.
 
-**c10c review fixes:** the review of the c10b pass found three faults, fixed in
-V030 lot c10c. `read_learn_prompt` reads the prompt through the shared
-`common.text.read_text` instead of its own reader. A learn pass that still does
-not fit after the merge call keeps the new lessons as `waiting` lessons in the
-file (never dropped) and promotes them into `lessons` as soon as there is room;
-`schemas/notebook.schema.json` gains the optional `waiting` array and the web app
-shows the waiting lessons with the same delete form. The learn-pass model cost is
-charged to a notebook ledger next to the notebook file (`notebook.spend.json`,
-via `common.notebook.notebook_ledger_path`) and counted in the instance total
-model cost on the Costs page, never in the per-clip list.
+## [2026-10-25] Notebook limit and ledger review fixes (V030 lot c10c)
+
+**Context:** The review of the c10b learn pass found three faults:
+`read_learn_prompt` read the prompt with its own file reader instead of the shared
+`common.text.read_text`; a learn pass that still did not fit after the merge call
+had no place to keep the new lessons; and the learn-pass model cost was not counted
+in the instance total model cost on the Costs page.
+
+**Options:** (A) drop the lessons that do not fit and leave the cost out of the
+instance total; (B) keep them as `waiting` lessons in the file (never dropped) and
+charge the learn-pass cost to a notebook ledger counted in the instance total.
+
+**Decision:** B. `read_learn_prompt` reads the prompt through the shared
+`common.text.read_text`. A learn pass that still does not fit after the merge call
+keeps the new lessons as `waiting` lessons in the file (never dropped) and promotes
+them into `lessons` as soon as there is room; `schemas/notebook.schema.json` gains
+the optional `waiting` array and the web app shows the waiting lessons with the same
+delete form. The learn-pass model cost is charged to a notebook ledger next to the
+notebook file (`notebook.spend.json`, via
+`common.notebook.notebook_ledger_path`) and counted in the instance total model cost
+on the Costs page, never in the per-clip list.
+
+**Why not A:** the issue asks that nothing be dropped and that the instance total
+show what the notebook costs.
+
+**Consequence:** `scripts/notebook.py` gains the `waiting` handling and the notebook
+ledger, `schemas/notebook.schema.json` gains `waiting`, `scripts/serve.py` shows the
+waiting lessons and adds the notebook ledger to the instance total, and
+`prompts/notebook_merge.md` is new. `docs/RULES.md` extends the notebook rule.
+
+**c10d review fixes:** the review of the c10c pass found two faults, fixed in V030
+lot c10d. `merge_lessons` takes the new id from `next_id(lessons + waiting)` through
+the one `next_notebook_id` helper, so a merge on a notebook with waiting lessons
+never reuses an id. The waiting list is capped at 3 lessons in total: when 3 are
+already waiting the learn pass writes nothing and leaves the `.learn.json` marker
+where it was (the feedback is learned once room is made, nothing dropped) and
+`--json` reports `"status": "waiting_full"`.
 
 ## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
 
