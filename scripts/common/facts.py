@@ -18,7 +18,7 @@ from common.constants import MIN_SHOT_LENGTH_S
 from common.jsonio import load_json
 from common.moves import MOVE_ROLES
 from common.overlap import overlap_seconds
-from common.peak import centre_window, choose_peak
+from common.peak import choose_peak
 
 MAX_SLOT_S = 12.0
 DEFAULT_IMPORTANT_MAX_S = 6.0
@@ -459,9 +459,3 @@ def landing_floor(fact):
     return None if landing is None else float(landing) + LANDING_FLOOR_S
 
 
-def expected_cut(fact, length_s):
-    """The ``(in_s, out_s)`` of a ``length_s`` cut centred on the shot's peak, inside its window."""
-    window_in = float(fact["window_in_s"])
-    window_out = float(fact["window_out_s"])
-    length = min(float(length_s), window_out - window_in)
-    return centre_window(window_in, window_out, length, fact_peak(fact), landing_floor(fact))

@@ -11,7 +11,7 @@ import beats
 import llm_director
 from common.beatsnap import absorb_pair, snap_slots
 from common.config import ConfigError
-from common.facts import expected_cut, make_fact
+from common.facts import make_fact
 from common.exit_codes import EXIT_USAGE
 
 
@@ -676,18 +676,6 @@ def test_facts_carry_the_peak_and_where_it_came_from(tmp_path):
     assert (facts["0056/s1"]["peak_s"], facts["0056/s1"]["peak_source"]) == (4.5, "vision")
     assert (facts["0057/s1"]["peak_s"], facts["0057/s1"]["peak_source"]) == (12.5, "motion")
     assert (facts["0080/s1"]["peak_s"], facts["0080/s1"]["peak_source"]) == (10.0, "middle")
-
-
-PEAK_FACT = {**fact("p/s1", "p.mp4", 0.0, 20.0), "peak_s": 14.0, "peak_source": "vision"}
-
-
-def test_expected_cut_is_centred_on_the_peak_inside_the_window():
-    assert expected_cut(PEAK_FACT, 4.0) == (12.0, 16.0)
-    assert expected_cut({**PEAK_FACT, "peak_s": 1.0}, 4.0) == (0.0, 4.0)
-    assert expected_cut({**PEAK_FACT, "peak_s": 19.5}, 4.0) == (16.0, 20.0)
-    landing = {**PEAK_FACT, "peak_s": 2.0, "landing_at_s": 10.0}
-    in_s, out_s = expected_cut(landing, 3.0)
-    assert out_s == pytest.approx(10.75) and in_s == pytest.approx(7.75)
 
 
 def test_previous_edit_context_carries_the_shot_words(tmp_path):
