@@ -1274,7 +1274,7 @@ def _director_review_call(client, prompt, payload, report, pictures, state, fact
         + json.dumps(report, ensure_ascii=False)
         + "\n\nPictures of the cut, one per shot, in timeline order: "
         + ", ".join(f"{picture['id']} ({picture['shot_key']})" for picture in pictures)
-        + ". Approve or answer with a complete revised plan."
+        + ". Answer with a review: approve, or send notes with a complete revised plan."
     )
     content = [{"type": "text", "text": user_text}]
     for picture in pictures:
@@ -1282,7 +1282,7 @@ def _director_review_call(client, prompt, payload, report, pictures, state, fact
         if uri is not None:
             content.append({"type": "image_url", "image_url": {"url": uri}})
     messages = [
-        {"role": "system", "content": prompt},
+        {"role": "system", "content": prompt + "\n\n" + read_prompt("director_review.md")},
         {"role": "user", "content": content},
     ]
     try:

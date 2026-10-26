@@ -154,6 +154,15 @@ def test_approved_review_ends_after_round_one(tmp_path):
     assert len(client.calls) == 2
 
 
+def test_the_review_call_asks_for_a_review_not_a_plan(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([flow_plan(), review_approved()])
+    llm_director.run(workspace, brief=BRIEF, client=client, picture_fn=PictureStub())
+    first, second = client.calls
+    assert "The review of the cut" not in first["messages"][0]["content"]
+    assert "The review of the cut" in second["messages"][0]["content"]
+
+
 def test_revised_plan_runs_the_editor_again_and_stops_after_two_rounds(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([flow_plan(), review_revised(), review_not_approved()])
