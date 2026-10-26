@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Added
 
 - Director: the shot length limits (`director.shot_limits`, 1.5 to 8 s by default, one row per content type) are in `config.yaml`; the length asked is a guide, the beat and the director's own length come first, and a shot asked longer than the limit stays long only when the director gives an `over_limit_reason`.

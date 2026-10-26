@@ -2,7 +2,7 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
-## v0.3.0 (candidate)
+## v0.3.0 (2026-10-26)
 
 v0.3.0 makes the director usable as an extension of any coding agent. One `yt`
 command runs every tool from any folder, and the pipeline ships as five Claude
@@ -27,6 +27,7 @@ issues.
 
 **Experimental** — everything else, as in v0.2.0, plus the plugin, the `yt`
 command, the agent mode, the chat and the notebook.
+The director rewrite (film-crew flow, the editor that cuts on the beat, the review round, the length limits) and the Director tab were tested on two sets of footage but not yet by the owner on a real clip, so they ship as experimental. Known: some cuts feel on the beat but in another rhythm; the Debug tab has no link for now.
 
 ## v0.2.0 (2026-10-24)
 
