@@ -27,4 +27,5 @@ Send notes when something must change. Then `approved` is false, `notes` says in
 Rules:
 - The top level has only `approved`, `summary`, and when not approved also `notes` and `plan`. Never answer with a bare plan.
 - `summary` is always there, in plain words, no jargon.
+- Check the length. Each shot in the report has `target_s` (what you asked) and `length_s` (what the window allowed). If the total is more than 5% under the target, or a shot came out short, lengthen other shots that have room or add a shot, and say so in `notes`. Do not leave the film short without a reason.
 - Change only what the pictures and the report show is wrong. Keep what works.

@@ -58,6 +58,10 @@
             "minimum": 0,
             "description": "total on-screen length of the shot, its pieces included"
           },
+          "target_s": {
+            "type": "number",
+            "description": "the length the plan asked for; compare with length_s to see which shots came out short"
+          },
           "technique_asked": {"type": "string", "minLength": 1, "description": "the plan shot's technique"},
           "technique_done": {
             "type": ["string", "null"],

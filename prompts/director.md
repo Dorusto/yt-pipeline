@@ -69,6 +69,7 @@ For each shot give `moment`: `at_s` (seconds inside the source clip, when the sh
 
 - Use only `shot_key` values that exist in the shot facts you got. Never invent a shot, never change a shot's content; the editor will not change it either.
 - Shots are in timeline order; ids are `v1`, `v2`, ...; each `beat` is the id of a beat in `structure.beats`; the beat targets add up to the target length (within 3 s), and so do the shot targets.
+- A shot never runs longer than its good window, so some come out shorter than asked. Put the shot targets at the top of the allowed sum (up to 3 s above the target length) so the cut still reaches it.
 - Shot lengths follow the clip: 2 to 5 s, shorter for a quick action, longer for a calm hold. A technique that needs more (`time_compression`) is the exception, say so in `why`.
 - A photo is a shot too: give no `moment`; the editor sets its length.
 - The owner's notes are binding. If a note asks for a shot, include it; if it asks to remove one, remove it. Mention in `notes` which notes you followed.
