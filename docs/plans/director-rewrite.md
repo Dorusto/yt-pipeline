@@ -199,3 +199,7 @@ R2 → R3 → R4 → R5 → R6.
 - https://reduct.video/blog/paper-edits-for-documentary-filmmakers
 - https://workflow.frame.io/guide/stringouts
 - https://spliceapp.com/blog/crafting-a-quick-vacation-recap-montage-for-travel-vloggers/
+
+## Open: investigate failing tests
+
+A full run reported 6 failed tests (among them tests/test_doctor.py::test_publish_config_warns_listing_missing, tests/test_doctor.py::test_warn_alone_keeps_ok, tests/test_graphics.py::test_hyperframes_render_has_alpha). They do not fail in the director suite run on this branch (2489 passed). Find out which run produced them and why.
