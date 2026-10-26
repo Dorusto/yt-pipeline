@@ -1,7 +1,7 @@
 ---
 name: yt-publish
-description: Build the publish kit for a finished edit — turn a FilmCraft project or an edit.json plus per-source Whisper word JSON files into a Romanian timeline .srt and a flat _words.json for the final cut, without transcribing again, run one Whisper pass over a media file to produce a raw .srt and the per-source word JSON, run the whole publish chain in one command (subtitles → corrections → verify → a human-review stop → EN translation → thumbnail → metadata draft), or build the manual-upload publish kit (video + RO/EN SRTs + thumbnail + studio.md copy-ready blocks and a Studio-order checklist). Use when the user wants subtitles for an assembled edit, a timeline word list for the cut, asks to map existing word timestamps onto the edit's clips, wants to transcribe a clip to .srt + word JSON, wants the publish kit run end to end, or wants the Studio upload sheet. Trigger phrases - "fă subtitrarea pentru montaj", "subtitrări din proiectul FilmCraft", "words.json pentru edit", "subtitles from the edit", "timeline subtitles", "map words onto the cut", "transcrie clipul în srt", "transcribe the clip to words.json", "rulează lanțul de publicare", "publish chain", "subtitles to metadata in one command", "publish.py", "fă publish kit-ul", "pregătește upload-ul manual", "studio.md", "publish kit". Not for translating subtitles alone (that is `yt-transcript`), not for correcting them alone (`correct_srt.py`), not for building the edit (that is `director`/`llm_director`) and not for rendering (that is `render`).
-compatibility: Run from the repository root with the repo .venv. Step 1 makes no model calls and needs no new dependencies; step 2 needs openai-whisper + torch on the real machine but runs offline with --backend mock. Reads a FilmCraft project (JSON, schema filmcraft-project) or an edit.json (schemas/edit.schema.json) and one Whisper word JSON per source clip. Step 4 chains steps 1-3 plus correct_srt.py, translate_srt.py and thumbnail.py as subprocesses; it calls no model itself and runs offline with a mock config. Step 5 is the standalone `publish_kit.py`: it reads the chain's outputs and links them into `publish-kit/`; `--kit-loudness` runs loudness.py as a subprocess. Originals are read-only; outputs are derived and overwritten on re-run.
+description: Build the publish kit for an edit — turn a FilmCraft project or an edit.json plus per-source Whisper word JSON files into a Romanian timeline .srt and a flat _words.json for the final cut, or run the publish chain in one command. Use when the user wants subtitles for an assembled edit, a timeline word list for the cut, asks to map existing word timestamps onto the edit's clips, wants to transcribe a clip to .srt + word JSON, wants the publish kit run end to end, or wants the Studio upload sheet. Trigger phrases - "fă subtitrarea pentru montaj", "subtitrări din proiectul FilmCraft", "words.json pentru edit", "subtitles from the edit", "timeline subtitles", "map words onto the cut", "transcrie clipul în srt", "transcribe the clip to words.json", "rulează lanțul de publicare", "publish chain", "subtitles to metadata in one command", "publish.py", "fă publish kit-ul", "pregătește upload-ul manual", "studio.md", "publish kit". Not for `yt-transcript`, `correct_srt.py`, `director`/`llm_director` or `render`.
+compatibility: Run with the `yt` entry point on PATH. Step 1 makes no model calls and needs no new dependencies; step 2 needs openai-whisper + torch on the real machine but runs offline with --backend mock. Reads a FilmCraft project (JSON, schema filmcraft-project) or an edit.json (schemas/edit.schema.json) and one Whisper word JSON per source clip. Step 4 chains steps 1-3 plus correct_srt.py, translate_srt.py and thumbnail.py as subprocesses; it calls no model itself and runs offline with a mock config. Step 5 is the standalone `publish_kit.py`: it reads the chain's outputs and links them into `publish-kit/`; `--kit-loudness` runs loudness.py as a subprocess. Originals are read-only; outputs are derived and overwritten on re-run.
 ---
 
 # yt-publish
@@ -15,14 +15,14 @@ Two inputs are accepted, and they use the same mapping rule.
 From a FilmCraft project:
 
 ```bash
-.venv/bin/python scripts/subs_from_edit.py --fcproj project.fcproj --sequence Main \
+yt subs_from_edit --fcproj project.fcproj --sequence Main \
   --words-dir /path/to/words/ --out-dir /path/to/out/ [--track "Audio 1"] [--name NAME] [--json]
 ```
 
 From an `edit.json` edit list:
 
 ```bash
-.venv/bin/python scripts/subs_from_edit.py --from-edit edit.json \
+yt subs_from_edit --from-edit edit.json \
   --words-dir /path/to/words/ --out-dir /path/to/out/ [--name NAME] [--json]
 ```
 
@@ -42,7 +42,7 @@ From an `edit.json` edit list:
 Run one Whisper pass over a media file and write a raw `.srt` plus the per-source word JSON that step 1's `--words-dir` reads. Use it when no edit project and no word JSONs exist yet, then transcribe each source clip with `--name` set to the source stem.
 
 ```bash
-.venv/bin/python scripts/transcribe.py INPUT [--out-dir DIR] [--name NAME] [--model MODEL] \
+yt transcribe INPUT [--out-dir DIR] [--name NAME] [--model MODEL] \
   [--language ro] [--backend whisper|mock] [--json]
 ```
 
@@ -60,7 +60,7 @@ Run one Whisper pass over a media file and write a raw `.srt` plus the per-sourc
 Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publish draft: 3 titles, a description in Romanian and English with the channel's fixed CTA wording, chapters from the timeline, tags and a pinned-comment proposal. A human reviews the draft; nothing is uploaded. Thumbnail concepts are a separate step (see Step 3b).
 
 ```bash
-.venv/bin/python scripts/metadata.py SRT --context CONTEXT.md [--title TITLE] \
+yt metadata SRT --context CONTEXT.md [--title TITLE] \
   [--chapters chapters.json] [--previous-url URL] [--repo-url URL] \
   [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
 ```
@@ -71,8 +71,8 @@ Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publis
 - `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's: each `start_s` becomes a normalized `HH:MM:SS` timestamp and the existing chapter rules apply (first at `00:00:00`, non-decreasing, inside the transcript). The model's own `chapters` key becomes optional and is ignored when present; without the flag nothing changes. A missing or invalid file exits 2 naming the path or the offending chapter.
 - `--out-dir` is the output folder (default: the SRT's parent; created if missing). `--name` is used in the draft header and the `--json` summary (default: the SRT stem). It writes `<out-dir>/metadata.md` and, next to it, `<out-dir>/metadata.json` with the validated fields (`name`, `titles`, `description_ro`, `description_en`, `chapters`, `tags`, `pinned_comment`) so the publish kit is deterministic from the model JSON.
 - `--prompt` is an alternative prompt file (default: `prompts/metadata.md`).
-- The tool sends the prompt file text plus `## Context`, `## Chosen title` (only with `--title`), `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
-- The channel's fixed wording comes from `channel.fixed` in the config, one string per language: `members_sentence` (with `{members}` filled from `channel.members`) and `closing` are inserted verbatim and never taken from the model. The RO description gets the RO string and the EN description the EN one; a missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. `channel.members` is required only when a `members_sentence` string contains the `{members}` placeholder; a channel that does not thank members in the description runs without it. The description order is intro → github line (omitted when null) → members sentence (omitted when unset) → previous line (omitted when null or when `--previous-url` was not given) → subscribe line → promo lines (each prefixed with its `[label]`) → closing (omitted when unset).
+- The tool sends the prompt file text plus `## Style`, `## Context`, `## Chosen title` (only with `--title`), `## Transcript` (the SRT as `[HH:MM:SS] text` lines) and `## Links` to the `metadata` model role at `temperature=0.3`, and parses one JSON object back (a ```json fence is stripped).
+- The channel's fixed wording comes from `channel.fixed` in the config, one string per language: `members_sentence` (with `{members}` filled from `channel.members`) and `closing` are inserted verbatim and never taken from the model. The RO description gets the RO string and the EN description the EN one; a missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. `channel.members` is required only when a `members_sentence` string contains the `{members}` placeholder; a channel that does not thank members in the description runs without it. The description order is intro → github line (omitted when null) → members sentence (omitted when unset) → previous line (omitted when null or when `--previous-url` was not given) → subscribe line → promo lines (each prefixed with its `[label]`) → closing (omitted when unset). The `channel.style.description_order` list sets the order of the description parts (`intro`, `github`, `members`, `previous`, `subscribe`, `promo`, `closing`); an unknown name is a config error; unset keeps the default order. The channel's own style instructions come from `channel.style` in the config, one non-empty string per part (`title_style`, `description_order`, `pinned_comment_voice`); the tool hands the present parts to the model in a `## Style` section, one line per part, and a missing part is left out — never replaced by built-in text; `thumbnail_formula` stays in `channel.fixed`.
 - Chapters must be `HH:MM:SS` or `MM:SS` (normalized to `HH:MM:SS`), non-decreasing, inside the transcript, first one `00:00:00`. A chapter may carry `title_en`; when at least one does, the draft adds a `## Chapters (EN)` section and `metadata.json` keeps `title_en` per chapter. A chapter without `title_en` falls back to its RO title in that section.
 - `--json` prints a summary: `output`, `titles`, `chapters`, `tags`, `wall_time_s` and `llm_cost_usd`.
 - Errors exit 2 with a message on stderr and write nothing: missing or unreadable SRT/context, `channel.github_url` missing or empty in the config (and `channel.members` too when a `members_sentence` string contains `{members}`), a missing model role, a bad chapter (named) from `--chapters`. Budget or LLM errors, unparseable model JSON or a missing or invalid JSON key (named) exit 3 (the model call failed after work started).
@@ -83,7 +83,7 @@ Turn a corrected Romanian `.srt` plus a context note into a `metadata.md` publis
 Turn the confirmed title, the context note and the corrected `.srt` into 2-3 Romanian thumbnail concepts: `thumbnail_concepts.py` asks the `metadata` model role and writes `thumbnail_concepts.json` (validated against `schemas/thumbnail_concepts.schema.json`) plus a Romanian `thumbnail_concepts.md`. The chosen concept feeds `thumbnail.py --concepts`/`--pick` directly. A human picks one; nothing is uploaded.
 
 ```bash
-.venv/bin/python scripts/thumbnail_concepts.py SRT --context CONTEXT.md --title "AI-UL MEU" \
+yt thumbnail_concepts SRT --context CONTEXT.md --title "AI-UL MEU" \
   [--out-dir DIR] [--name NAME] [--prompt PATH] [--json]
 ```
 
@@ -98,7 +98,7 @@ Turn the confirmed title, the context note and the corrected `.srt` into 2-3 Rom
 One command runs the whole publish kit for a finished edit: subtitles (from the edit project if given, else transcribe) → corrections → verify (the corrected SRT against the final video) → a stop for human review → `--resume` → EN translation → thumbnail (when a photo is given) → metadata draft → the manual-upload kit (with `--kit`). A step whose output exists is skipped, and the run history is kept in `PROJECT/publish_state.json`.
 
 ```bash
-.venv/bin/python scripts/publish.py --project DIR --context FILE \
+yt publish --project DIR --context FILE \
   (--fcproj PROJ --sequence NAME [--track T] | --from-edit EDIT.json | --media FILE) \
   [--words-dir DIR] [--name NAME] \
   [--photo FILE --title T --keyword K --theme tech|creator [--kicker K]] \
@@ -126,7 +126,7 @@ One command runs the whole publish kit for a finished edit: subtitles (from the 
 `publish_kit.py` is the standalone kit tool. It reads the publish chain's existing outputs and writes `PROJECT/publish-kit/` for a manual YouTube Studio upload: `<name>_RO.srt`, `<name>_EN.srt`, `thumbnail.jpg`, the final video (linked) and `studio.md` with one copy-ready block per Studio field plus a checklist in Studio order. It never re-runs or overwrites the chain's outputs, so it can be re-run alone after changing only the thumbnail. No API upload and no FilmCraft caption-track import.
 
 ```bash
-.venv/bin/python scripts/publish_kit.py --project DIR --final-video FILE \
+yt publish_kit --project DIR --final-video FILE \
   [--name NAME] [--kit-loudness] [--kit-title TITLE] [--json]
 ```
 

@@ -1,10 +1,12 @@
 import json
 import subprocess
+import sys
 import tempfile
 import wave
 
 import numpy as np
 import pytest
+import yaml
 
 import beats
 from common.exit_codes import EXIT_OK, EXIT_USAGE
@@ -325,6 +327,7 @@ def test_help_lists_flags_with_examples(capsys):
         "--slots",
         "--min-beat-s",
         "--max-beat-s",
+        "--engine",
         "--json",
         "--force",
     ):
@@ -375,3 +378,118 @@ def test_grid_is_a_local_maximum(tmp_path, capsys):
     scores = [score(shift) for shift in shifts]
     best = shifts[int(np.argmax(scores))]
     assert abs(best - beats.ONSET_LATENCY_S) <= 0.01
+
+
+def test_engine_beat_this_stub(tmp_path, capsys, monkeypatch):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    beat_s = np.arange(0.0, 8.0, 0.5)
+    downbeat_s = beat_s[::4]
+    monkeypatch.setattr(
+        beats,
+        "beat_this_beats",
+        lambda samples, rate=beats.ANALYSIS_RATE: (beat_s, downbeat_s),
+    )
+    summary = analyse(capsys, click, "--engine", "beat_this")
+    assert summary["bpm"] == pytest.approx(120.0, abs=0.5)
+    assert summary["beat_s"] == [round(float(value), 4) for value in beat_s]
+    assert summary["downbeat_s"] == [round(float(value), 4) for value in downbeat_s]
+    numpy_summary = analyse(capsys, click)
+    assert set(summary) == set(numpy_summary)
+
+
+def test_engine_beat_this_missing_package(tmp_path, capsys, monkeypatch):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    monkeypatch.setitem(sys.modules, "beat_this", None)
+    monkeypatch.setitem(sys.modules, "beat_this.inference", None)
+    code = beats.main([str(click), "--engine", "beat_this", "--json"])
+    assert code == EXIT_USAGE
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == EXIT_USAGE
+    assert "pip install beat-this" in payload["error"]
+    assert "[error]" in captured.err
+
+
+def test_engine_bad_value(tmp_path, capsys):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    with pytest.raises(SystemExit) as excinfo:
+        beats.main([str(click), "--engine", "bogus"])
+    assert excinfo.value.code == EXIT_USAGE
+
+
+def test_engine_numpy_matches_default(tmp_path, capsys):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    default = analyse(capsys, click)
+    explicit = analyse(capsys, click, "--engine", "numpy")
+    default.pop("wall_time_s")
+    explicit.pop("wall_time_s")
+    assert explicit == default
+
+
+def write_config(tmp_path, engine):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": {"director": "deepseek/deepseek-v4.1-flash"},
+                "llm_budget_usd": 1.0,
+                "llm_backend": "mock",
+                "beats": {"engine": engine},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_engine_comes_from_config(tmp_path, capsys, monkeypatch):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    monkeypatch.delenv("YT_PIPELINE_BEATS_ENGINE", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, "beat_this")))
+    beat_s = np.arange(0.0, 8.0, 0.5)
+    downbeat_s = beat_s[::4]
+    monkeypatch.setattr(
+        beats,
+        "beat_this_beats",
+        lambda samples, rate=beats.ANALYSIS_RATE: (beat_s, downbeat_s),
+    )
+    summary = analyse(capsys, click)
+    assert summary["beat_s"] == [round(float(value), 4) for value in beat_s]
+    assert summary["downbeat_s"] == [round(float(value), 4) for value in downbeat_s]
+
+
+def test_engine_flag_overrides_config(tmp_path, capsys, monkeypatch):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    monkeypatch.delenv("YT_PIPELINE_BEATS_ENGINE", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, "beat_this")))
+    called = []
+    monkeypatch.setattr(
+        beats,
+        "beat_this_beats",
+        lambda samples, rate=beats.ANALYSIS_RATE: called.append(True)
+        or (np.zeros(0), np.zeros(0)),
+    )
+    summary = analyse(capsys, click, "--engine", "numpy")
+    assert called == []
+    assert summary["beats"] > 0
+
+
+def test_engine_unknown_config_value_is_a_usage_error(tmp_path, capsys, monkeypatch):
+    click = tmp_path / "click.wav"
+    make_click(click, duration=8.0)
+    monkeypatch.delenv("YT_PIPELINE_BEATS_ENGINE", raising=False)
+    monkeypatch.setenv("YT_CONFIG", str(write_config(tmp_path, "bogus")))
+    code = beats.main([str(click), "--json"])
+    assert code == EXIT_USAGE
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == EXIT_USAGE
+    assert "[error]" in captured.err

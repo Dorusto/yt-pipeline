@@ -1,8 +1,8 @@
 # S56 — first Mode B slice (lots 1-3)
 
-Draft report for Doru to confirm. Scope: talking-head + screen OBS recordings to a
+Draft report for the owner to confirm. Scope: talking-head + screen OBS recordings to a
 FilmCraft rough cut a human finishes — `rough_cut.py` (cut model + paired slots),
-`eval_rough_cut.py` (scored against Doru's hand edit, thresholds tuned) and
+`eval_rough_cut.py` (scored against the owner's hand edit, thresholds tuned) and
 `mode_b.py` (one command: transcribe what is missing → rough cut → export,
 skipping any step whose output already exists).
 
@@ -40,7 +40,7 @@ skipping any step whose output already exists).
 - Whisper transcription only ran on the mock backend here; the real `whisper`
   backend was not exercised.
 
-## Doru, check this
+## the owner, check this
 
 - `docs/reports/S56-eval.md` — only the `ok` filler was kept and
   `retake_similarity` stayed at 0.75, plus the overfitting note.

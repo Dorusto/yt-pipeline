@@ -1,7 +1,7 @@
 ---
 name: yt-thumbnail
 description: Render a branded 1280x720 YouTube thumbnail from a portrait photo and a title with the DEPPSiT brand kit (brand.json) — cut-out portrait with an outer glow screen-blended onto a generated or photo background, title + keyword + kicker + #DEPPSiT tag in the brand fonts, optional layered thumbnail.psd (psd-tools). Two themes — tech (generated dark background, cool keyword) and creator (photo background, warm keyword). Use when the user asks for a YouTube thumbnail or cover from a photo, wants the branded DEPPSiT look, or wants the text on separate PSD layers for manual retouching. Trigger phrases - "fă thumbnail", "thumbnail cu brand", "generează thumbnail-ul", "cover pentru YouTube", "branded thumbnail". Not for cutting shorts (that is yt-shorts), not for the recap render (that is yt-render), not for background removal from video (that is MatAnyone / D6).
-compatibility: Run from the repository root with the repo .venv. CPU only, no GPU, no model calls (rembg runs a local ONNX model, ~973 MB downloaded once to ~/.rembg/models/, older rembg to ~/.u2net/; the birefnet-portrait cut-out needs about 8 GB free RAM); writes only the --out directory. psd-tools is needed for --psd; rembg is optional (--skip-cutout works without it).
+compatibility: Run with the `yt` entry point on PATH. CPU only, no GPU, no model calls (rembg runs a local ONNX model, ~973 MB downloaded once to ~/.rembg/models/, older rembg to ~/.u2net/; the birefnet-portrait cut-out needs about 8 GB free RAM); writes only the --out directory. psd-tools is needed for --psd; rembg is optional (--skip-cutout works without it).
 ---
 
 # yt-thumbnail
@@ -11,7 +11,7 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
 ## Step 1: tech theme (generated background)
 
 ```bash
-.venv/bin/python scripts/thumbnail.py --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
+yt thumbnail --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
     --kicker "// homelab · automatizări" --theme tech --out thumb/
 ```
 
@@ -22,7 +22,7 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
 ## Step 2: creator theme (photo background, required)
 
 ```bash
-.venv/bin/python scripts/thumbnail.py --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
+yt thumbnail --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
     --theme creator --background frame.jpg --out thumb/
 ```
 
@@ -31,7 +31,7 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
 ## Step 3: PSD and cut-out options
 
 ```bash
-.venv/bin/python scripts/thumbnail.py --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
+yt thumbnail --photo photo.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" \
     --theme tech --out thumb/ --psd --skip-cutout --brand brand.json --json
 ```
 
@@ -42,7 +42,7 @@ One command turns a portrait photo + a title into the branded 1280x720 YouTube t
 ## Step 4: concepts file
 
 ```bash
-.venv/bin/python scripts/thumbnail.py --photo photo.jpg --concepts thumbnail_concepts.json \
+yt thumbnail --photo photo.jpg --concepts thumbnail_concepts.json \
     --pick 2 --out thumb/ --skip-cutout --json
 ```
 

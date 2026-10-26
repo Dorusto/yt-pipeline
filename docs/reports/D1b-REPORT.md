@@ -1,6 +1,6 @@
 # D1b — describe + index → shotlog, vision bake-off
 
-Date: 2026-10-13. Branch `d1b-describe-index`. **⛔ Doru checkpoint.**
+Date: 2026-10-13. Branch `d1b-describe-index`. **⛔ the owner checkpoint.**
 
 Scope delivered: `motion`/`quality` emit confidence per label and `uncertain`
 when signals disagree or large self-moving regions dominate; `describe`
@@ -85,7 +85,7 @@ not retune the geometry.
 - **Per-mode score weights** (vision/audio/text per content type) — D2 router
   scope; today one weight pair for everything.
 
-## Doru, check this
+## the owner, check this
 
 1. Watch `~/media/yt-test/workspace/recap_d1b_720p.mp4` (81 s) next to
    `recap_720p.mp4` (S1, 85 s) — are the cave and tunnel moments now where you

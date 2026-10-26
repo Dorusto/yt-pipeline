@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
+### Added
+
+- Director: the shot length limits (`director.shot_limits`, 1.5 to 8 s by default, one row per content type) are in `config.yaml`; the length asked is a guide, the beat and the director's own length come first, and a shot asked longer than the limit stays long only when the director gives an `over_limit_reason`.
+- Director: a review prompt (`prompts/director_review.md`) for the notes round, so the review call answers with a review and not with a plan.
+- Web app: the Director tab folds the shot-by-shot list and the look-alike list; the Debug tab has no link for now (the page stays at `?tab=debug`).
+- Agent entry point: `yt <tool> [args]` runs any tool from any folder, and `yt --help --json` lists the tools as JSON.
+- Claude Code plugin: five plugins in one marketplace `yt-pipeline` (`yt-director`, `yt-publish`, `yt-shorts`, `yt-editor`, `yt-admin`), each installable alone; every skill works on its own through `yt <tool>`.
+- Typed tools (MCP): each plugin ships `scripts/yt_mcp.py` with `yt_list`, `yt_describe`, `yt_run` and `yt_preview`.
+- Director agent mode: `llm_director.py --prepare` writes the director prompt and payload, `--apply` validates `director_plan.json` and runs the editor, and `--prepare --review` writes the pictures and the report and the host agent writes `director_review.json`, so a host agent can direct the edit on its own subscription with no OpenRouter key.
+- Director chat in the Director tab: the director's notes in plain words, a message in and a reply out with a cost/time estimate, and a Make-the-new-version button.
+- The director is honest about its tools: when it cannot do something it says what it can do instead and the request is logged as a missing tool.
+- Per-instance style settings: `channel.style` (`title_style`, `description_order`, `pinned_comment_voice`).
+- Learning notebook: a per-instance file of at most 40 lessons, shown at the bottom of the project page; after each new version one cheap model call writes at most 3 lessons.
+- Fresh-container smoke test: `deploy/smoke_plugin.sh` and a checklist in `docs/AGENT_SETUP.md`.
+- Third-party licences: `NOTICE.md` and `docs/licences.md`.
+- Beats: an optional Beat This! downbeat engine (`beats.engine`, `numpy` | `beat_this`, default `numpy`; `--engine` or `YT_PIPELINE_BEATS_ENGINE` overrides it), so the cuts can land on the strongest beat of the bar.
+- Release: pushing a tag closes the open issues of the milestone named like the tag and the milestone itself.
+- Quality: faces are counted per segment and the whip pattern is marked, and the score uses both — a fast move next to a short hold on people scores low, while a deliberate move is not punished for its shake.
+- Director speed: `director.reasoning_effort` (`low`, `medium`, `high` or `off`, default `medium`) and `--reasoning-effort` set how much hidden reasoning the model spends on every `llm_director` call, sent as OpenRouter's `reasoning` body; the spend ledger records the reasoning tokens of each call.
+- Web app: a **Director** tab holds the chat with the director and, under it, the collapsible notebook.
+- Web app: a **Stop** button on the progress card of a running edit stops the run and its child processes and leaves the previous version as the current one.
+- Director: the rule director takes the owner's explicit keys (`--add-shots`/`--drop-shots`, comma-separated and repeatable) and the `--json` summary reports `applied_keys`/`not_applied_keys`; the web app says "The director could not make this edit; a simpler editor made it." and lists which requested changes were applied and which were not when the shown edit is a rule fallback.
+- Director rewrite: the code editor `scripts/director_editor.py` turns a `director_plan.json` into `edit.json` and an `editor_report.json`, cutting the windows around the director's moments, on the beat, and never changing the shots.
+- Web app: a **Debug** tab (last, muted) shows the shot list, the raw plan, the editor report, the rounds and the model calls.
+
+### Changed
+
+- Director: the film-crew flow writes the music track (`audio.music`) and the ambient level under it (`audio.ambient_under_music_db`) into `edit.json` when they come from flags, and `decisions[]` — one used row per plan shot (the director's purpose and why, the technique done or not) plus the editor's could-not-do items.
+- Director: `--speed-ramp` reaches the code editor, which sets `middle_speed` on a move's plain cut (the middle half up to 1.2x, head and tail real time).
+- Shared helpers: the shot-fact, beat-snap, move and window-similarity helpers live once in `scripts/common/` and both the director and the editor import them.
+- Director: the chat goes through the director — `llm_director.py --chat` makes one director call with the last plan, the editor report, the rounds, the owner's notes and the notebook, and a decision the owner made is stored as an owner note and carried into the next run's feedback; the Director tab shows the director's idea, structure, per-shot reasons and the editor's report in plain words, and the **Why?** tab is replaced by the **Debug** tab (the `explain.html` artifact stays served).
+- Director: the default flow is the film crew — one director call writes `director_plan.json`, the code editor cuts it into `edit.json` and `editor_report.json` without changing the shots, the director reviews the cut with one picture per shot (at most 2 rounds, `director_rounds.json` records every round), and the rule director is the fallback only when the model gives no usable plan.
+- The recap's YouTube title and description are optional and off by default: `recap.py --meta` / `--no-meta` override `recap.meta` in the config (default false), the web Upload and Re-edit forms carry a "Title and description" option, and with it off the `recap_meta` station is skipped and the Recap tab shows no title/description block.
+- The project page's reviewer box is replaced by the chat in the Director tab (the notebook too).
+- The metadata prompt no longer carries a built-in pinned-comment voice; it comes from `channel.style.pinned_comment_voice`.
+- `description_order` assembles the description in the configured order.
+- Director: the director gets a shortlist of the eligible candidates (every star plus the top-K by score) instead of the whole pool, and `describe` runs its per-clip model calls in a small worker pool (`--workers`, default 4), so a first edit is faster.
+- Web app: a friend's Costs page shows only that instance's own costs (its model cost to cover, its limits, its clips, the donation buttons and the line that anything paid above the model cost goes into building the app further) and no owner project totals or donations list; the UI label "New recap" becomes "New video".
+- Notebook: lessons that do not fit are kept as `waiting` lessons (never dropped, at most 3) and the learn-pass cost is counted in the instance total model cost.
+- Director: the director's shortlist now also sends every clip's best eligible segment, and the label score no longer rewards clean-but-dull shots (steadiness and a defect-free segment add nothing; only unsteady levels and real defects subtract).
+- Web app: the chat with the director and the notebook moved out of the Recap tab and the bottom of the project page into the **Director** tab.
+- Web app: the run progress card shows "Total so far" only when it differs from the current step's time, and a skipped step shows "already done" instead of "0 s".
+- Director: a plain-word request is resolved against the shot descriptions and clip numbers and the reply names the shots it means; the reply's `can_do` is `all`/`part`/`none` and a reply that cannot do everything replaces "Make the new version" with a disabled "Answer the director first" button; two neighbouring slots that are beats of one segment, or a similar pair, keep only the better one.
+- Director: the one jump-cut rule — a same-segment-beat or similar neighbour pair keeps only the better one unless the owner explicitly asked for both; the director never marks such a cut `deliberate` by itself.
+- Web app: the Director tab's chat shows the last 3 exchanges; older ones fold under a closed "Earlier messages (N)" section, and the input box and the button sit directly under the newest exchange.
+- Web app: "Delete this version" is a normal secondary button with the bin icon, and the first version can be deleted too while another version stays (only the latest and a version during a run are refused).
+- Web app: the Director tab opens at the newest message (`#chat-latest`).
+- Notebook: a lesson is a general rule and may not name a shot id, a clip number or a project name; the learn pass skips such a lesson with a `[warn]` line and still succeeds.
+- Director: the neighbour check compares the frames inside each slot's `in_s..out_s` (the windows actually in the edit) with the same MobileNetV2 embedding, cached per window key in `similarity_windows.json`; whole-segment similarity stays in `similarity.json` for the menu the model sees.
+
+### Removed
+
+- Director: the three-role loop (screenwriter, editor, reviewer) and its prompts (`prompts/screenwriter.md`, `prompts/editor.md`, `prompts/reviewer.md`, `prompts/playbook.md`), the `shot_plan.json` schema and the old feedback-reply path (`--interpret-feedback`).
+- Director: the star/group/auto-fill repairs (`hero_missing`, the star groups, the repair chain) and the `meta.director.review` writer.
+
+### Fixed
+
+- Run status trusts only our own live pid: a `.run.json` holding a live but unrelated pid reads done or stopped, never running.
+- The four web-app tool calls (feedback reply, rewrite metadata, drop/trim shot, notebook delete) answer 504 with plain text when the tool does not finish inside its timeout.
+- Version names are validated with `fullmatch`, so `v1\n`, `v00001` and `../v1` are refused.
+- The notebook survives a concurrent edit: the learn pass re-reads the file under a lock after the model call and applies removals and additions by id.
+- A version's model cost is stored in `version.json` at snapshot time, so deleting a middle version leaves the next version's cost unchanged.
+- The owner's first name is out of the repository; `scripts/check_public.py` enforces it (the GitHub handle `Dorusto` stays).
+- Stop button: the run's pid is killed only when its recorded start time or command line still matches, so a reused pid is never killed.
+- `llm_director.py --prepare` together with `--force` is a usage error.
+- `notebook.py --merge` with a repeated id is a usage error.
+- An empty or duplicate `channel.style.description_order` is a config error; `recap_meta.py` no longer receives `description_order`.
+- A defect the intent rule waives (shake on a deliberate move) is no longer given as "defect: ..." in the edit's reasons; the shot gets its real reason (low score / did not fit the length).
+- An explicit request to add a named shot is followed even when the shot has minor defects — the reply says which defects it has; only an `accidental`/`setup`/`teardown` role or a whip short-hold stays refused.
+
 ## [0.2.0] - 2026-10-24
 
 yt-pipeline v0.2.0 is the first release with the publish flow and the phone

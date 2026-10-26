@@ -1,7 +1,7 @@
 ---
 name: yt-reframe
 description: Follow the subject of a clip with a moving crop window and write a crop path JSON (time -> x, y) for any aspect (9:16 default) — OpenCV YuNet face detection per sampled frame, TrackerMIL between detections, a saliency map when there is no face, smoothed centre path with no jumps and a limited speed. Use when the user wants a clip reframed to vertical, a moving 9:16 crop, a crop path for a Shorts render, or asks where the subject is in frame over time. Trigger phrases - "reframează clipul", "crop vertical care urmărește subiectul", "crop path", "moving crop", "9:16 care urmărește fața", "reframe to vertical", "follow the subject". Not for cutting or rendering the short (that is `shorts_generator.py` / `yt-shorts`), not for describing content (that is `describe`) and not for camera-motion geometry (that is `motion`).
-compatibility: Run from the repository root. Needs the repo .venv with opencv-python and numpy; CPU only. Reads the clip read-only, writes one JSON (default <video_dir>/auto/<stem>_reframe.json). The YuNet model downloads once to ~/.cache/yt-pipeline/models/ and never into the repository. Makes no LLM calls, so the run costs 0 USD.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with opencv-python and numpy; CPU only. Reads the clip read-only, writes one JSON (default <video_dir>/auto/<stem>_reframe.json). The YuNet model downloads once to ~/.cache/yt-pipeline/models/ and never into the repository. Makes no LLM calls, so the run costs 0 USD.
 ---
 
 # yt-reframe
@@ -14,7 +14,7 @@ saliency); there is no model call and no spend.
 ## Step 1: write the crop path
 
 ```bash
-.venv/bin/python scripts/reframe.py --video /path/to/clip.mp4 --json
+yt reframe --video /path/to/clip.mp4 --json
 ```
 
 - `--video` is required and read-only. `--out` sets the JSON path (default

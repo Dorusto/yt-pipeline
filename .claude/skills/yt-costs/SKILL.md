@@ -1,12 +1,12 @@
 ---
 name: yt-costs
 description: Keep a small SQLite ledger of what the project costs and earns — model jobs, build-agent spend, fixed monthly costs, one-off investments and donations — with idempotent imports and a totals view. Use when the user asks what the project costs or earns, wants to add a cost or a donation, import the model or build-agent spend, import donations from a CSV export, or see the balance. Trigger phrases - "cât costă proiectul", "cât am cheltuit", "adaugă o donație", "importă cheltuielile", "importă donațiile", "cât e balanța", "costs ledger", "add a cost", "import the spend", "import donations", "what is the balance", "totals". Not for the per-run LLM budget cap (that is `scripts/common/llm.py` and the watchdog), not for the read-only Costs page in the web app (that is `scripts/serve.py`, `GET /costs`) and not for any donation payment handling.
-compatibility: Run from the repository root. Needs the repo .venv (stdlib only — sqlite3, json). The ledger is a SQLite file outside the repository; no model is called, so llm_cost_usd is always 0.0. Reads llm_spend.json files and a run-spend JSON read-only through `scripts/common/spend.py`.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv (stdlib only — sqlite3, json). The ledger is a SQLite file outside the repository; no model is called, so llm_cost_usd is always 0.0. Reads llm_spend.json files and a run-spend JSON read-only through `scripts/common/spend.py`.
 ---
 
 # yt-costs
 
-The costs ledger tool. It keeps one SQLite file of what the project costs and earns and answers with a `totals` view. All commands run from the repository root.
+The costs ledger tool. It keeps one SQLite file of what the project costs and earns and answers with a `totals` view. All commands run through `yt <tool>`.
 
 ## The ledger path (three ways)
 
@@ -21,13 +21,13 @@ With none set the tool stops with a usage error naming those three ways. Docs an
 ## Commands
 
 ```bash
-.venv/bin/python scripts/costs.py --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
-.venv/bin/python scripts/costs.py --ledger <costs.db> import-jobs --workspaces <workspaces>
-.venv/bin/python scripts/costs.py --ledger <costs.db> import-dev --from <run-spend.json>
-.venv/bin/python scripts/costs.py --ledger <costs.db> import-opencode --db <opencode.db> --match <folder-part>
-.venv/bin/python scripts/costs.py --ledger <costs.db> import-donations --from <donations.csv>
-.venv/bin/python scripts/costs.py --ledger <costs.db> totals --month 2026-10 --json
-.venv/bin/python scripts/costs.py --ledger <costs.db> list --kind model_job
+yt costs --ledger <costs.db> add --kind donation --amount 10 --date 2026-10-01
+yt costs --ledger <costs.db> import-jobs --workspaces <workspaces>
+yt costs --ledger <costs.db> import-dev --from <run-spend.json>
+yt costs --ledger <costs.db> import-opencode --db <opencode.db> --match <folder-part>
+yt costs --ledger <costs.db> import-donations --from <donations.csv>
+yt costs --ledger <costs.db> totals --month 2026-10 --json
+yt costs --ledger <costs.db> list --kind model_job
 ```
 
 - `add --kind K --amount USD [--date D] [--note TEXT]` appends one manual entry. `--kind` is one of the five kinds, `--amount` is a finite number `> 0` (a decimal comma, a thousands dot and a leading `$`/`€` are accepted; a lone thousands dot like `1.000` reads as 1000), `--date` defaults to today and must match `YYYY-MM-DD`. `source` is `null`.

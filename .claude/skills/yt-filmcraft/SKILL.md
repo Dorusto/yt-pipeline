@@ -1,7 +1,7 @@
 ---
 name: yt-filmcraft
-description: Bridge the FilmCraft edit and the publish flow without needing FilmCraft installed. Read a .fcproj project's timeline markers into markers.json (the graphics_plan.py contract) and the Rose markers into todo.md, apply the loudness recipe — in-editor through the headless filmcraft-cli (Essential Sound Dialogue + Auto-Match + Clarity Dynamics) on a copy of the project, or without an editor as an ffmpeg two-pass loudnorm on a video file — or apply a basic colour recipe to the camera clips of a project (one Lumetri Basic Correction per recording session: white balance, exposure, contrast, measured on a few frames, on a copy unless --in-place). Use when the user asks to pull the markers out of a FilmCraft project, wants the redo list outside the editor, wants the project's voice clips loudness-matched, wants a video normalised to the YouTube loudness targets, or wants the camera clips' colour evened out between sessions. Trigger phrases - "scoate markerele din proiectul FilmCraft", "fă markers.json din fcproj", "lista de refăcut din editor", "normalizează sunetul proiectului", "aplică rețeta de loudness", "read the FilmCraft markers", "markers.json from fcproj", "loudness match the project", "normalise this video to -14 LUFS", "normalizează culoarea clipurilor", "potrivește culoarea sesiunilor", "even out the colour between sessions", "colour recipe", "white balance per session". Not for importing subtitles into the FilmCraft caption track (out of scope), not for choosing the cut (that is `director`/`llm_director`), not for rendering (that is `render`) and not for measuring or cleaning ambient sound (that is `audio-clean`).
-compatibility: Run from the repository root. Needs the repo .venv and ffmpeg/ffprobe. The markers tool reads the .fcproj read-only. The loudness --video backend needs only ffmpeg; the --fcproj backend needs filmcraft-cli (from $FILMCRAFT_CLI or PATH) and never modifies the input project unless --in-place is given. The colour tool needs filmcraft-cli too and never modifies the input project unless --in-place is given.
+description: Bridge the FilmCraft edit and the publish flow without needing FilmCraft installed. Read a .fcproj project's timeline markers into markers.json, apply the loudness recipe or a colour recipe to the camera clips. Use when the user asks to pull the markers out of a FilmCraft project, wants the redo list outside the editor, wants the project's voice clips loudness-matched, wants a video normalised to the YouTube loudness targets, or wants the camera clips' colour evened out between sessions. Trigger phrases - "scoate markerele din proiectul FilmCraft", "fă markers.json din fcproj", "lista de refăcut din editor", "normalizează sunetul proiectului", "aplică rețeta de loudness", "read the FilmCraft markers", "markers.json from fcproj", "loudness match the project", "normalise this video to -14 LUFS", "normalizează culoarea clipurilor", "potrivește culoarea sesiunilor", "even out the colour between sessions", "colour recipe", "white balance per session". Not for `director`/`llm_director`, `render` or `audio-clean`.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv and ffmpeg/ffprobe. The markers tool reads the .fcproj read-only. The loudness --video backend needs only ffmpeg; the --fcproj backend needs filmcraft-cli (from $FILMCRAFT_CLI or PATH) and never modifies the input project unless --in-place is given. The colour tool needs filmcraft-cli too and never modifies the input project unless --in-place is given.
 ---
 
 # yt-filmcraft
@@ -19,8 +19,8 @@ consumes, and `todo.md` holding only the Rose markers — the redo list outside 
 editor.
 
 ```bash
-.venv/bin/python scripts/fcproj_markers.py project.fcproj --json
-.venv/bin/python scripts/fcproj_markers.py project.fcproj --sequence Main \
+yt fcproj_markers project.fcproj --json
+yt fcproj_markers project.fcproj --sequence Main \
   --out markers.json --todo todo.md
 ```
 
@@ -42,8 +42,8 @@ An ffmpeg two-pass `loudnorm` to the YouTube targets (`I=-14 LUFS`, `TP=-1 dBTP`
 `linear=true`, copies the video stream and re-encodes the audio as AAC 320k.
 
 ```bash
-.venv/bin/python scripts/loudness.py --video clip.mp4 --json
-.venv/bin/python scripts/loudness.py --video clip.mp4 --out clip_loud.mp4 \
+yt loudness --video clip.mp4 --json
+yt loudness --video clip.mp4 --out clip_loud.mp4 \
   --target-i -14 --target-tp -1 --target-lra 11
 ```
 
@@ -57,9 +57,9 @@ headless `filmcraft-cli`: Dialogue type, Auto-Match loudness and Clarity Dynamic
 medium (`clarity.enabled`, `clarity.dynamics.on`, `clarity.dynamics.amount: 5`).
 
 ```bash
-.venv/bin/python scripts/loudness.py --fcproj project.fcproj --sequence Main --json
-.venv/bin/python scripts/loudness.py --fcproj project.fcproj --dry-run
-.venv/bin/python scripts/loudness.py --fcproj project.fcproj --in-place
+yt loudness --fcproj project.fcproj --sequence Main --json
+yt loudness --fcproj project.fcproj --dry-run
+yt loudness --fcproj project.fcproj --in-place
 ```
 
 - The binary comes from `$FILMCRAFT_CLI` or `filmcraft-cli` on PATH; missing → exit 3 naming both (not on `--dry-run`, which prints without needing the binary).
@@ -78,9 +78,9 @@ contrast) to every camera clip of that session, through the headless
 `filmcraft-cli`. No model is called; `llm_cost_usd` is always `0.0`.
 
 ```bash
-.venv/bin/python scripts/colour.py --fcproj project.fcproj --sequence Main --json
-.venv/bin/python scripts/colour.py --fcproj project.fcproj --dry-run
-.venv/bin/python scripts/colour.py --fcproj project.fcproj --in-place
+yt colour --fcproj project.fcproj --sequence Main --json
+yt colour --fcproj project.fcproj --dry-run
+yt colour --fcproj project.fcproj --in-place
 ```
 
 - The binary comes from `$FILMCRAFT_CLI` or `filmcraft-cli` on PATH; missing → exit 3 naming both (not on `--dry-run`, which prints without needing the binary).
@@ -101,12 +101,12 @@ needed at export time, so it runs in CI and is unit-testable. Media is
 referenced by path, never embedded.
 
 ```bash
-.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj --json
-.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+yt export_filmcraft edit.json --out project.fcproj --json
+yt export_filmcraft edit.json --out project.fcproj \
   --graphics-plan graphics_plan.json --graphics-dir overlays/ --sequence Main
-.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+yt export_filmcraft edit.json --out project.fcproj \
   --chapters chapters.json
-.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+yt export_filmcraft edit.json --out project.fcproj \
   --shorts-candidates shorts_candidates.json
 ```
 
@@ -119,7 +119,7 @@ referenced by path, never embedded.
 - Missing media is a **warning**, not an error: the project still opens with offline media. Photo slots export as stills with a "Ken Burns not exported" warning; speed ramps export at real time with a warning.
 - `filmcraft-cli` is only needed to OPEN or inspect the result (resolved from `$FILMCRAFT_CLI` else PATH); the export itself never calls it.
 - `--json` reports `output`, `sequence`, `tracks`, `slots_placed`, `photos_placed`, `overlays_placed`, `markers` (`green`/`rose`/`mango`, plus `sections` when `--chapters` is given and `shorts` when `--shorts-candidates` is given), `missing_media`, `warnings`, `route: "json"`, `wall_time_s`, `llm_cost_usd` (`0.0`).
-- On this machine the scripts need `.venv/bin/python` — the system `python3` has no `jsonschema`.
+- On this machine the scripts need the repo `.venv` — the system `python3` has no `jsonschema`.
 
 ## What is out of scope
 

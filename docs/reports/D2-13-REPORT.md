@@ -8,10 +8,10 @@
 - Full test suite: green.
 
 ## Mocked / not verified
-- Not run on the real kotor-demo on the LXC yet (needs Doru's pull + restart).
+- Not run on the real kotor-demo on the LXC yet (needs the owner's pull + restart).
 - Best photo of a burst (closed eyes, blur) is not in this change.
 
-## Doru, check this
+## the owner, check this
 - `git pull`, restart `web`, then Re-edit kotor-demo with Format both: the page shows v1 (old) and v2 (new) chips.
 - Watch a photo zoom in the new version: it should glide, not step.
 - Try Length with an exact number (e.g. 45).

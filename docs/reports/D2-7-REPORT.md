@@ -87,7 +87,7 @@ times); T2, T3, T4, T5 came from the coder and passed audit.
 - `render_final` / Kdenlive export not run in this acceptance.
 - The user profile (`feedback.jsonl` is written, never read) stays future work.
 
-## Doru, check this
+## the owner, check this
 
 1. Open `http://<agent-host>:<port>/` after `git pull` and
    `.venv/bin/python scripts/serve.py --workspaces ~/media/projects --inbox ~/media/inbox` —

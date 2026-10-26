@@ -10,8 +10,8 @@ Usage:
 Projects page lists, in descending folder-name order, every direct child
 directory that holds at least one of ``.run.json``, ``recap_720p.mp4``,
 ``recap_720p_9x16.mp4``, ``recap_final.mp4``, ``shotlog.html``, ``explain.html`` or ``edit.json``, with a
-running/failed/done status badge. Each project page has the Recap / Why? / Shots
-tabs (recap player, ``explain.html``, ``shotlog.html``) and a Re-edit form;
+running/failed/done status badge. Each project page has the Recap / Director / Shots
+tabs (recap player, the director's cut in plain words, ``shotlog.html``) and a Re-edit form;
 ``/upload`` takes clips and photos from a phone browser into the inbox and
 starts ``recap.py`` in the background. Only the finished artifacts (both recap formats, final, explain, shots) are ever
 served, also from ``versions/vNNN/``; proxies, ``edit.json``, ``.run.json``,
@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -61,9 +62,10 @@ from common.config import (
     no_costs_message,
     no_inbox_message,
     no_music_library_message,
-    no_project_totals_message,
+    no_notebook_message,
     no_requests_message,
     no_storage_message,
+    notebook_path,
     project_totals_url,
     requests_path,
     storage_gb,
@@ -72,18 +74,20 @@ from common.config import (
 from common.costs import compute_totals, connect as connect_ledger, list_entries
 from common.brief_facts import FACT_LABELS, load_brief_facts, write_brief_facts
 from common.decisions import used_shot_keys
+from common.director import director_review
 from common.excluded import exclude_name, include_name, is_excluded, load_excluded
-from common.feedback import append_feedback
+from common.feedback import append_feedback, read_feedback
 from common.jsonio import load_json, write_json
 from common.media import clip_kind, earliest_creation_date, video_files
+from common.notebook import notebook_ledger_path, notebook_lessons, notebook_waiting
 from common.openrouter import key_info
-from common.photos import is_photo
+from common.photos import is_photo, proxy_name
 from common.edit_timeline import edit_summary as edit_summary_document
 from common.runlog import RUN_MARKER, epoch_of, last_run_lines, last_run_start, spend_between
 from common.sizes import BYTES_PER_GB, format_gb, format_size_short
 from common.theme import THEME_CSS, PROGRESS_CSS
 from common.pacing import estimate_all_good
-from common.versions import list_versions
+from common.versions import list_versions, valid_version
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 from common.llm import LLMError, read_ledger
@@ -96,9 +100,12 @@ DEFAULT_MAX_TOTAL_MB = 20480
 UPLOAD_CHUNK = 65536
 STORAGE_WARN_RATIO = 0.8
 CREDIT_CACHE_SECONDS = 600
-TOTALS_CACHE_SECONDS = 600
 FAILURE_CACHE_SECONDS = 120
 HTTP_TIMEOUT_SECONDS = 3
+FEEDBACK_TIMEOUT_S = 180
+META_TIMEOUT_S = 180
+EDIT_DROP_TIMEOUT_S = 900
+NOTEBOOK_TIMEOUT_S = 60
 WILDCARD_BINDS = {"", "0.0.0.0", "::"}
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BRIEF_MAX_CHARS = 4000
@@ -154,13 +161,12 @@ ARTIFACT_LABELS = (
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
-TABS = (("recap", "Recap"), ("files", "Files"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
+TABS = (("recap", "Recap"), ("director", "Director"), ("files", "Files"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"), ("debug", "Debug"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 SHORTS_LAYOUT_POLICIES = ("auto", "on", "off")
 SHORTS_LAYOUTS = ("face", "split")
 SHORTS_CANDIDATES_FILE = "shorts_candidates.json"
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
-VERSION_RE = re.compile(r"^v\d{1,4}$")
 PROGRESS_RE = re.compile(r"^\[\s*(\d+)/\s*(\d+)\]\s+(\S+)\s+(\S+)")
 STEP_SECONDS_RE = re.compile(r"(\d+(?:\.\d+)?)s\b")
 LENGTH_MIN_S = 5
@@ -192,6 +198,11 @@ CUT_PREVIEW_DIR = "cut_previews"
 CUT_ACTIONS = ("keep", "cut")
 CUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
 MODE_B_TOOL = "scripts/rough_cut.py"
+REEDIT_FIELDS = (
+    "brief", "length", "length_s", "order", "audio_clean", "format",
+    "speed_ramp", "music", "ambient_under_music_db", "meta",
+    "fact_place", "fact_when", "fact_who", "fact_occasion",
+)
 REQUESTS_MAX_CHARS = 2000
 CONTACT_MAX_CHARS = 200
 REQUEST_TYPES = ("Feedback", "Feature request")
@@ -351,6 +362,15 @@ def shorts_layout_default():
     elif value is False:
         value = "off"
     return value if value in SHORTS_LAYOUT_POLICIES else "auto"
+
+
+def recap_meta_default():
+    """The config's ``recap.meta`` policy as ``on``/``off``, or ``off`` when missing or invalid."""
+    try:
+        value = load_config().get("recap", {}).get("meta")
+    except (ConfigError, OSError, ValueError):
+        return "off"
+    return "on" if value is True else "off"
 
 
 def load_shorts_candidates(directory):
@@ -573,7 +593,8 @@ def build_parser():
     parser.add_argument(
         "--project-totals-url",
         default=None,
-        help="URL of the owner instance's /costs.json, shown on the Costs page as the project's own costs "
+        help="the owner instance's /costs.json URL; set on a friend's instance to mark it as one — "
+             "its Costs page then shows only its own costs "
              "(or YT_PIPELINE_PROJECT_TOTALS_URL, or costs.project_totals_url in the config)",
     )
     parser.add_argument(
@@ -581,6 +602,12 @@ def build_parser():
         default=None,
         help="logo mark shown in the top bar and used as the favicon "
              "(or YT_PIPELINE_BRAND_LOGO, or brand.logo in the config; default: option-1)",
+    )
+    parser.add_argument(
+        "--notebook",
+        default=None,
+        help="instance notebook JSON file (or YT_PIPELINE_NOTEBOOK, or notebook.path "
+             "in the config; no personal default)",
     )
     parser.add_argument(
         "--check",
@@ -671,6 +698,83 @@ def pid_alive(pid):
         return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
     except psutil.Error:
         return False
+
+
+def run_was_stopped(directory):
+    """True when ``.run.json`` marks the run as stopped by the owner."""
+    path = Path(directory) / ".run.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("stopped") is True
+
+
+def run_is_ours(directory, pid):
+    """True when ``pid`` is still the run recorded in ``.run.json``, not a reused pid.
+
+    Compares the process start time recorded at spawn, or the command line when
+    no start time was recorded; with neither, the pid cannot be trusted.
+    """
+    import psutil
+
+    try:
+        data = json.loads((Path(directory) / ".run.json").read_text(encoding="utf-8"))
+        process = psutil.Process(pid)
+        if not isinstance(data, dict):
+            return False
+        started = data.get("pid_started")
+        if isinstance(started, (int, float)) and not isinstance(started, bool):
+            return abs(process.create_time() - float(started)) < 2.0
+        command = data.get("command")
+        if isinstance(command, list) and command and all(isinstance(part, str) for part in command):
+            return process.cmdline() == command
+    except (OSError, ValueError, psutil.Error):
+        return False
+    return False
+
+
+def _terminate_group(pid):
+    """Terminate a run's whole process group: SIGTERM, wait up to 5 s, then SIGKILL."""
+    try:
+        pgid = os.getpgid(pid)
+    except OSError:
+        pgid = None
+    kill = os.killpg if pgid is not None else os.kill
+    target = pgid if pgid is not None else pid
+    try:
+        kill(target, signal.SIGTERM)
+    except OSError:
+        return
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not pid_alive(pid):
+            return
+        time.sleep(0.1)
+    try:
+        kill(target, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def stop_run(workspace):
+    """Stop the run recorded in ``.run.json`` and mark it stopped; False when nothing runs."""
+    workspace = Path(workspace)
+    pid = read_run_pid(workspace)
+    if pid is None:
+        return False
+    if run_is_ours(workspace, pid):
+        _terminate_group(pid)
+    marker = workspace / ".run.json"
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data["stopped"] = True
+    write_text_atomic(marker, json.dumps(data, indent=2) + "\n")
+    return True
 
 
 def run_report(directory):
@@ -861,55 +965,13 @@ def credit_warning(server):
     )
 
 
-def fetch_project_totals(url, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
-    """GET the owner instance's /costs.json; return the totals dict or raise."""
-    opener = opener or urllib.request.urlopen
-    with opener(url, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    if not isinstance(data, dict) or not isinstance(data.get("balance_usd"), (int, float)):
-        raise ValueError("project totals must be a JSON object with a numeric balance_usd")
-    return data
-
-
-_totals_cache = {"at": 0.0, "url": None, "value": None, "failed_at": 0.0}
-
-
-def project_totals(url, now=None, timeout=HTTP_TIMEOUT_SECONDS, opener=None):
-    """Cached project totals from the owner instance, or None when unavailable."""
-    now = time.monotonic() if now is None else now
-    if (
-        _totals_cache["url"] == url
-        and _totals_cache["value"] is not None
-        and now - _totals_cache["at"] < TOTALS_CACHE_SECONDS
-    ):
-        return _totals_cache["value"]
-    if (
-        _totals_cache["url"] == url
-        and _totals_cache["value"] is None
-        and now - _totals_cache["failed_at"] < FAILURE_CACHE_SECONDS
-    ):
-        return None
-    try:
-        value = fetch_project_totals(url, timeout=timeout, opener=opener)
-    except (OSError, ValueError, KeyError):
-        value = None
-    _totals_cache["at"] = now
-    _totals_cache["url"] = url
-    _totals_cache["value"] = value
-    _totals_cache["failed_at"] = now if value is None else 0.0
-    return value
-
-
 def signed_cost(usd):
     """A cost with a real minus sign in front of the dollar sign."""
     return ("\u2212" if usd < 0 else "") + format_cost(abs(usd))
 
 
-def totals_rows(totals, fixed_notes=(), voluntary=False):
-    """The ledger totals: the balance as the headline, then what the project has cost, line by line.
-
-    With `voluntary` (a friend's instance) only the cost lines are shown, small, as the owner's costs anyone may help with.
-    """
+def totals_rows(totals, fixed_notes=()):
+    """The ledger totals: the balance as the headline, then what the project has cost, line by line."""
     balance = totals["balance_usd"]
     state = "plus" if balance >= 0 else "minus"
     by_kind = totals.get("by_kind") or {}
@@ -937,16 +999,6 @@ def totals_rows(totals, fixed_notes=(), voluntary=False):
         for name, value, why in lines
     )
     total = totals.get("total_cost_usd", api + totals.get("fixed_total_usd", 0.0))
-    if voluntary:
-        return (
-            '<section class="voluntary"><h2>The project\'s own costs</h2>'
-            "<p>Voluntary. Building and running the app costs the owner this much so far; "
-            "anything you give beyond your own model cost goes to developing the project.</p>"
-            '<table class="clip-costs cost-lines"><caption>What the project has cost</caption>'
-            f"<tbody>{rows}</tbody>"
-            f'<tfoot><tr><th scope="row">Total</th><td class="num cost">{format_cost(total)}</td></tr></tfoot>'
-            "</table></section>"
-        )
     return (
         f'<div class="balance {state}">'
         f'<span class="balance-label">Balance</span>'
@@ -1060,12 +1112,14 @@ def failure_text(lines):
 
 
 def project_status(directory):
-    """Return running, failed or done for one project workspace."""
+    """Return running, stopped, failed or done for one project workspace."""
     directory = Path(directory)
     pid = read_run_pid(directory)
     if pid is None:
         return "done"
-    if pid_alive(pid):
+    if run_was_stopped(directory):
+        return "stopped"
+    if pid_alive(pid) and run_is_ours(directory, pid):
         return "running"
     report = run_report(directory)
     if report["outcome"] == "done":
@@ -1182,6 +1236,18 @@ RUN_NOTICE_STYLE = (
     ".run-hint{opacity:.75;margin:.4em 0 0}"
 )
 
+NOTEBOOK_STYLE = (
+    ".notebook{margin-top:var(--sp-5);border:1px solid var(--line);border-radius:var(--radius-l);"
+    "background:var(--surface);padding:var(--sp-3)}"
+    ".notebook summary{cursor:pointer;font-family:var(--font-display);font-weight:600}"
+    ".notebook ul{list-style:none;margin:var(--sp-3) 0 0;padding:0;display:grid;gap:var(--sp-2)}"
+    ".notebook li{display:flex;gap:var(--sp-2);align-items:baseline;justify-content:space-between}"
+    ".notebook .lesson-id{color:var(--muted);font-size:var(--fs-s)}"
+    ".notebook .proposal{color:var(--accent)}"
+    ".notebook form{margin:0}"
+    ".notebook button{min-height:var(--tap)}"
+)
+
 # Durations in the run notice keep counting between the page refreshes.
 TICK_SCRIPT = """
 (function(){function f(s){s=Math.max(0,Math.round(s));if(s<60)return s+' s';var m=Math.floor(s/60),r=s%60;
@@ -1276,7 +1342,7 @@ def render_page(title, body, active=None, script="", refresh=None, features=None
     nav = []
     for key, href, label in (
         ("projects", "/", "Projects"),
-        ("upload", "/upload", "New recap"),
+        ("upload", "/upload", "New video"),
         ("costs", "/costs", "Costs"),
     ):
         if key != "projects" and not feature_on(features, key):
@@ -1370,7 +1436,7 @@ def render_index(entries, features=None, brand_logo=DEFAULT_BRAND_LOGO):
         body = f'<ul class="projects">{"".join(rows)}</ul>'
     else:
         body = ('<p class="empty">No projects yet. Start one from '
-                '<a href="/upload">New recap</a>.</p>')
+                '<a href="/upload">New video</a>.</p>')
     return render_page(
         "Projects",
         f'<h1>Projects</h1><p class="lede">Every folder you sent, newest first.</p>{body}',
@@ -1396,6 +1462,11 @@ def render_costs(server, thanks=False):
             f'<td class="num">{versions} version{"s" if versions != 1 else ""}</td>'
             f'<td class="num cost">{format_cost(cost)}</td></tr>'
         )
+    if server.notebook is not None:
+        try:
+            rows_cost.append(read_ledger(notebook_ledger_path(server.notebook))["total_usd"])
+        except LLMError:
+            pass
     if rows:
         per_clip = (
             '<table class="clip-costs"><caption>Model cost per clip</caption>'
@@ -1464,8 +1535,8 @@ def render_costs(server, thanks=False):
     else:
         request_form = '<p class="empty">Requests are not set up.</p>'
 
-    # A friend's instance shows the shared project costs and donations from the
-    # owner's instance, and only its own projects in the per-clip table.
+    # A friend's instance shows only its own model cost to cover, its limits and
+    # its own clips; the owner's project totals and donations are not fetched.
     parts = []
     limits = f"{storage_line(server)}{credit_line(server)}"
     limits_box = f"<div class=limits>{limits}</div>" if limits else ""
@@ -1477,15 +1548,13 @@ def render_costs(server, thanks=False):
         parts.append(donation)
         parts.append(instance_due_block(spent, instance_paid(server.ledger), limit_usd))
         parts.append(limits_box)
-        fetched = project_totals(server.project_totals_url)
-        if fetched is None:
-            parts.append('<p class="empty">Project costs are unavailable.</p>')
-            donation_entries = None
-        else:
-            parts.append(totals_rows(fetched, fetched.get("fixed_notes") or (), voluntary=True))
-            donation_entries = fetched.get("donations") or []
         parts.append(per_clip.replace("Model cost per clip", "Model cost of your clips"))
-        lede = "What your edits cost in AI models, and how to help with the rest."
+        parts.append(
+            '<p class="costs-note">Anything you pay above your model cost goes into '
+            "building the app further.</p>"
+        )
+        donation_entries = None
+        lede = "What your edits cost in AI models."
     else:
         parts.append("".join(ledger_parts) + owner_time_block(owner_time()) + per_clip)
         parts.append(limits_box)
@@ -1532,9 +1601,9 @@ def append_request(path, line):
         handle.write(json.dumps(line) + "\n")
 
 
-def append_feedback_action(workspace, action, **fields):
+def append_feedback_action(workspace, action, text):
     """Append one feedback action line to the workspace's feedback.jsonl."""
-    append_feedback(workspace, action, text=fields.get("feedback") or "", tool=TOOL)
+    append_feedback(workspace, action, text=text, tool=TOOL)
 
 
 def render_strip(summary, prefix="", thumbs=()):
@@ -1613,6 +1682,9 @@ def render_player(directory, prefix="", heading=None, meta_line=None, trust_edit
 
 def version_cost(version):
     """Model spend of the run that made this version: since the version before it."""
+    stored = version["meta"].get("cost_usd")
+    if isinstance(stored, (int, float)) and not isinstance(stored, bool):
+        return stored
     path = Path(version["path"])
     made = epoch_of(version["meta"].get("created_at"))
     if made is None:
@@ -1673,7 +1745,6 @@ def running_step_text(report):
     current = report.get("current")
     if current:
         name = html_escape(STATION_PLAIN_NAMES.get(current, current))
-        step = report.get("current_step") or 0
         return f"Now: {name}"
     if report["total"]:
         return (
@@ -1695,6 +1766,17 @@ def format_duration(seconds):
     return f"{hours} h {minutes:02d} min"
 
 
+def format_estimate(usd, seconds):
+    """The plain-word cost/time estimate, or "" when neither is known."""
+    if usd is not None and seconds is not None:
+        return f"about {format_cost(usd)} and {format_duration(seconds)}"
+    if usd is not None:
+        return f"about {format_cost(usd)}"
+    if seconds is not None:
+        return f"about {format_duration(seconds)}"
+    return ""
+
+
 def live_time(since, seconds):
     """A duration that keeps counting in the browser (TICK_SCRIPT) from ``since``."""
     attr = f' data-since="{since:.0f}"' if since is not None else ""
@@ -1706,14 +1788,19 @@ def render_step_list(report):
     rows = []
     for item in report.get("steps") or []:
         label = html_escape(STATION_PLAIN_NAMES.get(item["name"], item["name"]))
-        took = format_duration(item["seconds"]) if item["seconds"] is not None else "?"
+        if item["seconds"] is None:
+            took = "?"
+        elif item["seconds"] == 0:
+            took = "already done"
+        else:
+            took = format_duration(item["seconds"])
         rows.append(f'<li><span>{item["step"]}. {label}</span><span class="num">{took}</span></li>')
     if not rows:
         return ""
     return f'<details class="run-steps"><summary>Steps done</summary><ol>{"".join(rows)}</ol></details>'
 
 
-def render_run_notice(status, report, has_previous=False):
+def render_run_notice(status, report, has_previous=False, name=None):
     """The banner about the run in progress or the run that failed; empty otherwise."""
     if status == "running":
         bar = ""
@@ -1734,19 +1821,30 @@ def render_run_notice(status, report, has_previous=False):
             step_line = f'<p class="run-now">{running_step_text(report)}</p>'
         total_line = ""
         if report.get("started_at") is not None:
-            total_line = (
-                '<p class="run-total">Total so far: '
-                f'{live_time(report["started_at"], now - report["started_at"])}</p>'
-            )
+            total_seconds = now - report["started_at"]
+            step_seconds = report.get("elapsed")
+            if step_seconds is None or abs(total_seconds - step_seconds) >= 1.0:
+                total_line = (
+                    '<p class="run-total">Total so far: '
+                    f'{live_time(report["started_at"], total_seconds)}</p>'
+                )
         if report.get("cost_usd") is not None:
             total_line += f'<p class="run-total">Model cost so far: {format_cost(report["cost_usd"])}</p>'
         hint = "This page refreshes by itself."
         if has_previous:
             hint = "The previous version stays below until the new one is ready. " + hint
+        stop = ""
+        if name:
+            stop = (
+                f'<form class="stop-run" method="post" action="/{html_escape(name)}/stop-run">'
+                '<button class="go" type="submit">Stop</button></form>'
+            )
         return (
             f'<div class="notice"><strong>Making a new edit</strong>{step_line}{bar}{total_line}'
-            f'{render_step_list(report)}<p class="run-hint">{hint}</p></div>'
+            f'{render_step_list(report)}<p class="run-hint">{hint}</p>{stop}</div>'
         )
+    if status == "stopped":
+        return '<div class="notice"><strong>Stopped. The previous version is still here.</strong></div>'
     if status == "failed":
         where = html_escape(report["failed_at"] or "an unknown step")
         error = f"<br><code>{html_escape(report['error'])}</code>" if report["error"] else ""
@@ -1863,6 +1961,175 @@ def _meta_field(label, value):
     )
 
 
+def reedit_hidden_fields(options):
+    """Hidden inputs carrying the current Re-edit options into the chat's approve form."""
+    return "".join(
+        f'<input type="hidden" name="{field}" value="{html_escape(options.get(field) or "")}">'
+        for field in REEDIT_FIELDS
+    )
+
+
+def last_run_options(directory):
+    """The form options of the workspace's last run (``.run.json`` ``options``), or {}."""
+    data = load_json(Path(directory) / ".run.json")
+    if not isinstance(data, dict):
+        return {}
+    options = data.get("options")
+    return options if isinstance(options, dict) else {}
+
+
+def meta_option_on(directory):
+    """False only when the last run explicitly turned the title and description off."""
+    return last_run_options(directory).get("meta") != "off"
+
+
+def normalise_can_do(value):
+    """The can_do enum from a stored value; the old bool form reads false -> none, true -> all."""
+    if value is False:
+        return "none"
+    if value is True:
+        return "all"
+    if value in ("part", "none"):
+        return value
+    return "all"
+
+
+def director_fallback_notice(edit, reply):
+    """The applied/not-applied owner keys when a rule fallback made the shown edit.
+
+    Returns ``None`` unless the edit's ``meta.director.by`` is ``"rules"`` and the
+    last reply row carries the owner's ``add_keys``/``drop_keys``. An ``add_key``
+    is applied when it is in the edit, a ``drop_key`` when it is absent.
+    """
+    if not isinstance(edit, dict) or not isinstance(reply, dict):
+        return None
+    director = (edit.get("meta") or {}).get("director")
+    if not isinstance(director, dict) or director.get("by") != "rules":
+        return None
+    add_keys = [key for key in (reply.get("add_keys") or []) if isinstance(key, str) and key.strip()]
+    drop_keys = [key for key in (reply.get("drop_keys") or []) if isinstance(key, str) and key.strip()]
+    if not add_keys and not drop_keys:
+        return None
+    present = {slot.get("shot_key") for slot in edit.get("video") or []}
+    applied = []
+    not_applied = []
+    for key in add_keys:
+        (applied if key in present else not_applied).append(key)
+    for key in drop_keys:
+        (applied if key not in present else not_applied).append(key)
+    return {"applied": applied, "not_applied": not_applied}
+
+
+def render_chat_panel(directory, name, version_path=None, version_name=""):
+    """The chat with the director: the reviewer's objections and the conversation."""
+    directory = Path(directory)
+    base = Path(version_path) if version_path else directory
+    parts = ['<section class="chat" id="chat"><h2>Chat with the director</h2>']
+    edit = load_json(base / "edit.json")
+    replies = [row for row in read_feedback(directory) if row.get("action") == "reply"]
+    notice = director_fallback_notice(edit, replies[-1] if replies else None)
+    if notice is not None:
+        parts.append(
+            '<p class="chat-fallback">The director could not make this edit; '
+            "a simpler editor made it.</p>"
+        )
+        if notice["applied"]:
+            parts.append(
+                f'<p class="chat-fallback">Applied: {html_escape(", ".join(notice["applied"]))}</p>'
+            )
+        if notice["not_applied"]:
+            parts.append(
+                f'<p class="chat-fallback">Not applied: {html_escape(", ".join(notice["not_applied"]))}</p>'
+            )
+    review = director_review(edit)
+    if isinstance(review, dict):
+        for objection in review.get("objections") or []:
+            if not isinstance(objection, dict):
+                continue
+            text = objection.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            shot = objection.get("shot")
+            shot_html = ""
+            if isinstance(shot, int) and not isinstance(shot, bool) and shot > 0:
+                shot_html = f'<span class="chat-shot">{shot}</span>'
+            parts.append(
+                f'<div class="chat-msg director">{shot_html}<p>{html_escape(text)}</p></div>'
+            )
+    exchanges = []
+    for row in replies:
+        text = row.get("text")
+        reply = row.get("reply")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if not isinstance(reply, str) or not reply.strip():
+            continue
+        estimate = row.get("estimate")
+        estimate_html = ""
+        if isinstance(estimate, dict):
+            estimate_text = format_estimate(estimate.get("usd"), estimate.get("s"))
+            if estimate_text:
+                estimate_html = f'<p class="chat-estimate">{html_escape(estimate_text)}</p>'
+        decision_html = ""
+        decision_note = row.get("decision_note")
+        if isinstance(decision_note, str) and decision_note.strip():
+            decision_html = f'<p class="chat-decision">Decision: {html_escape(decision_note)}</p>'
+        exchanges.append(
+            f'<div class="chat-msg user"><p>{html_escape(text)}</p></div>'
+            f'<div class="chat-msg director"><p>{html_escape(reply)}</p>{decision_html}{estimate_html}</div>'
+        )
+    if exchanges:
+        exchanges[-1] = exchanges[-1].replace(
+            '<div class="chat-msg user">', '<div class="chat-msg user" id="chat-latest">', 1
+        )
+    older = exchanges[:-3]
+    recent = exchanges[-3:]
+    if older:
+        parts.append(
+            f'<details class="chat-earlier"><summary>Earlier messages ({len(older)})</summary>'
+            f'{"".join(older)}</details>'
+        )
+    parts.extend(recent)
+    version_field = (
+        f'<input type="hidden" name="version" value="{html_escape(version_name)}">'
+        if version_name
+        else ""
+    )
+    parts.append(
+        f'<form class="chat-form" method="post" action="/{html_escape(name)}/feedback-reply" '
+        'enctype="multipart/form-data">'
+        f"{version_field}"
+        '<textarea name="feedback" rows="2" required '
+        'placeholder="drop 0071/s2, tunnel longer"></textarea>'
+        '<button class="go" type="submit">Send</button>'
+        "</form>"
+    )
+    if replies:
+        last = replies[-1]
+        can_do = normalise_can_do(last.get("can_do"))
+        if can_do == "all":
+            hint = last["text"] + "\n\nDirector's reading: " + last["reply"]
+            decision_note = last.get("decision_note")
+            if isinstance(decision_note, str) and decision_note.strip():
+                hint += "\n\nDecision: " + decision_note
+            parts.append(
+                f'<form class="chat-approve" method="post" action="/{html_escape(name)}/re-edit" '
+                'enctype="multipart/form-data">'
+                f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
+                '<input type="hidden" name="approved" value="1">'
+                '<input type="hidden" name="submit" value="reedit">'
+                f"{reedit_hidden_fields(last_run_options(directory))}"
+                '<button class="go" type="submit">Make the new version</button>'
+                "</form>"
+            )
+        else:
+            parts.append(
+                '<button class="go" type="button" disabled>Answer the director first</button>'
+            )
+    parts.append("</section>")
+    return "".join(parts)
+
+
 def render_recap_panel(directory, name=None, wanted=None, compare_with=None, status=None, report=None,
                        meta_cost=None):
     """Return the Recap tab panel: run notice, version chips, the player(s) with their strips."""
@@ -1873,7 +2140,7 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
     has_previous = any(has_video(version) for version in versions) or (
         (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
     )
-    parts = [render_run_notice(status, report, has_previous=has_previous)]
+    parts = [render_run_notice(status, report, has_previous=has_previous, name=name)]
     shown = pick_version(versions, wanted)
     if shown is None:
         has_any = (directory / "recap_720p.mp4").is_file() or (directory / VERTICAL_PREVIEW).is_file()
@@ -1886,13 +2153,14 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
                     parts.append(
                         f'<a class="download" href="{final_name}">Download the full-quality {final_name}</a>'
                     )
-        parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
+        if meta_option_on(directory):
+            parts.append(render_meta_box(directory, name=name, version=None, meta_cost=meta_cost))
         return "\n".join(part for part in parts if part)
     compare = pick_version(versions, compare_with) if compare_with is not None else None
     if compare is not None and compare["number"] == shown["number"]:
         compare = None
     parts.append(render_version_links(name or directory.name, versions, shown))
-    if status != "running" and shown is not versions[-1] and shown is not versions[0]:
+    if status != "running" and shown is not versions[-1]:
         parts.append(render_delete_version_form(name or directory.name, shown))
     if status != "running" and has_video(shown):
         parts.append(render_drop_form(name or directory.name, shown))
@@ -1907,8 +2175,11 @@ def render_recap_panel(directory, name=None, wanted=None, compare_with=None, sta
             trust_edit=True,
         )
     )
-    parts.append(render_meta_box(directory, shown["path"], name=name, version=shown["name"],
-                                 meta_cost=meta_cost))
+    if meta_option_on(directory):
+        parts.append(
+            render_meta_box(directory, shown["path"], name=name, version=shown["name"],
+                            meta_cost=meta_cost)
+        )
     if compare is not None:
         other = compare["name"].lstrip("v").lstrip("0") or "0"
         parts.append(
@@ -2074,11 +2345,7 @@ def _file_row(path, kind, edit_names, excluded, lengths, new=False):
 
 
 def _has_proxy(proxy_dir, path):
-    if (proxy_dir / path.name).is_file():
-        return True
-    if path.suffix.lower() == ".heic" and (proxy_dir / f"{path.stem}.jpg").is_file():
-        return True
-    return False
+    return (proxy_dir / proxy_name(path)).is_file()
 
 
 def project_files(directory):
@@ -2196,28 +2463,273 @@ def render_files_panel(directory, name, features=None, consent_text=None):
     return f"<style>{DROP_STYLE}</style>{summary}{new_line}{rows}{add}"
 
 
-def _render_tabs(name, enabled, tab):
-    """The project tab bar: Recap, Files, Cuts and Shorts."""
-    labels = dict(TABS)
+def render_notebook_panel(notebook, name):
+    """Return the collapsible notebook section, or an empty string when no notebook is set."""
+    if notebook is None:
+        return ""
+    lessons = notebook_lessons(notebook)
+    waiting = notebook_waiting(notebook)
 
+    def lesson_row(lesson):
+        lesson_id = html_escape(str(lesson.get("id") or ""))
+        text = html_escape(str(lesson.get("text") or ""))
+        label = ""
+        if lesson.get("kind") == "proposal" and lesson.get("part"):
+            label = f' <span class="proposal">\u2192 channel.fixed.{html_escape(str(lesson["part"]))}</span>'
+        return (
+            f'<li><span><span class="lesson-id">{lesson_id}</span> {text}{label}</span>'
+            f'<form method="post" action="/{html_escape(name)}/notebook-delete">'
+            f'<input type="hidden" name="id" value="{lesson_id}">'
+            f'<button type="submit">Delete</button></form></li>'
+        )
+
+    rows = [lesson_row(lesson) for lesson in lessons]
+    inner = "<ul>" + "".join(rows) + "</ul>" if rows else '<p class="empty">No lessons yet.</p>'
+    if waiting:
+        waiting_rows = "".join(lesson_row(lesson) for lesson in waiting)
+        inner += (
+            '<p class="notebook-full">The notebook is full. Remove a lesson to make room '
+            "for a new one.</p>"
+            f'<ul class="waiting">{waiting_rows}</ul>'
+        )
+    return (
+        f'<details class="notebook" id="notebook">'
+        f'<summary>Notebook ({len(lessons)} lessons)</summary>{inner}</details>'
+    )
+
+
+def render_director_explanation(directory, shown):
+    """The director's cut in plain words: the idea, the structure, the shots and the editor's report."""
+    directory = Path(directory)
+    plan = load_json(directory / "director_plan.json")
+    if not isinstance(plan, dict):
+        return '<p class="empty">No director data yet.</p>'
+    parts = ["<h2>The director's cut</h2>"]
+    parts.append(
+        f'<p class="director-idea"><strong>Idea:</strong> {html_escape(str(plan.get("idea") or ""))}</p>'
+    )
+    structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
+    parts.append(
+        f'<p class="director-structure"><strong>Structure:</strong> '
+        f'{html_escape(str(structure.get("kind") or ""))} — {html_escape(str(structure.get("why") or ""))}</p>'
+    )
+    beats = structure.get("beats") if isinstance(structure.get("beats"), list) else []
+    beat_rows = []
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        beat_rows.append(
+            f'<li><strong>{html_escape(str(beat.get("name") or ""))}</strong> — '
+            f'{html_escape(str(beat.get("intent") or ""))} ({html_escape(str(beat.get("target_s") or ""))} s)</li>'
+        )
+    if beat_rows:
+        parts.append(f'<ul class="director-beats">{"".join(beat_rows)}</ul>')
+    shots = plan.get("shots") if isinstance(plan.get("shots"), list) else []
+    shot_rows = []
+    for shot in shots:
+        if not isinstance(shot, dict):
+            continue
+        shot_rows.append(
+            f'<li><span class="shot-key">{html_escape(str(shot.get("shot_key") or ""))}</span> '
+            f'{html_escape(str(shot.get("purpose") or ""))} — {html_escape(str(shot.get("why") or ""))}</li>'
+        )
+    if shot_rows:
+        parts.append(
+            f'<details class="director-shots-fold"><summary>Shot by shot ({len(shot_rows)} shots)</summary>'
+            f'<ol class="director-shots">{"".join(shot_rows)}</ol></details>'
+        )
+    parts.append(render_editor_report(directory))
+    parts.append(render_director_notes(directory, shown))
+    return "".join(parts)
+
+
+def render_editor_report(directory):
+    """The editor's report in plain words: the length, what it could not do and the look-alike neighbours."""
+    report = load_json(Path(directory) / "editor_report.json")
+    parts = ["<section class=\"director-report\"><h3>Editor's report</h3>"]
+    if not isinstance(report, dict):
+        parts.append('<p class="empty">No editor report yet.</p>')
+        parts.append("</section>")
+        return "".join(parts)
+    total = html_escape(str(report.get("total_length_s")))
+    target = report.get("target_length_s")
+    if target is None:
+        parts.append(f"<p>{total} s</p>")
+    else:
+        parts.append(f"<p>{total} s of {html_escape(str(target))} s</p>")
+    could_not_do = report.get("could_not_do") if isinstance(report.get("could_not_do"), list) else []
+    if could_not_do:
+        rows = "".join(f"<li>{html_escape(str(note))}</li>" for note in could_not_do)
+        parts.append(f'<ul class="could-not-do">{rows}</ul>')
+    similar = report.get("similar_neighbours") if isinstance(report.get("similar_neighbours"), list) else []
+    if similar:
+        rows = []
+        for pair in similar:
+            if not isinstance(pair, dict):
+                continue
+            rows.append(
+                f'<li>{html_escape(str(pair.get("first") or ""))} and '
+                f'{html_escape(str(pair.get("second") or ""))} look alike '
+                f'({html_escape(str(pair.get("score") or ""))})</li>'
+            )
+        parts.append(
+            f'<details class="similar-fold"><summary>Shots that look alike ({len(rows)})</summary>'
+            f'<ul class="similar-neighbours">{"".join(rows)}</ul></details>'
+        )
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def render_director_notes(directory, shown):
+    """The notes of the rounds, or the shown edit's own notes when the rounds carry none."""
+    directory = Path(directory)
+    rounds = load_json(directory / "director_rounds.json")
+    round_rows = rounds.get("rounds") if isinstance(rounds, dict) and isinstance(rounds.get("rounds"), list) else []
+    notes = []
+    for row in round_rows:
+        if not isinstance(row, dict):
+            continue
+        review = row.get("review")
+        if not isinstance(review, dict):
+            continue
+        for note in review.get("notes") or []:
+            if isinstance(note, str) and note.strip():
+                notes.append((row.get("round"), note))
+    parts = ['<section class="director-notes"><h3>Notes</h3>']
+    if notes:
+        multiple = len(round_rows) > 1
+        rows = []
+        for round_number, note in notes:
+            prefix = f"Round {round_number}: " if multiple else ""
+            rows.append(f"<li>{html_escape(prefix + note)}</li>")
+        parts.append(f"<ul>{''.join(rows)}</ul>")
+    else:
+        path = Path(shown["path"]) / "edit.json" if shown else directory / "edit.json"
+        edit = load_json(path)
+        director = (edit.get("meta") or {}).get("director") if isinstance(edit, dict) else None
+        fallback = director.get("notes") if isinstance(director, dict) else None
+        if isinstance(fallback, list) and fallback:
+            rows = "".join(f"<li>{html_escape(str(note))}</li>" for note in fallback)
+            parts.append(f"<ul>{rows}</ul>")
+        else:
+            parts.append('<p class="empty">No notes.</p>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def render_debug_panel(directory, name):
+    """The Debug tab: the shot list, the raw plan, report, rounds and model calls."""
+    directory = Path(directory)
+    plan = load_json(directory / "director_plan.json")
+    parts = ['<div class="debug"><h2>Debug</h2>']
+    if not isinstance(plan, dict):
+        parts.append('<p class="empty">No director data yet.</p></div>')
+        return "".join(parts)
+    edit = load_json(directory / "edit.json")
+    slots = edit.get("video") if isinstance(edit, dict) and isinstance(edit.get("video"), list) else []
+    plan_shots = {}
+    for shot in plan.get("shots") or []:
+        if isinstance(shot, dict) and shot.get("id") is not None:
+            plan_shots[shot["id"]] = shot
+    rows = []
+    for slot in slots:
+        if not isinstance(slot, dict):
+            continue
+        shot = plan_shots.get(slot.get("id")) or {}
+        if slot.get("kind") == "photo":
+            window = "photo"
+        else:
+            window = f"{slot.get('in_s')}–{slot.get('out_s')}"
+        moment = shot.get("moment") if isinstance(shot.get("moment"), dict) else {}
+        moment_text = moment.get("at_s")
+        if moment_text is None:
+            moment_text = moment.get("hint")
+        rows.append(
+            "<tr>"
+            f"<td>{html_escape(str(slot.get('id') or ''))}</td>"
+            f"<td>{html_escape(str(slot.get('shot_key') or ''))}</td>"
+            f"<td>{html_escape(window)}</td>"
+            f"<td>{html_escape(str(shot.get('technique') or ''))}</td>"
+            f"<td>{html_escape(str(moment_text if moment_text is not None else ''))}</td>"
+            "</tr>"
+        )
+    parts.append("<h3>Shots</h3>")
+    parts.append(
+        "<table><thead><tr><th>id</th><th>shot</th><th>window</th><th>technique</th><th>moment</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+    for heading, filename in (
+        ("Plan", "director_plan.json"),
+        ("Editor report", "editor_report.json"),
+        ("Rounds", "director_rounds.json"),
+    ):
+        data = load_json(directory / filename)
+        parts.append(f"<h3>{heading}</h3><pre>{html_escape(json.dumps(data, ensure_ascii=False))}</pre>")
+    parts.append("<h3>Costs and model calls</h3>")
+    ledger = load_json(directory / "llm_spend.json")
+    entries = ledger.get("entries") if isinstance(ledger, dict) and isinstance(ledger.get("entries"), list) else []
+    cost_rows = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cost_rows.append(
+            "<tr>"
+            f"<td>{html_escape(str(entry.get('role') or ''))}</td>"
+            f"<td>{html_escape(str(entry.get('model') or ''))}</td>"
+            f"<td>{html_escape(str(entry.get('cost_usd') or ''))}</td>"
+            "</tr>"
+        )
+    parts.append(
+        "<table><thead><tr><th>role</th><th>model</th><th>cost</th></tr></thead>"
+        f"<tbody>{''.join(cost_rows)}</tbody></table>"
+    )
+    total = (edit.get("meta") or {}).get("llm_cost_usd") if isinstance(edit, dict) else None
+    total_line = f"Total: {html_escape(str(total))} USD"
+    rounds = load_json(directory / "director_rounds.json")
+    if isinstance(rounds, dict) and rounds.get("total_cost_usd") is not None:
+        total_line += f" (rounds: {html_escape(str(rounds['total_cost_usd']))} USD)"
+    parts.append(f"<p>{total_line}</p></div>")
+    return "".join(parts)
+
+
+def render_director_panel(directory, name, notebook=None, wanted=None):
+    """The Director tab: the director's cut in plain words, the chat and the collapsible notebook."""
+    directory = Path(directory)
+    shown = pick_version(list_versions(directory), wanted)
+    if shown is not None:
+        chat = render_chat_panel(
+            directory, name, version_path=shown["path"], version_name=shown["name"]
+        )
+    else:
+        chat = render_chat_panel(directory, name)
+    return render_director_explanation(directory, shown) + chat + render_notebook_panel(notebook, name)
+
+
+def _render_tabs(name, enabled, tab):
+    """The project tab bar: Recap, Director, Files, Cuts, Shorts and Debug."""
+    labels = dict(TABS)
     def link(key):
         active = ' class="active"' if key == tab else ""
-        return f'<a href="/{html_escape(name)}/?tab={key}"{active}>{html_escape(labels[key])}</a>'
+        anchor = "#chat-latest" if key == "director" else ""
+        return f'<a href="/{html_escape(name)}/?tab={key}{anchor}"{active}>{html_escape(labels[key])}</a>'
 
     parts = []
     if "recap" in enabled:
         parts.append(link("recap"))
+    if "director" in enabled:
+        parts.append(link("director"))
     if "files" in enabled:
         parts.append(link("files"))
     for key in ("cuts", "shorts"):
         if key in enabled:
             parts.append(link(key))
+    # Debug stays reachable at ?tab=debug but has no link for now.
     return f'<nav class="tabs">{"".join(parts)}</nav>'
 
 
 def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_with=None, features=None,
                    feedback_prefill="", reedit_open=False, consent_text=None,
-                   brand_logo=DEFAULT_BRAND_LOGO, meta_cost=None):
+                   brand_logo=DEFAULT_BRAND_LOGO, meta_cost=None, notebook=None):
     """Return the project page with the tabs and the Re-edit form."""
     directory = Path(directory)
     mode_b = is_mode_b(directory)
@@ -2230,9 +2742,9 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             continue
         if key == "shorts" and (not has_shorts or not feature_on(features, "shorts")):
             continue
-        if key in ("recap", "why", "shots") and not feature_on(features, key):
+        if key in ("recap", "shots") and not feature_on(features, key):
             continue
-        if key == "files" and not feature_on(features, "recap"):
+        if key in ("files", "director") and not feature_on(features, "recap"):
             continue
         enabled.append(key)
     if tab not in enabled:
@@ -2242,12 +2754,8 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
     if "recap" in enabled:
         panels["recap"] = render_recap_panel(directory, name, wanted, compare_with, status, report,
                                              meta_cost=meta_cost)
-    if "why" in enabled:
-        panels["why"] = render_iframe_panel(
-            directory,
-            "explain.html",
-            "No explanation for this edit yet. Run scripts/explain.py, or re-edit it once to create one.",
-        )
+    if "director" in enabled:
+        panels["director"] = render_director_panel(directory, name, notebook=notebook, wanted=wanted)
     if "shots" in enabled:
         panels["shots"] = render_iframe_panel(
             directory,
@@ -2260,6 +2768,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         panels["shorts"] = render_shorts_panel(directory, name)
     if "files" in enabled:
         panels["files"] = render_files_panel(directory, name, features, consent_text=consent_text)
+    panels["debug"] = render_debug_panel(directory, name)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
     if estimate and estimate["shots"]:
@@ -2292,7 +2801,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         else ""
     )
     body = (
-        f"<style>{RUN_NOTICE_STYLE}</style><h1>{html_escape(name)}</h1>"
+        f"<style>{RUN_NOTICE_STYLE}{NOTEBOOK_STYLE}</style><h1>{html_escape(name)}</h1>"
         f'<p class="lede">{lede}</p>'
         f"{render_delete_form(name)}"
         f"{nav}"
@@ -2380,6 +2889,11 @@ def option_fields(music_tracks):
                 default=shorts_layout_default(),
             ),
         ),
+        (
+            "Title and description",
+            render_select("meta", [("auto", "Auto (off)"), ("off", "off"), ("on", "on")],
+                          default=recap_meta_default()),
+        ),
         ("Music", render_select("music", music_options, default="auto")),
         (
             "Ambient under the music (dB)",
@@ -2463,14 +2977,14 @@ def render_delete_form(name):
 
 
 def render_delete_version_form(name, version):
-    """A small form that deletes one version (never the latest or the first)."""
+    """A small form that deletes one version (never the latest)."""
     number = version["number"]
     question = f"Delete version {number}? Its video and files are removed for good."
     return (
         f'<form class="delete-version" method="post" action="/{html_escape(name)}/delete-version">'
         f'<input type="hidden" name="version" value="{html_escape(version["name"])}">'
         f'<button type="button" class="version-del" data-question="{html_escape(question)}">'
-        "Delete this version</button></form>"
+        f"{BIN_ICON}<span>Delete this version</span></button></form>"
     )
 
 
@@ -2546,7 +3060,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         )
         start_disabled = " disabled"
     body = (
-        "<h1>New recap</h1>"
+        "<h1>New video</h1>"
         '<p class="lede">Add the clips of one day, say what you want, and start.</p>'
         '<form class="upload-form" method="post" action="/upload" enctype="multipart/form-data">'
         f"{drop}"
@@ -2565,7 +3079,7 @@ def render_upload(music_tracks, features=None, consent_text=None, storage_html="
         '<p class="upload-status" aria-live="polite"></p></div>'
         "</form>"
     )
-    return render_page("New recap", f"<style>{DROP_STYLE}</style>{body}", active="upload",
+    return render_page("New video", f"<style>{DROP_STYLE}</style>{body}", active="upload",
                        script=page_script(LENGTH_SCRIPT, DROP_SCRIPT, UPLOAD_PROGRESS_SCRIPT,
                                           BRIEF_HINTS_SCRIPT, CONSENT_SCRIPT),
                        features=features, brand_logo=brand_logo)
@@ -2598,50 +3112,7 @@ def render_reedit(name, music_tracks, features=None, feedback_prefill="", files_
         f"{render_form_rows(fields)}"
         f"{AUTO_HINT}"
         '<button class="go" type="submit" name="submit" value="reedit">Re-edit</button>'
-        f'<button class="ask" type="submit" name="submit" value="ask" '
-        f'formaction="/{html_escape(name)}/feedback-reply">Ask the director</button>'
         "</form></details>"
-    )
-
-
-REEDIT_FIELDS = (
-    "brief", "length", "length_s", "order", "audio_clean", "format",
-    "speed_ramp", "shorts_layout", "music", "ambient_under_music_db",
-    "fact_place", "fact_when", "fact_who", "fact_occasion",
-)
-
-
-def render_feedback_reply(name, fields, feedback, summary):
-    """The reply page: the director's reading, the estimate and the approve button."""
-    reply = summary["reply"]
-    estimate_usd = summary.get("estimate_usd")
-    estimate_s = summary.get("estimate_s")
-    if estimate_usd is not None and estimate_s is not None:
-        estimate = f"about {format_cost(estimate_usd)} and {format_duration(estimate_s)}"
-    elif estimate_usd is not None:
-        estimate = f"about {format_cost(estimate_usd)}"
-    elif estimate_s is not None:
-        estimate = f"about {format_duration(estimate_s)}"
-    else:
-        estimate = "the estimate is not available yet"
-    hidden = "".join(
-        f'<input type="hidden" name="{html_escape(field)}" '
-        f'value="{html_escape(fields.get(field) or "")}">'
-        for field in REEDIT_FIELDS
-    )
-    hint = feedback + "\n\nDirector's reading: " + reply
-    change_link = f'/{html_escape(name)}/?tab=recap&feedback={urllib.parse.quote(feedback)}'
-    return (
-        "<h1>Ask the director</h1>"
-        f'<p class="reply">{html_escape(reply)}</p>'
-        f'<p class="estimate">{html_escape(estimate)}</p>'
-        f'<form method="post" action="/{html_escape(name)}/re-edit" enctype="multipart/form-data">'
-        f"{hidden}"
-        '<input type="hidden" name="approved" value="1">'
-        f'<input type="hidden" name="feedback" value="{html_escape(hint)}">'
-        '<button class="go" type="submit" name="submit" value="reedit">Make the new version</button>'
-        "</form>"
-        f'<p><a href="{change_link}">Change my request</a></p>'
     )
 
 
@@ -3300,6 +3771,11 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
         command += ["--format", frame_format]
     if (fields.get("speed_ramp") or "auto") == "on":
         command.append("--speed-ramp")
+    meta = fields.get("meta") or "auto"
+    if meta == "on":
+        command.append("--meta")
+    elif meta == "off":
+        command.append("--no-meta")
     music = fields.get("music") or "auto"
     if music == "auto":
         command += ["--music", "auto"]
@@ -3318,7 +3794,79 @@ def build_recap_command(python, source, workspace, brief, fields, music_dir):
     return command
 
 
-def start_recap(command, workspace, source, options):
+def start_learn(workspace, notebook):
+    """Spawn the notebook learning pass in the background; never raises, never blocks."""
+    if notebook is None:
+        return None
+    workspace = Path(workspace)
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve().parent / "notebook.py"),
+        "--workspace", str(workspace),
+        "--notebook", str(notebook),
+        "--learn",
+        "--json",
+    ]
+    try:
+        log = (workspace / "learn.log").open("ab")
+    except OSError as exc:
+        print(f"[warn] could not open the learn log: {exc}", file=sys.stderr)
+        return None
+    try:
+        handle = subprocess.Popen(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(REPO_ROOT),
+        )
+    except OSError as exc:
+        log.close()
+        print(f"[warn] could not start the learn pass: {exc}", file=sys.stderr)
+        return None
+    threading.Thread(target=_reap_learn, args=(handle, log), daemon=True).start()
+    return handle.pid
+
+
+def _reap_learn(handle, log):
+    try:
+        handle.wait()
+    finally:
+        try:
+            log.close()
+        except OSError:
+            pass
+
+
+def _reap_recap(handle, workspace, notebook):
+    code = handle.wait()
+    if code == 0 and notebook is not None:
+        start_learn(workspace, notebook)
+
+
+def _process_start_time(pid):
+    """The start time psutil reports for ``pid``, or None when it cannot be read."""
+    import psutil
+
+    try:
+        return psutil.Process(pid).create_time()
+    except psutil.Error:
+        return None
+
+
+class ToolTimeout(Exception):
+    """A tool subprocess did not finish inside its timeout."""
+
+
+def run_tool_command(command, timeout):
+    """Run a tool subprocess with a timeout; raise ToolTimeout when it does not finish."""
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise ToolTimeout(f"the tool did not finish within {timeout:g} s") from exc
+
+
+def start_recap(command, workspace, source, options, notebook=None):
     """Spawn the recap in the background, record ``.run.json`` and return the pid."""
     workspace.mkdir(parents=True, exist_ok=True)
     with (workspace / "run.log").open("ab") as log:
@@ -3333,14 +3881,17 @@ def start_recap(command, workspace, source, options):
         )
     record = {
         "pid": handle.pid,
+        "pid_started": _process_start_time(handle.pid),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "label": "recap",
         "source": str(source),
         "options": options,
         "command": command,
     }
-    (workspace / ".run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    threading.Thread(target=handle.wait, daemon=True).start()
+    write_text_atomic(workspace / ".run.json", json.dumps(record, indent=2) + "\n")
+    threading.Thread(
+        target=_reap_recap, args=(handle, workspace, notebook), daemon=True
+    ).start()
     return handle.pid
 
 
@@ -3369,6 +3920,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 self.send_not_found()
                 return
             self.handle_reedit(segments[0])
+            return
+        if len(segments) == 2 and segments[1] == "stop-run":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_stop_run(segments[0])
             return
         if len(segments) == 2 and segments[1] == "feedback-reply":
             if not feature_on(features, "recap"):
@@ -3411,6 +3968,12 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 self.send_not_found()
                 return
             self.handle_exclude_file(segments[0])
+            return
+        if len(segments) == 2 and segments[1] == "notebook-delete":
+            if not feature_on(features, "recap"):
+                self.send_not_found()
+                return
+            self.handle_notebook_delete(segments[0])
             return
         if len(segments) == 2 and segments[1] == "cut-review":
             self.handle_cut_review(segments[0])
@@ -3535,6 +4098,8 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             if not marker.is_file():
                 raise UploadError(409, "no recorded source for this project")
             data = json.loads(marker.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise UploadError(409, "unreadable .run.json")
             source = Path(data.get("source") or "")
             if not source.is_dir():
                 raise UploadError(409, "recorded source is gone")
@@ -3547,13 +4112,25 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if fields.get("approved"):
             try:
-                append_feedback_action(workspace, "approved", **fields)
+                append_feedback_action(workspace, "approved", fields.get("feedback") or "")
             except OSError:
                 pass
         self._start_for(fields, source, project, reedit=True)
 
+    def handle_stop_run(self, project):
+        """Stop the run in progress and show the previous version."""
+        workspace = self.server.root / project
+        if not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        if project_status(workspace) != "running":
+            self.send_error_text(409, "nothing is running")
+            return
+        stop_run(workspace)
+        self.send_redirect(f"/{project}/?tab=recap")
+
     def handle_feedback_reply(self, project):
-        """Ask the director how it reads a feedback request; start no run."""
+        """The chat with the director: one director call answers the message; start no run."""
         workspace = self.server.root / project
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
@@ -3571,16 +4148,18 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             sys.executable,
             str(Path(__file__).resolve().parent / "llm_director.py"),
             "--workspace", str(workspace),
-            "--interpret-feedback", feedback,
+            "--chat", feedback,
             "--json",
         ]
         version = (fields.get("version") or "").strip()
-        if VERSION_RE.match(version):
+        if valid_version(version):
             command += ["--version", version]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        result = self.run_tool(command, FEEDBACK_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the director could not answer"]
-            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            self.send_error_text(400 if result.returncode == 2 else 502, message[0])
             return
         try:
             summary = json.loads((result.stdout or "").strip().splitlines()[-1])
@@ -3588,14 +4167,29 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             summary = None
         reply = summary.get("reply") if isinstance(summary, dict) else None
         if not isinstance(reply, str) or not reply.strip():
-            self.send_error_text(500, "the director gave no answer")
+            self.send_error_text(502, "the director gave no answer")
             return
-        body = render_feedback_reply(project, fields, feedback, summary)
-        self.send_html(
-            render_page("Ask the director", body, active="projects", features=self.server.features,
-                        brand_logo=self.server.brand_logo),
-            True,
-        )
+        can_do = normalise_can_do(summary.get("can_do"))
+        missing_tool = summary.get("missing_tool")
+        missing_tool = missing_tool if isinstance(missing_tool, str) and missing_tool.strip() else None
+        if can_do in ("part", "none") and missing_tool is not None and self.server.requests is not None:
+            try:
+                append_request(
+                    self.server.requests,
+                    {
+                        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        "type": "missing_tool",
+                        "text": f"{missing_tool}: {feedback}",
+                        "contact": "",
+                        "backed": False,
+                    },
+                )
+            except OSError:
+                pass
+        location = f"/{project}/?tab=director"
+        if valid_version(version):
+            location += f"&v={int(version.lstrip('v'))}"
+        self.send_redirect(location + "#chat-latest")
 
     def handle_rewrite_meta(self, project):
         """Save the four facts and rewrite the shown version's title and description."""
@@ -3610,7 +4204,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         version = (fields.get("version") or "").strip()
         target = workspace / "versions" / version
-        if not (VERSION_RE.match(version) and target.is_dir()):
+        if not (valid_version(version) and target.is_dir()):
             target = workspace
             version = ""
         facts = facts_from_fields(fields)
@@ -3623,7 +4217,9 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             "--force",
             "--json",
         ]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        result = self.run_tool(command, META_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the title could not be rewritten"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
@@ -3664,13 +4260,16 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         command = [sys.executable, str(Path(__file__).resolve().parent / "edit_drop.py"),
                    "--workspace", str(workspace), "--json", *extra]
         version = fields.get("version") or ""
-        if re.fullmatch(r"v\d+", version):
+        if valid_version(version):
             command += ["--version", version]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        result = self.run_tool(command, EDIT_DROP_TIMEOUT_S)
+        if result is None:
+            return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["edit_drop failed"]
             self.send_error_text(400 if result.returncode == 2 else 500, message[0])
             return
+        start_learn(workspace, self.server.notebook)
         self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_drop_shot(self, project):
@@ -3761,6 +4360,37 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         self.send_redirect(f"/{project}/?tab=files")
 
+    def handle_notebook_delete(self, project):
+        """Remove one lesson from the instance notebook with notebook.py."""
+        workspace = self.server.root / project
+        if self.server.notebook is None or not workspace.is_dir() or not is_project(workspace):
+            self.send_error_text(404, "unknown project")
+            return
+        try:
+            fields = self._form_fields()
+        except UploadError as exc:
+            self.send_error_text(exc.status, exc.message)
+            return
+        lesson_id = (fields.get("id") or "").strip()
+        if not lesson_id:
+            self.send_error_text(400, "give the lesson id to remove")
+            return
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "notebook.py"),
+            "--notebook", str(self.server.notebook),
+            "--remove", lesson_id,
+            "--json",
+        ]
+        result = self.run_tool(command, NOTEBOOK_TIMEOUT_S)
+        if result is None:
+            return
+        if result.returncode != 0:
+            message = (result.stderr or "").strip().splitlines()[-1:] or ["the lesson could not be removed"]
+            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            return
+        self.send_redirect(f"/{project}/?tab=director#notebook")
+
     def handle_delete_project(self, project):
         """Delete the workspace and its inbox source; refuse while a run is going."""
         workspace = self.server.root / project
@@ -3774,7 +4404,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         marker = workspace / ".run.json"
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
-            source = Path(data.get("source") or "")
+            source = Path(data.get("source") or "") if isinstance(data, dict) else None
         except (OSError, ValueError):
             source = None
         try:
@@ -3790,7 +4420,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         self.send_redirect("/")
 
     def handle_delete_version(self, project):
-        """Delete one version folder; refuse the latest, the first and while a run is going."""
+        """Delete one version folder; refuse the latest and while a run is going."""
         workspace = self.server.root / project
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
@@ -3804,7 +4434,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_text(exc.status, exc.message)
             return
         version = (fields.get("version") or "").strip()
-        if not VERSION_RE.fullmatch(version):
+        if not valid_version(version):
             self.send_error_text(400, "invalid version")
             return
         versions = list_versions(workspace)
@@ -3813,9 +4443,6 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if version == versions[-1]["name"]:
             self.send_error_text(409, "cannot delete the latest version")
-            return
-        if version == versions[0]["name"]:
-            self.send_error_text(409, "cannot delete the first version")
             return
         root = (workspace / "versions").resolve()
         target = (workspace / "versions" / version).resolve()
@@ -3827,6 +4454,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         except OSError as exc:
             self.send_error_text(500, f"could not delete the version: {exc}")
             return
+        start_learn(workspace, self.server.notebook)
         self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_expectations(self, project):
@@ -4005,11 +4633,25 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             sys.executable, source, workspace, brief, fields, self.server.music_dir
         )
         try:
-            start_recap(command, workspace, source, fields)
+            start_recap(
+                command,
+                workspace,
+                source,
+                fields,
+                notebook=self.server.notebook if reedit else None,
+            )
         except OSError as exc:
             self.send_error_text(500, f"could not start the recap: {exc}")
             return
         self.send_redirect(f"/{folder}/")
+
+    def run_tool(self, command, timeout):
+        """Run a tool subprocess; a timeout is a 504 with plain text."""
+        try:
+            return run_tool_command(command, timeout)
+        except ToolTimeout as exc:
+            self.send_error_text(504, str(exc))
+            return None
 
     def send_error_text(self, status, message):
         body = (message + "\n").encode("utf-8")
@@ -4167,6 +4809,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                     consent_text=self.server.consent_text,
                     brand_logo=self.server.brand_logo,
                     meta_cost=query_param(self.path, "meta_cost"),
+                    notebook=self.server.notebook,
                 ),
                 send_body,
             )
@@ -4196,7 +4839,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.send_file(target, send_body)
             return
-        if len(segments) == 4 and segments[1] == "versions" and VERSION_RE.match(segments[2]):
+        if len(segments) == 4 and segments[1] == "versions" and valid_version(segments[2]):
             artifact = segments[3]
             part = ARTIFACT_FEATURES.get(artifact)
             if part is not None and not feature_on(features, part):
@@ -4215,7 +4858,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         if (
             len(segments) == 5
             and segments[1] == "versions"
-            and VERSION_RE.match(segments[2])
+            and valid_version(segments[2])
             and segments[3] == "thumbs"
         ):
             self.handle_thumb(root / segments[0] / "versions" / segments[2], segments[4], send_body)
@@ -4329,7 +4972,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
     def __init__(self, address, root, music_dir, inbox, max_file_bytes, max_total_bytes,
                  ledger=None, requests=None, donation_links=None, features=None, consent_text=None,
                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                 brand_logo=DEFAULT_BRAND_LOGO):
+                 brand_logo=DEFAULT_BRAND_LOGO, notebook=None):
         self.root = Path(root)
         self.music_dir = music_dir
         self.inbox = inbox
@@ -4344,6 +4987,7 @@ class WorkspaceServer(http.server.ThreadingHTTPServer):
         self.credit_warn_usd = credit_warn_usd if credit_warn_usd is not None else DEFAULT_CREDIT_WARN_USD
         self.project_totals_url = project_totals_url
         self.brand_logo = brand_logo
+        self.notebook = Path(notebook) if notebook is not None else None
         super().__init__(address, WorkspaceHandler)
 
 
@@ -4352,7 +4996,7 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
                  ledger=None, requests=None, donation_links=None,
                  features=None, consent_text=None,
                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                 brand_logo=DEFAULT_BRAND_LOGO):
+                 brand_logo=DEFAULT_BRAND_LOGO, notebook=None):
     """Bind ``root`` at ``bind:port`` and return the ready server."""
     return WorkspaceServer(
         (bind, port),
@@ -4370,6 +5014,7 @@ def build_server(root, bind, port, music_dir=None, inbox=None,
         credit_warn_usd,
         project_totals_url,
         brand_logo,
+        notebook,
     )
 
 
@@ -4377,7 +5022,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
                   inbox=None, ledger=None, requests=None, donation_links=None,
                   features=None, consent_text=None,
                   storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                  brand_logo=DEFAULT_BRAND_LOGO):
+                  brand_logo=DEFAULT_BRAND_LOGO, notebook=None):
     """Return the flat summary object shared by ``--json`` and ``--check``."""
     host = f"[{bind}]" if ":" in bind else bind
     base = f"http://{host}:{port}"
@@ -4418,6 +5063,7 @@ def build_summary(root, bind, port, projects, status, started, music_dir=None,
         "inbox": str(Path(inbox).expanduser().resolve()) if inbox else None,
         "ledger": str(Path(ledger).expanduser()) if ledger else None,
         "requests": str(Path(requests).expanduser()) if requests else None,
+        "notebook": str(notebook) if notebook else None,
         "donation_links": donation_links,
         "features": list(features) if features is not None else list(WEB_FEATURES),
         "consent": bool(consent_text),
@@ -4493,6 +5139,9 @@ def main(argv=None):
         requests = requests_path(args.requests)
         if requests is None:
             print(f"[warn] {no_requests_message('--requests')}", file=sys.stderr)
+        notebook = notebook_path(args.notebook)
+        if notebook is None:
+            print(f"[warn] {no_notebook_message('--notebook')}", file=sys.stderr)
         donation = donation_links(args.donation_url)
         global EUR_PER_USD
         EUR_PER_USD = usd_to_eur()
@@ -4503,8 +5152,6 @@ def main(argv=None):
             print(f"[warn] {no_storage_message('--storage-gb')}", file=sys.stderr)
         warn_usd = credit_warn_usd()
         totals_url = project_totals_url(args.project_totals_url)
-        if totals_url is None:
-            print(f"[warn] {no_project_totals_message('--project-totals-url')}", file=sys.stderr)
         logo = brand_logo(args.brand_logo)
         try:
             server = build_server(
@@ -4524,6 +5171,7 @@ def main(argv=None):
                 warn_usd,
                 totals_url,
                 logo,
+                notebook,
             )
         except OSError as exc:
             raise ServeRuntimeError(f"could not bind {bind}:{args.port}: {exc}") from exc
@@ -4537,7 +5185,7 @@ def main(argv=None):
     summary = build_summary(
         root, bind, port, projects, "check" if args.check else "serving", started,
         music_dir, inbox, ledger, requests, donation, features, consent,
-        storage, warn_usd, totals_url, logo,
+        storage, warn_usd, totals_url, logo, notebook,
     )
     if args.json:
         print(json.dumps(summary), flush=True)

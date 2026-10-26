@@ -83,12 +83,12 @@ def test_unknown_template_exits_2(capsys):
 @pytest.mark.parametrize(
     "template,props,needle",
     [
-        ("lower_third", {"name": "Doru"}, "role"),
+        ("lower_third", {"name": "Name"}, "role"),
         ("lower_third", {"role": "creator"}, "name"),
         ("counter", {"number": "1"}, "label"),
         ("counter", {"label": "clips"}, "number"),
         ("callout", {}, "text"),
-        ("lower_third", {"name": "Doru", "role": "creator", "extra": 1}, "extra"),
+        ("lower_third", {"name": "Name", "role": "creator", "extra": 1}, "extra"),
         ("callout", {"text": "x", "style": "nope"}, "style"),
         ("lower_third", {"name": "", "role": "creator"}, "name"),
     ],
@@ -124,7 +124,7 @@ def test_brand_values_reach_composed_html(tmp_path):
     copy_fonts(tmp_path)
     brand_path = write_brand(tmp_path, brand)
     loaded, path = graphics.load_brand(brand_path)
-    values = graphics.render_values("lower_third", {"name": "Doru", "role": "creator"}, loaded)
+    values = graphics.render_values("lower_third", {"name": "Name", "role": "creator"}, loaded)
     fonts = graphics.resolve_fonts(loaded, path.parent)
     html, declared = graphics.compose_html("lower_third", values, 1280, 720, 25, 4.0, fonts)
     assert "#123456" in html
@@ -144,7 +144,7 @@ def test_missing_font_exits_2_naming_path_and_key(tmp_path, capsys):
     brand = load_brand_dict()
     brand["fonts"]["title"]["path"] = "missing/Title.ttf"
     brand_path = write_brand(tmp_path, brand)
-    args = mock_args(tmp_path, "lower_third", {"name": "Doru", "role": "creator"})
+    args = mock_args(tmp_path, "lower_third", {"name": "Name", "role": "creator"})
     args += ["--brand", str(brand_path)]
     rc = graphics.main(args)
     assert rc == 2
@@ -154,7 +154,7 @@ def test_missing_font_exits_2_naming_path_and_key(tmp_path, capsys):
 
 
 def test_missing_brand_exits_2(tmp_path, capsys):
-    args = mock_args(tmp_path, "lower_third", {"name": "Doru", "role": "creator"})
+    args = mock_args(tmp_path, "lower_third", {"name": "Name", "role": "creator"})
     args += ["--brand", str(tmp_path / "nope.json")]
     rc = graphics.main(args)
     assert rc == 2
@@ -162,7 +162,7 @@ def test_missing_brand_exits_2(tmp_path, capsys):
 
 
 def test_mock_output_has_alpha_and_composed_html(tmp_path, capsys):
-    rc = graphics.main(mock_args(tmp_path, "lower_third", {"name": "Doru", "role": "creator"}) + ["--json"])
+    rc = graphics.main(mock_args(tmp_path, "lower_third", {"name": "Name", "role": "creator"}) + ["--json"])
     assert rc == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["backend"] == "mock"
@@ -188,7 +188,7 @@ def test_plan_renders_only_approved(tmp_path, capsys):
     plan = write_plan(
         tmp_path,
         [
-            entry("g1", "lower_third", {"name": "Doru", "role": "creator"}, True),
+            entry("g1", "lower_third", {"name": "Name", "role": "creator"}, True),
             entry("g2", "counter", {"number": "42", "label": "clips"}, False),
             entry("g3", "callout", {"text": "echo hi", "style": "terminal"}, True, duration=2.5, time_s=8.0),
         ],
@@ -207,7 +207,7 @@ def test_plan_renders_only_approved(tmp_path, capsys):
 
 
 def test_plan_zero_approved_exits_0(tmp_path, capsys):
-    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Doru", "role": "creator"}, False)])
+    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Name", "role": "creator"}, False)])
     rc = graphics.main(
         ["--plan", str(plan), "--out-dir", str(tmp_path / "out"), "--backend", "mock", "--json"]
     )
@@ -217,14 +217,14 @@ def test_plan_zero_approved_exits_0(tmp_path, capsys):
 
 
 def test_plan_zero_approved_human_notice(tmp_path, capsys):
-    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Doru", "role": "creator"}, False)])
+    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Name", "role": "creator"}, False)])
     rc = graphics.main(["--plan", str(plan), "--out-dir", str(tmp_path / "out"), "--backend", "mock"])
     assert rc == 0
     assert "nothing rendered" in capsys.readouterr().out
 
 
 def test_plan_bad_approved_entry_names_id(tmp_path, capsys):
-    plan = write_plan(tmp_path, [entry("g9", "lower_third", {"name": "Doru"}, True)])
+    plan = write_plan(tmp_path, [entry("g9", "lower_third", {"name": "Name"}, True)])
     rc = graphics.main(["--plan", str(plan), "--out-dir", str(tmp_path / "out"), "--backend", "mock"])
     assert rc == 2
     assert "g9" in capsys.readouterr().err
@@ -234,7 +234,7 @@ def test_plan_rejected_draft_props_not_validated(tmp_path, capsys):
     plan = write_plan(
         tmp_path,
         [
-            entry("g1", "lower_third", {"name": "Doru", "role": "creator"}, True),
+            entry("g1", "lower_third", {"name": "Name", "role": "creator"}, True),
             entry("g2", "counter", {}, False),
         ],
     )
@@ -253,14 +253,14 @@ def test_plan_missing_file_exits_2(tmp_path, capsys):
 
 
 def test_plan_without_out_dir_exits_2(tmp_path, capsys):
-    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Doru", "role": "creator"}, True)])
+    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Name", "role": "creator"}, True)])
     rc = graphics.main(["--plan", str(plan), "--backend", "mock"])
     assert rc == 2
     assert "out-dir" in capsys.readouterr().err
 
 
 def test_plan_and_template_conflict_exits_2(tmp_path, capsys):
-    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Doru", "role": "creator"}, True)])
+    plan = write_plan(tmp_path, [entry("g1", "lower_third", {"name": "Name", "role": "creator"}, True)])
     rc = graphics.main(
         ["--plan", str(plan), "--out-dir", str(tmp_path / "out"), "--template", "lower_third", "--backend", "mock"]
     )
@@ -291,7 +291,7 @@ def test_hyperframes_render_has_alpha(tmp_path, capsys):
             "--template",
             "lower_third",
             "--props",
-            json.dumps({"name": "Doru", "role": "creator"}),
+            json.dumps({"name": "Name", "role": "creator"}),
             "--out",
             str(out),
             "--width",

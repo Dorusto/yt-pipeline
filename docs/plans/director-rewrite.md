@@ -1,0 +1,224 @@
+# Director rewrite — the film crew (V030 lots R2–R6)
+
+## Goal
+
+Replace the chained-repair director with a film crew: the eyes annotate, the
+director decides, the editor executes and the director reviews. The director is
+the AI and owns the idea, the structure and the shots; the code only turns the
+director's plan into `edit.json` and never changes which shots are used.
+
+## The film crew
+
+### Eyes
+
+The existing analysis tools — `ingest`, `motion`, `quality`, `describe`,
+`similarity`, `index`. They only annotate; they never decide what goes in the
+edit. Their output is `shotlog.json`: every candidate with score, hook, reason,
+tags, role, motion label, semantic motion, faces and defects.
+
+### Director
+
+The AI. It reads the brief, the shotlog, the notebook and the style and writes
+`director_plan.json`: the `idea`, the `structure` (`kind`, `why` and the
+`beats[]`, each with `id`, `name`, `intent` and `target_s`) and the `shots[]`
+(each with `id`, `beat`, `shot_key`, `purpose`, `technique`, optional `pieces`,
+optional `moment`, `target_s` and `why`). It also reviews the cut.
+
+### Editor
+
+Code. It reads `director_plan.json`, `shotlog.json` and the beat grid, picks the
+exact in/out inside each shot's window, applies the length policy, peak-centring,
+beat snap and transitions, never changes which shots are used, writes `edit.json`
+and returns a short report (`editor_report.json`).
+
+### Reviewer = the director
+
+After the editor runs, the director reads the cut and the editor's report and
+either approves or asks for changes (max 2 rounds).
+
+### Owner chat
+
+The owner's message goes through the director: the director updates the plan and
+the editor re-executes. There is no separate "interpret feedback" model call.
+
+### Fallback
+
+Only when the model does not answer at all (no valid JSON after the retry). No
+rule-based repairs, no star/group/auto-fill machinery.
+
+### RULES cut down
+
+- owner notes > emotion > story > rhythm > viewer eye > space;
+- no two near-identical shots in a row unless intended;
+- cut on motion/beat;
+- clean entry and exit.
+
+## The module
+
+The director is a module of the `yt-director` plugin. In Claude Code it runs in
+agent mode (`llm_director.py --prepare` / `--apply` already exist): the director
+is the agent's own model, no OpenRouter key. In the web app it runs through
+OpenRouter (#123). The same plan schema and the same code editor serve both.
+
+## The lots
+
+### R2 — director skill + plan schema (hard, cap 0.6 USD)
+
+- **Issue:** #118, #123.
+- **Files:** `schemas/director_plan.schema.json`, `prompts/director.md` (new,
+  replaces the screenwriter's role), `prompts/agent_director.md`,
+  `.claude/skills/yt-llm-director/SKILL.md`.
+- **Design:** the plan schema requires `idea`, `structure` (`kind`, `why` and
+  `beats[]` with `id`, `name`, `intent`, `target_s`) and `shots[]` with `id`,
+  `beat`, `shot_key`, `purpose`, `technique`, optional `pieces`, optional
+  `moment`, `target_s` and `why` (`technique` is one of the catalogue in
+  `prompts/director.md`). The director prompt tells the model to write the plan
+  only, no timecodes. `prompts/director.md` replaces the screenwriter's role;
+  the old `schemas/shot_plan.schema.json` and `prompts/screenwriter.md` stay
+  until R5 removes them.
+- **Acceptance:** a test that the schema requires the new fields and rejects a
+  plan without them; a test that `prompts/director.md` exists and names the plan
+  schema.
+- **Cap:** 0.6 USD. **Hard:** yes (coder-max).
+
+### R3 — code editor + report (hard, cap 1.0 USD)
+
+- **Issue:** #118.
+- **Files:** `scripts/director_editor.py` (new),
+  `schemas/editor_report.schema.json` (new), `scripts/common/facts.py` and
+  `scripts/common/beatsnap.py` (the shot-fact and beat-snap helpers moved out
+  of `llm_director.py`), tests.
+- **Design:** `director_editor.py --workspace W --plan director_plan.json --out
+  edit.json --report editor_report.json` reads the plan, the shotlog and the
+  beats, picks the exact windows (length policy, peak-centring, beat snap,
+  transitions), writes `edit.json` (schema `edit.schema.json`) and a short
+  report (`schemas/editor_report.schema.json`: one row per plan shot, the total
+  and target length, what it could not do, the similar neighbours and a factual
+  summary). It never changes the shot keys or the slot order; a shot with no
+  usable window is a report note, not a silent swap.
+- **Acceptance:** on a synthetic workspace, `director_editor.py` writes a valid
+  `edit.json` and a report; the shot keys match the plan exactly; a plan slot
+  outside the shotlog is a usage error.
+- **Cap:** 1.0 USD. **Hard:** yes (coder-max).
+- **Done:** shipped in V030 lot R3; cost: 0.65603894 USD.
+
+### R4 — director-editor rounds + chat through the director + Director tab + Debug tab (hard, cap 0.8 USD)
+
+- **Issue:** #118, #123.
+- **Files:** `scripts/llm_director.py`, `prompts/director.md`, `scripts/serve.py`,
+  `prompts/interpret_feedback.md`, tests.
+- **Design:** the director writes the plan, the editor executes, the director
+  reviews (max 2 rounds); the owner chat is handed to the director (no separate
+  interpret call); the Director tab shows the director's plain-words explanation
+  of the cut; the Debug tab shows the plan, the editor report, the rounds and the
+  model calls.
+- **Acceptance:** a mock-model round loop test; the chat route goes through the
+  director; the Debug tab renders the plan and the report.
+- **Cap:** 0.8 USD. **Hard:** yes (coder-max).
+- **Done (R4a):** the flow, the notes round and agent mode shipped in V030 lot R4a; cost: 0.79186415 USD (the lot's spend, architect and coder rounds together).
+- **Done (R4b):** the chat through the director (`llm_director.py --chat` with the plan, the report, the rounds, the owner's notes and the notebook, and the `decision_note` stored as an owner note), the Director tab explanation and the Debug tab shipped in V030 lot R4b; cost: 0.745294036 USD (the lot's spend, architect and coder rounds together).
+
+### R5 — remove old code + rewrite RULES + update skills and guide (hard, cap 1.0 USD)
+
+- **Issue:** #118.
+- **Files:** `scripts/llm_director.py`, `scripts/director.py`,
+  `prompts/screenwriter.md`, `prompts/editor.md`, `prompts/reviewer.md`,
+  `docs/RULES.md`, `.claude/skills/yt-llm-director/SKILL.md`,
+  `.claude/skills/yt-director/SKILL.md`, `docs/guides/user-guide.md`,
+  `docs/guides/tools.md`.
+- **Design:** remove the old three-role loop, the star/group/auto-fill repairs
+  and the old feedback-reply path (keep only the "model did not answer"
+  fallback); rewrite the RULES editing-grammar section to the short list; update
+  the skills and the guide.
+- **Acceptance:** full suite green; no dead code; RULES matches the new grammar.
+- **Cap:** 1.0 USD. **Hard:** yes (coder-max).
+- **Done:** shipped in V030 lot R5. The greps in "R5 done" below are empty; the
+  DECISIONS history is the only place the removed names may still appear. Cost:
+  1.4464926 USD (the lot's spend, architect and coder rounds together; the
+  lot's cap was 1.0 USD).
+
+### R6 — test on fresh copies of Kotor and Monschau (cap 0.5 USD)
+
+- **Issue:** #118.
+- **Files:** `docs/reports/director-rewrite.md` (new).
+- **Design:** run the new director end-to-end on fresh copies of the Kotor and
+  Monschau footage; compare the cut to the owner's expectations (`eval_edit.py`);
+  report the two runs, the eval results and the owner's check.
+- **Acceptance:** the report with the two runs and the eval results.
+- **Cap:** 0.5 USD. **Hard:** no.
+
+## R5 done
+
+The three greps below return no matches (exit 1, no output); the DECISIONS
+history is the only place the removed names may still appear.
+
+```
+$ git grep -n "shot_plan\|screenwriter" -- scripts/ prompts/ schemas/ tests/ .claude/ docs/guides/ docs/AGENT_SETUP.md
+(no output)
+
+$ git grep -n "hero_missing\|repair_missing_stars\|star_groups\|required_star_keys\|star_group_keys\|sorted_stars\|stars_share_one_group\|collapse_star_groups" -- scripts/ tests/ prompts/
+(no output)
+
+$ git grep -n "fill_to_target(record\|final_neighbour_check\|review_copy\|review_object\|interpret_feedback\|build_interpret_user\|request_reply\|append_reply_line\|owner_keys_from_feedback\|read_role_prompt\|read_chat_prompt\|three-role" -- scripts/ tests/ prompts/ .claude/
+(no output)
+```
+
+## R7 to R9 (done directly by the coordinator, not as agent lots)
+
+- **R7** (`cea2a5f`, `0ea6c12`): the notes-round call was reusing the plan prompt, so the model answered with a plan. `prompts/director_review.md` now ends the system message of the review call (and fills the agent-mode inputs); the editor report carries `target_s` per shot. Re-runs on copies of the Kotor and Monschau tests showed the notes round working.
+- **R8** (`2efed12`): the three duplicated helpers merged into `scripts/common/`.
+- **R9**: length is a guide, the beat and the director win. Shot limits 1.5 to 8 s in `config.yaml` (`director.shot_limits`), `over_limit_reason` on a plan shot, calm holds no longer exempt. See DECISIONS 2026-10-26.
+
+## Build order
+
+R2 → R3 → R4 → R5 → R6.
+
+## Owner decisions
+
+- The Director tab always shows the director's idea, the structure and why, why
+  each shot, and the editor's report; it replaces the "Why?" button.
+- A separate, discreet Debug tab shows the shot list and the raw details.
+- The app has no settings.
+
+## Out of scope
+
+- MCP sampling.
+- A shared notebook between instances.
+- Anything not needed to publish the next clip.
+
+## References
+
+- https://nofilmschool.com/2016/11/6-rules-good-cutting-according-oscar-winning-editor-walter-murch
+- https://wikis.utexas.edu/display/rtf318/Murch%27s+Rule+of+Six
+- https://workflow.frame.io/guide/editing-stages
+- https://en.wikipedia.org/wiki/Rough_cut
+- https://en.wikipedia.org/wiki/Jump_cut
+- https://my.eng.utah.edu/~cs5964/LecturesPDF/CS5964Machinima_Editing1_04.pdf
+- https://www.netspar.nl/kennisplein/the-influence-of-exit-entrance-cuts-on-visual-attention-during-movie-viewing-an-eye-tracking-experiment/
+- https://en.wikipedia.org/wiki/Kuleshov_effect
+- https://reduct.video/blog/paper-edits-for-documentary-filmmakers
+- https://workflow.frame.io/guide/stringouts
+- https://spliceapp.com/blog/crafting-a-quick-vacation-recap-montage-for-travel-vloggers/
+
+## Failing tests: checked
+
+A report of 6 failed tests (doctor and graphics) came from a different checkout: 2569 tests and 457 files, while this branch has 2489 tests and 468 files. On this branch the full suite passes (2489 passed, 7 skipped). If the other checkout is master, run its suite there to see them.
+
+## Where to stop, and room to improve
+
+Development of the director stops here for now. Next step is the owner watching real clips. Ideas for later, in order:
+- Give the director more useful facts about each shot (what is in the frame, how the shot starts and ends, what comes before and after) so it chooses better.
+- Teach it the editing craft from the research notes (docs/research/editing-craft.md, docs/guides/shot-grammar.md): cutting on motion, clean entry and exit, a video to still photo change that does not read as a jump.
+- A way to archive or hide old test projects in the project list.
+- Debug tab: hidden for now (still at ?tab=debug); decide later what it should show.
+- Director tab: shorter, only how the director thought, why, the problems and what it did.
+
+## Notes from the review of the first real runs (to pick up in the next version)
+
+- The director already receives a plain-words description, summary, tags, subject and scenery for each shot (107 of 109 in the Kotor test). What holds it back is the set of rules around it. Next version: fewer rules, more independence, better facts about each shot.
+- Beats: checked on the Kotor song. The old engine and the beat_this model agree within 12 ms (31 ms at most), tempo steady at 107 bpm, and all 16 cuts of the test cut sit within 5 ms of a beat. So the beat tool does not look like the cause. Still open: the owner hears cuts that feel on beat but in another rhythm. Cuts fall every 4 or 8 beats, sometimes 1.7 s apart.
+- Gap in the tests: test runs through llm_director.py leave audio.music empty in edit.json, so on beat was only checked against the grid, not with sound. Next time check a web run with the music attached, and ask the owner for the exact seconds that feel wrong.
+- Cut from a video to a still photo can feel like a jump (Kotor, about 10.9 s). To handle with the editing-craft notes.
+- A shot the director dropped (the tunnel in one Kotor version) is a choice, not a cutting bug. The reason is in the Director tab.
+- Test runs were made in separate project copies on purpose, so the owner's own project and its versions stay untouched. Old copies were deleted; only the latest test copies remain.
+- Open for later: a folder on the NAS for finished films, archive for old projects, what Debug should show, a shorter Director tab, and an Opus investigation of beats only if the check with real music still finds a problem.

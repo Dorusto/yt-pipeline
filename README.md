@@ -27,11 +27,24 @@ export OPENROUTER_API_KEY=sk-or-v1-...            # key from https://openrouter.
 .venv/bin/python scripts/serve.py --workspaces <workspaces> --inbox <inbox>
 ```
 
+Every tool is also reachable as `yt <tool> ...` from any folder — see
+[docs/AGENT_SETUP.md](docs/AGENT_SETUP.md).
+
 Install per OS — `ffmpeg` + `ffprobe` first: `sudo apt install ffmpeg` (Linux),
 `brew install ffmpeg` (macOS), `winget install ffmpeg` (Windows, then reopen the
 shell). Python 3.11+ and `uv` everywhere (`pip install uv`). On Windows run the
 commands from PowerShell with `.venv\Scripts\python.exe` and
 `$env:OPENROUTER_API_KEY=...`.
+
+## Install as a Claude Code plugin
+
+```
+/plugin install yt-director --marketplace Dorusto/yt-pipeline
+/plugin install yt-publish --marketplace Dorusto/yt-pipeline
+/plugin install yt-shorts --marketplace Dorusto/yt-pipeline
+/plugin install yt-editor --marketplace Dorusto/yt-pipeline
+/plugin install yt-admin --marketplace Dorusto/yt-pipeline
+```
 
 ## Where to go next
 
@@ -44,5 +57,6 @@ commands from PowerShell with `.venv\Scripts\python.exe` and
 - Work on the code with an AI agent: [AGENTS.md](AGENTS.md) (shared by Claude Code, opencode and DeepSeek).
 - What it can and cannot do yet: [docs/ROADMAP.md](docs/ROADMAP.md)
 
-Licensed under [AGPL-3.0-or-later](LICENSE); external contributions need a signed
-CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Licensed under [AGPL-3.0-or-later](LICENSE); third-party licences are listed in
+[docs/licences.md](docs/licences.md) and [NOTICE.md](NOTICE.md). External
+contributions need a signed CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).

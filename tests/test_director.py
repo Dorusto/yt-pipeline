@@ -4,9 +4,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 import director
+from common.facts import segment_subranges
 from common.moves import slot_screen_length
 from common.schema import validate
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -1141,11 +1143,11 @@ def test_segment_subranges_prefers_beats():
             {"key": "a/s1b2", "start_s": 60.0, "end_s": 160.0},
         ]
     }
-    assert director.segment_subranges(segment, beats) == [
+    assert segment_subranges(segment, beats) == [
         (0.0, 60.0, "a/s1b1"),
         (60.0, 160.0, "a/s1b2"),
     ]
-    assert director.segment_subranges(segment, {}) == [(0.0, 160.0, None)]
+    assert segment_subranges(segment, {}) == [(0.0, 160.0, None)]
 
 
 def test_beat_window_is_clamped_to_the_beat():
@@ -1161,7 +1163,7 @@ def test_beat_window_is_clamped_to_the_beat():
             {"key": "clipA/s1b2", "start_s": 60.0, "end_s": 160.0},
         ]
     }
-    candidates, _ = director.build_candidates(
+    candidates = director.build_candidates(
         clip, None, 0.0, 0.0, quality, motion, 2.0, beats_by_segment=beats,
     )
     assert [(c["shot_key"], c["in_s"], c["out_s"]) for c in candidates] == [
@@ -1186,6 +1188,160 @@ def test_two_beats_of_one_take_with_another_take_between(tmp_path):
     assert middle["clip"] == "clipB.mp4"
 
 
+def test_two_adjacent_beats_of_one_segment_keep_only_the_better(tmp_path):
+    workspace = build_beats_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "12", "--order", "chronological", "--pacing", "uniform", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "clipA/s1b1" in keys
+    assert "clipA/s1b2" not in keys
+    rejected = {
+        row["id"]: row["reason"]
+        for row in record.get("decisions") or []
+        if row.get("status") == "rejected"
+    }
+    assert rejected["clipA/s1b2"].startswith("pointless jump cut")
+
+
+def test_keep_shots_keeps_both_beats_of_one_segment(tmp_path):
+    workspace = build_beats_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "12", "--order", "chronological", "--pacing", "uniform",
+        "--keep-shots", "clipA/s1b1,clipA/s1b2", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "clipA/s1b1" in keys
+    assert "clipA/s1b2" in keys
+
+
+def build_owner_keys_workspace(root):
+    clips = [
+        {"file": "clip_0072_x.mp4", "path": "/media/clip_0072_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:00:00"},
+        {"file": "clip_0091_x.mp4", "path": "/media/clip_0091_x.mp4", "duration_s": 60.0, "creation_time": "2026-01-01T10:01:00"},
+    ]
+    write_json(
+        root / "ingest.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "source_dir": "/media", "clips": clips},
+    )
+    write_json(
+        root / "quality" / "clip_0072_x.json",
+        quality_doc("clip_0072_x.mp4", 60.0, [segment("s7", 0.0, 60.0, "hold", motion_label="static")]),
+    )
+    write_json(root / "motion" / "clip_0072_x.json", motion_doc("clip_0072_x.mp4", 60.0, []))
+    write_json(
+        root / "quality" / "clip_0091_x.json",
+        quality_doc("clip_0091_x.mp4", 60.0, [segment("s2", 0.0, 60.0, "hold", motion_label="static")]),
+    )
+    write_json(root / "motion" / "clip_0091_x.json", motion_doc("clip_0091_x.mp4", 60.0, []))
+    write_shotlog(
+        root,
+        [
+            shotlog_shot("0072/s7b1", "clip_0072_x.mp4", "s7b1", 0.0, 30.0, True, 0.95, "the bunker", "interest 95", hero=True),
+            shotlog_shot("0072/s7b5", "clip_0072_x.mp4", "s7b5", 30.0, 60.0, True, 0.97, "the bunker again", "interest 97", hero=True),
+            shotlog_shot("0091/s2", "clip_0091_x.mp4", "s2", 0.0, 60.0, True, 0.9, "the orbit", "interest 90", hero=True, role="move", motion_label="orbit"),
+        ],
+    )
+    shots = json.loads((root / "shotlog.json").read_text(encoding="utf-8"))["shots"]
+    for shot in shots:
+        if shot["key"] in ("0072/s7b1", "0072/s7b5"):
+            shot["beat_of"] = "s7"
+    write_json(
+        root / "shotlog.json",
+        {"generated_at": "2026-01-01T00:00:00+00:00", "weights": {"vision": 0.55, "labels": 0.45}, "shots": shots},
+    )
+    return root
+
+
+def test_drop_shots_removes_the_key_from_the_edit(tmp_path):
+    workspace = build_owner_keys_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "24", "--order", "chronological", "--pacing", "uniform",
+        "--drop-shots", "0072/s7b1", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "0072/s7b1" not in keys
+    assert "0072/s7b1" in summary["applied_keys"]
+
+
+def test_add_shots_puts_the_key_in_the_edit(tmp_path):
+    workspace = build_owner_keys_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "24", "--order", "chronological", "--pacing", "uniform",
+        "--add-shots", "0091/s2", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    record = json.loads((tmp_path / "edit.json").read_text(encoding="utf-8"))
+    keys = [slot.get("shot_key") for slot in record["video"]]
+    assert "0091/s2" in keys
+    assert "0091/s2" in summary["applied_keys"]
+
+
+def test_add_shots_reports_a_key_with_no_candidate(tmp_path):
+    workspace = build_owner_keys_workspace(tmp_path / "ws")
+    result = run_director(
+        "--workspace", workspace, "--out", tmp_path / "edit.json",
+        "--target-duration-s", "24", "--order", "chronological", "--pacing", "uniform",
+        "--add-shots", "9999/s9", "--json",
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert "9999/s9" in summary["not_applied_keys"]
+    assert "9999/s9" not in summary["applied_keys"]
+
+
+def test_force_add_shots_inserts_a_candidate_not_in_the_edit():
+    candidate = {
+        "clip": "clip_0091_x.mp4",
+        "segment": {"id": "s2"},
+        "in_s": 0.0,
+        "out_s": 60.0,
+        "score": 0.9,
+        "role": "hold",
+        "motion_label": "static",
+        "steadiness": "static",
+        "position": 0.5,
+        "content_offset": 60.0,
+        "shot_key": "0091/s2",
+        "similar_to": [],
+    }
+    slots = [
+        {
+            "clip": "clip_0072_x.mp4",
+            "in_s": 0.0,
+            "out_s": 4.0,
+            "score": 0.5,
+            "shot_key": "0072/s7b1",
+            "content_offset": 0.0,
+            "segment": {"id": "s7"},
+            "role": "hold",
+            "motion_label": "static",
+            "steadiness": "static",
+            "position": 0.0,
+            "similar_to": [],
+        }
+    ]
+    warnings = []
+    result, applied, not_applied = director.force_add_shots(
+        slots, [candidate], {"0091/s2"}, 24.0, 5.0, 2.0, "chronological", warnings, 6.0, 3.6,
+    )
+    assert applied == ["0091/s2"]
+    assert not_applied == []
+    assert "0091/s2" in [slot.get("shot_key") for slot in result]
+
+
 def test_window_ends_at_the_steady_motion_end():
     clip = {"file": "clipA.mp4"}
     quality = quality_doc("clipA.mp4", 30.0, [segment("s1", 0.0, 30.0, "move", motion_label="pan_right")])
@@ -1193,7 +1349,7 @@ def test_window_ends_at_the_steady_motion_end():
         "clipA.mp4", 30.0,
         [move("m1", 0.0, 30.0, "pan_right", "regular", "no_shaking", 2.0, 18.0, 1.75, 25.0)],
     )
-    candidates, _ = director.build_candidates(clip, None, 0.0, 0.0, quality, motion, 2.0)
+    candidates = director.build_candidates(clip, None, 0.0, 0.0, quality, motion, 2.0)
     assert len(candidates) == 1
     assert candidates[0]["in_s"] == 1.75
     assert candidates[0]["out_s"] == 18.0
@@ -1207,24 +1363,6 @@ def test_important_cap_defaults_to_the_pacing_hero_max(tmp_path):
     assert "middle_speed" not in slot
     assert slot["peak_source"] == "middle"
     assert slot["in_s"] == 8.25 and slot["out_s"] == 11.75
-
-
-def test_prompts_state_the_hero_cap_without_hardcoding_it():
-    for name in ("editor.md", "reviewer.md", "screenwriter.md"):
-        text = (ROOT / "prompts" / name).read_text(encoding="utf-8")
-        assert "8.0 s" not in text
-        assert "8 seconds" not in text
-        assert "up to 8 s" not in text
-    editor = (ROOT / "prompts" / "editor.md").read_text(encoding="utf-8")
-    assert "hero cap" in editor
-    assert "capped at 6.0 s" not in editor
-    reviewer = (ROOT / "prompts" / "reviewer.md").read_text(encoding="utf-8")
-    assert "hero cap" in reviewer
-    assert "up to 6 s" not in reviewer
-    assert "centred on the shot's `peak_s`" in reviewer
-    screenwriter = (ROOT / "prompts" / "screenwriter.md").read_text(encoding="utf-8")
-    assert "hero cap" in screenwriter
-    assert "1.5" in screenwriter
 
 
 def write_photo(path, size=(64, 48), color=(120, 80, 40)):
@@ -1498,7 +1636,9 @@ def test_beat_snap_cut_beyond_the_slack_warns_and_stays():
     }
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.0, "duration_s": 3.0}
     warnings = []
-    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    stats = director.snap_slots(
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
+    )
     assert video["out_s"] == 2.3
     assert any("cut 1: not snapped" in warning for warning in warnings)
     assert stats["unsnapped"] >= 1
@@ -1518,7 +1658,9 @@ def test_beat_snap_moves_a_cut_past_the_window_within_the_slack():
     }
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.0, "duration_s": 3.0}
     warnings = []
-    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    stats = director.snap_slots(
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
+    )
     assert abs(video["out_s"] - 2.6) <= 0.02
     assert stats["unsnapped"] == 0
 
@@ -1528,7 +1670,7 @@ def test_beat_snap_photo_duration_lands_on_a_whole_beat():
     grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.9, "duration_s": 2.9}
     warnings = []
-    director.snap_slots([photo], grid, [False], warnings)
+    director.snap_slots([photo], [director.slot_bounds_for(photo)], grid, warnings, downbeats_at=[False])
     assert abs(photo["duration_s"] - round(photo["duration_s"] / 0.5) * 0.5) <= 0.02
     assert 2.0 <= photo["duration_s"] <= 4.0
     assert not [warning for warning in warnings if "not snapped" in warning]
@@ -1546,8 +1688,65 @@ def test_snap_slots_returns_the_beat_snap_shape():
         "important": False,
     }
     warnings = []
-    stats = director.snap_slots([video], grid, [False], warnings)
+    stats = director.snap_slots([video], [director.slot_bounds_for(video)], grid, warnings, downbeats_at=[False])
     assert set(stats) == {"beats", "snapped", "unsnapped", "downbeats", "half_bar"}
+
+
+def test_slot_bounds_for_matches_the_old_snap_bounds():
+    photo = {
+        "media_type": "photo",
+        "clip": "p.jpg",
+        "in_s": 0.0,
+        "out_s": 3.0,
+        "duration_s": 3.0,
+        "max_screen_s": 4.0,
+    }
+    plain = {
+        "clip": "a.mp4",
+        "in_s": 10.0,
+        "out_s": 14.0,
+        "window_in_s": 8.0,
+        "window_out_s": 16.0,
+        "landing_floor_s": None,
+        "important": False,
+        "max_screen_s": 5.0,
+    }
+    landing = dict(plain, landing_floor_s=13.5)
+    important = dict(plain, important=True, motion_label="pan_left")
+    hero_static = dict(plain, important=True, motion_label="static")
+    assert director.slot_bounds_for(photo) == {"cap": 4.0, "important": False, "photo": True}
+    assert director.slot_bounds_for(plain) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": False,
+        "low": 10.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
+    assert director.slot_bounds_for(landing) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": False,
+        "low": 13.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
+    assert director.slot_bounds_for(important) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": True,
+        "low": 10.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
+    assert director.slot_bounds_for(hero_static) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": True,
+        "low": 10.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
 
 
 def test_beat_snap_photo_slots_stay_on_beats_in_an_edit(tmp_path):
@@ -1608,7 +1807,7 @@ def test_beats_joins_the_input_mtimes(tmp_path):
     assert json.loads(third.stdout)["status"] == "written"
 
 
-def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
+def test_beat_snap_pair_absorb_moves_an_important_cut_pinned_at_the_window_end():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
     grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
     video = {
@@ -1618,18 +1817,41 @@ def test_beat_snap_pair_absorb_moves_a_cut_pinned_at_the_window_end():
         "window_in_s": 0.0,
         "window_out_s": 2.9,
         "landing_floor_s": None,
-        "important": False,
+        "important": True,
     }
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.5, "duration_s": 3.5}
     warnings = []
-    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
+    stats = director.snap_slots(
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
+    )
     assert abs(video["out_s"] - 3.0) <= 0.02
     assert 2.0 <= photo["duration_s"] <= 4.0
     assert not [warning for warning in warnings if "not snapped" in warning]
     assert stats["unsnapped"] == 0
 
 
-def test_beat_snap_pair_absorb_moves_a_cut_past_both_windows_within_the_slack():
+def test_beat_snap_pair_absorb_moves_an_important_cut_past_both_windows_within_the_slack():
+    beat_s = [round(0.5 * index, 4) for index in range(40)]
+    grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
+    video = {
+        "clip": "a.mp4",
+        "in_s": 0.0,
+        "out_s": 2.9,
+        "window_in_s": 0.0,
+        "window_out_s": 2.9,
+        "landing_floor_s": None,
+        "important": True,
+    }
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.0, "duration_s": 2.0}
+    warnings = []
+    stats = director.snap_slots(
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
+    )
+    assert abs(video["out_s"] - 3.0) <= 0.02
+    assert stats["unsnapped"] == 0
+
+
+def test_beat_snap_pair_absorb_does_not_move_a_non_important_cut_past_the_window():
     beat_s = [round(0.5 * index, 4) for index in range(40)]
     grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
     video = {
@@ -1641,11 +1863,14 @@ def test_beat_snap_pair_absorb_moves_a_cut_past_both_windows_within_the_slack():
         "landing_floor_s": None,
         "important": False,
     }
-    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.0, "duration_s": 2.0}
+    photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.5, "duration_s": 3.5}
     warnings = []
-    stats = director.snap_slots([video, photo], grid, [False, False], warnings)
-    assert abs(video["out_s"] - 3.0) <= 0.02
-    assert stats["unsnapped"] == 0
+    stats = director.snap_slots(
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
+    )
+    assert video["out_s"] == 2.9
+    assert stats["unsnapped"] >= 1
+    assert any("not snapped" in warning for warning in warnings)
 
 
 def test_pacing_table_at_the_anchors():
@@ -2024,3 +2249,41 @@ def test_static_framings_of_one_take_still_never_jump_cut(tmp_path):
     _, record = run_edit(workspace, tmp_path / "edit.json", "--order", "chronological")
     clips = [slot["clip"] for slot in record["video"]]
     assert all(first != second for first, second in zip(clips, clips[1:]))
+
+
+def test_whip_short_hold_scores_low():
+    candidate = {
+        "role": "move",
+        "segment": {"id": "s1", "confidence": 0.8, "defects": [], "whip": "short_hold"},
+        "steadiness": "no_shaking",
+        "motion_label": "pan_right",
+        "position": 0.5,
+    }
+    assert director.score_candidate(candidate, "uniform") == pytest.approx(0.1)
+
+
+def test_deliberate_move_shake_not_penalised():
+    base = {
+        "role": "move",
+        "segment": {"id": "s1", "confidence": 0.8, "defects": [{"name": "shake", "value": 0.5}]},
+        "steadiness": "no_shaking",
+        "motion_label": "complex_motion",
+        "semantic_motion": "orbit",
+        "position": 0.5,
+    }
+    without = dict(base)
+    without["segment"] = {"id": "s1", "confidence": 0.8, "defects": []}
+    assert director.score_candidate(base, "uniform") == pytest.approx(
+        director.score_candidate(without, "uniform")
+    )
+
+
+def test_clean_hold_gets_no_no_defect_bonus():
+    candidate = {
+        "role": "hold",
+        "segment": {"id": "s1", "confidence": 0.7, "defects": []},
+        "steadiness": "static",
+        "motion_label": "static",
+        "position": 0.5,
+    }
+    assert director.score_candidate(candidate, "uniform") == pytest.approx(0.55 + 0.25 * 0.7)

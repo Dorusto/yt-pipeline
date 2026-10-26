@@ -23,7 +23,7 @@ merged master (D2-4, D2-5).
   grid, both directors snap every cut to a beat (downbeats at structure
   changes). Synthetic run, 120 BPM click track: **all 8 cuts within 0 ms of a
   beat** (target ≤ 80 ms).
-- **Mix rule (Doru):** the music is the bed, normalised to the loudness
+- **Mix rule (the owner):** the music is the bed, normalised to the loudness
   target; the cleaned ambient stays audible 12 dB under it
   (`--ambient-under-music-db`), never removed; a loud ambient event dips the
   music gently. Measured: ambient 11.3 dB under the music (unit test), and on
@@ -52,7 +52,7 @@ merged master (D2-4, D2-5).
 - `--music auto` (pick a track from `~/media/music` by brief and tags) is not
   built; D2-7 or later.
 
-## Doru, check this
+## the owner, check this
 
 1. On the LXC, after `git pull`: `recap.py --source <Kotor photo day> --music ~/media/music/<track>.mp3 --brief "about 60 seconds, chronological"` and watch the preview.
 2. Ken Burns on your real photos: does the move feel calm (8 % zoom/pan)?

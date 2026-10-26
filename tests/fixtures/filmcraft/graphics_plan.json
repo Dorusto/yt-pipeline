@@ -9,7 +9,7 @@
       "duration_s": 2.0,
       "template": "lower_third",
       "props": {
-        "name": "Doru",
+        "name": "Host",
         "role": "creator"
       },
       "reason": "introduce the host",

@@ -20,7 +20,7 @@
 - Landing phrases (a move followed by its landing hold, the even clips): the landing floor wins over the peak, so the cut ends at the floor and `centred` is false. This is deliberate (see DECISIONS) and produces a warning.
 - Real footage, a real render inspected by eye on a phone, MobileNet similarity (hist backend used), the OpenRouter LLM path (the llm_director with the mock client falls back to the rule director, tool `director.py`).
 
-## Doru, check this
+## the owner, check this
 
 - `docs/DECISIONS.md` last entry: decide whether, for a move + landing phrase, the best moment should win over the landing hold.
 - Run `scripts/recap.py --source <folder> --brief "..."` on real footage: are long moves cut around the gate/subject? `explain.html` shows "centred on the best moment at X s (from ...)" per slot.

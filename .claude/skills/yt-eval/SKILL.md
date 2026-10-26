@@ -1,18 +1,18 @@
 ---
 name: yt-eval
 description: Score the workspace motion/ and quality/ outputs, or the final shotlog labels, against a ground-truth YAML written by the person who filmed the clips — per-clip and total scores from interval overlap of expected vs predicted move and role, horizon false positives and event precision/recall (F1). Use when the user asks how well the motion or quality tools match what was actually filmed, wants the eval baseline, wants the pipeline number after the vision verdicts, or needs a before/after number to judge a D1a-2 fix. Trigger phrases - "score the tools against ground truth", "rulează evaluarea", "cât de bune sunt etichetele", "eval baseline", "compară motion/quality cu ground truth", "cât câștigă verdictul", "score the shotlog labels". Labels only — it never edits, cuts or re-analyses footage, and it does not fix the tools.
-compatibility: Run from the repository root. Needs the repo .venv with pyyaml and jsonschema; CPU only, no GPU and no network. Reads the ground-truth YAML and the workspace read-only; the only file written is --out. Fast (seconds for a handful of clips).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with pyyaml and jsonschema; CPU only, no GPU and no network. Reads the ground-truth YAML and the workspace read-only; the only file written is --out. Fast (seconds for a handful of clips).
 ---
 
 # yt-eval
 
-Turn "the labels look plausible" into a number. The ground-truth YAML holds the move, role, horizon and event labels a human wrote from what they filmed; this tool matches every ground-truth clip to the workspace `motion/<stem>.json` and `quality/<stem>.json` by the 4-digit counter in the file name and scores interval overlap, horizon false positives and event precision/recall. `--labels` chooses which labels are scored: `geometry` (the motion/quality documents, the D1a-2 baseline) or `shotlog` (the effective labels of `WORKSPACE/shotlog.json`, where the vision verdict wins on uncertain segments — the pipeline number). It baselines the current tools: every later D1a-2 fix must move the score up. All commands run from the repository root.
+Turn "the labels look plausible" into a number. The ground-truth YAML holds the move, role, horizon and event labels a human wrote from what they filmed; this tool matches every ground-truth clip to the workspace `motion/<stem>.json` and `quality/<stem>.json` by the 4-digit counter in the file name and scores interval overlap, horizon false positives and event precision/recall. `--labels` chooses which labels are scored: `geometry` (the motion/quality documents, the D1a-2 baseline) or `shotlog` (the effective labels of `WORKSPACE/shotlog.json`, where the vision verdict wins on uncertain segments — the pipeline number). It baselines the current tools: every later D1a-2 fix must move the score up. All commands run through `yt <tool>`.
 
 ## Step 1: score a ground-truth file against a workspace
 
 ```bash
-.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace <workspace>
-.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace <workspace> --labels shotlog
+yt eval_labels --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace <workspace>
+yt eval_labels --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace <workspace> --labels shotlog
 ```
 
 - `--ground-truth PATH` (required) is the YAML below. `--workspace DIR` (required) holds `motion/*.json` and `quality/*.json`.
@@ -24,8 +24,8 @@ Turn "the labels look plausible" into a number. The ground-truth YAML holds the 
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --json
-.venv/bin/python scripts/eval_labels.py --ground-truth GT.yaml --workspace WS --out report.json
+yt eval_labels --ground-truth GT.yaml --workspace WS --json
+yt eval_labels --ground-truth GT.yaml --workspace WS --out report.json
 ```
 
 The default prints a fixed-width table, one row per ground-truth clip in ground-truth order, then a TOTAL row; `-` marks a component the ground truth does not ask for (never zero). `--json` prints the full report object (indent 2) instead — including `meta` with `wall_time_s` and `llm_cost_usd` (always 0.0 here, the tool calls no model) — and `--out FILE` additionally writes that object atomically (`.tmp` then `os.replace`), re-run safe and overwriting. The report is always validated against `schemas/eval.schema.json` before it is printed or written.

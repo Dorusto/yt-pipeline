@@ -16,7 +16,7 @@ Code, comments, commit messages and documentation are in English.
 
 External contributions are accepted only with a signed CLA. The CLA grants the project copyright holder (Dorusto) the right to relicense your contribution, including under a different or commercial licence. This is what keeps dual licensing possible: the project is released under AGPL-3.0-or-later, and the same code can also be offered under a commercial licence.
 
-Sign by email or by commenting the form below on the pull request. Doru records one signed CLA per contributor.
+Sign by email or by commenting the form below on the pull request. the owner records one signed CLA per contributor.
 
 ```
 I grant the project copyright holder (Dorusto) the right to relicense my contribution under any licence.

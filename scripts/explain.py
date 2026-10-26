@@ -8,8 +8,8 @@ Usage:
     python scripts/explain.py --workspace DIR --out /tmp/explain.html --force
 
 Reads ``edit.json`` (required, validated against ``schemas/edit.schema.json``)
-plus ``shot_plan.json`` and ``shotlog.json`` (optional) and writes one
-self-contained ``explain.html``: the brief, the screenwriter plan in words, the
+plus ``director_plan.json`` and ``shotlog.json`` (optional) and writes one
+self-contained ``explain.html``: the brief, the director's plan in words, the
 timeline with a base64 thumbnail per slot (the cut versus the candidate window
 and the slot's reason) and every candidate used or rejected with the reason,
 from ``decisions[]``. No model is called. Sources are read-only; the HTML is
@@ -26,6 +26,7 @@ from html import escape
 from pathlib import Path
 
 from common.decisions import REASON_GROUPS
+from common.director import director_review
 from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
@@ -45,7 +46,7 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="explain.py",
         description=(
-            "Write explain.html in a workspace: the brief, the screenwriter plan "
+            "Write explain.html in a workspace: the brief, the director's plan "
             "in words, the edit timeline with a thumbnail per slot and every "
             "candidate used or rejected with the reason, from edit.json."
         ),
@@ -86,7 +87,7 @@ def run(workspace, out=None, force=False):
     if not force and _output_is_up_to_date(out_path, inputs):
         return _summary("skipped", edit, out_path, started), EXIT_OK
     _check_out_location(out_path, workspace_path, edit.get("sources") or [])
-    plan = _load_optional(workspace_path / "shot_plan.json", "shot_plan")
+    plan = _load_optional(workspace_path / "director_plan.json", "director_plan")
     shotlog = _load_optional(workspace_path / "shotlog.json", "shotlog")
     document = _html_document(workspace_path, edit, plan, shotlog)
     _write_html(out_path, document)
@@ -157,7 +158,7 @@ def _out_path(workspace_path, out):
 
 def _input_files(workspace_path, edit_path):
     inputs = [edit_path]
-    for name in ("shot_plan.json", "shotlog.json"):
+    for name in ("director_plan.json", "shotlog.json"):
         path = workspace_path / name
         if path.exists():
             inputs.append(path)
@@ -241,15 +242,15 @@ def _summary_sentences(edit, plan, slots, decisions):
     ]
     names = [
         str(beat.get("name"))
-        for beat in (plan or {}).get("structure") or []
+        for beat in ((plan or {}).get("structure") or {}).get("beats") or []
         if isinstance(beat, dict) and beat.get("name")
     ]
     if names:
         sentences.append("The plan runs: " + " → ".join(names) + ".")
     else:
-        sentences.append("No shot plan was used for this edit.")
+        sentences.append("No director plan was used for this edit.")
     director = (edit.get("meta") or {}).get("director") or {}
-    review = director.get("review")
+    review = director_review(edit)
     if isinstance(review, dict):
         if review.get("approved"):
             sentences.append("The reviewer approved the edit.")
@@ -400,13 +401,18 @@ def _plan_section(plan, used_plan=True):
     lines = [f"<h2>{heading}</h2>"]
     if not isinstance(plan, dict):
         lines.append(
-            '<p class="missing">No shot plan (shot_plan.json) in this workspace — '
+            '<p class="missing">No director plan (director_plan.json) in this workspace — '
             "the edit was not planned by the LLM director.</p>"
         )
         return "\n".join(lines)
-    logline = escape(str(plan.get("logline") or ""))
-    lines.append(f'<blockquote class="brief">{logline}</blockquote>')
-    beats = plan.get("structure") or []
+    idea = escape(str(plan.get("idea") or ""))
+    lines.append(f'<blockquote class="brief">{idea}</blockquote>')
+    structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
+    kind = escape(str(structure.get("kind") or ""))
+    why = escape(str(structure.get("why") or ""))
+    if kind or why:
+        lines.append(f'<p class="meta-line">{kind} — {why}</p>')
+    beats = structure.get("beats") or []
     if beats:
         items = []
         for beat in beats:
@@ -415,18 +421,20 @@ def _plan_section(plan, used_plan=True):
             target = _seconds_text(beat.get("target_s"))
             items.append(f"<li><strong>{name}</strong> — {intent} <span class=\"cand-meta\">{target}</span></li>")
         lines.append("<ul>\n" + "\n".join(items) + "\n</ul>")
-    rows = plan.get("slot_plan") or []
+    rows = plan.get("shots") or []
     if rows:
         items = []
         for row in rows:
             ident = escape(str(row.get("id") or ""))
             key = escape(str(row.get("shot_key") or ""))
             target = _seconds_text(row.get("target_s"))
+            technique = escape(str(row.get("technique") or ""))
+            purpose = escape(str(row.get("purpose") or ""))
             why = escape(str(row.get("why") or ""))
             items.append(
                 f'<div class="candidate"><span class="cand-id">{ident}</span>'
-                f'<span class="cand-meta">{key} · {target}</span>'
-                f'<span class="cand-reason">{why}</span></div>'
+                f'<span class="cand-meta">{key} · {target} · {technique}</span>'
+                f'<span class="cand-reason">{purpose} {why}</span></div>'
             )
         lines.append("\n".join(items))
     return "\n".join(lines)
@@ -473,7 +481,11 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
     slot_id = escape(str(slot.get("id") or ""))
     shot_key = slot.get("shot_key")
     key_html = f' <span class="short-id">· {escape(str(shot_key))}</span>' if shot_key else ""
-    reason = escape(str(slot.get("reason") or ""))
+    decision = used_by_slot.get(str(slot.get("id") or ""))
+    reason_text = str(slot.get("reason") or "")
+    if decision is not None and decision.get("reason"):
+        reason_text = str(decision["reason"])
+    reason = escape(reason_text)
     meta_parts = [escape(source_name)]
     if _is_number(slot.get("score")):
         meta_parts.append(f"score {float(slot['score']):.2f}")
@@ -553,7 +565,9 @@ def _decision_maps(decisions):
     used_by_slot = {}
     by_id = {}
     for row in decisions:
-        by_id[str(row.get("id") or "")] = row
+        ident = str(row.get("id") or "")
+        if row.get("status") == "used" or ident not in by_id:
+            by_id[ident] = row
         if row.get("status") == "used" and row.get("slot"):
             used_by_slot[str(row["slot"])] = row
     return used_by_slot, by_id

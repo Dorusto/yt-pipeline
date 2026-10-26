@@ -131,7 +131,7 @@ labels the motion tool produced, measured defects and the event count:
 | 0084 | 18.8 | move 17.1, hold 1.7 | travel_forward | — | 0 |
 | 0086 | 16.6 | hold 15.3, move 1.2 | — | — | 0 |
 
-## Doru, check this
+## the owner, check this
 
 1. Watch `~/media/yt-test/workspace/recap_720p.mp4` (85 s) — is it watchable
    end to end, and does the calm→energy arc read?

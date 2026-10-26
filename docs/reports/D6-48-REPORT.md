@@ -24,11 +24,11 @@ More renders: `examples/thumbnail/`.)*
 
 ## Mocked / not verified
 
-- **The real rembg cut-out on a real photo**: the build LXC has 6 GB RAM and the OOM killer ends BiRefNet inference (exit 137) even at 450x600 input. The code calls rembg's actual 2.0.85 API (`new_session("birefnet-portrait")`, `remove`); the integration test runs it in a subprocess where the model is present and skips on OOM. First real-photo run is Doru's (below).
+- **The real rembg cut-out on a real photo**: the build LXC has 6 GB RAM and the OOM killer ends BiRefNet inference (exit 137) even at 450x600 input. The code calls rembg's actual 2.0.85 API (`new_session("birefnet-portrait")`, `remove`); the integration test runs it in a subprocess where the model is present and skips on OOM. First real-photo run is the owner's (below).
 - PSD look inside Photoshop/Photopea — round-trip verified with psd-tools only.
-- The look vs the real `DEPPSiT-template-v2` — the brief's numbers are implemented exactly, but only Doru has the template to compare against.
+- The look vs the real `DEPPSiT-template-v2` — the brief's numbers are implemented exactly, but only the owner has the template to compare against.
 
-## Doru, check this
+## the owner, check this
 
 1. Run it once on a real photo (the one thing the LXC cannot do; needs `pip install "rembg[cpu]"` and ~8 GB free RAM):
    `python scripts/thumbnail.py --photo TU.jpg --title "AI-UL MEU" --keyword "RULEAZĂ ACASĂ" --kicker "// homelab · automatizări" --theme tech --out /tmp/thumb --psd`

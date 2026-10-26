@@ -1,6 +1,6 @@
-# D1a checkpoint — Doru's review (2026-10-13)
+# D1a checkpoint — the owner's review (2026-10-13)
 
-Ground truth from Doru for 6 clips is in [`eval/ground_truth_boat_2026-10-12.yaml`](../../eval/ground_truth_boat_2026-10-12.yaml). Verdict: the tools work end to end, but the labels miss what matters on footage shot from a moving boat. D1a is not approved yet; one more round (D1a-2) with the fixes below, then a short re-check, then D1b.
+Ground truth from the owner for 6 clips is in [`eval/ground_truth_boat_2026-10-12.yaml`](../../eval/ground_truth_boat_2026-10-12.yaml). Verdict: the tools work end to end, but the labels miss what matters on footage shot from a moving boat. D1a is not approved yet; one more round (D1a-2) with the fixes below, then a short re-check, then D1b.
 
 ## What the comparison shows
 

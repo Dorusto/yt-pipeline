@@ -70,7 +70,7 @@ the vision model is a thin, cheap layer of judgement on top.
 - Framing checks are single vision calls on 4-tile mosaics, not a systematic
   framing eval over the whole eval set.
 
-## Doru, check this
+## the owner, check this
 
 1. Numbers: `~/projects/yt-pipeline/.venv/bin/python scripts/eval_labels.py --ground-truth eval/ground_truth_boat_2026-10-12.yaml --workspace ~/media/yt-test/ws-d28-mosaic --labels shotlog` (mosaic) vs the same with `ws-d28-legacy` (old).
 2. Watch a moving-crop short: `.venv/bin/python scripts/shorts_generator.py --video ~/media/yt-test/raw/dji_mimo_20261012_124338_0081_1791817211091_video.mp4 --yes` with a `shorts_config.yaml` segment without `x_offset`, then play `shorts/Short1-*.mp4`.

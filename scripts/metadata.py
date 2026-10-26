@@ -23,7 +23,15 @@ import sys
 import time
 from pathlib import Path
 
-from common.channel import fixed_string, fixed_strings, members_placeholder_used
+from common.channel import (
+    DESCRIPTION_PARTS,
+    description_order,
+    fixed_string,
+    fixed_strings,
+    members_placeholder_used,
+    style_section,
+    style_strings,
+)
 from common.config import ConfigError, load_config
 from common.llm import LLMError, make_client
 from common.schema import SchemaError, validate_or_raise
@@ -52,9 +60,20 @@ def get_client():
 
 
 def build_message(
-    prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url, chosen_title=None
+    prompt_text,
+    context_text,
+    transcript_text,
+    channel_url,
+    previous_url,
+    repo_url,
+    chosen_title=None,
+    style=None,
 ):
-    parts = [prompt_text, "## Context", context_text]
+    parts = [prompt_text]
+    section = style_section(style)
+    if section is not None:
+        parts.append(section)
+    parts.extend(["## Context", context_text])
     if chosen_title is not None:
         parts.extend(["## Chosen title", chosen_title])
     parts.extend(["## Transcript", transcript_text])
@@ -238,21 +257,32 @@ def fill_members(fixed, members):
     return filled
 
 
-def build_description(fields, lang, fixed, previous_url):
-    paragraphs = [fields["intro"][lang]]
-    if fields["github_line"] is not None:
-        paragraphs.append(fields["github_line"][lang])
-    members_sentence = fixed_string(fixed, "members_sentence", lang)
-    if members_sentence is not None:
-        paragraphs.append(members_sentence)
-    if previous_url and fields["previous_line"] is not None:
-        paragraphs.append(fields["previous_line"][lang])
-    paragraphs.append(fields["subscribe_line"][lang])
-    for promo in fields["promo_lines"]:
-        paragraphs.append(f"[{promo['label']}] {promo[lang]}")
-    closing = fixed_string(fixed, "closing", lang)
-    if closing is not None:
-        paragraphs.append(closing)
+def build_description(fields, lang, fixed, previous_url, order=None):
+    if order is None:
+        order = DESCRIPTION_PARTS
+    paragraphs = []
+    for part in order:
+        if part == "intro":
+            paragraphs.append(fields["intro"][lang])
+        elif part == "github":
+            if fields["github_line"] is not None:
+                paragraphs.append(fields["github_line"][lang])
+        elif part == "members":
+            members_sentence = fixed_string(fixed, "members_sentence", lang)
+            if members_sentence is not None:
+                paragraphs.append(members_sentence)
+        elif part == "previous":
+            if previous_url and fields["previous_line"] is not None:
+                paragraphs.append(fields["previous_line"][lang])
+        elif part == "subscribe":
+            paragraphs.append(fields["subscribe_line"][lang])
+        elif part == "promo":
+            for promo in fields["promo_lines"]:
+                paragraphs.append(f"[{promo['label']}] {promo[lang]}")
+        elif part == "closing":
+            closing = fixed_string(fixed, "closing", lang)
+            if closing is not None:
+                paragraphs.append(closing)
     return "\n\n".join(paragraphs)
 
 
@@ -317,6 +347,8 @@ def run(
 
     config = load_config()
     fixed = fixed_strings(config)
+    style = style_strings(config)
+    order = description_order(style)
     channel_url = (config.get("channel") or {}).get("github_url")
     if not isinstance(channel_url, str) or not channel_url.strip():
         raise MetadataError("config is missing channel.github_url (a non-empty string)")
@@ -336,7 +368,14 @@ def run(
     file_chapters = load_chapters_file(chapters_path) if chapters_path else None
 
     message = build_message(
-        prompt_text, context_text, transcript_text, channel_url, previous_url, repo_url, title
+        prompt_text,
+        context_text,
+        transcript_text,
+        channel_url,
+        previous_url,
+        repo_url,
+        title,
+        style=style,
     )
     answer = get_client().complete_json(
         "metadata",
@@ -349,8 +388,8 @@ def run(
         file_chapters if file_chapters is not None else fields["chapters"], srt_end
     )
 
-    ro_description = build_description(fields, "ro", fixed, previous_url)
-    en_description = build_description(fields, "en", fixed, previous_url)
+    ro_description = build_description(fields, "ro", fixed, previous_url, order)
+    en_description = build_description(fields, "en", fixed, previous_url, order)
 
     output_name = name or srt_path.stem
     out_path = Path(out_dir).expanduser() if out_dir else srt_path.parent

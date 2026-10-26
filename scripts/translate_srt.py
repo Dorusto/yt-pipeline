@@ -19,12 +19,12 @@ import json
 import re
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from common.cli import handle_help
 from common.config import ConfigError
 from common.llm import LLMError, make_client
+from common.pool import ordered_map
 from common.summary import summary_fields
 from common.exit_codes import EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
@@ -130,11 +130,11 @@ def main():
     try:
         starts = list(range(0, len(texts), BATCH_SIZE))
         print(f"Traduc {len(texts)} segmente în {len(starts)} loturi, câte {WORKERS} odată...", file=stream)
-        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            results = pool.map(lambda i: (i, translate_batch(texts[i:i + BATCH_SIZE])), starts)
-            for i, result in results:
-                for j, translation in result.items():
-                    translated_texts[i + j] = translation
+        for i, result in ordered_map(
+            lambda i: (i, translate_batch(texts[i:i + BATCH_SIZE])), starts, WORKERS
+        ):
+            for j, translation in result.items():
+                translated_texts[i + j] = translation
 
         with open(output_file, "w", encoding="utf-8") as f:
             for idx, seg in enumerate(segments):

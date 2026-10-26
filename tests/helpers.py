@@ -1,6 +1,20 @@
+import os
 import subprocess
+from pathlib import Path
 
 from common.llm import MockClient
+
+REFERENCE_DIR_ENV = "YT_PIPELINE_REFERENCE_DIR"
+REFERENCE_DIR_PLACEHOLDER = Path("/nonexistent/reference")
+
+
+def reference_dir():
+    """The host's reference-material folder, from ``YT_PIPELINE_REFERENCE_DIR``.
+
+    Unset means the reference tests skip; the repo never carries a personal path.
+    """
+    value = os.environ.get(REFERENCE_DIR_ENV)
+    return Path(value) if value else REFERENCE_DIR_PLACEHOLDER
 
 
 def make_click(path, duration=8.0, bpm=120.0, accent=False):

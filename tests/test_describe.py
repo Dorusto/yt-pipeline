@@ -9,10 +9,10 @@ import pytest
 from PIL import Image
 
 import describe
-from common.llm import BudgetExceeded
-from common.exit_codes import EXIT_OK, EXIT_RUNTIME
+from common.llm import BudgetExceeded, MockClient
+from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.schema import validate
-from common.vision import MockVisionModel, VisionResponse
+from common.vision import MockVisionModel, OpenRouterVisionModel, VisionResponse
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "describe.py"
@@ -1146,6 +1146,34 @@ def test_photo_described_with_pseudo_segment(tmp_path):
     assert validate(data, "describe") == []
 
 
+def test_max_calls_marks_photo_with_max_calls(tmp_path):
+    photos = [write_photo(tmp_path / f"photo_{index:02d}.jpg") for index in range(1, 4)]
+    write_ingest(tmp_path, [photo_record(photo) for photo in photos])
+    model = MockVisionModel()
+    summary, code = describe.run(
+        tmp_path,
+        model=model,
+        model_id="mock/vision",
+        config=CONFIG,
+        max_calls=1,
+        workers=4,
+        photos_only=True,
+    )
+    assert code == EXIT_RUNTIME
+    described = 0
+    skipped = 0
+    for path in (tmp_path / "describe").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for seg in data["segments"]:
+            if seg["status"] == "described":
+                described += 1
+            else:
+                assert seg["skip_reason"] == "max_calls"
+                skipped += 1
+    assert described == 1
+    assert skipped >= 1
+
+
 def test_photo_subject_position_falls_back_to_center(tmp_path):
     photo = write_photo(tmp_path / "photo_01.jpg")
     write_ingest(tmp_path, [photo_record(photo)])
@@ -1377,3 +1405,141 @@ def test_photo_with_a_stale_path_is_read_from_the_workspace_proxy(tmp_path):
     summary, code = describe.run(tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG, photos_only=True)
     assert code == EXIT_OK
     assert summary["photos"] == 1
+
+
+LEDGER_ANSWER = json.dumps(
+    {
+        "description": "a shot",
+        "summary": "a shot",
+        "tags": ["shot"],
+        "subject": "none",
+        "scenery": "outside",
+        "semantic_motion": "none",
+        "interest": 40,
+        "hero": False,
+        "verdict": None,
+    }
+)
+
+
+def normalise_record(record):
+    record = dict(record)
+    record.pop("generated_at", None)
+    record.pop("wall_time_s", None)
+    return record
+
+
+def write_four_clips(tmp_path):
+    for index in range(4):
+        clip = write_video(tmp_path / f"clip{index}.mp4")
+        write_quality(
+            tmp_path,
+            f"clip{index}",
+            clip,
+            [
+                segment("s1", 0.0, 4.0, "hold"),
+                segment("s2", 4.0, 8.0, "move", motion_label="pan_right"),
+            ],
+        )
+
+
+def test_workers_match_sequential_output(tmp_path):
+    write_four_clips(tmp_path)
+    sequential, code = describe.run(
+        tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG, workers=1
+    )
+    assert code == EXIT_OK
+    first = {
+        path.name: normalise_record(json.loads(path.read_text(encoding="utf-8")))
+        for path in (tmp_path / "describe").glob("*.json")
+    }
+    concurrent, code = describe.run(
+        tmp_path, model=MockVisionModel(), model_id="mock/vision", config=CONFIG, workers=4, force=True
+    )
+    assert code == EXIT_OK
+    second = {
+        path.name: normalise_record(json.loads(path.read_text(encoding="utf-8")))
+        for path in (tmp_path / "describe").glob("*.json")
+    }
+    assert first == second
+    for key in (
+        "clips",
+        "described",
+        "skipped",
+        "segments_described",
+        "segments_skipped",
+        "beats",
+        "photos",
+        "frames_sampled",
+        "mosaics_sent",
+    ):
+        assert sequential[key] == concurrent[key]
+    assert concurrent["workers"] == 4
+
+
+def test_workers_charge_the_ledger_once_per_call(tmp_path):
+    for index in range(4):
+        clip = write_video(tmp_path / f"clip{index}.mp4")
+        write_quality(tmp_path, f"clip{index}", clip, [segment("s1", 0.0, 4.0, "hold")])
+    ledger = tmp_path / "llm_spend.json"
+    client = MockClient(config=CONFIG, cost_per_call=0.001, text=LEDGER_ANSWER, ledger_path=ledger)
+    model = OpenRouterVisionModel(client=client)
+    summary, code = describe.run(
+        tmp_path, model=model, model_id="mock/vision", config=CONFIG, workers=4
+    )
+    assert code == EXIT_OK
+    entries = json.loads(ledger.read_text(encoding="utf-8"))["entries"]
+    assert len(entries) == 4
+    assert summary["llm_cost_usd"] == pytest.approx(0.004)
+
+
+def test_max_calls_with_workers_makes_one_call(tmp_path):
+    for index in range(4):
+        clip = write_video(tmp_path / f"clip{index}.mp4")
+        write_quality(tmp_path, f"clip{index}", clip, [segment("s1", 0.0, 4.0, "hold")])
+    model = MockVisionModel()
+    summary, code = describe.run(
+        tmp_path, model=model, model_id="mock/vision", config=CONFIG, max_calls=1, workers=4
+    )
+    assert code == EXIT_RUNTIME
+    assert len(model.calls) == 1
+    described = 0
+    skipped = 0
+    for path in (tmp_path / "describe").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for seg in data["segments"]:
+            if seg["status"] == "described":
+                described += 1
+            else:
+                assert seg["skip_reason"] == "max_calls"
+                skipped += 1
+    assert described == 1
+    assert skipped >= 1
+
+
+def test_workers_zero_is_a_usage_error(tmp_path):
+    clip = write_video(tmp_path / "clip.mp4")
+    write_quality(tmp_path, "clip", clip, [segment("s1", 0.0, 4.0, "hold")])
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "models:\n  vision: mock/vision\nllm_budget_usd: 5.0\nllm_backend: mock\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--workspace",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+            "--workers",
+            "0",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == EXIT_USAGE
+    assert json.loads(result.stdout)["ok"] is False
+

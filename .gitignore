@@ -16,6 +16,8 @@ corrections.txt
 !brand.json
 !schemas/*.json
 !tests/fixtures/**/*.json
+!.claude-plugin/*.json
+!hooks/*.json
 *.mov
 *.m4v
 *.mkv

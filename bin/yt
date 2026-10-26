@@ -1,0 +1,14 @@
+#!/bin/sh
+# yt entry point: a thin launcher that finds a Python and runs scripts/yt.py.
+
+script=$0
+while [ -L "$script" ]; do
+    target=$(readlink "$script")
+    case $target in
+        /*) script=$target ;;
+        *) script=$(dirname "$script")/$target ;;
+    esac
+done
+root=$(cd "$(dirname "$script")/.." && pwd)
+
+exec python3 "$root/scripts/yt.py" "$@"

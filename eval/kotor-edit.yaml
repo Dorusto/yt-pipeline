@@ -1,4 +1,4 @@
-# Edit expectations for the Kotor demo workspace, written from Doru's review
+# Edit expectations for the Kotor demo workspace, written from the owner's review
 # of v4 (2026-10-15): the model dropped the top heroes 0072/s5 and 0072/s7b1.
 # Used by scripts/eval_edit.py against <workspace>/edit.json. No footage, no
 # paths: only short shot keys and numbers, so the file is safe to commit.

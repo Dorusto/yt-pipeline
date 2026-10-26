@@ -96,3 +96,12 @@ def test_snapshot_keeps_thumbs(tmp_path):
     assert (kept / "thumbs" / "shot-1.jpg").is_file()
     listed = versions.list_versions(tmp_path)[0]
     assert "thumbs" in listed["files"]
+
+
+def test_snapshot_writes_cost_usd_from_meta(tmp_path):
+    now = time.time()
+    touch(tmp_path / "edit.json", "{}", now - 10)
+    touch(tmp_path / "recap_720p.mp4", "video", now)
+    kept = versions.snapshot(tmp_path, {"cost_usd": 0.0123})
+    record = json.loads((kept / "version.json").read_text(encoding="utf-8"))
+    assert record["cost_usd"] == 0.0123

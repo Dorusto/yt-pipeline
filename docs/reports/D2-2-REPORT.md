@@ -1,4 +1,4 @@
-# D2-2 — the four fixes Doru asked for after watching `recap_d2_720p.mp4`
+# D2-2 — the four fixes the owner asked for after watching `recap_d2_720p.mp4`
 
 Date: 2026-10-14, branch `d2-2-fixes`. Budget: **0.32 USD** of the 1 USD
 (28 calls: 9 vision for the 0072 beats, 19 director for three loop runs — the
@@ -68,7 +68,7 @@ S1 brief, the 0072 tunnel approach now in the edit.
   same way.
 - **Local GPU vision backend** — unchanged, never run here.
 
-## Doru, check this
+## the owner, check this
 
 1. `~/media/yt-test/workspace/recap_d2_720p.mp4` — jump to **~40 s** (the
    tunnel approach, v7) and to the last shot (the orbit, now 6 s instead of

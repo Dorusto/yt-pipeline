@@ -1,17 +1,17 @@
 ---
 name: yt-quality
-description: Measure footage quality per segment and label each segment with a role — move, hold, transition_in, transition_out, setup, teardown, accidental — with a confidence, plus the measured defects (blur, exposure, shake, obstruction, horizon). Use when the user asks how good the footage is, which shots are blurry, shaky, over- or under-exposed, obstructed or tilted, or wants setup/teardown and transition candidates marked, or wants a junk take flagged as accidental. Trigger phrases - "verifică calitatea footage-ului", "care cadre sunt mișcate sau blurate", "quality check", "etichetează setup și teardown", "unde e blurat sau tremurat", "clipul ăsta e de aruncat". Labels only — it never deletes, cuts or trims anything. Not for camera-motion vocabulary (that is `motion`) or semantic content (that is `describe`).
-compatibility: Run from the repository root. Needs the repo .venv with opencv-python-headless and numpy; CPU only, no GPU and no network. Reads clips read-only and writes quality/<stem>.json into the workspace. Prefers a matching motion/<stem>.json in the workspace for segmentation and shake; without it, it falls back to coarse still/moving segments and warns.
+description: Measure footage quality per segment and label each segment with a role — move, hold, transition_in, transition_out, setup, teardown, accidental — with a confidence, plus the measured defects (blur, exposure, shake, obstruction, horizon, face_cut) and the per-segment face counts. Use when the user asks how good the footage is, which shots are blurry, shaky, over- or under-exposed, obstructed or tilted, how many faces are in a shot, or wants setup/teardown and transition candidates marked, or wants a junk take flagged as accidental. Trigger phrases - "verifică calitatea footage-ului", "care cadre sunt mișcate sau blurate", "quality check", "etichetează setup și teardown", "unde e blurat sau tremurat", "câte fețe sunt în cadru", "clipul ăsta e de aruncat". Labels only — it never deletes, cuts or trims anything. Not for camera-motion vocabulary (that is `motion`) or semantic content (that is `describe`).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with opencv-python-headless and numpy; CPU only, no GPU and no network. Reads clips read-only and writes quality/<stem>.json into the workspace. Prefers a matching motion/<stem>.json in the workspace for segmentation and shake; without it, it falls back to coarse still/moving segments and warns. Face detection uses the YuNet model in ~/.cache/yt-pipeline/models/ (downloaded once); `--no-faces` skips it and needs no model.
 ---
 
 # yt-quality
 
-Measure the quality of a clip and label every segment with a role before any editing decision. Sampled frames are measured for blur, exposure, obstruction, frame difference and horizon; a matching `motion/<stem>.json` drives segmentation and carries the camera label and shake. Each segment gets a role with a confidence and the measured defects. **Labels only — nothing is ever deleted, cut or trimmed here.** All commands run from the repository root.
+Measure the quality of a clip and label every segment with a role before any editing decision. Sampled frames are measured for blur, exposure, obstruction, frame difference and horizon; a matching `motion/<stem>.json` drives segmentation and carries the camera label and shake. Each segment gets a role with a confidence and the measured defects. **Labels only — nothing is ever deleted, cut or trimmed here.** All commands run through `yt <tool>`.
 
 ## Step 1: analyse one clip or a folder
 
 ```bash
-.venv/bin/python scripts/quality.py /path/to/clip.mp4 --workspace /path/to/workspace
+yt quality /path/to/clip.mp4 --workspace /path/to/workspace
 ```
 
 - `INPUT` is one video file, or a folder scanned non-recursively for `.mp4`, `.mov` and `.m4v` files (any letter case, sorted by name).
@@ -19,12 +19,13 @@ Measure the quality of a clip and label every segment with a role before any edi
 - `--motion-dir` (default `DIR/motion`) is where the matching `motion/<stem>.json` is looked up. When it is present it drives segmentation and carries the camera label and shake; when it is absent the tool still works on its own coarse still/moving segmentation and adds the warning `no motion file; segments are coarse`.
 - `--sample-fps` (default 2) sets how many frames per second are decoded for the measurements; the rest are skipped. `--width` (default 320) scales frames down before measuring.
 - `--force` re-analyses a clip whose output already exists. Without it, a clip whose JSON exists and validates against the `quality` schema is skipped and counted as `skipped`.
+- `--no-faces` skips face detection, so no YuNet model is needed. `--config` sets the config file path (default the repo `config.yaml`); it is read for `whip.min_hold_s`.
 - On any error it prints one `[error] ...` line to stderr and exits `2` (bad flags, missing input, unreadable video) or `3` (runtime failure after work started: disk write failed). It never asks questions.
 
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/quality.py /path/to/clip.mp4 --workspace /path/to/workspace --json
+yt quality /path/to/clip.mp4 --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"clips": 21, "analyzed": 21, "skipped": 0, "output_dir": "/abs/workspace/quality"}`. Read `DIR/quality/<stem>.json` for the per-clip detail; it is validated against `schemas/quality.schema.json` and written atomically, so a run leaves a complete valid file or none.
@@ -38,15 +39,16 @@ The `--json` output is a single object, e.g. `{"clips": 21, "analyzed": 21, "ski
 - A segment whose motion label is `static` never gets role `move`. It is a `hold` when the still/hold rule applies, otherwise a `hold` with confidence `0.4` and evidence `no significant camera motion`.
 - `motion_label` is the CameraBench label of the overlapping move from the motion file, or the segment's own dominant motion; `null` without a motion file.
 - `motion_label_confidence` is the `confidence` of the motion move or phase that supplied `motion_label` (0–1), or `null` when there is no motion label (the frame-diff fallback with no motion file). It is the source's own confidence, already priced for its uncertainty reasons.
+- `speed` is the camera speed from the motion file (`slow`/`regular`/`fast`, or `null`). `faces_max` is the largest number of faces in a counted sample, `face_size_max` the largest face box area as a share of the frame (0–1), `face_cut` whether a face box touches a frame edge, and `face_seconds` the counted samples with at least one face times the sample interval. `whip` marks a fast move between short holds on people (`short_hold`) or between two long holds (`deliberate`); a segment with no mark has no `whip` key.
 - `uncertain` is `true` when the segment's labels cannot commit and the vision step (`describe`) must adjudicate it; its verdict wins in the shotlog. `uncertain_reasons` lists why, and is empty when `uncertain` is `false`:
   - the four motion reasons (`scale_vs_radial_flow`, `parallax_vs_rotation`, `self_moving_regions`, `mixed_motion_signals`) are copied from the move or phase that supplied `motion_label`, for traceability;
   - `motion_uncertain` is added when that source itself was `uncertain`;
   - `role_signals_disagree` is quality's own reason, added when the role triggers contradict each other: a head/tail segment that is both a transition and a setup/teardown candidate; an accidental trigger (obstruction, near-uniform frame, static low-detail frame) on a segment that overlaps a motion move or carries a non-static label; or the `unclassified motion` fallback.
 - `confidence` is the role confidence minus `0.15` per quality-level flag (`role_signals_disagree`, `motion_uncertain`), clamped to `[0.05, 1.0]`. The four propagated motion reasons do not deduct again — they are already priced into `motion_label_confidence`. When both flags are present the deduction is `0.30`. The accidental run rule sets its own fixed confidence (`0.6` / `0.65`) and keeps the segment's `uncertain_reasons`, adding `role_signals_disagree` when the upgrade contradicts a `move` segment with an overlapping move.
-- `defects` lists only the measured defects that cross their threshold, each with a normalised `value` (0–1, higher is worse) and a human-readable `detail`: `blur` (Laplacian variance below half the clip's own median), `exposure` (clipped highlights, crushed shadows or mean luma outside 40–200), `shake` (trajectory residual), `obstruction` (large, flat, static area), `horizon` (measured roll above 5°).
+- `defects` lists only the measured defects that cross their threshold, each with a normalised `value` (0–1, higher is worse) and a human-readable `detail`: `blur` (Laplacian variance below half the clip's own median), `exposure` (clipped highlights, crushed shadows or mean luma outside 40–200), `shake` (trajectory residual), `obstruction` (large, flat, static area), `horizon` (measured roll above 5°), `face_cut` (a face box touching the frame edge, value 0.2).
 - `metrics` always carries the raw numbers behind the defects (`laplacian_rel`, `clip_high_pct`, `clip_low_pct`, `mean_luma`, `shake`, `obstruction`, `horizon_deg`), even when no defect is reported.
 - `horizon_deg` is the roll of the horizon in degrees, measured per frame from a dominant long near-horizontal line (the sea/sky boundary) and averaged over the segment. Positive means the right end of the line is higher on screen; `0` is level. A frame contributes only when at least 3 long near-horizontal lines (length ≥ 25% of the frame width, angle within 15° of horizontal) survive and their angles are clustered (median absolute deviation ≤ 3°); otherwise the frame abstains. When no frame in a segment has a measurement, `horizon_deg` is `null` — the tool abstains instead of guessing from arbitrary edges. The `horizon` defect fires only when `horizon_deg` is not `null` and `|horizon_deg| > 5`, with severity scaled to 15°; `null` never produces a defect. Long parallel non-horizon edges (rock striations, canopy edges) can still be read as a horizon when no sea line exists; the vision step in D1b is expected to veto such segments.
-- Intent and defect stay separate: blur or shake on a fast `move` is still reported as a defect, but the segment also gets the evidence string `motion blur during a fast move (intent)` / `shake during a fast move (intent)`. The director decides.
+- Intent and defect stay separate: motion blur on a fast move is no longer reported as a defect, and a deliberate move (`orbit_candidate`, `pan_*`, `tilt_*`, `dolly_*`, `travel_*`, `truck_*`) is not punished for shake the way a static hold is — its shake threshold is doubled. A fast move between short holds on people is marked `whip: "short_hold"` and scores low, while a fast move between two long holds is `whip: "deliberate"`. The director decides.
 
 ## Notes
 

@@ -1,6 +1,6 @@
 # S59 — Mode B on the real clip (lots 1-4)
 
-Report for Doru to confirm. Scope: issue #60 on branch `s59-mode-b-real` — the
+Report for the owner to confirm. Scope: issue #60 on branch `s59-mode-b-real` — the
 real OBS folder layout and pairing (lot 1 + follow-ups), chapters and Shorts
 from the final FilmCraft edit (lot 2), Shorts karaoke with the brand look and
 `layout: split` (lot 3), docs (lot 4), plus the review fixes of the lots 1-3
@@ -52,7 +52,7 @@ audit.
   `chapters.json` instead of asking the model again. On the real Second Brain
   timeline (866.09 s, 1955 words): 9 chapters all inside the timeline and 5
   candidates of 29-58 s each inside one chapter. In `--fcproj` mode the two files
-  default to the clip's publish folder (parent of `--words-dir`), per Doru
+  default to the clip's publish folder (parent of `--words-dir`), per the owner
   2026-10-21.
 - **Shorts karaoke** (lot 3, `329954f`, `c5e1938`): word times from the timeline
   `_words.json` (SRT interpolation only without `--words`), corrections applied
@@ -93,7 +93,7 @@ audit.
   `<ntfy-url>`); `notify.py` reads `NTFY_URL` or config `ntfy_url` with no private default;
   `check_public.py` fails on 10/8, 172.16/12, 192.168/16 outside `.gitignored` files.
 
-**Open questions (Doru):**
+**Open questions (the owner):**
 
 1. `layout: split` still stacks the **face cell over the screen cell** (issue #60, S59 lot
    3c). Your note says "(screen on top, camera below)" — flip the two cells? (one
@@ -117,7 +117,7 @@ audit.
   here (originals are read-only): pairing was verified from the real file names
   and the lot 2 tools from the real `.fcproj` + word JSON files.
 
-## Doru, check this
+## the owner, check this
 
 - The sample frames (karaoke + split layout): `examples/s59-shorts-frames/*.jpg`.
 - Run the checks on the real folder: `python3 scripts/mode_b.py ~/Videos/2026-09-second-brain --check --json`.

@@ -4,6 +4,1318 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-26] Length is a guide, the beat and the director win (V030 lot R9)
+
+**Context:** The editor held every shot to 2-5 s and moved a cut onto a beat
+only while the shot stayed inside that range, so a few cuts stayed off the
+beat, and the director was nudged to hit the target length exactly. The test
+runs showed a 53 s cut for a 60 s target and 4 of 13 cuts off the beat.
+
+**Options:** (A) keep the narrow limits and add more repair rules; (B) widen
+the limits, make them configurable, let the director go past them with a
+reason, and let the target length drift.
+
+**Decision:** B. Order of priority: the beat, then the length the director asked
+for, then the limits. The video shot limits are 1.5 to 8 s by default and live
+in `config.yaml` under `director.shot_limits` (a `default` row and one row per
+content type); a shot asked longer than `max_s` is cut shorter, on a beat,
+unless the plan shot carries `over_limit_reason`, then the editor keeps its
+length, still on a beat. The target length is a guide: about 10% either way is
+fine and the director says why in its notes. Photos stay at 2-4 s.
+
+**Rationale:** The director is the creative; the code only executes. Hard
+limits and a hard total were fighting the beat. Limits stay as a wide frame
+the owner can change per content type.
+
+---
+
+## [2026-10-25] The old director machinery removed (V030 lot R5)
+
+**Context:** The film crew shipped in R4a/R4b, but the old three-role loop, its
+chain of repairs and the star/group/auto-fill machinery were still in
+`llm_director.py`, and the old feedback-reply path (`--interpret-feedback`) was
+still in the code. RULES, the skills and the guide still described them. The
+film-crew flow also did not yet write into `edit.json` what the old flow wrote:
+the music track, the ambient level under it and the `decisions[]` rows.
+
+**Decision:** The film-crew flow writes `audio.music` and
+`audio.ambient_under_music_db` when they come from flags, and `decisions[]` —
+one used row per plan shot (the director's purpose and why, the technique done
+or not) plus the editor's could-not-do items; the director no longer lists every
+candidate it left out. `--speed-ramp` reaches the editor, which sets
+`middle_speed` on a move's plain cut (the middle half up to 1.2x, head and tail
+real time). `explain.py` keeps the used row when a rejected row shares its id.
+The old machinery is removed: the screenwriter/editor/reviewer prompts, the
+`shot_plan.json` schema, the star/group/auto-fill repairs (`hero_missing`, the
+star groups, the repair chain), the old feedback-reply path and the
+`meta.director.review` writer. What stays: the rule director
+(`scripts/director.py`) with its own selection heuristics (its `fill_to_target`
+and star-first pick are its own code, not the removed flow), `is_star` in
+`llm_director.py` for the shortlist, and the shared helpers in
+`scripts/common/` (facts, beatsnap, moves, window similarity) that the editor
+and the director both import. The dedup test now flags two top-level scripts
+with the same helper name as well as a top-level/common overlap, its baseline
+was rebuilt and a stale-entry test fails when the baseline lists a name that is
+no longer a duplicate.
+
+**Why:** The chain of repairs contradicted itself (R1) and the film crew
+replaced it; keeping the old code would keep two flows alive and the docs would
+describe a flow that no longer runs. The music, the ambient level and
+`decisions[]` are what the render and `explain.html` read, so the new flow must
+write them.
+
+**Consequence:** Files touched — `scripts/llm_director.py`, `scripts/director.py`,
+`scripts/director_editor.py`, `scripts/explain.py`, `scripts/serve.py`,
+`scripts/render.py`, `scripts/common/beatsnap.py`, `scripts/common/frames.py`,
+`scripts/common/html.py`, `prompts/director.md`, `prompts/screenwriter.md`
+(removed), `prompts/editor.md` (removed), `prompts/reviewer.md` (removed),
+`prompts/interpret_feedback.md` (removed), `prompts/playbook.md` (removed),
+`schemas/shot_plan.schema.json` (removed), `tests/test_no_duplicate_helpers.py`,
+`tests/test_llm_director.py`, `tests/test_director.py`, `tests/test_explain.py`,
+`tests/test_notebook.py`, `tests/test_prompts.py`, `tests/test_schema.py`,
+`docs/RULES.md`, `docs/AGENT_SETUP.md`, `docs/guides/user-guide.md`,
+`.claude/skills/yt-llm-director/SKILL.md`,
+`.claude/skills/yt-director-editor/SKILL.md` (new),
+`.claude/skills/yt-explain/SKILL.md`, `.claude/skills/yt-recap/SKILL.md`,
+`.claude/skills/yt-notebook/SKILL.md`, `.claude-plugin/marketplace.json`,
+`tests/test_plugin_manifest.py`, `CHANGELOG.md`, `docs/plans/director-rewrite.md`.
+The grep proof: `git grep` for `shot_plan|screenwriter`, for the star/repair
+names and for the old helper names over `scripts/`, `prompts/`, `schemas/`,
+`tests/`, `.claude/` and the guides returns nothing; the DECISIONS history is
+the only place the removed names may still appear.
+
+---
+
+## [2026-10-25] The chat through the director and the two tabs (V030 lot R4b)
+
+**Context:** The director rewrite (V030 lot R1) decided the film crew and that
+the owner's chat goes through the director. The chat was still a separate cheap
+interpret call (`llm_director.py --interpret-feedback`) that only said how the
+director read a request, and the project page still had a **Why?** tab with the
+old `explain.html` iframe.
+
+**Decision:** The chat is one director call: `llm_director.py --chat` sends the
+owner's message with the last plan, the editor report, the rounds, the owner's
+earlier notes and the notebook, and answers a plain reply. When the owner
+decided something, the answer carries a short `decision_note` stored as an
+owner note in `feedback.jsonl` and carried into the next run's feedback; the
+chat never edits the cut. The Director tab shows the director's idea, structure,
+per-shot reasons and the editor's report in plain words, then the chat and the
+notebook. A new Debug tab (last, muted) shows the shot list, the raw plan, the
+report, the rounds and the model calls. The **Why?** tab is gone (the
+`explain.html` artifact stays served); the old `--interpret-feedback` path stays
+in the code until R5.
+
+**Why:** The chat is the owner talking to the director, so it must see what the
+director sees (the plan, the report, the rounds, the notes, the notebook) and
+its decisions must reach the next run; a separate interpret call could only
+guess. The explanation belongs in the Director tab where the owner already
+talks to the director, and the raw files belong in a discreet Debug tab.
+
+**Consequence:** Files touched — `prompts/director_chat.md` (new),
+`scripts/llm_director.py`, `scripts/serve.py`, `scripts/common/theme.py`,
+`tests/test_director_chat.py` (new), `tests/test_serve_chat.py`,
+`tests/test_serve.py`, `docs/RULES.md`, `docs/AGENT_SETUP.md`,
+`docs/guides/user-guide.md`, `docs/guides/tools.md`,
+`.claude/skills/yt-recap/SKILL.md`, `CHANGELOG.md`,
+`docs/plans/director-rewrite.md`.
+
+---
+
+## [2026-10-25] The director flow (V030 lot R4a)
+
+**Context:** The director rewrite (V030 lot R1) decided the film crew: the
+director (the AI) picks the idea, the structure and the shots, the editor is
+code that executes the plan and never changes the shots, and the director
+reviews the cut for at most 2 rounds. The plan contract shipped in R2 and the
+code editor in R3, but the default `llm_director.py` flow was still the old
+three-role loop with its chain of repairs, which contradicted the film-crew
+decision.
+
+**Decision:** The default flow is the film crew. One director call writes
+`director_plan.json`, with one repair retry that sends the exact validation
+errors back to the model. The code editor (`director_editor.py`, called as a
+subprocess) executes the plan and never changes the shots. The notes round
+sends one picture per shot plus the editor report and the director answers
+`director_review.json`: approved, or a complete revised plan with notes. At most
+2 rounds; after the second the cut is delivered with the remaining notes in
+`edit.json` `meta.director.notes`. The rule director is the fallback only when
+the model gives no usable plan. `director_plan.json`, `editor_report.json` and
+`director_rounds.json` are written in the workspace; `meta.director.by` is
+`llm`, `agent` or `rules`. The agent mode is `--prepare` / `--apply` /
+`--prepare --review` with no model call.
+
+**Why:** The chain of repairs contradicted itself (R1): the model's plan and
+the code's repairs fought over the same decisions, and the reviewer judged a
+draft the repairs had already rewritten. One plan, one executor and one review
+round keep the director's decisions intact.
+
+**Consequence:** Files touched — `scripts/llm_director.py`,
+`schemas/director_review.schema.json`, `prompts/agent_director.md`,
+`tests/test_director_flow.py`, `tests/test_llm_director.py`,
+`tests/test_llm_director_agent.py`, `tests/fixtures/director_plan_flow.json`,
+`CHANGELOG.md`, `docs/plans/director-rewrite.md`, `docs/guides/tools.md`,
+`prompts/tools.md`, `docs/RULES.md`. The old loop, its repairs and the star
+machinery stay in the file until R5 removes them. The chat through the director
+and the Director and Debug tabs are R4b.
+
+---
+
+## [2026-10-25] The code editor and its report (V030 lot R3)
+
+**Context:** The director rewrite (V030 lot R1) splits the work into a film
+crew: the director (the AI) writes `director_plan.json` with the idea, the
+structure and the shots, and the editor is code that executes the plan and never
+changes the shots. The plan contract shipped in R2; the editor did not exist
+yet, and the window, peak, landing, beat and similarity helpers lived inside
+`llm_director.py`, which VISION principle 1 forbids another tool to import.
+
+**Options:** (A) let `director_editor.py` import `llm_director.py` and reuse its
+helpers; (B) move the helpers to `scripts/common/` and have both tools import
+them; (C) copy the helpers into the editor.
+
+**Decision:** B. `scripts/common/facts.py` holds the shot-fact helpers (the
+workspace read, the candidate windows, the peaks, the landings, the subject
+events) and `scripts/common/beatsnap.py` the beat-grid and snap helpers;
+`slot_duration` moves next to `slot_screen_length` in `common/moves.py`.
+`llm_director.py` imports them back, so its behaviour is unchanged. The new
+`scripts/director_editor.py` turns a validated `director_plan.json` plus the
+workspace shotlog into `edit.json` and a short `editor_report.json`
+(`schemas/editor_report.schema.json`): one row per plan shot, the total and
+target length, what it could not do, the similar neighbours and a factual
+summary. It never swaps, drops, adds or reorders shots; what it cannot do goes
+in the report. No model call.
+
+**Why not A:** a tool importing another tool's code breaks the independence
+rule. **Why not C:** a copy would drift from the director's helpers.
+
+**Consequence:** files touched — `scripts/director_editor.py`,
+`schemas/editor_report.schema.json`, `scripts/common/facts.py`,
+`scripts/common/beatsnap.py`, `scripts/common/moves.py`,
+`scripts/llm_director.py`, `tests/test_director_editor.py`,
+`tests/test_no_duplicate_helpers.py`, `docs/plans/director-rewrite.md`,
+`docs/guides/tools.md`, `CHANGELOG.md`. The editor is not wired into the web
+app, `llm_director.py`'s CLI or the plugin yet; R4 does the rounds and the tabs.
+
+## [2026-10-25] Director rewrite as a film crew (V030 lot R1)
+
+**Context — what the director was:** The director had grown into a chain of repairs that contradict each other: a rule-based fallback that punishes the cut when the final check fails on small issues, and rules the owner never asked for — mandatory star shots, groups, auto-fill, repeated passes that drop shots, hidden shot swaps, and a second AI call as "editor".
+
+**Why it is rewritten:** On the Kotor test the fallback produced a 52 s cut instead of the 60 s asked for, caused by a 1.6 s shot made by a code repair and one missing star shot.
+
+**Decision:** The film crew replaces the chain. Eyes = the existing analysis tools, which only annotate. Director = the AI, which picks the idea, the structure with a reason and the shots with a purpose and a technique. Editor = code that executes, never changes the shots and returns a short report. The director reviews the cut, max 2 rounds. The owner's chat goes through the director. The fallback runs only when the model does not answer at all. RULES is cut down to: owner notes > emotion > story > rhythm > viewer eye > space; no two near-identical shots in a row unless intended; cut on motion/beat; clean entry and exit.
+
+**Consequence:** The RULES editing-grammar section is rewritten in lot R5; the plan is `docs/plans/director-rewrite.md`; the lots are R2–R6.
+
+## [2026-10-25] Stop, learn and delete-version cleanup (V030 lot c30)
+
+**Context:** The read-only audit of the rest of v0.3.0 found several loose ends.
+`project_status` trusted any live pid in `.run.json`, so a reused pid read
+`running`; the four web-app tool calls (`feedback-reply`, `rewrite-meta`,
+`drop-shot`/`trim-shot`, `notebook-delete`) let a `subprocess.TimeoutExpired`
+escape as a 500; version names were checked with `match`/`fullmatch` in several
+places and `version_dirs` used `startswith("v") and isdigit()`; the feedback
+action took raw form fields as keyword arguments, so a field named `workspace`
+could reach `append_feedback`; the notebook's learn pass read the file, made the
+model call and wrote back without a lock, so a concurrent CLI edit was lost; a
+version's cost was recomputed from the spend ledger at display time, so deleting
+a middle version changed the next version's cost; and the owner's first name
+appeared in 63 tracked files.
+
+**Options:** (A) fix each finding in its own lot; (B) fix them together in one
+cleanup lot, with the name sweep enforced by `check_public.py`; (C) leave the
+name sweep to a manual pass and only fix the code.
+
+**Decision:** B. `project_status` checks `run_was_stopped` first and returns
+`running` only when `pid_alive(pid) and run_is_ours(directory, pid)`. A module
+`ToolTimeout` and `run_tool_command` turn a timeout into a 504 with plain text,
+used at the four call sites through named constants (`FEEDBACK_TIMEOUT_S`,
+`META_TIMEOUT_S`, `EDIT_DROP_TIMEOUT_S`, `NOTEBOOK_TIMEOUT_S`).
+`common/versions.valid_version` (`VERSION_NAME_RE.fullmatch`) is the one version
+check, used by `version_dirs` and every `serve.py` site. `append_feedback_action`
+takes `(workspace, action, text)`. `notebook.py` holds a `filelock` on
+`<notebook>.lock` around every read-modify-write; the learn pass makes the model
+call outside the lock, then re-reads and applies removals and additions by id.
+`recap.py` and `edit_drop.py` write `cost_usd` into the version meta and
+`version_cost` reads it first. `check_public.py` gains `OWNER_NAME` and the
+owner's first name is replaced with `the owner` in every tracked file (the
+GitHub handle `Dorusto` stays).
+
+**Why not A:** the findings are small and independent, but they share the same
+files (`serve.py`, `versions.py`, `notebook.py`) and the same audit, so one lot
+keeps the tests and the docs in step. **Why not C:** a manual sweep would drift
+again; the pre-commit hook and CI must enforce it.
+
+**Consequence:** files touched — `scripts/serve.py`,
+`scripts/common/versions.py`, `scripts/notebook.py`, `scripts/recap.py`,
+`scripts/edit_drop.py`, `scripts/check_public.py`,
+`assets/graphics/lower_third.html`, `config.yaml.example`, `CHANGELOG.md`,
+`docs/RULES.md`, `docs/DECISIONS.md`, the `yt-notebook` and `yt-recap` skills,
+the 63 files holding the owner's first name, and the tests
+`tests/test_serve.py`, `tests/test_serve_chat.py`, `tests/test_notebook.py`,
+`tests/test_versions.py`, `tests/test_check_public.py`, `tests/test_graphics.py`,
+`tests/test_graphics_plan.py`, `tests/test_no_personal_setup.py`. A version made
+before this lot has no `cost_usd` in its meta and keeps the `spend_between`
+fallback.
+
+## [2026-10-25] The reviewer judges what ships, prompts trimmed (V030 lot c29b)
+
+**Context:** The reviewer read the raw editor draft and the raw validator
+violations, so it judged windows the repair chain was about to change: it could
+send a fix for a cut the tool had already rebuilt, or approve a draft whose
+shipped windows broke a rule. The role prompts also restated rules the code
+validator already enforces (the window, the landing floor, the peak, the hero
+cap, the same-take rule, the similarity rule, the pacing limits, the photo
+length), and the user messages were pretty-printed JSON carrying fields no role
+used (`faces_max`, `face_size_max`, `description`, `reason`).
+
+**Options:** (A) leave the reviewer on the raw draft and only trim the prompts;
+(B) build a repaired copy of the draft and its plan for the reviewer, drop the
+restated rules from the prompts and send compact JSON without the unused fields;
+(C) move the repair chain before the reviewer and let the reviewer see the real
+record.
+
+**Decision:** B. `review_copy` deep-copies the record and the plan, runs
+`ensure_all_planned_slots`, `repair_draft` (only when the copy has blocking
+violations) and `finish_record` on the copies, and annotates every video slot
+with `keep_whole` and `max_screen_s`; the real record, plan and `used_ids` are
+never touched. The round loop computes `review_violations` on the copy, hands the
+copy to the reviewer and approves only when the verdict is `approved` and the
+copy has no violations; the raw `violations` still drive the repair control flow
+and the early stop. `review_object` drops an objection whose slot is gone from
+the shipped edit or now holds another shot than the reviewer saw (the loop
+remembers `last_review_keys`), and a `notes` entry becomes an objection about the
+edit as a whole. The prompts lose the playbook line (the playbook is prepended by
+`read_role_prompt`), the reviewer loses the list of rules the validator enforces
+and the "after two rounds" sentence, and the length tolerance is written as
+`TARGET_SLACK_S` seconds ("within 3 s of the target duration") in the editor and
+reviewer prompts. Every user message is compact JSON; `editor_facts` drops
+`faces_max`, `face_size_max`, `description` and `reason`, and `reviewer_slots`
+drops `description` and `reason` from the reviewer's payload.
+
+**Why not A:** the reviewer would keep judging windows that never ship, so its
+fixes and its approval would not describe the edit the owner gets. **Why not C:**
+the repair chain mutates the plan (`drop_from_plan`, `fill_to_target`) and the
+record, so running it on the real draft would change what the loop keeps and
+would make the reviewer's round the one that ships.
+
+**Consequence:** files touched — `scripts/llm_director.py`, `prompts/reviewer.md`,
+`prompts/editor.md`, `prompts/screenwriter.md`, `prompts/playbook.md`,
+`tests/test_llm_director.py`, `tests/test_prompts.py`, `tests/test_director.py`,
+`docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`, the
+`yt-llm-director` skill. The happy-path user messages shrank from 7022 to 5483
+characters (compact JSON plus the dropped fields). No `docs/RULES.md` change: the
+reviewer's role and the round cap are unchanged, only the prompt and the payload.
+
+## [2026-10-25] Director repairs agree with each other and with the owner (V030 lot c29)
+
+**Context:** The read-only audit of `ef7d4d1` found the LLM director's repair
+chain fighting itself. The pointless-drop pass ran 5–7 times and `fill_to_target`
+2–3 times per run; the length rules contradicted each other (the validator forced
+a `keep_whole` window while the move policy was the real authority, so a hero cut
+the policy had just fitted was flagged again); a slot id could be reused after it
+was dropped, so a later repair could overwrite a slot the owner had seen; the
+warnings kept every pass's `cut N:` and `exception:` notes, so the notes no longer
+described the edit that shipped; an owner-added shot next to a higher-scored
+similar neighbour was dropped by the pointless-cut rule; and an embed error in the
+window check silently read as "not similar". The reviewer could never approve
+because the validator kept raising a rule the policy had already satisfied. What
+worked and stays: speed, cuts on the beat, the shot picks and the owner's requests
+honoured.
+
+**Options:** (A) leave the chain as it is and only relax the reviewer; (B) make
+the repairs agree — one length authority, protected owner/star keys, stable slot
+ids, last-pass notes, a `similar_to` fallback on an embed error and one final
+`validate_edit` gate; (C) drop the `keep_whole` rule from the validator but keep
+the plan's `keep_whole` flag as the victim test.
+
+**Decision:** B. `drop_pointless_neighbours` keeps a pair with one protected key
+and drops the other (both protected keeps both); `drop_pointless_cuts` protects
+the owner's add keys and the required stars and never drops an owner-added shot in
+the same-take loop. `next_slot_id(plan, used_ids)` never reuses an id dropped
+earlier in the run (`drop_from_plan` records the ids it removes). `finalize_lengths`
+clears the previous pass's `cut N:`/`exception:` notes before it runs, so only the
+last pass's notes stay. The move policy is the only length authority: `validate_edit`
+no longer emits `keep_whole` and runs the peak and length checks unconditionally,
+`normalise_window` always applies the target/peak logic, `pick_swap_victim` tests
+`keeps_whole(victim_fact)` instead of the plan flag, and `REBUILT_RULES` drops
+`keep_whole`. `WindowEmbedder.similar` lets `EmbedError` propagate and
+`make_window_similar` falls back to the whole-segment `similar_to` check. The
+beat-snap slack applies only to a hero or semantic move (`_relaxed` checks
+`bounds["important"]`). After the final neighbour check both branches run one
+`validate_edit` and append every blocking violation as a warning, and `shot_plan.json`
+is written after the final repairs, before `edit.json`.
+
+**Why not A:** relaxing the reviewer alone leaves the validator and the policy
+disagreeing, so the same `keep_whole` violation comes back every round and the
+loop still cannot approve. **Why not C:** the plan's `keep_whole` flag is the
+model's claim, not the shot's; the fact's `keeps_whole` is the shot's own flag
+(a hero or a complete semantic move, never a static hold), which is what the
+policy and the victim test must agree on.
+
+**Consequence:** files touched — `scripts/common/neighbours.py`,
+`scripts/common/window_similarity.py`, `scripts/llm_director.py`, `docs/RULES.md`,
+`docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`, the `yt-llm-director`
+and `yt-director` skills, `tests/test_common_neighbours.py`,
+`tests/test_llm_director.py`, `tests/test_no_duplicate_helpers.py`. Dead code
+removed from `llm_director.py`:
+`source_contiguous`, `CONTIGUOUS_TOLERANCE_S`, `collapse_star_groups`,
+`CONTENT_TYPES` and the unused `peak_in_cut`/`EXIT_ATTENTION` imports. No change
+to `scripts/director.py`'s own logic, `scripts/serve.py`, `scripts/quality.py`,
+`scripts/index.py`, the schemas or the prompts; no new tool, flag or schema. No
+acceptance run on real projects in this lot — the owner's coordinator runs it.
+
+## [2026-10-25] Owner removals stick, similarity on the windows in the edit (V030 lot c28)
+
+**Context:** The owner's end-to-end test on a copy of `kotor-demo` (v017,
+`by: llm`). The owner asked to drop `0072/s7b5` and add `0091/s2`; both happened,
+but the star repair swapped `0072/s7b1` in for `0063/s1`, so slots 7 and 8
+(`0072/s5`, `0072/s7b1`) are near-identical back to back. `0072/s7b1` and
+`0072/s7b5` are both beats of segment `s7` (same clip, same `segment_id`), so
+they are one star group; `required_star_keys` excluded the dropped key from the
+star list *before* collapsing groups, so `0072/s7b1` stayed required and the
+repair put it back. The neighbour check also compared whole segments:
+`similarity.json` scores `0072/s5` vs `0072/s7` at **0.567** (below 0.90), while
+the windows actually in the edit (`0072/s5` 23.148–26.515 s vs `0072/s7b1`
+36.13–40.054 s) score **0.933** with the same MobileNetV2 embedding and the same
+3-frame interior spacing, over the threshold. The v017 notes also showed two cuts
+0.6 s off the beat after the repairs.
+
+**Options:** (A) keep the strict "never drop a shot the owner did not name"
+reading of the star repair, so a missing required star is only swapped in when
+the owner asked to add it; (B) let the star repair drop a victim again, but never
+a shot the owner named (add or drop) and never a member of the owner's dropped
+group; (C) compare whole segments in the neighbour check; (D) compare the frames
+inside each slot's `in_s..out_s` with the same embedding, cached per window key,
+and re-snap the cuts after a repair moves one.
+
+**Decision:** B and D. `required_star_keys` and `star_group_keys` exclude a group
+that contains any of the owner's drop keys, so an owner removal sticks through
+the star rule, the repairs and the reviewer. `pick_swap_victim` skips a victim
+whose key is in `drop_keys` or in `star_group_keys(facts_by_key, drop_keys)`
+(the owner's dropped group) as well as the owner's added shots and `keep_whole`
+slots, so the star repair swaps a missing required star in for the weakest
+compatible slot and never drops a named shot. The neighbour check embeds the
+frames inside each slot's `in_s..out_s` (`common/window_similarity.py`,
+`WindowEmbedder`, cache `<workspace>/similarity_windows.json`) with the same
+backend and spacing `similarity.py` uses; whole-segment similarity stays in
+`similarity.json` for the menu the model sees. After a repair moves a cut the
+edit is re-snapped to the beat grid with the same per-slot caps.
+
+**Why not A:** the strict reading disables the hero repair and makes every run
+where the model leaves out a required star fall back to the rule director — the
+acceptance (`by: llm`) fails. The shipped rule is "never drop a shot the owner
+named or a member of the owner's dropped group", which keeps the hero repair
+alive and still honours the owner. **Why not C:** whole-segment scores miss what
+is on screen — the 0.567 vs 0.933 pair above is exactly the near-duplicate the
+owner saw, and the whole-segment score would let it through.
+
+**Numbers:** the acceptance run on a fresh copy of `kotor-demo`
+(`/root/media/projects/kotor-c28`) with the same feedback text: `llm_director`
+359.2 s and 0.0348 USD, `meta.director.by = "llm"` (no fallback), `0091/s2` in,
+`0072/s7b5` out, no other `0072/s7` beat back, `0063/s1` still in, worst
+neighbour window score 0.7997 (below 0.90) and every cut within 0.005 s of a
+beat. The reviewer did not approve the last draft (five length objections), so
+the run kept the last valid draft; `by` is still `llm`.
+
+**Consequence:** files touched — `scripts/common/embed.py` (new),
+`scripts/common/window_similarity.py` (new), `scripts/similarity.py`,
+`scripts/llm_director.py`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`,
+`docs/plans/v0.3.0.md`, the `yt-llm-director`, `yt-director` and `yt-similarity`
+skills, `tests/test_llm_director.py`, `tests/test_common_window_similarity.py`.
+No change to `scripts/director.py`, `scripts/quality.py`, the web app, the
+schemas or the prompts; the threshold stays 0.90 and the embedding stays
+MobileNetV2. No real footage, clip text or private paths in the repo.
+
+## [2026-10-25] Delete-version button and review follow-ups (V030 lot c27)
+
+**Context:** The owner's phone test showed "Delete this version" as a full-width
+grey bar that did not match the page, and the first version could not be
+deleted although it is just another version once a later one exists. The c25
+review also found three loose ends: the general similar-segments rule had been
+merged away, the Director tab opened at the top of a long chat, and `stop_run`
+signalled whatever process held the pid in `.run.json`, which could be an
+unrelated process after a pid reuse.
+
+**Decision:** The button is a normal secondary button with the bin icon; only
+the latest version and a version during a run are refused, so the first can be
+deleted while another stays. `docs/RULES.md` has the general rule again ("No two
+visually similar segments in one edit unless the brief or the owner asks for
+it") next to the neighbour rule. The newest chat exchange carries
+`id="chat-latest"`, and the Director tab link and the redirect after a message go
+to `?tab=director#chat-latest`. `start_recap` records the process start time in
+`.run.json` and `stop_run` kills the group only when the pid's start time (or,
+for a record without one, its command line) still matches.
+
+**Consequence:** files touched: `scripts/serve.py`, `scripts/common/theme.py`,
+`docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/guides/user-guide.md`, `docs/guides/phone-flow.md`, the `yt-recap` skill,
+the tests (a short real `sleep` process group). No model call; no real footage.
+
+## [2026-10-25] A feedback run does what the owner asked, or says it did not (V030 lot c26)
+
+**Context:** The owner's phone test. On the Kotor workspace the owner asked "add
+the orbit around the group on the boat, remove one of the two similar bunker
+shots". The chat reply resolved it correctly (add `0091/s2` despite its shake,
+drop `0072/s7b1`, keep `0072/s7b5`), the owner approved, and the version came out
+from the rule director: `llm_director` ran 650.8 s and ended in `fallback`
+(`meta.director.by = rules`, `approved` false), so the orbit was missing and the
+page said nothing.
+
+**Options:** (A) leave the star repair, the pointless-cut rule and the fallback
+as they are; (B) make the star repair and the pointless-cut rule agree, carry the
+owner's explicit add/drop keys into the rule fallback, say on the page when a
+simpler editor made the edit, stop the loop early when a round makes no progress,
+and keep the notebook lessons general.
+
+**Decision:** B, with these parts (all shipped in this lot):
+
+1. `required_star_keys` collapses two stars of one segment (same clip and
+   `segment_id`, the better kept) and excludes the owner's drop keys, so the hero
+   rule can never require a star the pointless-cut rule would drop.
+2. `drop_pointless_cuts` keeps the owner's add keys, so the pointless-cut rule
+   never drops a shot the owner asked for.
+3. `pick_swap_victim` skips the owner's add keys and `keep_whole` slots, so the
+   star repair never swaps out the owner's added shot or a whole hero.
+4. The rule director takes `--add-shots`/`--drop-shots` (comma-separated,
+   repeatable) and reports `applied_keys`/`not_applied_keys` in `--json`; the LLM
+   director reads the owner's `add_keys`/`drop_keys` from the last `reply` row
+   whose `text` prefixes the feedback and passes them to the fallback.
+5. The web app shows "The director could not make this edit; a simpler editor
+   made it." plus the applied / not-applied keys when the shown edit is a rule
+   fallback.
+6. The round loop stops early when a round makes no progress: if the reviewer is
+   not approved and the validator's blocking violations are the same
+   `(slot, rule)` set as the previous round's, it breaks and keeps the last valid
+   draft or falls back, without running another round.
+7. The learning prompt forbids shot ids, clip numbers and project names, and a
+   lesson that contains one is rejected.
+8. The required stars count once per group: `required_star_keys` groups two
+   stars that are beats of one segment (same clip and `segment_id`) or a
+   `similar_to` pair (groups are transitive) and requires only the best of each
+   group, so the star repair and the pointless-cut rule no longer undo each other
+   (#118, #119, #94).
+
+**Why not A:** the owner's explicit request was silently undone by the director's
+own repair, the version came out from the rules with no word on the page, and the
+loop kept paying for rounds that changed nothing.
+
+**Numbers:** before 650.8 s and `fallback`; after 232.9 s and `fallback` on the
+fresh Kotor copy — the run still fell back, on a `hero_missing` for `0081/s5`
+(score 0.87225), a `similar_to` neighbour of `0081/s7` that the pointless-cut
+rule drops. The group rule (c26g) makes the required stars count once per similar
+pair, so the star repair and the pointless-neighbour drop agree; the lower star
+`0081/s5` is no longer required once its similar better `0081/s7` is planned.
+`0091/s2` is in and `0072/s7b1` is out in the fallback edit. The end-to-end
+acceptance of the group rule on a real project (an `llm` edit instead of the
+fallback) is pending: the model account had no credits, so only unit tests on
+synthetic data ran.
+
+**Consequence:** files touched — `scripts/llm_director.py`, `scripts/director.py`,
+`scripts/serve.py`, `scripts/notebook.py`, `prompts/interpret_feedback.md`,
+`prompts/notebook_learn.md`, `prompts/reviewer.md`, `docs/RULES.md`,
+`docs/DECISIONS.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/guides/user-guide.md`, the three skills, `tests/test_llm_director.py`, the
+tests. No OpenRouter model call in the tests; no real footage or private paths.
+
+## [2026-10-25] Stop button, short chat, review follow-ups (V030 lot c25)
+
+**Context:** The owner's phone test of v030 and the reviews of `e61eac0` (c23)
+and `b04e4a0` (c24) filed follow-ups. A running edit could not be stopped from
+the phone. The Director tab's chat grew without bound, so the newest message and
+the input box were far down the page. The one jump-cut rule was written twice in
+`docs/RULES.md` and the two lines contradicted each other ("never back to back,
+even with `--allow-similar`"). An old `feedback.jsonl` line stored `can_do` as a
+bool, which the web app read as `"all"`. The "deliberate move or orbit" check was
+copied inline in three tools.
+
+**Options:** (A) leave the run, the chat, the rule and the old `can_do` form as
+they are; (B) add a Stop button on the progress card, fold the chat to the last
+3 exchanges, merge the two jump-cut bullets into one rule, read the old bool
+`can_do` form, and share the deliberate-shot check.
+
+**Decision:** B, with these parts:
+
+1. `scripts/serve.py` gets `POST /<project>/stop-run` (part of the `recap`
+   feature): `stop_run` terminates the run's whole process group (`SIGTERM`,
+   wait up to 5 s, then `SIGKILL`; `os.killpg` with an `os.kill` fallback) and
+   writes `"stopped": true` into `.run.json`; `project_status` returns
+   `"stopped"` for a dead pid with that flag; the progress card shows a **Stop**
+   button while running and "Stopped. The previous version is still here." after.
+   The version is snapshotted by `recap.py` at the start of the first run (the
+   workspace's existing recap becomes v1) and at the end of every run, so a stop
+   leaves the previous version and writes nothing half-made into `versions/`.
+2. The Director tab's chat shows the last 3 exchanges; older ones fold under a
+   closed `<details class="chat-earlier">` "Earlier messages (N)" above them, and
+   the input box with Send and the "Make the new version" / disabled "Answer the
+   director first" button sit directly under the newest exchange. No scroll box.
+3. The one jump-cut rule: two neighbouring slots that are beats of the same
+   segment, or a `similar_to` pair, keep only the better one (a tie keeps the
+   earlier), unless the owner explicitly asked for both. The director never marks
+   such a cut `deliberate` by itself; `deliberate` is set only when the owner's
+   feedback asks for both shots next to each other. `scripts/director.py` gains
+   `--keep-shots` and passes it as `keep_keys`; `scripts/llm_director.py` uses
+   `common/neighbours.py` (`drop_pointless_cuts`) instead of its own
+   `drop_jump_cuts` / `weaker_of_pair`.
+4. `normalise_can_do` reads the old bool form: `false` → `"none"`, `true` →
+   `"all"`; the `missing_tool` request line is still written for `"none"`.
+5. `scripts/common/intent.py` gains `is_deliberate_shot`, used by
+   `common/decisions.py`, `director.py` and `index.py`.
+
+**Why not A:** the owner could not stop a run from the phone, the chat pushed the
+input box off the screen, the two rule lines contradicted each other, and the old
+`can_do` form silently promised a version the director had said it could not make.
+
+**Consequence:** files touched — `scripts/serve.py`, `scripts/common/theme.py`,
+`scripts/common/intent.py`, `scripts/common/decisions.py`, `scripts/director.py`,
+`scripts/index.py`, `scripts/common/neighbours.py`, `scripts/llm_director.py`,
+`prompts/screenwriter.md`, `prompts/reviewer.md`, `schemas/shot_plan.schema.json`,
+`docs/RULES.md`, `docs/RELEASES.md`, `docs/guides/shot-grammar.md`,
+`docs/guides/user-guide.md`, `docs/plans/v0.3.0.md`,
+`CHANGELOG.md`, `.claude/skills/yt-recap/SKILL.md`,
+`.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-director/SKILL.md`,
+the tests. No OpenRouter model call in the tests; no real footage or private
+paths.
+
+## [2026-10-25] Plain requests and no pointless jump cuts (V030 lot c24)
+
+**Context:** The owner's phone test of v030 (after c23) filed three fixes. The
+director's interpret reply only understood short ids, so a plain-word request
+("the bunker shots that come one after another", "the camera circles the group")
+was not resolved against the shot descriptions, subjects and clip numbers it
+already had. The reply's `can_do` was a bool, so the web app could not tell a
+request it could do in part from one it could not do at all, and it always kept
+the "Make the new version" button. Two neighbouring slots that are beats of one
+segment, or a `similar_to` pair, could both stay in an edit as a pointless jump
+cut.
+
+**Options:** (A) leave the interpret reply, the button and the neighbour rule as
+they are; (B) resolve plain-word requests against the shot descriptions and clip
+numbers, make `can_do` an `"all" | "part" | "none"` enum with a disabled
+"Answer the director first" button when it is not `"all"`, and drop the weaker
+of every pointless neighbouring pair in both directors.
+
+**Decision:** B, with these parts:
+
+1. `scripts/common/neighbours.py` holds the neighbour rule: two slots are beats
+   of one segment when they share a clip and a segment id but not a shot key;
+   `drop_pointless_neighbours` drops the lower-scoring slot of every pointless
+   pair (a tie keeps the earlier), unless the owner asked for both
+   (`keep_keys`). `scripts/director.py` calls it after assembly and records each
+   drop in `decisions[]`; `scripts/llm_director.py`'s validator raises
+   `same_segment`/`similar` and the repair drops the weaker one, unless the plan
+   marks the later slot `deliberate`.
+2. `prompts/interpret_feedback.md` resolves the request by its words against the
+   shot summaries, subjects, tags and clip numbers and names the shots it means;
+   `can_do` is `"all" | "part" | "none"` and `missing_tool` is kept only when it
+   is not `"all"`. `scripts/serve.py` logs one `missing_tool` line when `can_do`
+   is not `"all"` and replaces the "Make the new version" form with a disabled
+   "Answer the director first" button until the owner sends another message.
+3. `previous_edit_context` enriches the used rows with the shotlog's `summary`,
+   `subject` and `tags`, and the rejected rows with `summary` and `subject` (the
+   rejected rows do not carry `tags`), so the interpret call sees the words the
+   owner used.
+
+**Why not A:** the owner's phone test showed the director could not act on the
+words a person actually writes, the button promised a version the director had
+said it could not make, and the same-segment neighbour pair was a visible jump
+cut.
+
+**Consequence:** files touched — `scripts/common/neighbours.py`,
+`scripts/director.py`, `scripts/llm_director.py`, `scripts/serve.py`,
+`prompts/interpret_feedback.md`, `prompts/reviewer.md`,
+`prompts/screenwriter.md`, `schemas/shot_plan.schema.json`, `docs/RULES.md`,
+`docs/guides/shot-grammar.md`, `docs/agents/rules-checked.md`,
+`docs/guides/user-guide.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/DECISIONS.md`, `.claude/skills/yt-llm-director/SKILL.md`,
+`.claude/skills/yt-recap/SKILL.md`, `.claude/skills/yt-director/SKILL.md`, the
+tests. No OpenRouter model call in the tests; no real footage or private paths.
+
+## [2026-10-25] Director tab, honest reasons, progress card and director speed (V030 lot c23)
+
+**Context:** The owner's phone test of v030 filed issues #118 (the Director tab),
+#119 (honest reasons, director speed) and #94 (the progress card). The chat with
+the director and the notebook lived in the Recap tab and at the bottom of the
+project page; the edit's `decisions[]` named a defect the c21 intent rule already
+waives; the progress card showed "Total so far" even when it equalled the current
+step's time and "0 s" for a skipped step; the director's calls spent almost all
+their time on hidden reasoning tokens (11 k to 51 k completion tokens per call on
+the Kotor demo, for a short JSON answer).
+
+**Options:** (A) leave the layout, the reasons, the card and the reasoning as they
+are; (B) move the chat and the notebook into their own Director tab, make the
+reasons honest, fix the card, and add a configurable reasoning effort with a
+measured default.
+
+**Decision:** B, with these parts:
+
+1. Director tab: `scripts/serve.py` `TABS` gains `("director", "Director")` next
+   to Files; `render_director_panel` holds the chat (`render_chat_panel`) and,
+   under it, the collapsible notebook (`render_notebook_panel`); the notebook is
+   no longer at the bottom of the project page; the tab is part of the `recap`
+   feature; the feedback-reply redirect goes to `?tab=director#chat` and the
+   notebook-delete redirect to `?tab=director#notebook`.
+2. Honest reasons: `scripts/common/decisions.py` `_reject_reason` drops a defect
+   the intent rule waives (`counts_as_defect` in `scripts/common/scoring.py`: a
+   deliberate move or a semantic `orbit` waives `shake`), so such a shot gets its
+   real reason (low score / did not fit the length);
+   `prompts/interpret_feedback.md` and `prompts/screenwriter.md` say an explicit
+   request to add a named shot is followed even when it has minor defects (the
+   reply names the defects); only an `accidental`/`setup`/`teardown` role or a
+   whip short-hold stays refused.
+3. Progress card: `render_run_notice` shows "Total so far" only when it differs
+   from the current step's time by at least 1 s; `render_step_list` shows "already
+   done" for a step whose seconds are 0 (a skipped step) instead of "0 s".
+4. Director speed: `director.reasoning_effort` (`low` | `medium` | `high` | `off`)
+   in the config, `--reasoning-effort` overrides it; `scripts/common/llm.py`
+   `reasoning_extra_body` sends OpenRouter's `reasoning: {"effort": ...}` (`off` →
+   `{"enabled": false}`) on every `llm_director` call (screenwriter, editor,
+   reviewer and the `--interpret-feedback` reply); `llm_spend.json` records
+   `reasoning_tokens` per call. Measured on a copy of the Kotor demo: baseline (no
+   reasoning body) 282.26 s; `low` 168.31 s but it fell back to the rule director
+   2 of 2 times (224.20 s with the fallback); `medium` 205.28 s; `eval_edit` 3/3
+   for each. Because `low` lost the model edit, the default is `medium`.
+5. c22b review: the `yt-index` skill's label-score line names the whip short-hold
+   score 0.1 and the deliberate-move shake rule; `docs/plans/v0.3.0.md` lists c22b
+   and c23 with the real total (15.85 USD).
+
+**Why not A:** the owner's phone test showed the layout and the reasons were wrong,
+and the reasoning tokens were the whole cost of a director call; the numbers show
+`low` is faster but loses the model edit, so `medium` is the honest default.
+
+**Consequence:** files touched — `scripts/serve.py`, `scripts/common/decisions.py`,
+`scripts/common/scoring.py`, `scripts/common/config.py`, `scripts/common/llm.py`,
+`scripts/llm_director.py`, `prompts/interpret_feedback.md`,
+`prompts/screenwriter.md`, `config.yaml.example`, the tests,
+`.claude/skills/yt-index/SKILL.md`, `.claude/skills/yt-llm-director/SKILL.md`,
+`.claude/skills/yt-notebook/SKILL.md`, `docs/RULES.md`,
+`docs/agents/rules-checked.md`, `docs/guides/tools.md`,
+`docs/guides/user-guide.md`, `CHANGELOG.md`, `docs/plans/v0.3.0.md`,
+`docs/DECISIONS.md`. No OpenRouter model call in the tests; the speed numbers come
+from a copy of the Kotor demo (`/root/media/projects/kotor-speed`), never written
+into `kotor-test` or `kotor-demo`.
+
+## [2026-10-25] Director shortlist and the clean-shot bonus (V030 lot c22)
+
+**Context:** Issue #119 points 4–5, plus the c21 review. The label score still
+rewarded a clean-but-dull hold (a steadiness bonus and a `+0.10` no-defect
+bonus), and the same formula lived twice — in `scripts/index.py` and
+`scripts/director.py`. The screenwriter's shortlist could drop a clip entirely
+when none of its shots reached the top-K, so a whole clip never reached the
+model. The c21 review also found `quality.py` silently defaulting the whip
+threshold when an explicit `--config` could not load.
+
+**Options:** (A) leave the score and the shortlist as they are; (B) move the
+label score to one shared function, drop the clean-shot bonuses, and let every
+clip send its best eligible segment to the screenwriter.
+
+**Decision:** B. The label score lives in the new `scripts/common/scoring.py`
+(`label_score`), used by `scripts/index.py` and `scripts/director.py`; the local
+`ROLE_BASE`, `STEADINESS_BONUS`, `DEFECT_WEIGHTS`, `DEFAULT_DEFECT_WEIGHT` and
+`_label_score` are gone. The formula is the role base + 0.25·confidence, minus
+`unsteady` (0.10) / `very_unsteady` (0.20) and the real defects (capped at 0.4);
+steadiness and a defect-free segment no longer add points. `shortlist_rows` in
+`scripts/llm_director.py` adds every clip's best eligible segment (skipping a
+whip short-hold) to the stars and the top-K, in shotlog order. The shotlog row
+carries the `whip` mark (`schemas/shotlog.schema.json`). `quality.py`'s
+`_whip_min_hold_s` treats an explicit `--config` that cannot load as a usage
+error (exit 2) instead of a silent default.
+
+**Why not A:** the two signals are free and the issue shows the score rewards
+clean-but-dull holds; a clip that never reaches the shortlist can never be
+chosen, whatever the brief asks.
+
+**Consequence:** files touched — `scripts/common/scoring.py` (new),
+`scripts/index.py`, `scripts/director.py`, `scripts/llm_director.py`,
+`scripts/quality.py` (a stable file, so the commit carries
+`Stable-change: approved`), `schemas/shotlog.schema.json`, the tests,
+`docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/guides/shot-grammar.md`,
+`CHANGELOG.md`, `docs/plans/v0.3.0.md`, `docs/DECISIONS.md`. No OpenRouter model
+call; no change to the editing grammar, the pacing table, the beat snap, the
+star definition, `serve.py`, `recap.py` or `common/versions.py`.
+
+## [2026-10-25] Faces and camera-move intent in the score (V030 lot c21)
+
+**Context:** Issue #119 points 1–3, from a re-analysis of the Kotor demo. The
+motion data already carries the camera speed and the YuNet face detector is
+already in the repo, so both signals are free (no model call).
+`docs/guides/shot-grammar.md` already says intent and defect are separate
+fields, but the score code did not apply it.
+
+**Options:** (A) leave the score as it is; (B) add the two free signals — faces
+per segment and the camera-move intent — and let them change the score.
+
+**Decision:** B. `scripts/quality.py` counts faces on the frames it already
+samples (new segment fields `faces_max`, `face_size_max`, `face_cut`,
+`face_seconds`; a face cut by the edge is the small `face_cut` defect, value
+0.2) and marks the whip pattern (`whip: "short_hold"` on a fast move next to a
+hold on people shorter than `whip.min_hold_s`, default 3.0 s; `whip:
+"deliberate"` on a fast move between two long holds). Motion blur on a fast move
+is no longer a defect and a deliberate move's shake threshold is doubled
+(`DELIBERATE_SHAKE_FACTOR` 2.0). A `short_hold` segment gets label score `0.1`
+in `scripts/index.py` and `scripts/director.py`; a deliberate move (or a
+semantic `orbit`) is not penalised for its `shake` defect. The face fields reach
+`shotlog.json` and the LLM director's shot fact. The shared vocabulary lives in
+the new `scripts/common/intent.py`; the threshold is `whip.min_hold_s` in the
+config.
+
+**Why not A:** the two signals are free and the issue shows the score currently
+rewards clean-but-dull holds and punishes deliberate moves for their intent.
+
+**Consequence:** files touched — `scripts/common/intent.py` (new),
+`scripts/common/faces.py`, `scripts/common/config.py`, `scripts/quality.py` (a
+stable file, so the commit carries `Stable-change: approved`),
+`scripts/index.py`, `scripts/director.py`, `scripts/llm_director.py`,
+`schemas/quality.schema.json`, `schemas/shotlog.schema.json`,
+`config.yaml.example`, the tests, the `yt-quality` skill,
+`docs/guides/tools.md`, `docs/guides/shot-grammar.md`, `docs/RULES.md`,
+`docs/DECISIONS.md`. No OpenRouter model call; no change to `serve.py`,
+`recap.py`, `common/versions.py`, the editing grammar, the pacing table, the
+beat snap or the star definition. Issue #119 points 4–5 stay for lot c22.
+
+## [2026-10-25] Personal paths out of the tracked `opencode.json` (V030 audit lot a10, F17)
+
+**Context:** The v0.3.0 audit (F17) found the tracked `opencode.json` carried
+four `/root/...` permission paths, which are personal to this host.
+
+**Decision:** The four `/root/...` lines are removed from the tracked
+`opencode.json`; the host keeps them in its global opencode config
+(`~/.config/opencode/opencode.json`). `docs/AGENT_SETUP.md` says host-specific
+folders go in the global config, never in the tracked one.
+
+**Why:** The tracked file is public and must carry no personal path (RULES
+2026-10-23, "docs and examples use placeholders, never personal paths"); the
+global config is the right home for a host's own folders.
+
+**Consequence:** Files touched — `opencode.json`, `docs/AGENT_SETUP.md`,
+`docs/DECISIONS.md`. No code, CLI, schema, exit-code or test change; no
+`docs/RULES.md` change.
+
+## [2026-10-25] Small contract and skill fixes: yt-render names yt-reframe, recap reports a missing interpreter as runtime, host-only tests listed (V030 audit lot a8, F1, F2, F15)
+
+**Context:** The v0.3.0 audit found (F1) the `yt-render` skill's Vertical 9:16
+section runs `scripts/reframe.py` as a subprocess but never names the `yt-reframe`
+skill it depends on, so the skill is not self-contained when installed alone; (F2)
+`recap.py`'s `execute()` catches `OSError` (a command that cannot be started, e.g.
+a missing interpreter) and returns a hardcoded `"detail": "exit 1"`,
+`"returncode": 1`, while the exit-code table calls a failure of the work it started
+a runtime failure (`EXIT_RUNTIME` = 3); and (F15) `docs/agents/testing.md` does not
+list the tests that never run in CI or say why they skip.
+
+**Options:** (A) leave the three findings; (B) fix all three: add the `yt-reframe`
+pointer, use `EXIT_RUNTIME` in the `OSError` branch with a test, and document the
+host-only tests.
+
+**Decision:** B. F1 adds one line to the `yt-render` skill naming the `yt-reframe`
+skill and its crop-path contract. F2 changes the `OSError` branch of `recap.py`
+`execute()` to `"detail": f"exit {EXIT_RUNTIME}"` and `"returncode": EXIT_RUNTIME`
+(the constant is already imported), with a new test
+`test_execute_reports_a_missing_interpreter_as_runtime`. F15 adds a **Host-only
+tests** subsection to `docs/agents/testing.md` listing the reference-material,
+FilmCraft and optional model/package tests and why they skip, with no code change.
+
+**Why not A:** a skill that does not name the skill it needs breaks the
+install-alone contract, a hardcoded exit 1 contradicts the exit-code table, and
+undocumented host-only tests hide the code that has no CI coverage.
+
+**Consequence:** files touched — `.claude/skills/yt-render/SKILL.md`,
+`scripts/recap.py`, `tests/test_recap.py`, `docs/agents/testing.md`,
+`docs/DECISIONS.md`. No CLI, schema, summary-key or exit-code-table change; no
+`docs/RULES.md` change.
+
+## [2026-10-25] Render robustness: proxy skip notices new photos, missing-music exit code pinned (V030 audit lot a7, F13, F14, F3)
+
+**Context:** The v0.3.0 audit found (F14) that `recap.py` `is_up_to_date("proxy")`
+computed the source photos but never checked them, so a photo added after the last
+proxy run left the proxy station "up to date" and `render.py` failed on the missing
+photo proxy; and (F13/F3) that the cold run's `@music@` render failure was
+historical — fixed by D2-7 and the 2026-10-23 exit-code table — and F3 is a false
+positive: the missing-music exit-code test already existed since D2-6, only its
+name was wrong.
+
+**Options:** (A) leave the proxy skip rule and let `render.py` fall back to the
+source photo with a warning; (B) make the proxy skip rule notice new photos.
+
+**Decision:** B. `common.photos.proxy_name(photo)` is the one place that maps a
+photo to its proxy file name (HEIC → `<stem>.jpg`, else the file name), used by
+`proxy.py` and by `recap.py`'s `is_up_to_date("proxy")`, which now requires a
+proxy for every source clip and every source photo. The misleading test name is
+corrected and the missing-music message is pinned by the test; no behaviour change
+in `render.py`.
+
+**Why not A:** the proxy step is the one that knows the source; a render-time
+fallback would hide a stale proxy dir and re-introduce the failure on the next run.
+
+**Consequence:** files touched — `scripts/common/photos.py`, `scripts/proxy.py`,
+`scripts/recap.py`, `tests/test_recap.py`, `tests/test_render.py`,
+`docs/DECISIONS.md`. No CLI, schema, summary-key or exit-code change; no
+`docs/RULES.md` change.
+
+## [2026-10-25] numpy declared and reference tests read the host path from an env var (V030 audit lot a6, F18, F16)
+
+**Context:** The v0.3.0 audit found (F18) `numpy` imported directly by 12 scripts
+but absent from `requirements.txt` and `docs/licences.md`, and
+`tests/test_licences.py` only checks packages listed in the requirements files, so
+it cannot catch it; and (F16) five tracked test files hardcode the personal path
+`/root/media/eval/second-brain`, while `tests/test_no_personal_setup.py` does not
+scan `tests/`.
+
+**Options:** (A) leave numpy implicit as a transitive dependency of
+`opencv-python-headless` and keep the hardcoded test path; (B) declare numpy and
+read the reference folder from an environment variable.
+
+**Decision:** B. `numpy` is added to `requirements.txt` and gets one row in
+`docs/licences.md` (BSD-3-Clause). The reference-material tests read the folder
+from `YT_PIPELINE_REFERENCE_DIR` through `tests/helpers.py` `reference_dir()`, with
+a non-existent placeholder default, so they skip when it is unset and no personal
+path stays in those five reference tests.
+
+**Why not A:** a direct import must be declared (a transitive dependency can
+vanish without notice), and the placeholder rule (RULES 2026-10-23) applies to
+tests too.
+
+**Consequence:** files touched — `requirements.txt`, `docs/licences.md`,
+`tests/helpers.py`, `tests/test_chapters.py`, `tests/test_eval_rough_cut.py`,
+`tests/test_mode_b.py`, `tests/test_shorts_rank.py`, `tests/test_fs.py`,
+`tests/test_reference_dir.py` (new), `docs/agents/testing.md`, `docs/DECISIONS.md`.
+No CLI, schema or behaviour change; the reference tests now skip unless the host
+sets the env var.
+
+## [2026-10-25] One shared ordered worker pool (V030 audit lot a5, F4)
+
+**Context:** The v0.3.0 audit (F4) found the bounded worker pool hand-rolled in
+two tools: `scripts/describe.py` and `scripts/translate_srt.py` each built their
+own `ThreadPoolExecutor` with their own worker-count handling.
+`tests/test_no_duplicate_helpers.py` missed it because the two blocks are inline
+code, not same-named top-level functions, so the shared-code rule (RULES,
+2026-10-12) was not enforced.
+
+**Options:** (A) leave the two pools in place; (B) move the pool into one helper
+in `scripts/common/` and use it from both tools.
+
+**Decision:** B. `scripts/common/pool.py` gains `ordered_map(fn, items, workers=4)`,
+a generator that runs `fn(item)` for every item in a bounded `ThreadPoolExecutor`
+and yields the results in the input order (inline, no thread, when `workers` is 1
+or there is at most one item; `workers` below 1 raises `ValueError`).
+`describe.py` and `translate_srt.py` call it instead of their own pools; the
+outputs, the submission order and the costs ledger are unchanged.
+`tests/test_no_duplicate_helpers.py` gains a test that no top-level
+`scripts/*.py` names `ThreadPoolExecutor` or `ProcessPoolExecutor` directly, so
+the pool can only live in `common/pool.py`.
+
+**Why not A:** the shared-code rule says shared code lives only in
+`scripts/common/`; two copies of the same pool drift apart and the existing
+duplicate test cannot see inline code.
+
+**Consequence:** New `scripts/common/pool.py` and `tests/test_common_pool.py`;
+`scripts/describe.py` and `scripts/translate_srt.py` drop their
+`concurrent.futures` imports; `tests/test_no_duplicate_helpers.py` gains the
+guard test. No CLI flag, schema, summary key or behaviour change.
+
+## [2026-10-25] Notebook waiting cap on an over-limit file (V030 lot a3)
+
+**Context:** The v0.3.0 audit (F10) found that a hand-edited notebook holding
+more lessons than the limit (or a lower `--limit`) could push more than 3
+lessons into `waiting`: `scripts/notebook.py` moved every lesson past the limit
+to `waiting` without a cap, so `waiting` could exceed the 3-lesson rule.
+
+**Options:** (A) cap the overflow at 3 and keep the rest in `lessons`; (B) refuse
+the learn pass with a clear error when the notebook is already over its limit.
+
+**Decision:** both, in one rule. A learn pass on a notebook that already holds
+more lessons than the limit makes no model call, writes nothing, leaves the
+`.learn.json` marker and reports `"status": "waiting_full"` (reason "the notebook
+is over its limit"); the over-limit lessons stay in the file as lessons until the
+owner removes some. The overflow step that moves lessons past the limit to
+`waiting` is capped at `MAX_WAITING` (3), the rest staying in `lessons`, so
+`waiting` can never exceed 3 and nothing is dropped silently.
+
+**Why not A alone:** without the refusal the pass would keep adding lessons to an
+already over-limit file on every run; the owner must bring the file back under
+the limit first.
+
+**Consequence:** `scripts/notebook.py` gains the over-limit check and the capped
+overflow, `waiting_full_summary` takes a `reason`; `docs/RULES.md`, the
+`yt-notebook` skill, `docs/guides/tools.md` and `docs/guides/user-guide.md`
+describe the over-limit pass.
+
+## [2026-10-25] Notebook limit and ledger review fixes (V030 lot c10c)
+
+**Context:** The review of the c10b learn pass found three faults:
+`read_learn_prompt` read the prompt with its own file reader instead of the shared
+`common.text.read_text`; a learn pass that still did not fit after the merge call
+had no place to keep the new lessons; and the learn-pass model cost was not counted
+in the instance total model cost on the Costs page.
+
+**Options:** (A) drop the lessons that do not fit and leave the cost out of the
+instance total; (B) keep them as `waiting` lessons in the file (never dropped) and
+charge the learn-pass cost to a notebook ledger counted in the instance total.
+
+**Decision:** B. `read_learn_prompt` reads the prompt through the shared
+`common.text.read_text`. A learn pass that still does not fit after the merge call
+keeps the new lessons as `waiting` lessons in the file (never dropped) and promotes
+them into `lessons` as soon as there is room; `schemas/notebook.schema.json` gains
+the optional `waiting` array and the web app shows the waiting lessons with the same
+delete form. The learn-pass model cost is charged to a notebook ledger next to the
+notebook file (`notebook.spend.json`, via
+`common.notebook.notebook_ledger_path`) and counted in the instance total model cost
+on the Costs page, never in the per-clip list.
+
+**Why not A:** the issue asks that nothing be dropped and that the instance total
+show what the notebook costs.
+
+**Consequence:** `scripts/notebook.py` gains the `waiting` handling and the notebook
+ledger, `schemas/notebook.schema.json` gains `waiting`, `scripts/serve.py` shows the
+waiting lessons and adds the notebook ledger to the instance total, and
+`prompts/notebook_merge.md` is new. `docs/RULES.md` extends the notebook rule.
+
+**c10d review fixes:** the review of the c10c pass found two faults, fixed in V030
+lot c10d. `merge_lessons` takes the new id from `next_id(lessons + waiting)` through
+the one `next_notebook_id` helper, so a merge on a notebook with waiting lessons
+never reuses an id. The waiting list is capped at 3 lessons in total: when 3 are
+already waiting the learn pass writes nothing and leaves the `.learn.json` marker
+where it was (the feedback is learned once room is made, nothing dropped) and
+`--json` reports `"status": "waiting_full"`.
+
+**c10e review fixes:** the review of the c10d pass found two faults, fixed in
+V030 lot c10e. The learn pass checks the waiting room before the model call:
+when 3 lessons already wait it returns `waiting_full` with no model call and
+`llm_cost_usd` 0.0 (the marker stays), and when some room is left it asks the
+model for at most the remaining room's worth of new lessons, so the same
+feedback is never learned or paid twice. After the merge step any lesson past
+the limit (merged ones included, not only the ids the pass just added) goes to
+`waiting`, newest first, so the written notebook never holds more than the
+limit.
+
+---
+
+## [2026-10-25] A friend's Costs page shows only its own costs (V030 lot c19)
+
+**Context:** The friend's Costs page fetched the owner instance's `/costs.json`
+and showed the owner's project totals as voluntary costs and the owner's donation
+list, which read as the owner's ledger on a friend's page. The owner decided a
+friend's page shows only that instance's own costs.
+
+**Options:** (A) keep fetching and showing the owner's totals and donations;
+(B) show only the friend's own model cost, limits, clips and requests, with one
+line that anything paid above the model cost goes into building the app further.
+
+**Decision:** B. `render_costs`'s friend branch (still marked by
+`costs.project_totals_url`) no longer fetches the owner's totals: it keeps the
+donation buttons, `instance_due_block`, the limits box and the per-clip table
+("Model cost of your clips"), adds the line "Anything you pay above your model
+cost goes into building the app further." and drops the owner's project totals
+and the donations list. `totals_rows` loses the `voluntary` parameter.
+`project_totals()`/`fetch_project_totals()` and their cache are removed; the
+owner's `GET /costs.json` route stays (the owner's side is unchanged). The UI
+label "New recap" becomes "New video" (top menu, page title, h1, the
+projects-page link, the mockup image); the `/upload` URL and the word "recap" in
+code stay.
+
+**Why not A:** the owner decided a friend's page shows only its own costs; the
+owner's ledger on a friend's page is confusing.
+
+**Consequence:** `costs.project_totals_url` is kept as the friend-instance marker
+(its help and the docs say so); RULES, the user guide, the pilot-host guide and
+`config.yaml.example` are updated; no schema change and no new tool.
+
+---
+
+## [2026-10-25] Faster holiday edits (V030 lot c18)
+
+**Context:** Issue #94. A holiday run on this host took about half an hour before the first edit: the three-role loop ran the reviewer for all three rounds, the screenwriter prompt carried every eligible segment (106 candidates, a 32 k-token prompt), and `describe` sent its per-clip model calls one after another (1731.1 s cold). The edit quality was fine; the wall time was not.
+
+**Options:** (A) leave the loop as it is and only speed up `describe`; (B) cap the reviewer rounds, send the screenwriter a shortlist of the eligible candidates ranked by the existing scores, and run the `describe` per-clip calls in a small worker pool.
+
+**Decision:** B, three changes. (1) The reviewer runs at most `DEFAULT_ROUNDS` 2 rounds by default (`--rounds`, still capped at `MAX_ROUNDS` 3); the early stop when the reviewer approves with no violations is kept. (2) The screenwriter gets `shortlist_rows`: every star (`common.moves.is_star`) plus the top-K rows by score (ties by key), K = `SHORTLIST_FACTOR` 2 × the plan's slot count clamped to `SHORTLIST_MIN` 24 and `SHORTLIST_MAX` 60, returned in the shotlog's chronological order; the `--json` summary reports the shortlist size as `shortlist` and the full eligible count as `candidates`. The agent mode's `--prepare` writes the same shortlist under the heading `## The shortlisted shots`. (3) `describe` gains `--workers` (default 4, minimum 1): the selected clips and the photos that need work become one job list, run through a `ThreadPoolExecutor`, and the main thread validates, writes and counts the futures in submission order, so the outputs and the summary match a sequential run; `RunState` is thread-safe (`reserve_call`, `add_cost`, `note_frames`, `note_mosaics`, `stop`, `stopped`) and `_call_model` reserves the call before it runs, raising `MaxCallsReached` past `--max-calls`.
+
+**Why not A:** the reviewer rounds and the oversized screenwriter prompt were the two biggest fixed costs of the loop, and the `describe` calls are independent per clip, so all three are safe to cut without touching the editing grammar, the star definition or the pacing.
+
+**Consequence:** Files touched: `scripts/llm_director.py`, `scripts/describe.py`, `tests/test_llm_director.py`, `tests/test_describe.py`, `docs/RULES.md`, `docs/DECISIONS.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-describe/SKILL.md`, `docs/guides/tools.md`. No change to the editing grammar, the chronological-order rules, the star definition, the pacing table, the beat snap, `scripts/director.py`, the stable files (`serve.py`, `recap.py`, `common/versions.py`, `quality.py`) or `schemas/`. Measured on `/root/media/projects/kotor-demo` (numbers only, no clip text; full report in `/root/reports/94.md`): the director step went from 7 calls and a 32.2 k-token screenwriter prompt to 5 calls and 20.6 k tokens (2 fewer calls, 36 % smaller prompt; the wall time is dominated by the model's completion tokens, which vary run to run, so the two after samples 361.3 s and 537.5 s sit inside the before range around 459.5 s); `describe` on the same 4 clips went from 288.3 s sequential to 134.8 s with `--workers 4` (2.14×, the pool bounded by the longest clip); `eval_edit` on the same workspace went from 2/3 to 3/3 (the after edit keeps both heroes and lands inside the brief's length window).
+
+---
+
+## [2026-10-25] Beat This! as an optional downbeat engine (V030 lot c17)
+
+**Context:** Issue #113 — the cuts land on the wrong beat of the bar: the bar
+phase is one beat off, and the owner noted the wrong beat is not always beat 2,
+so the bar start is guessed, not found. Lot c17 compared our downbeats with
+Beat This! (CPJKU, ISMIR 2024) on the three music tracks used in the projects and
+shipped it as an optional engine (`beats.py --engine beat_this`, default
+`numpy`). The review of `eb1d396` asked for this entry and for the engine to be
+config, not code (VISION principle 6).
+
+**Options:** (A) keep the engine as a code default and the `--engine` flag only;
+(B) make the engine a config value (`beats.engine`, `numpy` | `beat_this`, default
+`numpy`) with `--engine` and `YT_PIPELINE_BEATS_ENGINE` as overrides.
+
+**Decision:** B. The engine is a config value `beats.engine` (`numpy` |
+`beat_this`, default `numpy`); `--engine` overrides it and
+`YT_PIPELINE_BEATS_ENGINE` also sets it. `scripts/common/config.py` validates the
+`beats` section and exposes `beats_engine()`; `scripts/beats.py` resolves the
+engine through it and reports an unknown value as a usage error. `beat-this`
+stays out of `requirements.txt` (it is optional and CI does not need it), and the
+`beats.json` / `--json` shape is unchanged. The default stays `numpy` until the
+owner's tap test decides otherwise. The comparison: on the three tracks the beat
+grids agree (same tempo, matched beats within ~15–32 ms) but the bar phase differs
+by exactly one beat and the offset is constant (median +1.03 to +1.06 beats;
+98–100 % of downbeats within a quarter beat); Beat This! lands on the strongest
+kick phase (≤150 Hz) in all three tracks while our heuristic lands on a
+weak-kick phase; on a synthetic click track with a backbeat accent (beats 2 and 4
+loud) our heuristic picks beat 2 as the downbeat. Licence: the Beat This! code and
+its published weights are MIT; the upstream README warns that some *training*
+files are copyrighted or under limited CC licences — a caveat to record, not a
+blocker.
+
+**Why not A:** VISION principle 6 says model backends are config, not code; a
+code default would make the engine a code change instead of a setting, and the
+owner's tap test must be able to switch it without touching the code.
+
+**Consequence:** `scripts/common/config.py` gains `BEATS_ENGINE_ENV`,
+`BEATS_ENGINES`, `DEFAULT_BEATS_ENGINE`, the `beats` section validation and
+`beats_engine()`; `scripts/beats.py` resolves the engine from the config and
+`--engine` overrides it; `config.yaml.example` shows the key commented out;
+`docs/RULES.md` gains the engine rule; the `yt-beats` skill documents the config
+value and the install and weights lines actually run on the host. No change to
+the `beats.json` shape, no new summary key, no `beat-this` in `requirements.txt`
+and no new env var beyond `YT_PIPELINE_BEATS_ENGINE`.
+
+---
+
+## [2026-10-24] A typed MCP server per plugin (V030 lot c13)
+
+**Context:** Issue #82. The pipeline's tools were reachable only through the `yt` dispatcher and the skills, so an agent had to read a skill to learn a tool's flags and could not call a tool as a typed function. The FilmCraft MCP server shows the pattern: a small stdio server that exposes a tool group directly. The five plugins already group the skills, but nothing turned that grouping into callable tools.
+
+**Options:** (A) one MCP server for the whole repository, exposing every tool; (B) one small MCP server per plugin, declared in the plugin's marketplace entry, exposing only that plugin's tools.
+
+**Decision:** B. `scripts/yt_mcp.py` is a stdio MCP server (official `mcp` Python SDK v2 (`MCPServer` and `@server.tool()` — https://py.sdk.modelcontextprotocol.io/servers/tools/; the `Image` return — https://py.sdk.modelcontextprotocol.io/servers/media/)) with four typed tools: `yt_list` (the plugin's tools, one line each), `yt_describe` (a tool's `--help` text and whether it supports `--json`), `yt_run` (runs `yt <tool> <args> --json` and returns the parsed object or a structured error) and `yt_preview` (a workspace poster or a video frame as an image). It is started with the plugin's own `--plugin` value and there is no flag that exposes every tool. The plugin → tools grouping is read from the marketplace and the skills by `scripts/common/plugins.py` (one source, never a hand-written list), so a new tool appears without a code change. Each of the five marketplace entries gains an inline `mcpServers` map whose server runs `${CLAUDE_PLUGIN_ROOT}/bin/yt yt_mcp --plugin <entry name>`; there is no root `plugin.json`, so the entry is the manifest and the inline map applies (https://code.claude.com/docs/en/plugins/create-marketplace). The server runs under the plugin venv because `bin/yt` → `scripts/yt.py` resolves it from `CLAUDE_PLUGIN_DATA`. The root/interpreter resolution moved out of `scripts/yt.py` into `scripts/common/entry.py` (`EntryError`, `resolve_repo_root`, `resolve_python`) so `yt_mcp.py` shares it. `yt_mcp.py` → `yt.py` joins the tool-to-tool named set. `mcp` is added to `requirements.txt` and the CI pip line.
+
+**Why not A:** one server for every tool would give each plugin every other plugin's tools, so installing `yt-shorts` alone would still expose the director and publish tools; the plugin boundary is the point of the marketplace, and the per-plugin server keeps the surface small.
+
+**Consequence:** Files touched: `scripts/common/entry.py`, `scripts/common/plugins.py`, `scripts/yt_mcp.py`, `scripts/yt.py`, `.claude-plugin/marketplace.json`, `requirements.txt`, `.github/workflows/tests.yml`, `docs/AGENT_SETUP.md`, `docs/guides/tools.md`, `docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/DECISIONS.md`, `tests/test_yt_mcp.py`, `tests/test_plugin_manifest.py`. No change to any tool's own CLI, schema or behaviour, no new skill, no root `.mcp.json`, no change to `bin/yt` or `hooks/session_start.sh`.
+
+**Review fixes (V030 lot c13b):** `yt_describe` also returns the tool's `--json` output contract (the example object and the exit-code line, read from the tool's skill) or `null` when the skill documents none; `yt_mcp.py` uses `common.jsonio.parse_child_json` and `common.versions` (`RENDER_NAMES`, `THUMBS_DIR`, `POSTER_NAME`) instead of its own copies; `tests/test_yt_mcp.py` runs the tools with `sys.executable` so the tests pass in a plain `pip install` environment.
+
+---
+
+## [2026-10-24] The notebook learns after each edit (V030 lot c10b)
+
+**Context:** Issue #106 point 4 and issue #96 point 3. The c10 notebook could be
+read and edited by hand, but nothing wrote a lesson from the feedback the person
+gave: the director kept no memory unless the owner typed a lesson himself. The
+review of `444fa92` (c10) also found four smaller faults: `--merge` with a
+repeated id crashed, `serve.py` had its own feedback reader, and
+`apply_agent_answer` carried an unused `notebook` parameter.
+
+**Options:** (A) the owner writes every lesson by hand; (B) after each new
+version the web app makes, one cheap model call reads the feedback since the last
+pass and writes at most 3 short lessons through `notebook.py`.
+
+**Decision:** B. `scripts/notebook.py` gains `--learn --workspace PATH`: it reads
+`<workspace>/feedback.jsonl` through the new shared `common.feedback.read_feedback`
+(rows strictly after the `last_learn_at` in the machine-owned marker
+`<workspace>/.learn.json`), builds a message from `prompts/notebook_learn.md`
+plus the existing lessons, the new feedback rows and the current `edit.json`
+brief, and makes one `metadata`-class call through `common/llm.py`. The answer
+`{"lessons": [...], "remove": [...]}` is applied with `next_id`/`make_lesson`;
+when the result would pass the 40-lesson limit the pass asks the model once to
+merge overlapping lessons or remove stale ones and retries; lessons that still
+do not fit wait in the file as `waiting` lessons (never dropped); then the
+document is validated and written atomically. With no new
+feedback the pass is skipped, makes no model call and writes nothing. `serve.py`
+spawns the pass in the background (`start_learn`) after a re-edit, a chat
+approval, a shot removed or trimmed, and a version deleted — never on a first
+upload, never blocking the request, a failure only logs. In agent mode the
+`yt-llm-director` skill tells the host agent to run the same pass after `--apply`.
+`--merge` with a repeated id is now a usage error, `serve.py`'s
+`read_feedback_lines` delegates to the shared reader, and the unused `notebook`
+parameter of `apply_agent_answer` is removed (`--prepare` already reads the
+notebook into `director/inputs.md`).
+
+**Why not A:** the issue asks the notebook to learn from the feedback the person
+already gives; a hand-written notebook would stay empty in practice.
+
+**Consequence:** `scripts/notebook.py` gains `--learn`/`--workspace` and the
+`learn()` function, `scripts/common/feedback.py` gains `read_feedback`,
+`scripts/serve.py` gains `start_learn` and the trigger points, and
+`prompts/notebook_learn.md` is new. `docs/RULES.md` extends the notebook rule and
+the `serve.py` → `notebook.py` subprocess entry to `--learn`. No change to
+`schemas/notebook.schema.json` (the marker lives in the workspace), no shared
+notebook between instances and no new web route or UI control.
+
+---
+
+## [2026-10-24] Style review fixes (V030 lot c9b)
+
+**Context:** The review of lot c9 (`e35ed6a`) found three problems. The metadata prompt still prescribed a built-in pinned comment voice ("in the creator's own plain first-person Romanian"), so the voice did not come only from `channel.style.pinned_comment_voice`. `channel.style.description_order` was handed to the model as an instruction but `build_description` still assembled the parts in a fixed order, so the setting did not actually change the description. And `docs/agents/rules-checked.md` had no row for the `channel.style` rule.
+
+**Options:** (A) leave the prompt voice in place and treat `description_order` as a model instruction only; (B) make the config the single source: the prompt prescribes no pinned comment voice and `description_order` is applied in code.
+
+**Decision:** B. `prompts/metadata.md` drops the built-in pinned comment voice and says the voice comes from `pinned_comment_voice` in the `## Style` section, with none prescribed when that part is missing; the CTA intro notes the `description_order` override. `scripts/common/channel.py` gains `DESCRIPTION_PARTS`, `parse_description_order(value)` and `description_order(style)`; `scripts/common/config.py` validates the `description_order` string at load (an unknown part name is a `ConfigError` naming the key and the offending part); `scripts/metadata.py`'s `build_description` takes an `order` and assembles the parts in it, and `run()` passes `description_order(style)` to both the RO and EN calls. `docs/agents/rules-checked.md` gains the `channel.style` row.
+
+**Why not A:** the review's point is that the channel's own settings must be the single source; a prompt that still prescribes a voice overrides the config, and a `description_order` that only reaches the model does not change the deterministic assembly the tool owns.
+
+**Consequence:** Files touched: `prompts/metadata.md`, `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/metadata.py`, `docs/RULES.md`, `docs/agents/rules-checked.md`, `docs/guides/tools.md`, `.claude/skills/yt-publish/SKILL.md`, `config.yaml.example`, `docs/DECISIONS.md`, `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_docs_in_step.py`. No new tool, no new CLI flag, no schema change; `recap_meta.py` is untouched and the default order is unchanged. The c9c review fixes: an empty or duplicate `description_order` is now rejected with a `ConfigError`, and `recap_meta.py` no longer receives `description_order` (it gets only `title_style` and `pinned_comment_voice`).
+
+---
+
+## [2026-10-24] Learning notebook with a 40-lesson limit (V030 lot c10)
+
+**Context:** Issue #106 points 3 and 4 and issue #96 point 3. The director kept
+no memory between edits: a lesson learned on one edit (a repeated sentence, a
+pacing that worked) was lost on the next, and a repeated sentence such as the
+sponsor line had no home outside the config. The owner wanted a small notebook
+the director keeps on this instance, with a size limit so it stays useful, and a
+way to record that a repeated sentence should move to `channel.fixed`.
+
+**Options:** (A) a per-workspace notebook with no limit; (B) a per-instance
+notebook file with a fixed 40-lesson limit, read by the director before each
+edit, shown in the web app, with a proposal lesson for a repeated sentence.
+
+**Decision:** B. `scripts/common/notebook.py` holds the shared loader and the
+`NOTEBOOK_LIMIT` of 40; `scripts/notebook.py` reads and edits the file
+(`--list`, `--add`, `--remove`, `--merge`, `--propose`) and validates it against
+`schemas/notebook.schema.json` before an atomic write. The path comes from
+`--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config;
+it is optional, so with none of the three set the director reads nothing and the
+web app shows no section — there is no personal default. The 40-lesson limit is
+a code rule, not a schema `maxItems`, so `--limit` stays a valid test override;
+a write past the limit fails with `EXIT_USAGE` and the caller merges overlapping
+lessons or removes stale ones first. A lesson of kind `proposal` names a
+`channel.fixed` part and the code never writes the config — the owner says yes
+by editing it. `llm_director.py` reads the notebook before every edit and hands
+it to the screenwriter, the editor and the reviewer (and to the host agent in
+`--prepare`); `serve.py` shows it as a collapsible section at the bottom of the
+project page with a delete form (`POST /<project>/notebook-delete`).
+
+**Why not A:** the issue asks for a per-instance notebook with a size limit and
+forced cleanup; a per-workspace notebook with no limit would grow without bound
+and would not carry a lesson from one edit to the next.
+
+**Consequence:** New `scripts/notebook.py`, `scripts/common/notebook.py`,
+`schemas/notebook.schema.json` and the `yt-notebook` skill; `llm_director.py`
+gains `--notebook` and the notebook block, `serve.py` gains `--notebook`, the
+panel and the delete route, and `scripts/common/config.py` gains
+`notebook_path()` and the `notebook.path` validation. `docs/RULES.md` gains the
+notebook rule and the `serve.py` → `notebook.py` subprocess entry. No automatic
+write to `channel.fixed`, no shared notebook between instances and no new web
+feature flag.
+
+---
+
+## [2026-10-24] Per-instance style settings (V030 lot c9)
+
+**Context:** Issue #106 point 2. The writing tools carried one channel's choices in code and prompts: how the titles should read, the order of the description parts and the voice of the pinned comment. `channel.fixed` already moved the channel's fixed wording into the config, but the style instructions had no home, so a second instance could not change them without editing the tools.
+
+**Options:** (A) keep the style choices in the prompts and code; (B) add a `channel.style` mapping to the instance config and hand the present parts to the model in a `## Style` section.
+
+**Decision:** B. `channel.style` is an optional mapping of part name (`title_style`, `description_order`, `pinned_comment_voice`) to a non-empty string. The parts are plain strings, not language-keyed, because the style is an instruction and `recap_meta.py` writes in the brief's language. `scripts/common/channel.py` gains `CHANNEL_STYLE_PARTS`, `style_strings`, `style_string` and `style_section`; `scripts/common/config.py` validates the mapping (a non-mapping, an unknown part or an empty/non-string value is a `ConfigError` naming the key); `metadata.py` and `recap_meta.py` read it and insert the `## Style` section immediately after the prompt text (before `## Context` and `## Brief` respectively) when at least one part is set. A missing part is left out, never replaced by built-in text. `thumbnail_formula` stays in `channel.fixed`. `recap_meta.py` now loads the config once in `run()` (so `--dry-run` also loads it) and `effective_config` takes the config as its first argument.
+
+**Why not A:** the style is the channel owner's, like the fixed wording; keeping it in code and prompts makes every instance share one channel's choices and breaks the no-personal-setup rule.
+
+**Consequence:** Files touched: `scripts/common/channel.py`, `scripts/common/config.py`, `scripts/metadata.py`, `scripts/recap_meta.py`, `prompts/metadata.md`, `prompts/recap_meta.md`, `config.yaml.example`, `docs/RULES.md`, `docs/guides/tools.md`, `docs/DECISIONS.md`, `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_recap_meta.py`. No schema change, no new tool, no new CLI flag; `thumbnail_concepts.py` and `channel.fixed.thumbnail_formula` are untouched, and the metadata prompt's field rules and `build_description`'s assembly order are unchanged (the style is an instruction to the model, not a new deterministic order).
+
+---
+
+## [2026-10-24] Director honest about its tools and the missing-tool log (V030 lot c8)
+
+**Context:** The chat with the director answered every request as if it could be done, even when the request asked for something none of the director's tools can do (for example adding subtitles to the recap). The owner had no signal of which tools the director needs next. The interpret prompt already carries the capability list (`prompts/tools.md`) from lot c5b, and `llm_director.interpret_feedback()` already makes one cheap model call and appends an `action: "reply"` line to `feedback.jsonl`.
+
+**Options:** (A) keep the free-text reply and let the model say it cannot do something in prose; (B) make the interpret answer structured (`reply`, `can_do`, `missing_tool`) and have the web app log one `missing_tool` line to the requests file when `can_do` is false.
+
+**Decision:** B. `prompts/interpret_feedback.md` returns exactly three keys: `reply` (1-3 sentences in the feedback's language), `can_do` (a bool) and `missing_tool` (a few words naming the missing capability when `can_do` is false, else `null`). `llm_director.request_reply()` returns the parsed answer dict and retries once when the answer is not a dict, `reply` is not a non-empty string or `can_do` is not a bool, then raises the existing runtime error. `interpret_feedback()` gains `can_do` and `missing_tool` in its summary and records both in the `action: "reply"` line through `append_reply_line()`. `print_interpret()` prints a second `missing tool: <missing_tool>` line when `can_do` is false. In `serve.py` `handle_feedback_reply`, anything that is not `False` counts as `True` (an older answer without the key still works); when `can_do` is false and `missing_tool` is set and a requests file is configured, one line `{date, type: "missing_tool", text: "<missing_tool>: <feedback>", contact: "", backed: false}` is appended, wrapped in `try/except OSError` so the reply never fails because of it. `REQUEST_TYPES` is unchanged, so the Costs form still offers only `Feedback` and `Feature request`.
+
+**Why not A:** the owner cannot see a missing tool in a free-text reply, and the web app cannot tell a "cannot do" answer from a normal one; a structured answer is what the requests log needs.
+
+**Consequence:** Files touched: `prompts/interpret_feedback.md`, `scripts/llm_director.py`, `scripts/serve.py`, `docs/guides/user-guide.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `tests/test_llm_director.py`, `tests/test_serve_chat.py`. No new tool, no schema change, no change to `REQUEST_TYPES` or the Costs form; the exact user-facing sentence stays the model's, in the user's language.
+
+---
+
+## [2026-10-24] Director agent mode: prepare and apply without an OpenRouter key (V030 lot c5b)
+
+**Context:** the plugin lets a host coding agent direct the edit on its own
+subscription. The director needs a way to hand the agent the inputs and to take
+the agent's plan and answer back, with no OpenRouter call.
+
+**Decision:** `llm_director.py --prepare --workspace W` writes
+`<workspace>/director/inputs.md` (the brief, the brief settings, the editing
+techniques, the shortlisted shots and their shot facts, the beat grid and music
+facts when given, and the two output shapes) and makes no model call; the host
+agent writes `shot_plan.json` and `edit.json` (the editor answer shape);
+`llm_director.py --apply --workspace W` validates both against the schemas and
+the editing grammar, repairs mechanical faults with the same machinery the loop
+uses and writes the final `edit.json` with `meta.director.by = "agent"`.
+`--target-duration-s 0` ("All good shots") works in agent mode exactly as in the
+loop. `--apply --force` re-applies from the plan and the existing edit's slots
+when `edit.json` is already a complete edit. The OpenRouter three-role loop
+stays the default for the web app. The shared setup (`_resolve_workspace_brief`,
+`_agent_context`) is one place used by both the loop and the agent mode.
+
+---
+
+## [2026-10-24] yt dispatcher, structured errors and plugin descriptions (V030 lot c2b)
+
+**Context:** review of the v0.3.0 plan and lots c2, c3 and c4. `yt` was a
+dispatcher with its own `--list` flag and duplicated root/venv resolution in
+`bin/yt`; a `--json` failure printed only the human `[error]` line; the five
+plugins shared one marketplace description; and the c3 entry claimed "no tool,
+schema or route changes" although `scripts/yt.py` had changed.
+
+**Options:** (A) keep `--list` and the duplicated resolution in `bin/yt`; (B)
+make `yt` the single named dispatcher, move all root/venv resolution into
+`scripts/yt.py`, make `bin/yt` a thin launcher, print the structured error
+object on every `--json` failure, drop `--list`, and give each plugin its own
+description.
+
+**Decision:** B. `yt <tool> [args...]` runs `scripts/<tool>.py` and propagates
+the child's exit code unchanged; `yt --help` lists the tools and `yt --json` /
+`yt --help --json` print the same JSON. `bin/yt` only finds a Python and execs
+`scripts/yt.py`; all root and interpreter resolution (including the plugin venv
+under `CLAUDE_PLUGIN_DATA` and the `~/.claude/plugins/data/*/yt-pipeline-venv`
+marker) lives in `scripts/yt.py`. Every failure with `--json` in the arguments
+prints one `{"ok": false, "error": ..., "exit_code": N}` object on stdout via
+`report_error(..., json_out=True)`. `--list` is dropped. Each of the five
+plugins gets its own one-line factual description.
+
+**Why not A:** two sources of root/venv resolution drift apart, and a machine
+reading `--json` needs the same error shape from every tool.
+
+**Consequence:** the c3 entry's "no tool, schema or route changes" line was
+inaccurate — `scripts/yt.py` changed; the guide, the tools reference, the
+README and the 20 skills that said "from the repository root" are updated in the
+same commit.
+
+---
+
+## [2026-10-24] Claude Code plugin packaging and marketplace (V030 lot c3)
+
+**Context:** Issue #82 — the 34 skills in `.claude/skills/` load only when the
+agent starts inside the repository; the repository must be installable as a
+Claude Code plugin from any folder.
+
+**Options:** (A) keep telling the user to start the agent inside the repo or pass
+`--add-dir`; (B) package the repository as a Claude Code plugin with its own
+marketplace, so the skills load from any folder and `yt` is on the Bash tool's
+`PATH`.
+
+**Decision:** B. The repository root is both the plugin root and the marketplace
+root. `.claude-plugin/plugin.json` (name `yt-pipeline`, `skills:
+["./.claude/skills/"]`) and `.claude-plugin/marketplace.json` (one entry
+`{name: yt-pipeline, source: "./"}`) package it; `bin/yt` is on the Bash tool's
+`PATH`; a `SessionStart` hook creates the plugin's virtual environment in
+`${CLAUDE_PLUGIN_DATA}` from `requirements.txt` and `bin/yt`/`scripts/yt.py` find
+it through a marker file.
+
+**Why not A:** the official Claude Code plugin format is the supported way to
+ship skills from any folder; the plugin data directory survives updates and is
+removed on uninstall.
+
+**Consequence:** `claude plugin validate .` is the owner's manual check (the build
+host has no `claude` CLI); the plugin `version` is bumped with the release; no
+tool, schema or route changes.
+
+---
+
 ## [2026-10-24] Members only when thanked; the kit without a thumbnail (V020N lot n31)
 
 **Context:** The publish test found two blockers. `metadata.py` required `channel.members` unconditionally, so a channel whose `members_sentence` does not use `{members}` (or has none) could not run. `publish.py --kit` without `--photo` failed at the kit step with "thumbnail not found", because `publish_kit.py` treated a missing `thumbnail.jpg` as a failing check.
@@ -24,6 +1336,32 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-24] Delete one version from the web app (V020N lot n29)
+
+**Context:** issue #109 — a project can be deleted from the web app, but a
+single version cannot, so old versions fill the disk of an instance.
+
+**Options:** (A) delete the version folder from the command line only; (B) a
+"Delete this version" action on the Recap tab, with an inline confirmation.
+
+**Decision:** B. `serve.py` gains `POST /<project>/delete-version` (urlencoded
+`version`, e.g. `v002`): it removes that version's folder under `versions/` and
+redirects to the latest version. The latest version, the first version (v001,
+the director's original) and a version while a run is going are refused; a name
+that is not `vNNN` (a crafted `../`) is a usage error, and the resolved target
+must sit directly under the project's `versions/` folder. The action shows only
+for a version that is neither the latest nor the first.
+
+**Why not A:** the owner asked for it in the phone flow; the version list and
+the disk are managed from the web app, and the confirmation matches the shot
+buttons.
+
+**Consequence:** RULES gains the route and the versions rule; the user guide
+and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
+the commit carries `Stable-change: approved`.
+
+---
+
 ## [2026-10-24] Cuts land on the strong beat; the wait message (V020N lot n28)
 
 **Context:** Issue #95, measured on a real holiday edit: the cuts sat 0.03-0.04 s after the strongest hit and only 5 of 14 landed on a downbeat. The onset envelope's flux peak is late by the STFT window-centre latency, so the whole grid was systematically late, and the director only preferred a downbeat when the plan's structure beat changed. Issue #93: the text after Yes on the Watch tab read "Shot N is getting X s longer/shorter, new version in about 15 s...".
@@ -31,6 +1369,34 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 **Decision:** `beats.py` gains `ONSET_LATENCY_S = (STFT_WINDOW / 2 - STFT_HOP / 2) / ANALYSIS_RATE` (≈ `0.0174 s`); `track_beats` and `pick_onsets` subtract it from their times (clamped at `0`), so the reported beat time is the start of the hit and the grid is not late. The `beats.json` shape, the CLI, the exit codes and the `--json` keys are unchanged. `llm_director.snap_slots` drops the `downbeat_at` parameter: every cut tries the nearest downbeat, then a half-bar beat (`downbeat + 2 * beat_period_s`, so the bar count stays even), then the nearest beat, and the first candidate whose snap fits the slot's allowed length range wins; the slot records the grid it used in `beat_grid` (`downbeat`/`half_bar`/`beat`, or `null` when unsnapped) and the `beat_snap` summary gains `downbeats` and `half_bar` counts. The downbeat-over-cap fallback stays. The after-Yes text becomes "Shot N will be X s longer/shorter. Making the new version, ready in about 15 s...".
 
 **Consequence:** Files touched: `scripts/beats.py`, `tests/test_beats.py`, `scripts/llm_director.py`, `schemas/edit.schema.json`, `tests/test_llm_director.py`, `scripts/serve.py`, `tests/test_serve.py`, `docs/guides/tools.md`, `.claude/skills/yt-beats/SKILL.md`, `.claude/skills/yt-llm-director/SKILL.md`, `.claude/skills/yt-render/SKILL.md`, `docs/RULES.md`, `docs/DECISIONS.md`, `CHANGELOG.md`. No new dependency, no new CLI flag, no change to the `beats.json` shape or the `beats.py` `--json` keys; `scripts/director.py` (the rule-based fallback) is unchanged and never passes downbeats.
+
+---
+
+## [2026-10-24] A simpler Watch tab, generic example wording (V020N lot n26)
+
+**Context:** issue #93 follow-up. The owner found the Watch (Recap) tab busier than it needs to be: the tab bar carried a **Details** group with **Why?** and **Shots** links, and the strip under the player showed a clip/photo colour legend. The owner also wanted `config.yaml.example` to stop carrying his own channel wording.
+
+**Options:** (A) keep the links and the legend and only hide them behind a feature flag; (B) drop the Why?/Shots links from the tab bar and the colour legend, keep the pages reachable by URL, and replace the owner's wording in the example with neutral placeholders.
+
+**Decision:** B. `serve._render_tabs` no longer builds the Details group, so the tab bar shows only Recap, Files, Cuts and Shorts; `render_strip` drops the `strip-legend` clip/photo spans and keeps the summary line in a `strip-summary` container. The `why`/`shots` feature parts, the `?tab=why` / `?tab=shots` routes and the `explain.html` / `shotlog.html` serving are unchanged, so the pages stay reachable by URL for the developer. `config.yaml.example` carries neutral `channel.fixed` placeholders (the real wording lives only in the owner's `config.yaml`).
+
+**Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
+
+**Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.
+
+---
+
+## [2026-10-24] Chronological order survives the director's repairs, the reviewer box leaves the project page (V020N lot n25)
+
+**Context:** Issue #95/#93 follow-up. On a real holiday test with the brief "about 60 seconds, chronological" the final edit was not in time order (0003, 0072, 0081, 0072, ...): the top-star repair in `llm_director.py` puts the swapped-in star in the slot of the shot it replaces, so a late shot lands early. Separately, the owner decided the project page no longer shows the director reviewer box.
+
+**Options:** (A) make the repair pick a victim near the star in time; (B) let the repair swap in place and re-sort the edit (and its plan) by capture/source time afterwards, before the beat snap.
+
+**Decision:** B. `llm_director.enforce_chronological_order` re-sorts the record and the plan by `edit_order_key` when the brief's order is chronological; it runs at the end of `repair_draft` and at the start of `finish_record` (before the beat snap, so the snapped lengths stay valid), and a same-take jump cut it creates is dropped again. The project page (`serve.py`) no longer renders the reviewer box; the verdict stays in `edit.json meta.director.review` and issue #96 (v0.3.0) brings it back in plain words.
+
+**Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
+
+**Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.
 
 ---
 
@@ -51,6 +1417,33 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 **Decision:** The render rounds the cut positions on the timeline (the cumulative time to the nearest frame; each clip's frame count is the difference of the rounded cut positions), for the landscape and the vertical render, so a cut stays on the planned beat. The shot question reads "Shot 2: 3 s longer?" / "Shot 2: 2 s shorter?". The n19 entry stays as history; this entry records that the wording changed.
 
 **Consequence:** `docs/RULES.md` and the `yt-render` skill say cut positions are rounded on the timeline, so a slot whose length is not a whole number of frames may move by less than one frame; the render test checks the rendered cut positions never drift more than half a frame from the plan.
+
+---
+
+## [2026-10-24] One model for every agent, reasoning level per agent (V020N lot n21)
+
+**Context:** the build agents ran on three OpenRouter models (`xiaomi/mimo-v2.6-pro`
+for the architect, `deepseek/deepseek-v4.1-flash` for the coder, `z-ai/glm-5.3-flash`
+as a fallback), so a lot's quality depended on which model happened to be picked
+and the fallback was easy to leave behind.
+
+**Options:** (A) keep the per-agent models and only document them; (B) one model
+for every agent, with the reasoning level set per agent.
+
+**Decision:** B. Every agent runs on `openrouter/deepseek/deepseek-v4.1-flash`;
+`xiaomi/mimo-v2.6-pro` and `z-ai/glm-5.3-flash` are dropped from `opencode.json`.
+The reasoning level is a `reasoning:` block in the agent file (`effort: high` for
+architect, coder and specwriter; `effort: xhigh` for the new `coder-max`), which
+opencode passes to OpenRouter. The architect hands a brief to `coder-max` only
+when the lot says "hard"; every other lot goes to `coder`.
+
+**Why not A:** the owner decided one model; a per-agent model split makes the
+output depend on the agent rather than the task, and the GLM fallback was never
+used.
+
+**Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
+four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
+level of each agent and when `coder-max` is used.
 
 ---
 
@@ -292,7 +1685,7 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ## [2026-10-21] Shorts layout policy auto/on/off and the web override (S59 follow-up 2)
 
-**Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. Doru asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.
+**Context:** Issue #60 lot 3 added `layout: split` (face region over screen region of one 16:9 frame) with a manual key `--layout`. the owner asked for an automatic per-candidate choice — `split` only when the session has both a camera and a screen recording and the screen shows something during that candidate — plus a web setting `auto`/`on`/`off` (also readable from config), a per-candidate override in the web app's shorts candidates list, and `face` for camera-only sessions.
 
 **Options:** (A) an extra field in the existing `director` scoring pass judging whether the screen is shown; (B) deterministic timeline signals — which angle each source clip is and what covers the candidate window; (C) decode sample frames of the screen file at candidate times and measure activity.
 
@@ -300,7 +1693,7 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 **Why not:** A) a model call to answer a fact the timeline already carries, and the pass would have to change shape; C) media decoding at ranking time for the same fact.
 
-**Consequence:** `shorts_candidates.json` always carries `layout: face|split`; camera-only and Mode A sessions never get `split`; the policy is one config key and one CLI flag. The split render's cell order is unchanged (S59 lot 3c: face cell over screen cell); Doru's note "(screen on top, camera below)" is an open question in the S59 follow-up 2 report.
+**Consequence:** `shorts_candidates.json` always carries `layout: face|split`; camera-only and Mode A sessions never get `split`; the policy is one config key and one CLI flag. The split render's cell order is unchanged (S59 lot 3c: face cell over screen cell); the owner's note "(screen on top, camera below)" is an open question in the S59 follow-up 2 report.
 
 ---
 
@@ -340,7 +1733,7 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ## [2026-10-21] S59 follow-ups: shared media helpers, audio sync, screen checks (issue #60)
 
-**Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). Doru also asked whether a screen file was really a screen file.
+**Context:** The lot 1 review found `video_files`, `parse_stamp` and `FILENAME_TIMESTAMP` written again in `mode_b.py` although `recap.py`/`rough_cut.py` already had them, and the name-timestamp `sync_offset_s` was wrong on the reference (it misses the container start time). the owner also asked whether a screen file was really a screen file.
 
 **Options:** (A) keep per-tool copies and the name-only offset; (B) move the shared helpers to `scripts/common/media.py`, measure the camera-to-screen offset by sound in `rough_cut.py` and add a cheap screen-suspect check to `mode_b.py`; (C) also teach `mode_b.py` to write the offset.
 
@@ -354,7 +1747,7 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ## [2026-10-21] Review fixes: one frame reader, one brand default, one colour parse, one keep rule (S59 review)
 
-**Context:** The lot 2/lot 3 reviews found shared logic written out per tool: the `VideoCapture` seek loop in `describe.py`, `similarity.py` and `mode_b.py` (three different contracts); `DEFAULT_BRAND` in `common/brand.py` plus `shorts_generator.py`, `thumbnail.py` and `graphics.py` (the `common` copy was dead); the `#RRGGBB` parse in `thumbnail.hex_to_rgb` and `shorts_generator.hex_to_ass_*`; the word-midpoint keep rule re-implemented in `shorts_generator.words_for_segment`; `PAUSE_SPLIT_S`, `TICKS_PER_SECOND`, `EPSILON`, `media_item_path` and `slot_length` duplicated across tools. The review also asked for a single source of truth for the word-to-edit mapping and for `chapters.json`/`shorts_candidates.json` to default to the clip's publish folder in `--fcproj` mode (Doru, 2026-10-21).
+**Context:** The lot 2/lot 3 reviews found shared logic written out per tool: the `VideoCapture` seek loop in `describe.py`, `similarity.py` and `mode_b.py` (three different contracts); `DEFAULT_BRAND` in `common/brand.py` plus `shorts_generator.py`, `thumbnail.py` and `graphics.py` (the `common` copy was dead); the `#RRGGBB` parse in `thumbnail.hex_to_rgb` and `shorts_generator.hex_to_ass_*`; the word-midpoint keep rule re-implemented in `shorts_generator.words_for_segment`; `PAUSE_SPLIT_S`, `TICKS_PER_SECOND`, `EPSILON`, `media_item_path` and `slot_length` duplicated across tools. The review also asked for a single source of truth for the word-to-edit mapping and for `chapters.json`/`shorts_candidates.json` to default to the clip's publish folder in `--fcproj` mode (the owner, 2026-10-21).
 
 **Decision:** `scripts/common/constants.py` holds `EPSILON`, `TICKS_PER_SECOND` and `PAUSE_SPLIT_S`; `scripts/common/frames.py` holds `read_frame_pairs` (near-seek retry option, strict or skip-on-missing, the caller's error class) used by `describe.py`, `similarity.py` and `mode_b.py`; `common/brand.DEFAULT_BRAND` is the only brand default and `common/brand.parse_hex_color` the only `#RRGGBB` parse (ASS colour formatting stays in `shorts_generator.py`); `common/timeline_words.word_in_window` is the keep rule used by `collect_words`, `map_words` and `words_for_segment`; `subs_from_edit.py` uses the shared `build_groups`/`map_words` (the crossfade overlap moved into `build_groups`); `mode_b.run_screen_checks` loads the YuNet detector only after readable screen frames were found; `mode_b.manifest_document` carries a recorded `sync_offset_s`/`sync_offset_confidence` over to a rewritten manifest (the skill's "the manifest value always wins" promise, kept after the lot 3 review); in `--fcproj` mode `chapters.py`/`shorts_rank.py` write `chapters.json`/`shorts_candidates.json` to the clip's publish folder (the parent of `--words-dir`), else next to the primary input.
 
@@ -805,16 +2198,16 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-12] D1 split into D1a (motion + quality, CPU) and D1b (describe + index)
 
-**Context:** The first D1 plan sent every scene-detected shot to a vision model. Doru's test clips are continuous action-cam takes of 2–5 minutes with no hard cuts, full of deliberate camera moves (orbit, push/pull, pans) wrapped in setup and teardown motion (moving into position after pressing record, moving back before stopping), plus blurred and shaky stretches. Scene detection alone sees one shot per take; a vision model looking at three stills cannot reliably tell a pan from an orbit or find where a move starts and ends. Research: `docs/research/camera-motion-and-quality.md`.
+**Context:** The first D1 plan sent every scene-detected shot to a vision model. the owner's test clips are continuous action-cam takes of 2–5 minutes with no hard cuts, full of deliberate camera moves (orbit, push/pull, pans) wrapped in setup and teardown motion (moving into position after pressing record, moving back before stopping), plus blurred and shaky stretches. Scene detection alone sees one shot per take; a vision model looking at three stills cannot reliably tell a pan from an orbit or find where a move starts and ends. Research: `docs/research/camera-motion-and-quality.md`.
 
 **Options:**
 - A) Keep one D1: scene detection + fixed 5 s segments + vision descriptions
 - B) Separate tools: `motion` (optical flow / gyro, motion phases, CameraBench labels), `quality` (measured defects plus a role per segment: move, hold, transition in/out, setup, teardown, accidental — labels, never deletions), then `describe` only on kept segments; checkpoint after the CPU-only part
 - C) Use the CameraBench fine-tuned Qwen2.5-VL for all motion labels now
 
-**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a Doru checkpoint. The analysis tools label and never delete: one file can hold several intentional shots, and fast motion at the head or tail of a take may be half of an in-camera transition (whip pan, roll) rather than junk — the director pairs them. Techniques the tools must know are catalogued in `docs/guides/shot-grammar.md`.
+**Decision:** B, as D1a (ingest, motion, quality) and D1b (describe, index, bake-off), each with a the owner checkpoint. The analysis tools label and never delete: one file can hold several intentional shots, and fast motion at the head or tail of a take may be half of an in-camera transition (whip pan, roll) rather than junk — the director pairs them. Techniques the tools must know are catalogued in `docs/guides/shot-grammar.md`.
 
-**Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and Doru can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.
+**Rationale:** CameraBench shows geometric methods are reliable for pan/tilt/roll/dolly/zoom/shake and VLMs for semantic moves (orbit, tracking); combining them is both more accurate and cheaper, because junk never reaches the paid vision step. D1a costs nothing to run and the owner can verify it from memory of what he filmed. C needs the 3090 and is kept as the later upgrade for semantic labels. Fixed 5 s segments (A) cut through the middle of moves and keep the junk.
 
 ---
 
@@ -875,7 +2268,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] Docstrings allowed, inline comments not
 
-**Context:** Rule 5 said "Comments in code → none". The D0 and D1a code has a docstring on every public function. The external audit flagged the mismatch and asked Doru to decide.
+**Context:** Rule 5 said "Comments in code → none". The D0 and D1a code has a docstring on every public function. The external audit flagged the mismatch and asked the owner to decide.
 
 **Decision:** Short docstrings on public functions and modules are allowed; inline comments stay out. CLAUDE.md rule 5 updated.
 
@@ -885,7 +2278,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] D1a not approved at checkpoint; ground-truth eval before more tuning
 
-**Context:** Doru reviewed 6 clips against what he filmed (`eval/ground_truth_boat_2026-10-12.yaml`). The tools mislabel boat motion (wave bob as tilt, travel as dolly or complex), confuse pan with truck and orbit, report a tilted horizon on level shots, and see nothing inside a locked-off hold where another boat approaches. Details in `docs/reports/D1a-CHECKPOINT.md`.
+**Context:** the owner reviewed 6 clips against what he filmed (`eval/ground_truth_boat_2026-10-12.yaml`). The tools mislabel boat motion (wave bob as tilt, travel as dolly or complex), confuse pan with truck and orbit, report a tilted horizon on level shots, and see nothing inside a locked-off hold where another boat approaches. Details in `docs/reports/D1a-CHECKPOINT.md`.
 
 **Decision:** A D1a-2 round before D1b: first an eval tool that scores the tools against ground-truth YAML, then platform motion, parallax (pan vs truck, orbit candidates), a horizon measured only on the sea/sky line, scene activity and events inside holds, and the `accidental` role, each judged by the eval score.
 
@@ -899,7 +2292,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 **Options:**
 - A) Fix the seven items directly and re-review by eye
-- B) Build `scripts/eval_labels.py` first, record a baseline score against Doru's ground-truth YAML, then require every fix to move the score
+- B) Build `scripts/eval_labels.py` first, record a baseline score against the owner's ground-truth YAML, then require every fix to move the score
 - C) Reuse an existing video-metric framework
 
 **Decision:** B. The scorer lives in `scripts/eval_labels.py` with `schemas/eval.schema.json` and the `yt-eval` skill. Scoring: interval overlap of expected vs predicted move/role with full credit for an exact label and 0.5 for a geometric look-alike (`dolly_in` for `travel_forward`, `pan_right` for `truck_right`, `pan_*` for `orbit`); horizon false positives against `horizon: level` truth (defect or |deg| > tol counts as a tilt claim, `null` abstains and never scores as success); event recall within ±3 s. `totals.overall` is the mean of the per-clip overalls. Baseline 0.26 → final 0.69 with every intermediate step recorded in `docs/reports/D1a-REPORT.md`.
@@ -1000,7 +2393,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] Packaging and publishing become D6; publish gate after D2
 
-**Context:** VISION listed auto-upload and voice cloning as out of scope. Doru's vault project (`70_ai-youtube-automation-pipeline/20_TODO.md`) already plans them, with Remotion motion graphics, thumbnails with a brand kit, audio/SFX/music and PeerTube, as chunks 3–7. His own rule is not to open the next chunk before the previous one is filmed and published.
+**Context:** VISION listed auto-upload and voice cloning as out of scope. the owner's vault project (`70_ai-youtube-automation-pipeline/20_TODO.md`) already plans them, with Remotion motion graphics, thumbnails with a brand kit, audio/SFX/music and PeerTube, as chunks 3–7. His own rule is not to open the next chunk before the previous one is filmed and published.
 
 **Decision:** These become phase D6, one standalone tool each, after D5. A publish gate sits after D2: once the director edits the Kotor footage on its own, the devlog clip is filmed and published before D3 starts.
 
@@ -1010,7 +2403,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] `edit.json` is the edit list; Kdenlive becomes an optional export; render and preview from the browser
 
-**Context:** VISION principle 4 made `fragments.yaml` → Kdenlive the output of the director. Doru edits from a phone while travelling and wants to drop the dependency on a desktop editor: preview the edit and make small adjustments in the browser, final render on the homelab. He also wants automatic story graphics for tutorials and talking-head (Hasan's MIT Remotion kit as a base, paid services swapped for ours), and music/SFX without ComfyUI. Research: `docs/research/rendering-and-audio.md`.
+**Context:** VISION principle 4 made `fragments.yaml` → Kdenlive the output of the director. the owner edits from a phone while travelling and wants to drop the dependency on a desktop editor: preview the edit and make small adjustments in the browser, final render on the homelab. He also wants automatic story graphics for tutorials and talking-head (Hasan's MIT Remotion kit as a base, paid services swapped for ours), and music/SFX without ComfyUI. Research: `docs/research/rendering-and-audio.md`.
 
 **Options:**
 - A) Keep `fragments.yaml` → Kdenlive as the main output, add an ffmpeg preview
@@ -1027,7 +2420,7 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] Time-box D1a-2, add slice S1 before D1b, and five plan additions
 
-**Context:** The plan now spans D0–D6 and about twenty tools. Doru's past projects sank in development without a deliverable. D1a-2 (motion/quality accuracy) could be polished indefinitely, yet nobody knows which analysis errors hurt an actual edit, because no edit exists yet.
+**Context:** The plan now spans D0–D6 and about twenty tools. the owner's past projects sank in development without a deliverable. D1a-2 (motion/quality accuracy) could be polished indefinitely, yet nobody knows which analysis errors hurt an actual edit, because no edit exists yet.
 
 **Decision:**
 - D1a-2 ends at ≥ 70% correct move type on ground-truth seconds plus 0051 = `accidental`, or after one pass over its eight items; leftovers become known issues.
@@ -1037,15 +2430,15 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 - D3 adds a synced footage inbox that `ingest` picks up on its own (sync tool decided by its own entry).
 - Every `--json` summary reports wall time and LLM cost.
 - D6 capstone: Hermes (Telegram) as remote control.
-- Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in Doru's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
+- Music: YuE2 first (editable ABC score → tempo and length chosen up front, beat sync by construction); ACE-Step 1.5 fallback only (noise floor in the owner's test). SFX stay with the CC0 library + Stable Audio Open; YuE2 makes no sound effects.
 
-**Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how Doru actually films and travels.
+**Rationale:** An early end-to-end result turns analysis tuning from guesswork into a ranked list. The other items close gaps between the plan and how the owner actually films and travels.
 
 ---
 
 ## [2026-10-13] Agent watchdog: cron script for spend and stalls; the architect reports repeated failures
 
-**Context:** ntfy already reports permission requests, OpenCode errors, phase reports and the daily external check. It stays silent when the agent burns money in a loop, sits stuck for hours, or keeps failing audits — the cases Doru most needs to hear about while travelling.
+**Context:** ntfy already reports permission requests, OpenCode errors, phase reports and the daily external check. It stays silent when the agent burns money in a loop, sits stuck for hours, or keeps failing audits — the cases the owner most needs to hear about while travelling.
 
 **Options:**
 - A) Parse OpenCode logs for everything
@@ -1060,11 +2453,11 @@ Separately, the same run exposed a design problem: `analyze_srt.py` generated 8 
 
 ## [2026-10-13] D1a approved after D1a-2; carried into S1
 
-**Context:** D1a-2 reached its time-box (all eight items done once; 0051 is `accidental`) with the ground-truth eval at 0.69 overall and 0.53 on move type. Doru approved D1a.
+**Context:** D1a-2 reached its time-box (all eight items done once; 0051 is `accidental`) with the ground-truth eval at 0.69 overall and 0.53 on move type. the owner approved D1a.
 
 **Decision:** Close D1a and start S1. Known issues carried as notes, not as another D1a round:
 - Scene events report many near-zero "subject_enters/leaves" (0072 has 11); the eval scores event recall only. S1 adds precision to `eval_labels.py` and a noise floor to events.
-- Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so Doru can spot overfitting while watching the recap.
+- Thresholds were tuned on the six ground-truth clips; S1 reports labels on the other clips so the owner can spot overfitting while watching the recap.
 - 0067 travel_backward (stern-facing camera, see the ground-truth note): measure radial contraction toward the vanishing point on the shore regions (the shores of the strait converge toward the centre) and exclude the wake band at the bottom of the frame before the travel rule; otherwise leave it to D1b vision.
 - 0081 interior horizon false positives and short orbit: D1b vision veto.
 
@@ -1160,11 +2553,11 @@ half of the same carry-over exists precisely because precision was invisible.
 
 ## [2026-10-13] No more hand rules per special case: `uncertain` labels go to vision; editor corrections grow the ground truth
 
-**Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. Doru: there will be many such shots; each would need another rule.
+**Context:** 0067 (stern-facing camera in a strait) needed a dedicated geometric rule. the owner: there will be many such shots; each would need another rule.
 
 **Decision:**
 - `motion` and `quality` attach a `confidence` to each label and emit `uncertain` when their signals disagree or the frame has large self-moving regions (wake, traffic, water). In D1b, `describe` adjudicates every `uncertain` segment and its label wins in `shotlog.json`. Geometry measures; it does not guess.
-- In D3, every label Doru corrects in the web editor is appended to the ground-truth set, so `eval_labels.py` scores against real footage that grows with use.
+- In D3, every label the owner corrects in the web editor is appended to the ground-truth set, so `eval_labels.py` scores against real footage that grows with use.
 - New hand-written geometric rules are added only when a case recurs and the eval shows it hurts edits.
 
 **Rationale:** Matches CameraBench (geometry for primitives, VLMs for semantics) and turns the long tail of special cases into data instead of code. Gyro from SD-card originals remains the upgrade for rotation.
@@ -1173,7 +2566,7 @@ half of the same carry-over exists precisely because precision was invisible.
 
 ## [2026-10-13] S1 review: content score, diversity and shot length go into D1b
 
-**Context:** Doru watched the S1 recap (85 s, 18 slots, labels only, no vision). Verdict: static shots are chosen very well; some shots are too long, others too short; near-duplicate shots appear, sometimes after a gap; the best moments (orbit 0091, approaching boat 0083, cave 0081, tunnel 0072) are missing because the director only knows "stable", not "beautiful".
+**Context:** the owner watched the S1 recap (85 s, 18 slots, labels only, no vision). Verdict: static shots are chosen very well; some shots are too long, others too short; near-duplicate shots appear, sometimes after a gap; the best moments (orbit 0091, approaching boat 0083, cave 0081, tunnel 0072) are missing because the director only knows "stable", not "beautiful".
 
 **Decision:** D1b delivers, besides `describe` + `index` + the vision bake-off:
 - a content score per segment from the vision model (subject, scenery, interest, "hero shot" flag) feeding the shotlog score;
@@ -1205,7 +2598,7 @@ budget — it needs `max_tokens` 8000 per segment and still loses answers);
 0.0066 USD vs 0.0590 USD for the same 32 segments; verdicts on the three
 uncertain segments with clear ground truth that GLM got right and DeepSeek did
 not (0067 wake → `travel_backward`, 0081 s7 → `travel_forward`, 0081 s15 →
-`travel_backward`); GLM sets `hero` on the tunnel and cave moments Doru named
+`travel_backward`); GLM sets `hero` on the tunnel and cave moments the owner named
 in the S1 review, DeepSeek never sets it.
 
 **Rationale:** The whole point of `uncertain` is that vision adjudicates where
@@ -1321,9 +2714,9 @@ would throw away geometry-good shots because a model call failed.
 
 ---
 
-## [2026-10-13] D1b approved; Doru's recap feedback becomes the first D2 tasks
+## [2026-10-13] D1b approved; the owner's recap feedback becomes the first D2 tasks
 
-**Context:** Doru watched `recap_d1b_720p.mp4` next to S1 and read the 0067 and 0081 descriptions. Verdict: shorter shots are better; descriptions are correct. Problems:
+**Context:** the owner watched `recap_d1b_720p.mp4` next to S1 and read the 0067 and 0081 descriptions. Verdict: shorter shots are better; descriptions are correct. Problems:
 1. A slow pan left was cut mid-move and followed by the stable shot it was landing on — a jump cut. Some static holds should be kept longer.
 2. The describe JSON is dense; hard to see what the director should choose from.
 3. The orbit at the end shows only its start; 2–2.5 s is too short for a stable, important move.
@@ -1333,7 +2726,7 @@ would throw away geometry-good shots because a model call failed.
 - A move and the hold it lands on form one phrase: either keep the move through its landing (cut inside the hold), or use only the hold; never cut out of a move and into its own landing. Two slots from the same take need a different take between them unless they are contiguous.
 - Hero shots and complete semantic moves (orbit, reveal, travel through a cave/tunnel) get their whole steady range up to a cap (default 8 s); pacing shortening applies only to ordinary shots.
 - `describe` adds a one-line `summary` (≤ 12 words) and a short tag list; the full description stays for the LLM director.
-- `index` writes a `shotlog.html` contact sheet in the workspace (thumbnail, time range, summary, score, hero, eligibility), so Doru can review on the phone. Generated, never committed.
+- `index` writes a `shotlog.html` contact sheet in the workspace (thumbnail, time range, summary, score, hero, eligibility), so the owner can review on the phone. Generated, never committed.
 - `eval_labels.py` scores the final shotlog label (verdict when present), not only the geometric one.
 
 **Rationale:** The first two are classic editing grammar (cut on completion of action; avoid same-scene jump cuts) that the rule-based director lacked. The contact sheet turns checkpoints into a phone review instead of reading JSON.
@@ -1360,7 +2753,7 @@ survives `dedupe_candidates`):**
 
 **Decision:** C. Measured on the 33 landing pairs: the phrase wins when the move
 is the better part (0080 s1 0.911, 0072 s7 tunnel 0.895, 0081 s7 0.862) and the
-hold alone wins when the hold is (0060 s5 Doru's pan case, 0080 s6 hero static).
+hold alone wins when the hold is (0060 s5 the owner's pan case, 0080 s6 hero static).
 On an exact tie the phrase wins. Phrase length: the end cut always lands inside
 the hold (`out_s >= H.start_s + 0.75`), the head is trimmed to the pacing target
 but never before the move's handle-in — so a phrase is never longer than its
@@ -1382,7 +2775,7 @@ slot's `role`/`motion_label` follow it — only candidacy is decided here.
 
 **Rationale:** A is what the first implementation did and it puts junk on screen;
 B is what the second round did and it lost the best shot of the film. C is the
-reading of the rule that keeps both Doru's constraints: no jump cut, and the
+reading of the rule that keeps both the owner's constraints: no jump cut, and the
 motion worth showing is shown through its landing.
 
 ---
@@ -1425,16 +2818,16 @@ stays the default. `--out` inside the originals folder is refused.
 frame-inclusive `out` timecodes (`out_s - 1/fps`) so the fragment lengths match
 the edit. The edit list stays `edit.json`.
 
-**Known conflict reported to Doru:** the reviewer wants the closing orbit and
+**Known conflict reported to the owner:** the reviewer wants the closing orbit and
 the chapel walk shorter than the `keep_whole` rule allows (8 s vs 5–5.5 s). The
 rule wins — it is the D1b feedback ("2–2.5 s is too short for a stable,
 important move") — but the reviewer's taste point is in the D2 report.
 
 ---
 
-## [2026-10-14] D2 reviewed by Doru; small D2-2 round before the publish gate
+## [2026-10-14] D2 reviewed by the owner; small D2-2 round before the publish gate
 
-**Context:** Doru watched `recap_d2_720p.mp4`: "much better, everything else is very good". Two faults: (1) the approach into the submarine tunnel (0072, ~00:20–00:50) is missing, only the exit is used; (2) a closing shot is too long — the camera keeps moving without purpose. D2 report question 5 (vision rescuing a geometry `accidental`) was decided by Claude as architect.
+**Context:** the owner watched `recap_d2_720p.mp4`: "much better, everything else is very good". Two faults: (1) the approach into the submarine tunnel (0072, ~00:20–00:50) is missing, only the exit is used; (2) a closing shot is too long — the camera keeps moving without purpose. D2 report question 5 (vision rescuing a geometry `accidental`) was decided by Claude as architect.
 
 **Cause of (1):** `motion` labels 0072 00:28–02:42 as one 134 s `travel_forward` move. One segment gives one window (≤ 8 s), so approach, interior and exit compete inside the same segment and only one survives.
 
@@ -1445,7 +2838,7 @@ important move") — but the reviewer's taste point is in the D2 report.
 - Wire `audio_clean` into `render.py` (ambient bus) and fetch an RNNoise `.rnnn` model (licence check) into the model cache.
 - Beat-aligned cuts in the director stay for the first brief with a music file.
 
-**Rationale:** Both faults come from granularity, not taste: a long take holds several moments. Fine trims are D3's job (Doru trims in the web editor), so the defaults only need to be sensible.
+**Rationale:** Both faults come from granularity, not taste: a long take holds several moments. Fine trims are D3's job (the owner trims in the web editor), so the defaults only need to be sensible.
 
 ---
 
@@ -1509,14 +2902,14 @@ director run that takes both with another take between (covered by tests).
 
 ## [2026-10-14] Feedback storage and the rules digest
 
-**Context:** Doru asked how the system learns, where it is written, and whether those files grow too large. `DECISIONS.md` already passed 1 000 lines and every agent task re-reads it.
+**Context:** the owner asked how the system learns, where it is written, and whether those files grow too large. `DECISIONS.md` already passed 1 000 lines and every agent task re-reads it.
 
 **Decision:**
 - **Feedback (D3):** the web editor appends one JSON line per action to `<workspace>/feedback.jsonl` — `{ts, kind: label_fix|approve|reject|trim|regenerate, clip, start_s, end_s, before, after}`. No footage, frames or thumbnails. A compaction step folds all workspaces into a per-user profile (`~/.local/share/yt-pipeline/profile.sqlite`): label fixes become ground-truth items (dedup by clip + range, newest wins); approvals/rejections become counts per tag, motion label and length bucket for the scorer. Per-project files are kept; the profile is rebuilt from them, so it can always be regenerated. Expected size: ~200 bytes per action.
 - **Rules digest (D3-00):** the architect writes `docs/RULES.md`, the rules in force in one short file (editing grammar, defaults, thresholds, model routing). Agents read `RULES.md` plus the last 10 DECISIONS entries, not the whole log. Every new decision that changes a rule updates `RULES.md` in the same commit.
 - Risk register: `docs/RISKS.md`. User guide: `docs/guides/user-guide.md`.
 
-**Rationale:** Small append-only files are easy to inspect, back up and rebuild; a current-state digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state, history lives in git).
+**Rationale:** Small append-only files are easy to inspect, back up and rebuild; a current-state digest keeps agent context and cost flat as the history grows (same principle as the owner's vault: reference files hold the current state, history lives in git).
 
 ---
 
@@ -1526,7 +2919,7 @@ director run that takes both with another take between (covered by tests).
 
 **Options:** A) gitleaks (MIT, secrets only, extra binary on the LXC); B) detect-secrets (Apache, secrets only, baseline file to maintain); C) small `scripts/check_public.py` (stdlib) covering secrets **and** media/subtitles/model weights/large files/base64 images, run as a git hook and in CI, plus GitHub secret scanning with push protection on the server side.
 
-**Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by Doru in the GitHub settings (the API is not available from the agents).
+**Decision:** C. Hook in `.githooks/pre-commit` (`git config core.hooksPath .githooks` once per clone), CI workflow `public-check`, `.gitignore` extended (images, subtitles, html, kdenlive, models, feedback, workspaces). `tests/fixtures/` and `examples/` (synthetic data only) are allowed. Push protection must be switched on by the owner in the GitHub settings (the API is not available from the agents).
 
 **Rationale:** Our main risk is personal media and transcripts, which secret scanners do not look for. The hook stops it before it exists in history; CI catches a skipped hook; push protection blocks known key formats even from other machines.
 
@@ -1544,13 +2937,13 @@ director run that takes both with another take between (covered by tests).
 - CI: `.github/workflows/tests.yml` runs the full pytest suite (golden next to the label eval) with the light dependencies (no torch/whisperx), alongside `public-check`.
 - `docs/RISKS.md` rows 1 and 3 updated; per-shoot golden edit sets on real test sets stay at D3.
 
-**Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as Doru's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.
+**Rationale:** The digest keeps agent context and cost flat as the history grows (same principle as the owner's vault: reference files hold the current state). Fixture-only goldens lock the editing grammar with zero footage and zero model cost and run on every push, which is exactly the regression class the S1/D1b/D2 reviews found: junk takes as openers, jump cuts out of moves, near-duplicates and missing hero shots.
 
 ---
 
 ## [2026-10-14] D2-3 "agent-ready": a fresh agent can go from folder + brief to MP4
 
-**Context:** Doru wants to demo, in the publish-gate clip, a fresh agent (Claude Code, OpenCode or Hermes) with no project knowledge turning a footage folder and one sentence into a recap. Gaps today: no tool makes the 720p proxies (they were made by hand), no single entry point chains the stations, no setup check, and the quickstart is spread across docs.
+**Context:** the owner wants to demo, in the publish-gate clip, a fresh agent (Claude Code, OpenCode or Hermes) with no project knowledge turning a footage folder and one sentence into a recap. Gaps today: no tool makes the 720p proxies (they were made by hand), no single entry point chains the stations, no setup check, and the quickstart is spread across docs.
 
 **Decision (small round before the clip, no new editing features):**
 - `scripts/proxy.py`: originals → 720p H.264 constant-frame-rate proxies with audio, skip existing, never touch originals.
@@ -1622,10 +3015,10 @@ i.e. re-encode noise).
 
 ## [2026-10-14] Demo scope before the clip: phone flow (D2-4) and cross-platform (D2-5)
 
-**Context:** Doru wants the publish-gate clip to show the tool used three ways: a fresh agent in a terminal (D2-3), phone only, and a normal PC (Windows, macOS, Linux). These are delivery work on top of D2, not new editing features.
+**Context:** the owner wants the publish-gate clip to show the tool used three ways: a fresh agent in a terminal (D2-3), phone only, and a normal PC (Windows, macOS, Linux). These are delivery work on top of D2, not new editing features.
 
 **Decision:**
-- **D2-4 phone flow, repo side.** `scripts/inbox.py`: watches an inbox folder (filled by a sync tool from the phone), groups new clips into a project per day, waits until the folder is quiet for N minutes, then runs `recap.py` with a default or per-folder brief (`brief.txt`). `scripts/serve.py`: read-only HTTP server for workspaces, bound to the tailnet address only, with an index page per project (recap, final, shotlog.html). `recap.py --notify` posts the preview link to ntfy. The `yt-recap` skill gains the phrases an assistant like Hermes receives from Telegram ("fă-mi un recap din clipurile de azi"). Installing the sync tool and wiring Hermes are system changes on Doru's machines: the repo ships instructions in `docs/guides/phone-flow.md`, Doru runs them.
+- **D2-4 phone flow, repo side.** `scripts/inbox.py`: watches an inbox folder (filled by a sync tool from the phone), groups new clips into a project per day, waits until the folder is quiet for N minutes, then runs `recap.py` with a default or per-folder brief (`brief.txt`). `scripts/serve.py`: read-only HTTP server for workspaces, bound to the tailnet address only, with an index page per project (recap, final, shotlog.html). `recap.py --notify` posts the preview link to ntfy. The `yt-recap` skill gains the phrases an assistant like Hermes receives from Telegram ("fă-mi un recap din clipurile de azi"). Installing the sync tool and wiring Hermes are system changes on the owner's machines: the repo ships instructions in `docs/guides/phone-flow.md`, the owner runs them.
 - **D2-5 cross-platform.** Replace the Unix-only pieces: `fcntl` ledger lock → a portable lock (choose by comparing at least two options), `pgrep` → `psutil` or a portable fallback, shell hook → Python hook. Paths through `pathlib` everywhere. CI matrix on ubuntu, macos and windows. Hardware encoders by platform: `h264_nvenc` (NVIDIA), `h264_videotoolbox` (macOS), else `libx264`. Install notes per OS in the quickstart.
 - Order: D2-5 can run in parallel with D2-3 (separate worktree, disjoint files); D2-4 starts after D2-3 is merged, because it builds on `recap.py`.
 
@@ -1719,7 +3112,7 @@ log spam); `--once` prints one line per group always.
 placeholder from the D3 plan). Phone = send-only camera folder, LXC =
 receive-only into `~/media/inbox`: nothing the pipeline does can delete clips
 from the phone. `docs/guides/phone-flow.md` carries the steps; installing it
-and wiring Hermes remain Doru's machine steps — the repo ships instructions
+and wiring Hermes remain the owner's machine steps — the repo ships instructions
 only.
 
 **Acceptance (2026-10-14, budget 1 USD):** 5 clips copied (never moved) from
@@ -1737,15 +3130,15 @@ $0. All 21 originals verified unchanged by md5.
 
 ## [2026-10-14] Demo scope extended: photos + music (D2-6) and the web app with explanations (D2-7)
 
-**Context:** Doru reviewed the D2-4 phone flow (link opens, quality fine for the demo) and wants the demo clip to beat DJI Mimo clearly: a day with more photos than clips, a soundtrack, and a view of *why* the edit looks the way it does. Spending stays paused after these phases until the Second Brain clip and the Facturi Agent demo are done.
+**Context:** the owner reviewed the D2-4 phone flow (link opens, quality fine for the demo) and wants the demo clip to beat DJI Mimo clearly: a day with more photos than clips, a soundtrack, and a view of *why* the edit looks the way it does. Spending stays paused after these phases until the Second Brain clip and the Facturi Agent demo are done.
 
-**D2-6 (running):** photos as candidates (EXIF time, describe, burst dedup, Ken Burns, portrait on a blurred background), `--music`, cuts on beats. Mix rule decided by Doru: the ambient sound stays under the music, quieter, never removed — default ambient 12 dB below the music, adjustable.
+**D2-6 (running):** photos as candidates (EXIF time, describe, burst dedup, Ken Burns, portrait on a blurred background), `--music`, cuts on beats. Mix rule decided by the owner: the ambient sound stays under the music, quieter, never removed — default ambient 12 dB below the music, adjustable.
 
 **D2-7 (after D2-6 merges), one agent, two parts in order:**
-1. *Explanations.* The director records a reason for every candidate it does not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length). `explain.html` per project: brief, screenwriter plan in words, the edit timeline (thumbnail, source in/out seconds versus the segment range, reason), every candidate with used / rejected and the reason, short IDs (`0071/s2`). A re-edit command takes feedback in plain words against those IDs ("drop 0071/s2, tunnel longer") and re-runs only the edit + render, so Doru can talk to the agent (Hermes or OpenCode) about its own analysis.
+1. *Explanations.* The director records a reason for every candidate it does not use (near-duplicate of X, defect, setup/teardown, low score, did not fit the length). `explain.html` per project: brief, screenwriter plan in words, the edit timeline (thumbnail, source in/out seconds versus the segment range, reason), every candidate with used / rejected and the reason, short IDs (`0071/s2`). A re-edit command takes feedback in plain words against those IDs ("drop 0071/s2, tunnel longer") and re-runs only the edit + render, so the owner can talk to the agent (Hermes or OpenCode) about its own analysis.
 2. *One web app with a menu,* served by `serve.py`, tailnet-only: Projects (list with status: done / running), Upload (clips + photos from the phone browser, project folder name, brief, options, Start → files land in the inbox, the recap starts), and per project the tabs Recap / Why? / Shots. Options menu, each defaulting to **Auto** (the agent decides from the brief and the footage): length (30 s / 60 s / 90 s / 3 min), order (chronological / best first), audio clean-up (yes / no), music (none / pick a track / auto from `~/media/music`), ambient level under the music. The same options appear on "re-edit" in the project page.
 
-**Pacing rule (D2-7, director):** shot length scales with the target length so a short recap carries more, shorter shots: ~20 s → 1.5–2.5 s per shot (≈8–10 shots), ~90 s → 2–5 s (≈20–25), 3 min → up to 6 s with whole moves. Hero and semantic moves stay the longest shots but shrink in proportion. Today's 20 s inbox recap had only 4 shots, which Doru finds too few.
+**Pacing rule (D2-7, director):** shot length scales with the target length so a short recap carries more, shorter shots: ~20 s → 1.5–2.5 s per shot (≈8–10 shots), ~90 s → 2–5 s (≈20–25), 3 min → up to 6 s with whole moves. Hero and semantic moves stay the longest shots but shrink in proportion. Today's 20 s inbox recap had only 4 shots, which the owner finds too few.
 
 **Later:** `--music auto` picks a track from `~/media/music` by brief and shot tags (needs the library analysed with `beats.py`); generated music (YuE2) waits for the 3090.
 
@@ -1900,7 +3293,7 @@ possible without re-deriving ids.
 
 ## [2026-10-15] D2-7 pacing table: shot length scales with the target length
 
-**Context:** the 20 s inbox recap had 4 shots of ~5 s; Doru wants a short recap
+**Context:** the 20 s inbox recap had 4 shots of ~5 s; the owner wants a short recap
 to carry more, shorter shots. The old rule sized the slot count as
 `clamp(round(T/6), 4, 24)` and fixed the slot band at 2–12 s, which cannot
 reach 8–10 shots in 20 s.
@@ -1937,7 +3330,7 @@ length options.
 
 ## [2026-10-15] D2-7 feedback loop: `--feedback` re-runs only the edit
 
-**Context:** Doru must be able to talk to the agent about its own analysis
+**Context:** the owner must be able to talk to the agent about its own analysis
 ("drop 0071/s2, tunnel longer"). The short ids exist since the decisions work;
 now the director has to accept them back.
 
@@ -2159,7 +3552,7 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 
 ## [2026-10-15] Web app look: one theme for the app, Why? and Shots (D2-9 design pass)
 
-**Context:** Doru's first look at the D2-7 web app on the phone: works, but looks like a test page, and the demo clip will show it.
+**Context:** the owner's first look at the D2-7 web app on the phone: works, but looks like a test page, and the demo clip will show it.
 
 **Decision:** one palette across `serve.py`, `explain.html` and `shotlog.html` (Kotor at night: deep water background, limestone text, sea-teal accent; green used / red left out / amber running), a serif for names and titles with the system sans for the interface, no web fonts (the app stays offline and private), 44 px touch targets. The memorable element is the edit strip under the player: the edit as proportional blocks (clip vs photo), tap a block to jump there, the current block lights up while playing. Plain labels: "New recap", "Clean the sound", "in the edit as v3" / "left out". Projects are ordered by last activity, not by name.
 
@@ -2167,7 +3560,7 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 
 ## [2026-10-15] Length "All good shots" and the estimate on the project page
 
-**Context:** Doru wants to say the length he wants and be told how long the edit would be with every good shot in it.
+**Context:** the owner wants to say the length he wants and be told how long the edit would be with every good shot in it.
 
 **Decision:** `scripts/common/pacing.estimate_all_good(shotlog)` counts every eligible, non-suppressed, non-duplicate shot with score ≥ 0.5 at the length a long cut gives it (static hold 4 s, move 5 s, hero/semantic move 6 s, photo 3 s, capped by its window). The project page shows "All good shots would make about N (M shots)". `--target-duration-s 0` (web: Length → All good shots) sets the target to that estimate and uses the long-cut pacing (the 180 s anchor) in both directors. A workspace moved to another folder still finds its proxies (index thumbnails, render) through `<workspace>/proxy/`.
 
@@ -2175,7 +3568,7 @@ found more content beats (15 vs 12), which is what the long-take split needs.
 
 ## [2026-10-15] Shot length policy: static shots keep the time limit, camera moves keep the move (middle ramp up to 1.2x)
 
-**Context:** Doru's rule: static shots must respect the time limit; for a pivot, pan or orbit keep as much of the move as possible, the middle may be sped up, at most 1.2x; the seconds rule must hold for 80-90 % of the shots. Until now hero and semantic-move slots kept the last `hero_max` seconds of their window and everything else was capped at `slot_max`, so a static hero hold ran to 6 s and a pan was cut wherever its pacing target ended.
+**Context:** the owner's rule: static shots must respect the time limit; for a pivot, pan or orbit keep as much of the move as possible, the middle may be sped up, at most 1.2x; the seconds rule must hold for 80-90 % of the shots. Until now hero and semantic-move slots kept the last `hero_max` seconds of their window and everything else was capped at `slot_max`, so a static hero hold ran to 6 s and a pan was cut wherever its pacing target ended.
 
 **Options:** (A) a global speed-up of the whole slot (changes the look of the whole move, audio pitch/tempo audible); (B) a ramp: head and tail quarters in real time, middle half at `s` (the speed change sits in the part of a move where it is least visible); (C) no speed change, only longer moves (breaks the seconds rule more often).
 
@@ -2190,13 +3583,13 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Golden changes (intentional):** `hero_present` hero hold `26.5-30.0` becomes `27.5-30.0` (static hero clamped from 3.5 s to `slot_max` 2.5 s); `phrase_move_strong` clipA `8.75-10.75` becomes `6.932-10.75` (the move is the one exception: 3.5 s on screen, middle at 1.2x). Director tests that measured source length now measure on-screen length.
 
-**Consequence / open point:** an ordinary move only gains the ~9 % of source the ramp buys inside its pacing length; letting every move grow to `slot_max` would keep more of each move but lengthen a 90 s edit by about a fifth. Doru can change that budget in one line (`apply_move_policy`).
+**Consequence / open point:** an ordinary move only gains the ~9 % of source the ramp buys inside its pacing length; letting every move grow to `slot_max` would keep more of each move but lengthen a 90 s edit by about a fifth. the owner can change that budget in one line (`apply_move_policy`).
 
 ---
 
 ## [2026-10-15] Vertical 9:16 recap from the same edit (D2-11 part 2)
 
-**Context:** Doru wants a Shorts/Reels version of a recap without a second edit.
+**Context:** the owner wants a Shorts/Reels version of a recap without a second edit.
 
 **Options:** (A) a second edit for vertical; (B) the same `edit.json`, each slot cropped with a moving window from `reframe.py`; (C) a fixed centre crop.
 
@@ -2208,7 +3601,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Normal speed by default, cuts centred on the best moment (D2-12)
 
-**Context:** D2-11 sped every long move up to 1.2x by default and kept the end of the window for important shots. Doru's corrections: normal speed unless he asks for the ramp, and when a move is longer than its allowed on-screen length keep the part around its best moment (a push through a gate is best at the gate, usually the middle), not the start or the end.
+**Context:** D2-11 sped every long move up to 1.2x by default and kept the end of the window for important shots. the owner's corrections: normal speed unless he asks for the ramp, and when a move is longer than its allowed on-screen length keep the part around its best moment (a push through a gate is best at the gate, usually the middle), not the start or the end.
 
 **Options:** (A) keep the ramp default and add a peak only to the trim; (B) ramp optional, peak-centred trim with a layered peak source; (C) peak only from the vision model.
 
@@ -2216,7 +3609,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Why:** the vision model sees the subject, the motion signal is free and always available, the middle is a neutral fallback. Priority follows reliability of intent, then availability.
 
-**Landing phrases:** a move followed by its landing hold keeps the landing rule (the cut ends at or after the floor), so the peak can fall outside the cut; the director warns. Choosing the peak over the landing would drop the landing hold and is left to Doru.
+**Landing phrases:** a move followed by its landing hold keeps the landing rule (the cut ends at or after the floor), so the peak can fall outside the cut; the director warns. Choosing the peak over the landing would drop the landing hold and is left to the owner.
 
 **Golden changes (intentional):** nine fixtures changed only in `expected_slots`: windows that started at the head of the window are now centred on the peak, which is the window middle in the fixtures (for example hero 13.75-16.25); `phrase_move_strong` is 7.25-10.75 (ramp off, hero cap 3.5 s); in `photo_slots` the first photo now sorts before the video because the video slot's chronological key moved later.
 
@@ -2226,7 +3619,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Kept versions, honest run state, smooth Ken Burns, exact length (D2-13)
 
-**Context:** Doru's re-edit on the moved kotor-demo workspace failed at `render_vertical` (the photo path still pointed at the old `/tmp` folder). The page then showed the new strip over the old video and stayed `running`. He also asked to keep old edits next to new ones, for smooth photo zooms and for a typed length.
+**Context:** the owner's re-edit on the moved kotor-demo workspace failed at `render_vertical` (the photo path still pointed at the old `/tmp` folder). The page then showed the new strip over the old video and stayed `running`. He also asked to keep old edits next to new ones, for smooth photo zooms and for a typed length.
 
 **Options (versions):** (A) git-like history of `edit.json` only; (B) one folder per version with the edit, the renders made from it and a small `version.json`; (C) suffix files in the workspace root.
 
@@ -2252,7 +3645,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Best photo of a burst: no closed eyes, no blur (D2-15)
 
-**Context:** Doru takes several photos of one moment; the edit should keep the one where nobody blinks and nothing is blurred. The burst winner was the highest score only.
+**Context:** the owner takes several photos of one moment; the edit should keep the one where nobody blinks and nothing is blurred. The burst winner was the highest score only.
 
 **Options:** (A) OpenCV only: Haar eye cascades (not shipped with OpenCV 5) or YuNet landmarks (no eye openness) plus Laplacian blur; (B) ask the vision model, which already sees every photo, for a fixed list of flaws, plus a measured Laplacian sharpness; (C) a dedicated blink model (new dependency and download).
 
@@ -2288,7 +3681,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-15] Edit expectations as a test; the model keeps the top heroes (D2-19)
 
-**Context:** On kotor-demo v4 the edit was "by: llm" (repair works) but the model dropped the top heroes 0072/s5 (0.91, the tunnel approach) and 0072/s7b1 (0.95, the bunker mouth). Doru wants his feedback turned into a file agents check, so they iterate without him, and the LLM director to keep the best shots the way the rule director already does.
+**Context:** On kotor-demo v4 the edit was "by: llm" (repair works) but the model dropped the top heroes 0072/s5 (0.91, the tunnel approach) and 0072/s7b1 (0.95, the bunker mouth). the owner wants his feedback turned into a file agents check, so they iterate without him, and the LLM director to keep the best shots the way the rule director already does.
 
 **Options (expectations):** (A) a new schema for edit expectations; (B) a small hand-written YAML checked by a standalone tool, no schema; (C) encode the checks in pytest fixtures only.
 
@@ -2298,35 +3691,35 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Why not schema (A):** two keys and a length do not need a schema yet; the YAML is the interface and stays safe to commit (shot keys and numbers only, no footage, no paths).
 
-**Consequence:** Doru's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.
+**Consequence:** the owner's review is a file any agent can run (`eval_edit.py`); a re-edit that drops a top star fails the check and the repair is supposed to fix it inside the LLM loop instead of silently falling back to the rules.
 
 ---
 
-## [2026-10-17] Thumbnail tool, brand kit and the PSD writer (D6-48, pulled forward by Doru)
+## [2026-10-17] Thumbnail tool, brand kit and the PSD writer (D6-48, pulled forward by the owner)
 
-**Context:** Doru pulled the D6 thumbnail tool forward (issue #48): one command must turn a portrait photo + a title into a branded 1280x720 YouTube thumbnail identical to his approved `DEPPSiT-template-v2` (kept locally, not in the repo). Two new dependencies were needed: a background-removal model and a PSD writer.
+**Context:** the owner pulled the D6 thumbnail tool forward (issue #48): one command must turn a portrait photo + a title into a branded 1280x720 YouTube thumbnail identical to his approved `DEPPSiT-template-v2` (kept locally, not in the repo). Two new dependencies were needed: a background-removal model and a PSD writer.
 
 **Options (PSD writer):** (A) `psd-tools` — MIT, actively maintained (1.25.0 released 2026-10-14), `PSDImage.new` / `create_pixel_layer` / `save`, negative layer offsets survive a round trip; (B) `pytoshop` — BSD, last release 1.2.1 in 2018 (Python 2.7/3.4-3.6 classifiers), read/write but unmaintained.
 
-**Options (cut-out):** (A) `rembg` 2.0.85 (MIT, maintained) with the `birefnet-portrait` session model, the one Doru tested on 2026-10-17 against PhotoCraft, `u2net` and `isnet-general-use` (only BiRefNet kept hair, both hands and all fingers with no haze); (B) PhotoCraft `layer.removeBackground` — rejected (poor edges, and no PhotoCraft dependency anywhere in the pipeline); (C) MatAnyone, the D6 video background remover, not applicable to stills yet.
+**Options (cut-out):** (A) `rembg` 2.0.85 (MIT, maintained) with the `birefnet-portrait` session model, the one the owner tested on 2026-10-17 against PhotoCraft, `u2net` and `isnet-general-use` (only BiRefNet kept hair, both hands and all fingers with no haze); (B) PhotoCraft `layer.removeBackground` — rejected (poor edges, and no PhotoCraft dependency anywhere in the pipeline); (C) MatAnyone, the D6 video background remover, not applicable to stills yet.
 
 **Decision:** A and A. `scripts/thumbnail.py` writes the PSD with psd-tools (one rasterized layer per element: background, portrait, title, keyword, kicker, tag — text layers cropped to their alpha bbox so each block moves in Photoshop) and cuts the portrait with rembg's Python API (`new_session("birefnet-portrait")`, lazy import, `requirements.txt` line `rembg[cpu]` since 2.0.85 ships without an ONNX backend in the base extra). pytoshop and PhotoCraft stay out. The model downloads on first run to `~/.rembg/models/birefnet-portrait/` (2.0.85; older rembg used `~/.u2net/` — the integration test checks both). On the 6 GB build LXC the BiRefNet inference is OOM-killed even at 450x600 input: the integration test runs the cut-out in a subprocess and skips on exit 137 instead of killing the suite.
 
 **Brand kit:** the look is data — `brand.json` at the repo root (re-included in `.gitignore`), validated by `schemas/brand.schema.json`: canvas, palette, font files (Montserrat Black + JetBrains Mono, SIL OFL, shipped in `assets/fonts/` so a fresh clone renders; paths are configurable and a missing font is a hard error naming the path, never a fallback), layout baselines, drop shadow, portrait margins/placement, the generated-background recipe (seed 7 grain) and the per-theme colour roles. `--brand` points at another kit.
 
-**Interpretations the brief left open (one-line changes in `brand.json`/`thumbnail.py` if Doru wants them different):** the title is one line that shrinks 4 px steps to a 40 px floor (a wrapped second line would collide with the keyword's first baseline); the kicker stays `warm` in both themes (the brief only fixes it for `tech`); `--background` given with `tech` replaces the generated background (darkened like `creator`); the outer glow is baked inside the PSD `portrait` layer (exactly the six listed layers, no seventh glow layer — in the JPG it is screen-blended as specified); the drop shadow follows the Photoshop angle convention (120° = light upper-left, shadow toward the lower right at +2.0, +3.46 px).
+**Interpretations the brief left open (one-line changes in `brand.json`/`thumbnail.py` if the owner wants them different):** the title is one line that shrinks 4 px steps to a 40 px floor (a wrapped second line would collide with the keyword's first baseline); the kicker stays `warm` in both themes (the brief only fixes it for `tech`); `--background` given with `tech` replaces the generated background (darkened like `creator`); the outer glow is baked inside the PSD `portrait` layer (exactly the six listed layers, no seventh glow layer — in the JPG it is screen-blended as specified); the drop shadow follows the Photoshop angle convention (120° = light upper-left, shadow toward the lower right at +2.0, +3.46 px).
 
-**Consequence:** `python scripts/thumbnail.py --photo ... --title ... --keyword ... --theme tech|creator [--psd]` produces the branded thumbnail from a brand file alone; Doru runs it once on a real photo (the one thing the build LXC cannot verify). PSD text is rasterized — retouching means moving/repainting layers, not editing type.
+**Consequence:** `python scripts/thumbnail.py --photo ... --title ... --keyword ... --theme tech|creator [--psd]` produces the branded thumbnail from a brand file alone; the owner runs it once on a real photo (the one thing the build LXC cannot verify). PSD text is rasterized — retouching means moving/repainting layers, not editing type.
 
 ---
 
 ## [2026-10-19] Video background removal: RVM by default, MatAnyone2 personal-use only (D6, issue #50)
 
-**Context:** Doru needs his talking-head footage cut out and placed over screen capture (first use: the Second Brain clip, edited in FilmCraft 0.9.0). He did it by hand in Sammie-Roto 2 (SAM2 + MatAnyone2, GUI clicks + export). The D6 roadmap and the thumbnail decision above named MatAnyone as the video background remover, but its licence (NTU S-Lab 1.0) allows non-commercial use only, and the pipeline may be sold later.
+**Context:** the owner needs his talking-head footage cut out and placed over screen capture (first use: the Second Brain clip, edited in FilmCraft 0.9.0). He did it by hand in Sammie-Roto 2 (SAM2 + MatAnyone2, GUI clicks + export). The D6 roadmap and the thumbnail decision above named MatAnyone as the video background remover, but its licence (NTU S-Lab 1.0) allows non-commercial use only, and the pipeline may be sold later.
 
-**Options (tested 2026-10-19 on the same 10.6 s 1080p25 clip, RTX 4070 Laptop 8 GB, full numbers in issue #50):** (A) SAM2 + MatAnyone2, the Sammie models driven from a script — best quality, 48 s, non-commercial; (B) EdgeTAM + ViTMatte-small (the stack of FilmCraft draft PR storytold/filmcraft#2122, run in Python on GPU) — Apache-2.0, 92 s, clearly worse in Doru's review; (C) RobustVideoMatting resnet50 — GPL-3.0, fully automatic, ~15 s, steadiest edges (`downsample_ratio` 0.6 steadier still); visibly behind A only on fast, motion-blurred hands. A permissive model matching A was searched for and not found (SAM2Matting, VideoMaMa, MaGGIe are all non-commercial).
+**Options (tested 2026-10-19 on the same 10.6 s 1080p25 clip, RTX 4070 Laptop 8 GB, full numbers in issue #50):** (A) SAM2 + MatAnyone2, the Sammie models driven from a script — best quality, 48 s, non-commercial; (B) EdgeTAM + ViTMatte-small (the stack of FilmCraft draft PR storytold/filmcraft#2122, run in Python on GPU) — Apache-2.0, 92 s, clearly worse in the owner's review; (C) RobustVideoMatting resnet50 — GPL-3.0, fully automatic, ~15 s, steadiest edges (`downsample_ratio` 0.6 steadier still); visibly behind A only on fast, motion-blurred hands. A permissive model matching A was searched for and not found (SAM2Matting, VideoMaMa, MaGGIe are all non-commercial).
 
-**Decision:** C by default, A as an optional backend for Doru's own videos only. Doru compared C and A side by side in FilmCraft and judged C "more than enough". Output is ProRes 4444 with alpha (`yuva444p10le`, `prores_ks -profile:v 4444`); FilmCraft 0.9.0 reads its alpha correctly. RVM code is never vendored into this repo: it is fetched at first run through `torch.hub` (GPL obligations then stay with the downloaded code; the videos produced are not GPL). MatAnyone2 is never the default and never used for paid work without written permission from its authors. MatAnyone2 gotcha: the first-frame mask goes in on a 0–255 scale, not 0–1, or the first frame comes out empty and tracking degrades.
+**Decision:** C by default, A as an optional backend for the owner's own videos only. the owner compared C and A side by side in FilmCraft and judged C "more than enough". Output is ProRes 4444 with alpha (`yuva444p10le`, `prores_ks -profile:v 4444`); FilmCraft 0.9.0 reads its alpha correctly. RVM code is never vendored into this repo: it is fetched at first run through `torch.hub` (GPL obligations then stay with the downloaded code; the videos produced are not GPL). MatAnyone2 is never the default and never used for paid work without written permission from its authors. MatAnyone2 gotcha: the first-frame mask goes in on a 0–255 scale, not 0–1, or the first frame comes out empty and tracking degrades.
 
 **Why not B:** permissive licence, but per-frame ViTMatte flickers (1.7x the edge noise of Sammie) and a temporal EMA that hides it leaves ghost halos around moving hands.
 
@@ -2380,7 +3773,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Superseded 2026-10-23** — the concepts moved to their own tool and file (`thumbnail_concepts.py` + `thumbnail.py --concepts`/`--pick`); see the V020N lot n10 entry above.
 
-**Context:** The lot 1 addendum to issue #51 (Doru, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
+**Context:** The lot 1 addendum to issue #51 (the owner, 2026-10-20) asks `metadata.py` to also write a `## Thumbnail` section in `metadata.md`: 2-3 distinct photo concepts with pose, a real emotion (never neutral), 3-4 words of thumbnail text that say the same as the title (row 1 title, row 2 keyword, kicker), theme `tech` or `creator`, and whether to use a frame from the clip (timecode from the transcript where the emotion fits) or a new photo. The chosen concept must map directly to the `thumbnail.py` flags.
 
 **Options:** (A) the model writes the `## Thumbnail` section as free-form markdown in its JSON; (B) a structured `thumbnail_concepts` key (2-3 objects with `name`/`pose`/`emotion`/`text{title,keyword,kicker}`/`theme`/`source{kind,timecode}`) validated like `chapters` and rendered by the tool; (C) no section for now — frame picking is issue #52's vision pass.
 
@@ -2404,7 +3797,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Why not A:** `convert_video` owns its own reader and whole-file range, needs `av tqdm pims`, and still leaves the ProRes export to us. **Why not C:** no second model format is needed this sprint.
 
-**Consequence:** `python3 scripts/matte.py clip.mp4 [--start S] [--end E] [--ratio R] [--out FILE] [--json]` produces the composite-ready matte on GPU when present, on CPU otherwise (build LXC: 3 s 640x360 at ratio 0.6 in ~45 s). The settings used on the real Second Brain clip are added to issue #50 as a comment after Doru's run; MatAnyone2 stays out of the repo (scope 3, personal-use only).
+**Consequence:** `python3 scripts/matte.py clip.mp4 [--start S] [--end E] [--ratio R] [--out FILE] [--json]` produces the composite-ready matte on GPU when present, on CPU otherwise (build LXC: 3 s 640x360 at ratio 0.6 in ~45 s). The settings used on the real Second Brain clip are added to issue #50 as a comment after the owner's run; MatAnyone2 stays out of the repo (scope 3, personal-use only).
 
 ---
 
@@ -2436,9 +3829,9 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] S51 sprint order and caps (issue #51)
 
-**Context:** Issue #51 is the publish-kit sprint. It runs on one branch, `sprint-publish-kit`, with one PR to master at the end that Doru merges.
+**Context:** Issue #51 is the publish-kit sprint. It runs on one branch, `sprint-publish-kit`, with one PR to master at the end that the owner merges.
 
-**Decision:** Lots run 0 → 1 → 2 → 3 → 4 with per-lot caps of 1 / 6 / 4 / 8 / 1 USD and a ceiling of 25 USD. Lot 3 (HyperFrames graphics) was the first to be cut if the total ran short — it did not have to be. Doru added lots 5 (FilmCraft bridge, 5 USD) and 6 (publish kit for manual upload, 4 USD) on 2026-10-21; they run after lot 4 on the same branch and PR. Lot 6 is variant B per Doru's 2026-10-21 comment: the API upload is parked because an unaudited Google project cannot make videos public.
+**Decision:** Lots run 0 → 1 → 2 → 3 → 4 with per-lot caps of 1 / 6 / 4 / 8 / 1 USD and a ceiling of 25 USD. Lot 3 (HyperFrames graphics) was the first to be cut if the total ran short — it did not have to be. the owner added lots 5 (FilmCraft bridge, 5 USD) and 6 (publish kit for manual upload, 4 USD) on 2026-10-21; they run after lot 4 on the same branch and PR. Lot 6 is variant B per the owner's 2026-10-21 comment: the API upload is parked because an unaudited Google project cannot make videos public.
 
 **Why not split the sprint into separate PRs:** one branch and one PR keep the sprint reviewable as a whole and match the issue's plan.
 
@@ -2448,7 +3841,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Publish kit instead of API upload (S51 lot 6, variant B)
 
-**Context:** YouTube locks every video uploaded through the Data API from an **unaudited** Google project as private and it cannot go public before the project passes the YouTube API audit (same for TikTok's Content Posting API); Doru changed lot 6 on 2026-10-21 accordingly.
+**Context:** YouTube locks every video uploaded through the Data API from an **unaudited** Google project as private and it cannot go public before the project passes the YouTube API audit (same for TikTok's Content Posting API); the owner changed lot 6 on 2026-10-21 accordingly.
 
 **Decision:** No `yt_upload.py`; `publish.py --kit` writes `<project>/publish-kit/` (video + RO/EN SRTs + thumbnail + `studio.md` copy-ready blocks and a Studio-order checklist) with loud checks (title 100, description 5000, EN subtitles present, thumbnail <= 2 MB and 1280x720, tags <= 500); `metadata.py` writes `metadata.json` so the kit is deterministic from the validated model JSON; the lot 5 `loudness.py --video` pass is opt-in via `--kit-loudness`.
 
@@ -2464,7 +3857,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 **Options (destination):** (A) append the taps to the repo's `eval/<project>-edit.yaml`; (B) write a workspace-local `expectations.yaml` that `eval_edit.py --workspace WS --expect WS/expectations.yaml` reads; (C) only append to the existing `feedback.jsonl` action log.
 
-**Decision:** B, with one extra top-level key. `serve.py` gains a single write route `POST /<project>/expectations` (urlencoded `shot` / `kind` / `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET on that path stays 404) that appends to `<workspace>/expectations.yaml` in the exact shape `eval_edit.py` already reads: `must_include: [{any_of: [shot], note}]` for "must be in" and `wrong_label: [{shot, note}]` for "wrong label". Taps are idempotent per (shot, kind), the write is atomic and the file is machine-owned (rewritten with a header comment, so hand-written YAML comments are lost). `eval_edit.py` is unchanged and ignores `wrong_label` — those rows are the record Doru and the agents read before the next re-edit or re-analysis. The progress bar takes `brand.json` `colors.cool` through `progress::-webkit-progress-value` / `progress::-moz-progress-bar` (fallback `#57b8c4`, never a start-up failure).
+**Decision:** B, with one extra top-level key. `serve.py` gains a single write route `POST /<project>/expectations` (urlencoded `shot` / `kind` / `note`; 200 JSON, 400 one-line text, 404 unknown project, 405 otherwise; GET on that path stays 404) that appends to `<workspace>/expectations.yaml` in the exact shape `eval_edit.py` already reads: `must_include: [{any_of: [shot], note}]` for "must be in" and `wrong_label: [{shot, note}]` for "wrong label". Taps are idempotent per (shot, kind), the write is atomic and the file is machine-owned (rewritten with a header comment, so hand-written YAML comments are lost). `eval_edit.py` is unchanged and ignores `wrong_label` — those rows are the record the owner and the agents read before the next re-edit or re-analysis. The progress bar takes `brand.json` `colors.cool` through `progress::-webkit-progress-value` / `progress::-moz-progress-bar` (fallback `#57b8c4`, never a start-up failure).
 
 **Why not A:** live taps would mix into the committed regression fixtures. **Why not C:** the issue names the expectations file, and `eval_edit.py` must be able to check what the taps said.
 
@@ -2488,7 +3881,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Mode B cut rules: pauses, fillers, retakes (S56)
 
-**Context:** Issue #56 lot 1 turns talking-head + screen recording sessions into a rough cut a human finishes in FilmCraft; the reference is Doru's hand edit of the same material. The cut has to remove the dead air, the filler words and the restarted sentences without clipping words.
+**Context:** Issue #56 lot 1 turns talking-head + screen recording sessions into a rough cut a human finishes in FilmCraft; the reference is the owner's hand edit of the same material. The cut has to remove the dead air, the filler words and the restarted sentences without clipping words.
 
 **Options:** (A) cut silence by audio loudness (auto-editor's approach, `docs/research/prior-art.md` §2.6); (B) cut by the word timestamps Whisper already produced (gaps between words, filler tokens, restarted sentences); (C) let an LLM choose the cut list.
 
@@ -2516,7 +3909,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Unfinished reference: eval on the finished stretch; retake_similarity reverted (S56 follow-up)
 
-**Context:** Doru has edited only the first 150 s of the Second Brain reference; the lot 2 precision_used 0.64 was not a real ceiling and the tuned thresholds were fitted to partly uncut material. `eval_rough_cut.py --until-s S` was added (commit 3d269b4) and the two lot 2 threshold changes were re-checked on the `--until-s 150` slice: A1 (`retake_similarity` 0.75, `fillers.always` with `ok`) gives precision_used 0.5619, recall_used 0.9629, F1_used 0.7097; B (`retake_similarity` 0.55, `fillers.always` with `ok`) gives precision_used 0.5638, recall_used 0.9496, F1_used 0.7075.
+**Context:** the owner has edited only the first 150 s of the Second Brain reference; the lot 2 precision_used 0.64 was not a real ceiling and the tuned thresholds were fitted to partly uncut material. `eval_rough_cut.py --until-s S` was added (commit 3d269b4) and the two lot 2 threshold changes were re-checked on the `--until-s 150` slice: A1 (`retake_similarity` 0.75, `fillers.always` with `ok`) gives precision_used 0.5619, recall_used 0.9629, F1_used 0.7097; B (`retake_similarity` 0.55, `fillers.always` with `ok`) gives precision_used 0.5638, recall_used 0.9496, F1_used 0.7075.
 
 **Decision:** the headline numbers are the `--until-s 150` ones (precision_used 0.5619, recall_used 0.9629, F1_used 0.7097 for the final config); the full-sequence numbers are indicative only. `fillers.always` keeps `ok`; `retake_similarity` goes back to 0.75 because 0.55 costs 0.0133 recall_used for 0.0018 precision_used on the finished stretch.
 
@@ -2526,7 +3919,7 @@ The render builds a ramped slot from three trims (middle `setpts=(PTS-STARTPTS)/
 
 ## [2026-10-21] Phone cut review writes cut_review.yaml (S57 lot 1)
 
-**Context:** Issue #57 lot 1 adds a Cuts view to the web app so Doru can approve or reject each automatic Mode B cut from the phone. The taps must feed back into `rough_cut.py` on a rerun and into `eval_rough_cut.py` as ground truth.
+**Context:** Issue #57 lot 1 adds a Cuts view to the web app so the owner can approve or reject each automatic Mode B cut from the phone. The taps must feed back into `rough_cut.py` on a rerun and into `eval_rough_cut.py` as ground truth.
 
 **Options:** (A) reuse `expectations.yaml`; (B) a workspace-local `cut_review.yaml` written by `serve.py` and read by both Mode B tools; (C) only a UI log with no tool integration.
 
@@ -2995,76 +4388,3 @@ README short and its links resolving.
 **Context:** issue #95 — in the first holiday-flow pilot most cuts missed the beat; the director notes carried `cut k: not snapped to a beat (nearest X s away)` for 4 of the cuts. Reproduced on the first holiday pilot: the cuts that start a new `shot_plan` structure beat snap to the nearest **downbeat**, and the downbeat grid is sparse (every 4 beats ≈ 2.1 s), so the nearest downbeat is often farther than the half-beat snap window and the cut is left unsnapped even though a beat is ~0.2 s away.
 
 **Decision:** in `llm_director.snap_slots` a structure-beat cut prefers the nearest downbeat only when it lies inside the small window (`BEAT_SNAP_FRACTION × beat_period_s`); otherwise it lands on the nearest beat of the dense grid. Every cut is then on a beat. The rule-based `director.py` never passes downbeats, so it is unchanged. Measured on the first holiday pilot: 9/9 cuts snapped (was 7/9).
-
-## [2026-10-24] One model for every agent, reasoning level per agent (V020N lot n21)
-
-**Context:** the build agents ran on three OpenRouter models (`xiaomi/mimo-v2.6-pro`
-for the architect, `deepseek/deepseek-v4.1-flash` for the coder, `z-ai/glm-5.3-flash`
-as a fallback), so a lot's quality depended on which model happened to be picked
-and the fallback was easy to leave behind.
-
-**Options:** (A) keep the per-agent models and only document them; (B) one model
-for every agent, with the reasoning level set per agent.
-
-**Decision:** B. Every agent runs on `openrouter/deepseek/deepseek-v4.1-flash`;
-`xiaomi/mimo-v2.6-pro` and `z-ai/glm-5.3-flash` are dropped from `opencode.json`.
-The reasoning level is a `reasoning:` block in the agent file (`effort: high` for
-architect, coder and specwriter; `effort: xhigh` for the new `coder-max`), which
-opencode passes to OpenRouter. The architect hands a brief to `coder-max` only
-when the lot says "hard"; every other lot goes to `coder`.
-
-**Why not A:** the owner decided one model; a per-agent model split makes the
-output depend on the agent rather than the task, and the GLM fallback was never
-used.
-
-**Consequence:** `opencode.json` registers one model; `.opencode/agents/` holds
-four agent files; `docs/AGENT_SETUP.md` §8 lists the model and the reasoning
-level of each agent and when `coder-max` is used.
-
-## [2026-10-24] Chronological order survives the director's repairs, the reviewer box leaves the project page (V020N lot n25)
-
-**Context:** Issue #95/#93 follow-up. On a real holiday test with the brief "about 60 seconds, chronological" the final edit was not in time order (0003, 0072, 0081, 0072, ...): the top-star repair in `llm_director.py` puts the swapped-in star in the slot of the shot it replaces, so a late shot lands early. Separately, the owner decided the project page no longer shows the director reviewer box.
-
-**Options:** (A) make the repair pick a victim near the star in time; (B) let the repair swap in place and re-sort the edit (and its plan) by capture/source time afterwards, before the beat snap.
-
-**Decision:** B. `llm_director.enforce_chronological_order` re-sorts the record and the plan by `edit_order_key` when the brief's order is chronological; it runs at the end of `repair_draft` and at the start of `finish_record` (before the beat snap, so the snapped lengths stay valid), and a same-take jump cut it creates is dropped again. The project page (`serve.py`) no longer renders the reviewer box; the verdict stays in `edit.json meta.director.review` and issue #96 (v0.3.0) brings it back in plain words.
-
-**Why not A:** a victim near the star in time still leaves the star in a slot that is not exactly its place in time; the re-sort guarantees the order for every repair, not only the star swap.
-
-**Consequence:** RULES gains the chronological-repair rule and the reviewer-box line changes; the `yt-llm-director` skill and the user guide describe the re-sort and the hidden box; `serve.py` is a stable file, so the commit carries `Stable-change: approved`.
-
-## [2026-10-24] A simpler Watch tab, generic example wording (V020N lot n26)
-
-**Context:** issue #93 follow-up. The owner found the Watch (Recap) tab busier than it needs to be: the tab bar carried a **Details** group with **Why?** and **Shots** links, and the strip under the player showed a clip/photo colour legend. The owner also wanted `config.yaml.example` to stop carrying his own channel wording.
-
-**Options:** (A) keep the links and the legend and only hide them behind a feature flag; (B) drop the Why?/Shots links from the tab bar and the colour legend, keep the pages reachable by URL, and replace the owner's wording in the example with neutral placeholders.
-
-**Decision:** B. `serve._render_tabs` no longer builds the Details group, so the tab bar shows only Recap, Files, Cuts and Shorts; `render_strip` drops the `strip-legend` clip/photo spans and keeps the summary line in a `strip-summary` container. The `why`/`shots` feature parts, the `?tab=why` / `?tab=shots` routes and the `explain.html` / `shotlog.html` serving are unchanged, so the pages stay reachable by URL for the developer. `config.yaml.example` carries neutral `channel.fixed` placeholders (the real wording lives only in the owner's `config.yaml`).
-
-**Why not A:** a feature flag would keep the tab bar and the legend in the default instance; the owner wants the simpler page everywhere, and the pages are still one URL away.
-
-**Consequence:** `serve.py` changes (a stable file, so the commit carries `Stable-change: approved`) and `scripts/common/theme.py` loses the dead legend CSS; the user guide, the phone-flow guide and the `yt-recap` skill describe the shorter tab list; issue #93 tracks the follow-up.
-
-## [2026-10-24] Delete one version from the web app (V020N lot n29)
-
-**Context:** issue #109 — a project can be deleted from the web app, but a
-single version cannot, so old versions fill the disk of an instance.
-
-**Options:** (A) delete the version folder from the command line only; (B) a
-"Delete this version" action on the Recap tab, with an inline confirmation.
-
-**Decision:** B. `serve.py` gains `POST /<project>/delete-version` (urlencoded
-`version`, e.g. `v002`): it removes that version's folder under `versions/` and
-redirects to the latest version. The latest version, the first version (v001,
-the director's original) and a version while a run is going are refused; a name
-that is not `vNNN` (a crafted `../`) is a usage error, and the resolved target
-must sit directly under the project's `versions/` folder. The action shows only
-for a version that is neither the latest nor the first.
-
-**Why not A:** the owner asked for it in the phone flow; the version list and
-the disk are managed from the web app, and the confirmation matches the shot
-buttons.
-
-**Consequence:** RULES gains the route and the versions rule; the user guide
-and the `yt-recap` skill describe the action; `serve.py` is a stable file, so
-the commit carries `Stable-change: approved`.

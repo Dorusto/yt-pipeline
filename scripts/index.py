@@ -41,25 +41,17 @@ from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.errors import report_error
 from common.frames import thumbnail_data_uri
 from common.html import open_state_script
+from common.intent import is_deliberate_shot
 from common.overlap import overlap_fraction, overlap_seconds
 from common.photos import BLOCKING_PHOTO_FLAWS
 from common.peak import valid_vision_peak
 from common.schema import SchemaError, validate_or_raise
+from common.scoring import label_score
 from common.theme import THEME_CSS
 
 CLIP_COUNTER = re.compile(r"_(\d{4})_")
 DEFAULT_WEIGHT_VISION = 0.55
 DEFAULT_WEIGHT_LABELS = 0.45
-ROLE_BASE = {"hold": 0.55, "move": 0.50, "transition_in": 0.35, "transition_out": 0.35}
-STEADINESS_BONUS = {
-    "no_shaking": 0.15,
-    "minimal_shaking": 0.08,
-    "static": 0.10,
-    "unsteady": -0.10,
-    "very_unsteady": -0.20,
-}
-DEFECT_WEIGHTS = {"horizon": 0.5}
-DEFAULT_DEFECT_WEIGHT = 1.0
 INELIGIBLE_ROLES = {"accidental", "setup", "teardown"}
 NO_VISION_PRIOR = 0.5
 SUPPRESS_OVERLAP_RATIO = 0.5
@@ -306,7 +298,9 @@ def _build_shot(
     steadiness = _steadiness(segment, motion, role)
     defects = list(segment.get("defects") or [])
     eligible = _is_eligible(role, uncertainty)
-    labels = _label_score(role, confidence, steadiness, defects)
+    semantic_motion = vision.get("semantic_motion") if vision else None
+    deliberate = is_deliberate_shot(motion_label, semantic_motion)
+    labels = label_score(role, confidence, steadiness, defects, segment.get("whip"), deliberate)
     vision_score = _vision_score(vision)
     if eligible:
         fusion_vision = vision_score if vision_score is not None else NO_VISION_PRIOR
@@ -361,6 +355,10 @@ def _build_shot(
         "reason": _reason(vision, motion_label, label_source, role, defects, eligible, beat_label),
         "similar_to": list(similarity_map.get(key, [])),
         "defects": [defect.get("name") for defect in defects],
+        "faces_max": segment.get("faces_max"),
+        "face_size_max": segment.get("face_size_max"),
+        "face_seconds": segment.get("face_seconds"),
+        "whip": segment.get("whip"),
         "suppressed_by": None,
     }
 
@@ -517,22 +515,6 @@ def _best_overlapping_move(segment, moves):
             best_overlap = overlap
             best = move
     return best
-
-
-def _label_score(role, confidence, steadiness, defects):
-    score = ROLE_BASE.get(role, 0.0)
-    score += 0.25 * float(confidence or 0.0)
-    if steadiness in STEADINESS_BONUS:
-        score += STEADINESS_BONUS[steadiness]
-    if defects:
-        penalty = sum(
-            float(defect.get("value", 0.0)) * DEFECT_WEIGHTS.get(defect.get("name"), DEFAULT_DEFECT_WEIGHT)
-            for defect in defects
-        )
-        score -= min(0.4, penalty)
-    else:
-        score += 0.10
-    return clamp(score, 0.0, 1.0)
 
 
 def _fused_score(vision, labels, weight_vision, weight_labels):

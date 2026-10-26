@@ -9,6 +9,7 @@ from PIL import Image
 
 import index
 from common.schema import validate
+from common.scoring import label_score
 from common.exit_codes import EXIT_OK, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -308,14 +309,7 @@ def test_score_matches_formula_with_vision(tmp_path):
     data, _ = build(tmp_path, segments=[segment], describe_segments=[describe])
     shot = data["shots"][0]
 
-    expected_labels = index.clamp(
-        index.ROLE_BASE["hold"]
-        + 0.25 * 0.7
-        + index.STEADINESS_BONUS["static"]
-        + 0.10,
-        0.0,
-        1.0,
-    )
+    expected_labels = label_score("hold", 0.7, "static", [])
     expected_vision = min(1.0, 60 / 100)
     expected_score = (index.DEFAULT_WEIGHT_VISION * expected_vision + index.DEFAULT_WEIGHT_LABELS * expected_labels) / (
         index.DEFAULT_WEIGHT_VISION + index.DEFAULT_WEIGHT_LABELS
@@ -323,8 +317,8 @@ def test_score_matches_formula_with_vision(tmp_path):
     assert shot["scores"]["labels"] == pytest.approx(expected_labels)
     assert shot["scores"]["vision"] == pytest.approx(expected_vision)
     assert shot["score"] == pytest.approx(expected_score)
-    assert expected_labels == pytest.approx(0.925)
-    assert expected_score == pytest.approx(0.74625)
+    assert expected_labels == pytest.approx(0.725)
+    assert expected_score == pytest.approx(0.65625)
 
 
 def test_score_matches_formula_without_vision(tmp_path):
@@ -335,14 +329,7 @@ def test_score_matches_formula_without_vision(tmp_path):
     data, _ = build(tmp_path, segments=[segment], motion_moves=moves)
     shot = data["shots"][0]
 
-    expected_labels = index.clamp(
-        index.ROLE_BASE["move"]
-        + 0.25 * 0.5
-        + index.STEADINESS_BONUS["no_shaking"]
-        + 0.10,
-        0.0,
-        1.0,
-    )
+    expected_labels = label_score("move", 0.5, "no_shaking", [])
     expected_score = (
         index.DEFAULT_WEIGHT_VISION * index.NO_VISION_PRIOR
         + index.DEFAULT_WEIGHT_LABELS * expected_labels
@@ -350,8 +337,8 @@ def test_score_matches_formula_without_vision(tmp_path):
     assert shot["scores"]["vision"] is None
     assert shot["scores"]["labels"] == pytest.approx(expected_labels)
     assert shot["score"] == pytest.approx(expected_score)
-    assert expected_labels == pytest.approx(0.875)
-    assert expected_score == pytest.approx(0.66875)
+    assert expected_labels == pytest.approx(0.625)
+    assert expected_score == pytest.approx(0.55625)
 
 
 def test_missing_vision_uses_neutral_prior(tmp_path):
@@ -359,9 +346,9 @@ def test_missing_vision_uses_neutral_prior(tmp_path):
     data, _ = build(tmp_path, segments=[segment])
     shot = data["shots"][0]
     assert shot["scores"]["vision"] is None
-    assert shot["scores"]["labels"] == pytest.approx(0.925)
-    assert shot["score"] == pytest.approx(0.55 * index.NO_VISION_PRIOR + 0.45 * 0.925)
-    assert shot["score"] == pytest.approx(0.69125)
+    assert shot["scores"]["labels"] == pytest.approx(0.725)
+    assert shot["score"] == pytest.approx(0.55 * index.NO_VISION_PRIOR + 0.45 * 0.725)
+    assert shot["score"] == pytest.approx(0.60125)
 
 
 def test_hero_shot_gets_vision_boost(tmp_path):
@@ -1188,3 +1175,60 @@ def test_shotlog_page_shares_the_theme_tokens():
     for token in ("--water:#151619", "--sea:#4fb0bd", "--tap:44px",
                   "--font-display:", "prefers-color-scheme:light"):
         assert token in page
+
+
+def test_whip_short_hold_scores_low(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0)
+    segment["whip"] = "short_hold"
+    data, _ = build(tmp_path, segments=[segment])
+    shot = find(data, "0081/s1")
+    assert shot["scores"]["labels"] == pytest.approx(0.1)
+
+
+def test_deliberate_move_shake_not_penalised(tmp_path):
+    shake = {"name": "shake", "value": 0.5}
+    described = described_segment("s1", 0.0, 10.0, role="move", motion_label="complex_motion")
+    described["semantic_motion"] = "orbit"
+    with_shake, _ = build(
+        tmp_path / "with",
+        segments=[quality_segment("s1", 0.0, 10.0, role="move", motion_label="complex_motion", defects=[shake])],
+        describe_segments=[described],
+    )
+    without_shake, _ = build(
+        tmp_path / "without",
+        segments=[quality_segment("s1", 0.0, 10.0, role="move", motion_label="complex_motion")],
+        describe_segments=[described],
+    )
+    penalised = find(with_shake, "0081/s1")
+    clean = find(without_shake, "0081/s1")
+    assert penalised["scores"]["labels"] == pytest.approx(clean["scores"]["labels"])
+    assert "shake" in penalised["defects"]
+
+
+def test_shot_carries_face_fields(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0)
+    segment["faces_max"] = 2
+    segment["face_size_max"] = 0.15
+    segment["face_seconds"] = 4.0
+    data, _ = build(tmp_path, segments=[segment])
+    shot = find(data, "0081/s1")
+    assert shot["faces_max"] == 2
+    assert shot["face_size_max"] == pytest.approx(0.15)
+    assert shot["face_seconds"] == pytest.approx(4.0)
+    assert validate(data, "shotlog") == []
+
+
+def test_shot_carries_the_whip_mark(tmp_path):
+    segment = quality_segment("s1", 0.0, 10.0)
+    segment["whip"] = "deliberate"
+    data, _ = build(tmp_path, segments=[segment])
+    shot = find(data, "0081/s1")
+    assert shot["whip"] == "deliberate"
+    assert validate(data, "shotlog") == []
+
+
+def test_shot_without_a_whip_mark_is_null(tmp_path):
+    data, _ = build(tmp_path, segments=[quality_segment("s1", 0.0, 10.0)])
+    shot = find(data, "0081/s1")
+    assert shot["whip"] is None
+    assert validate(data, "shotlog") == []

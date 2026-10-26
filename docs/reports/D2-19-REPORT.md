@@ -2,7 +2,7 @@
 
 ## Works
 
-- `eval/kotor-edit.yaml` records Doru's v4 review as a file any agent can run: `must_include` (`0072/s5`, and `0072/s7b1` OR `0072/s7b5`) and `length_s: {target: 60, tolerance: 3}`. No footage, no paths — safe to commit.
+- `eval/kotor-edit.yaml` records the owner's v4 review as a file any agent can run: `must_include` (`0072/s5`, and `0072/s7b1` OR `0072/s7b5`) and `length_s: {target: 60, tolerance: 3}`. No footage, no paths — safe to commit.
 - `scripts/eval_edit.py` (standalone, `--help`/`--json`/`--out`, read-only) prints PASS/FAIL per expectation and exits 1 on any fail. 14 tests in `tests/test_eval_edit.py` on tiny fake edits; skill `.claude/skills/yt-eval-edit/SKILL.md`.
 - `llm_director.validate_edit` raises a blocking `hero_missing` when a top star (hero or score >= `STAR_MIN_SCORE` 0.85, from `common/moves.py`) from the top `STAR_SHARE` (40 %) of the slots is left out. `repair_draft` swaps it in for the weakest non-star slot of a compatible length, never creating a same-take jump cut, never falling back to the rules. A dropped hero photo stays the non-blocking `hero` warning. 6 new tests in `tests/test_llm_director.py`.
 - `STAR_MIN_SCORE`, `STAR_SHARE` and `is_star` moved to `scripts/common/moves.py`; `director.py` and `llm_director.py` both import them (the "no tool imports another tool" rule).
@@ -18,7 +18,7 @@
 - `fill_to_target` was verified on the real workspace and in one unit test; it has no test for the "no unused candidate left" edge.
 - Vision/eval on the *visual* quality of the new cut (does the story still read?) — not checked here; only the mechanical expectations.
 
-## Doru, check this
+## the owner, check this
 
 1. `python scripts/eval_edit.py --workspace ~/media/projects/kotor-demo --expect eval/kotor-edit.yaml` → `3 passed, 0 failed`.
 2. `python -c "import json; print(json.load(open('/root/media/projects/kotor-demo/edit.json'))['meta']['director'])"` → `"by": "llm"`, notes list the swaps.

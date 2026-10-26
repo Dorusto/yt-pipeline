@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Dorusto/yt-pipeline/schemas/eval.schema.json",
   "title": "eval",
-  "description": "Ground-truth evaluation report written by scripts/eval_labels.py: how well the workspace motion and quality outputs match the labels Doru wrote from what he filmed. Scores are interval-overlap based, 0..1, higher is better. Components absent from a clip's ground truth are null, never zero.",
+  "description": "Ground-truth evaluation report written by scripts/eval_labels.py: how well the workspace motion and quality outputs match the labels the owner wrote from what he filmed. Scores are interval-overlap based, 0..1, higher is better. Components absent from a clip's ground truth are null, never zero.",
   "type": "object",
   "required": [
     "generated_at",

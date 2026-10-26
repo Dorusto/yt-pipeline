@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared HTML snippets for the generated pages.
 
-The Why? and Shots pages both keep their ``<details data-keep>`` open state in
+The explain and Shots pages both keep their ``<details data-keep>`` open state in
 ``sessionStorage``; the key prefix keeps the two pages apart.
 """
 

@@ -11,6 +11,6 @@
 - Not run with the real model on kotor-demo yet: whether the repaired draft keeps 0072/s5, s7b1/s7b5 needs a real re-edit.
 - Thresholds (40 %, 0.85, 8 s) are first guesses.
 
-## Doru, check this
+## the owner, check this
 - `git pull`, restart `web`, Re-edit kotor-demo (60 s): Why? starts with "Edited by the model" or the fallback reason.
 - Shots tab → "Good but left out": the list should be short and not contain the tunnel heroes.

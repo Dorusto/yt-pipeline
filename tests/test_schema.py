@@ -213,22 +213,6 @@ def test_route_rejects_unknown_content_type():
     assert any("cooking" in e for e in schema.validate(data, "route"))
 
 
-def test_shot_plan_fixture_passes():
-    assert schema.validate(load("shot_plan_valid.json"), "shot_plan") == []
-
-
-def test_shot_plan_rejects_empty_structure():
-    data = load("shot_plan_valid.json")
-    data["structure"] = []
-    assert any("structure" in e for e in schema.validate(data, "shot_plan"))
-
-
-def test_shot_plan_requires_why():
-    data = load("shot_plan_valid.json")
-    del data["slot_plan"][0]["why"]
-    assert any("why" in e for e in schema.validate(data, "shot_plan"))
-
-
 def test_edit_middle_speed_is_optional_and_bounded():
     data = load("edit_valid.json")
     video = next(item for item in data["video"] if item.get("kind") != "photo")
@@ -241,3 +225,25 @@ def test_edit_middle_speed_is_optional_and_bounded():
     assert any("middle_speed" in e or "video/0" in e for e in schema.validate(data, "edit"))
     video["middle_speed"] = 0.9
     assert any("middle_speed" in e or "video/0" in e for e in schema.validate(data, "edit"))
+
+
+def test_edit_director_by_accepts_agent():
+    data = load("edit_valid.json")
+    data["meta"] = {
+        "tool": "scripts/llm_director.py",
+        "wall_time_s": 1.0,
+        "llm_cost_usd": 0.0,
+        "director": {"by": "agent", "approved": True, "notes": []},
+    }
+    assert schema.validate(data, "edit") == []
+
+
+def test_edit_director_by_rejects_unknown():
+    data = load("edit_valid.json")
+    data["meta"] = {
+        "tool": "scripts/llm_director.py",
+        "wall_time_s": 1.0,
+        "llm_cost_usd": 0.0,
+        "director": {"by": "robot", "approved": True, "notes": []},
+    }
+    assert schema.validate(data, "edit")

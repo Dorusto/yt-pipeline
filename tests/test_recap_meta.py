@@ -114,6 +114,48 @@ def test_dry_run_message_has_the_sections(tmp_path, monkeypatch, capsys):
     assert "- a wide shot of the valley" in message
 
 
+def test_style_section_from_config(tmp_path, monkeypatch, capsys):
+    write_edit(tmp_path / "edit.json")
+    config = dict(CONFIG)
+    config["channel"] = {"style": {"title_style": "short and concrete"}}
+    client = FakeClient([json.dumps(VALID)])
+    patch(monkeypatch, client, config=config)
+    assert recap_meta.main(["--workspace", str(tmp_path), "--dry-run", "--json"]) == EXIT_OK
+    summary = json.loads(capsys.readouterr().out)
+    message = summary["message"]
+    assert "\n\n## Style\n" in message
+    assert "title_style: short and concrete" in message
+
+
+def test_style_section_omitted_when_unset(tmp_path, monkeypatch, capsys):
+    write_edit(tmp_path / "edit.json")
+    client = FakeClient([json.dumps(VALID)])
+    patch(monkeypatch, client)
+    assert recap_meta.main(["--workspace", str(tmp_path), "--dry-run", "--json"]) == EXIT_OK
+    summary = json.loads(capsys.readouterr().out)
+    assert "\n\n## Style\n" not in summary["message"]
+
+
+def test_style_section_omits_description_order(tmp_path, monkeypatch, capsys):
+    write_edit(tmp_path / "edit.json")
+    config = dict(CONFIG)
+    config["channel"] = {
+        "style": {
+            "title_style": "short and concrete",
+            "description_order": "closing, intro, subscribe",
+            "pinned_comment_voice": "plain first person",
+        }
+    }
+    client = FakeClient([json.dumps(VALID)])
+    patch(monkeypatch, client, config=config)
+    assert recap_meta.main(["--workspace", str(tmp_path), "--dry-run", "--json"]) == EXIT_OK
+    summary = json.loads(capsys.readouterr().out)
+    message = summary["message"]
+    assert "title_style:" in message
+    assert "pinned_comment_voice:" in message
+    assert "description_order:" not in message
+
+
 def test_valid_answer_writes_and_validates(tmp_path, monkeypatch, capsys):
     write_edit(tmp_path / "edit.json")
     client = MockClient(text=json.dumps(VALID), config=CONFIG, cost_per_call=0.002)

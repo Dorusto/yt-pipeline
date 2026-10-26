@@ -31,10 +31,10 @@ Phase LLM spend: **$0.043** (budget 1 USD).
   540 s for **$0.043**. Second run: `skipped (nothing new)` at $0. State in
   `<projects>/inbox_state.json`; a new clip, a changed brief or `--force`
   re-invokes recap. 34 tests.
-- **`docs/guides/phone-flow.md` + skill phrases** — Doru's step-by-step
+- **`docs/guides/phone-flow.md` + skill phrases** — the owner's step-by-step
   (Syncthing phone send-only → LXC receive-only `~/media/inbox`, watcher +
   server commands, ntfy app, Hermes gets the `yt-recap` skill, troubleshooting,
-  privacy). Every system command is labelled as Doru's step — the repo installs
+  privacy). Every system command is labelled as the owner's step — the repo installs
   nothing. The `yt-recap` skill maps the Telegram phrases ("fă-mi un recap din
   clipurile de azi" → `inbox.py --once --notify`, "trimite-mi linkul" → the
   serve.py URL, etc.). Every flag cross-checked against the tools' `--help`.
@@ -48,12 +48,12 @@ Phase LLM spend: **$0.043** (budget 1 USD).
   threads; only the acceptance run exercised the real chain (one project, five
   clips).
 - Syncthing, ntfy app, Hermes and the systemd user units are **not** installed
-  here — `docs/guides/phone-flow.md` is written for Doru to run on his
+  here — `docs/guides/phone-flow.md` is written for the owner to run on his
   machines; the guide's commands are untested end-to-end on a real phone.
 - The watch loop was tested through SIGINT in tests, not by leaving it running
   for days.
 
-## Doru, check this
+## the owner, check this
 
 1. Read `docs/guides/phone-flow.md` — are the Syncthing + Hermes steps the
    ones you want to run for the demo?

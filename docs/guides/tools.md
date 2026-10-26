@@ -4,6 +4,28 @@ Every tool, grouped. The [README](../../README.md) is the front door; this is th
 reference. Each tool is a standalone script in `scripts/` with `--help`, `--json`
 and re-run safety; shared code lives in `scripts/common/`.
 
+## The yt entry point
+
+`scripts/yt.py` (launched by `bin/yt`) runs any tool from any folder:
+
+```bash
+yt doctor --source <folder>
+yt recap --source <folder> --brief <brief>
+```
+
+`yt <tool> [args...]` resolves the repository root (`YT_PIPELINE_HOME` first,
+else walking up from the script to the folder holding `scripts/` and
+`requirements.txt`) and the Python (`YT_PIPELINE_VENV`, else
+`<root>/.venv/bin/python`, else the plugin's own virtual environment under
+`~/.claude/plugins/data/`, else `python3`), then runs `scripts/<tool>.py` with
+the remaining arguments and propagates its exit code unchanged. `yt --help`
+lists the tools; `yt --json` and `yt --help --json` print the same JSON (the
+resolved root, Python and tool list). `bin/yt` is a thin launcher that finds a
+Python and runs `scripts/yt.py`.
+
+`scripts/yt_mcp.py` serves one plugin's tools over MCP (`yt yt_mcp --plugin
+<name>`), see `docs/AGENT_SETUP.md`, "Typed tools (MCP)".
+
 ---
 
 ## The finished-clip pipeline
@@ -60,11 +82,13 @@ All scripts live in `scripts/` (see paths above for exact commands).
 | `rough_cut.py` | `sessions.yaml` (camera + optional screen + words JSON) | `edit.json` rough cut (silence, fillers, retakes cut) |
 | `notify.py` | message | POST to the project's ntfy topic |
 | `inbox.py` | watcher | inbox folder → project per day → `recap.py` |
-| `serve.py` | server | preview of the workspaces on the tailnet plus the shotlog page's expectations buttons (reachable by URL only), the Mode B Cuts-tab cut review, the Re-edit box's "Ask the director" reply, the read-only Costs page, the feedback/requests form, per-project delete and per-version delete, per-instance feature switches, the upload consent checkbox, the tab bar Recap / Files / Cuts / Shorts (the explain and shotlog pages stay reachable by URL only), the poster cards and the shot-strip thumbnails |
+| `serve.py` | server | preview of the workspaces on the tailnet plus the shotlog page's expectations buttons (reachable by URL only), the Mode B Cuts-tab cut review, the Director tab's chat with the director, the read-only Costs page, the feedback/requests form, per-project delete and per-version delete, per-instance feature switches, the upload consent checkbox, the tab bar Recap / Director / Files / Cuts / Shorts (the explain and shotlog pages stay reachable by URL only), the poster cards and the shot-strip thumbnails |
 | `thumbs.py` | workspace with `edit.json` + recap | `thumbs/poster.jpg` + `thumbs/shot-N.jpg` (320 px); skill `yt-thumbs` |
 | `costs.py` | ledger DB + subcommand | SQLite ledger / totals JSON |
 | `edit_drop.py` | workspace with `versions/` | new version with shots removed or a shot made longer/shorter (no model call) |
 | `recap_meta.py` | `edit.json` | `recap_meta.json` (title, description, hashtags) |
+
+`recap_meta.py` also hands the channel's `channel.style` parts (`title_style`, `pinned_comment_voice`) to the model in a `## Style` section, one line per part; a missing part is left out.
 
 Every script prints one JSON summary with `--json` (`wall_time_s` and `llm_cost_usd` included, human lines on stderr) and never blocks on a prompt without a TTY: interactive questions have flag alternatives (`analyze_srt.py --select`, `shorts_generator.py --video`/`--audio`/`--srt`) and a missing flag without a terminal is a usage error.
 
@@ -117,14 +141,19 @@ Skills: `yt-ingest`, `yt-motion`, `yt-quality`, `yt-eval`.
 |:---|:---|:---|
 | `ingest.py` | folder of clips | `ws/ingest.json` — duration, fps, resolution, streams, creation time, gyro present |
 | `motion.py` | one clip or a folder | `ws/motion/<stem>.json` — trajectory, motion phases, CameraBench moves with steady range + handles |
-| `quality.py` | one clip or a folder | `ws/quality/<stem>.json` — per segment: role (move, hold, transition in/out, setup, teardown, accidental) with confidence + measured defects (blur, exposure, shake, obstruction, horizon) |
+| `quality.py` | one clip or a folder | `ws/quality/<stem>.json` — per segment: role (move, hold, transition in/out, setup, teardown, accidental) with confidence + measured defects (blur, exposure, shake, obstruction, horizon, face_cut), the per-segment face counts and the `whip` mark |
 | `eval_labels.py` | ground-truth YAML + workspace | per-clip and total move/role/horizon/event scores (table, or `--json`/`--out` report validated against `eval.schema.json`) |
 
 All three analysis tools accept `--json`, re-run safely (existing outputs are
 skipped, `--force` re-analyses) and validate their output against `schemas/`.
 `quality.py` prefers a matching `ws/motion/<stem>.json` and falls back to coarse
-frame-diff segmentation without it. `eval_labels.py` reads the workspace only and
-writes nothing unless `--out` is given.
+frame-diff segmentation without it. `quality.py` counts faces with YuNet on the
+frames it already samples (`--no-faces` skips it) and marks the whip short-hold
+pattern. `eval_labels.py` reads the workspace only and
+writes nothing unless `--out` is given. The vision stage `describe.py` (D1b)
+describes the kept segments and the still photos; its per-clip model calls run in
+a small worker pool (`--workers`, default 4, `1` = sequential) and the outputs
+are written in the original order.
 
 ---
 
@@ -148,7 +177,46 @@ Skill: `yt-director`.
 |:---|:---|:---|
 | `director.py` | `ws/ingest.json` + `ws/motion/*.json` + `ws/quality/*.json` | `ws/edit.json` — video slots (clip, in/out, score, reason) + audio/captions/graphics plan |
 
-The LLM director keeps its last reviewer verdict in `edit.json` `meta.director.review`, and `--interpret-feedback TEXT` says how the director reads a feedback request (one cheap call, no edit written) with a cost/time estimate.
+The LLM director runs the film crew: one director call writes `director_plan.json` (the idea, the structure and the shots, schema `schemas/director_plan.schema.json`), the code editor cuts it into `edit.json` and `editor_report.json` without changing the shots, and the director reviews the cut — one picture per shot plus the editor report — for at most 2 rounds. A not-approved review carries a complete revised plan and its notes; after the second round the cut is delivered with the remaining notes in `edit.json` `meta.director.notes`. `director_rounds.json` records every round with its plan, report, review and cost. The rule-based `director.py` is the fallback only when the model gives no usable plan and the `--dry-run` baseline. The director is offered a shortlist of the eligible candidates — every star plus the top-K by score (K = 2 × the plan's slot count, min 24, max 60) plus every clip's best eligible segment (unless it is a whip short-hold), in the shotlog's chronological order — instead of the whole pool. `--chat TEXT` talks to the director about the current edit: one director call with the last plan, the editor report, the rounds, the owner's notes and the notebook; the answer is a plain reply and, when the owner decided something, a short `decision_note` stored as an owner note; no edit written. `--reasoning-effort` (`low`, `medium`, `high` or `off`) sets how much hidden reasoning the model spends and overrides `director.reasoning_effort` in the config (default `medium`); every call carries it as OpenRouter's `reasoning` body (`off` disables reasoning), and there is no environment variable.
+
+The agent mode splits the flow in two so a host coding agent can direct the edit without an OpenRouter key. `--prepare` writes `<workspace>/director/inputs.md` — the director prompt, the brief and its facts, the brief settings, the notebook and the payload (the brief, the shot facts, the owner's notes and the notebook) — and makes no model call. The host agent writes `<workspace>/director_plan.json` (schema `schemas/director_plan.schema.json`), then `--apply` validates it, runs the code editor and writes the final `edit.json` and `editor_report.json` with `meta.director.by = "agent"`. For the notes round, `--prepare --review` writes the pictures of the cut and the editor report into `inputs.md`; the host agent writes `<workspace>/director_review.json` (schema `schemas/director_review.schema.json`) and runs `--apply` again — at most 2 rounds, then the cut is delivered with the notes. `--prepare` and `--apply` are mutually exclusive with each other, `--chat` and `--dry-run`; `--review` needs `--prepare`.
+
+```bash
+.venv/bin/python scripts/llm_director.py --workspace /path/to/ws \
+  --brief "about 90 seconds, chronological" --prepare --json
+.venv/bin/python scripts/llm_director.py --workspace /path/to/ws \
+  --brief "about 90 seconds, chronological" --apply --json
+.venv/bin/python scripts/llm_director.py --workspace /path/to/ws \
+  --brief "about 90 seconds, chronological" --prepare --review --json
+```
+
+### Code editor (director rewrite, V030 lot R3)
+
+`director_editor.py` executes a validated `director_plan.json` (the director rewrite's plan: idea, structure, shots) and writes `edit.json` plus a short `editor_report.json` — the exact cut windows around the director's moments, on the beat when a beat grid is given, never changing the shots. No model call.
+
+```bash
+.venv/bin/python scripts/director_editor.py --workspace /path/to/ws \
+  --plan /path/to/ws/director_plan.json --json
+```
+
+### Notebook (learning notebook)
+
+`notebook.py` reads and edits the instance's learning notebook — a small JSON file (`schemas/notebook.schema.json`) of short lessons the director keeps between edits, at most 40 of them. Skill: `yt-notebook`.
+
+```bash
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --list
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --add "keep the tunnel longer"
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --remove l003
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --merge l001,l002 --text "..."
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --propose members_sentence --text "..."
+.venv/bin/python scripts/notebook.py --notebook /path/to/notebook.json --learn --workspace /path/to/workspace
+```
+
+- The path comes from `--notebook`, else `YT_PIPELINE_NOTEBOOK`, else `notebook.path` in the config; it is optional, so with none of the three set the director reads nothing and the web app shows no section — there is no personal default. A missing file is an empty notebook; the first write creates it.
+- Exactly one command is required: `--list`, `--add`, `--remove`, `--merge`, `--propose` or `--learn`. Ids are `lNNN` (zero-padded to 3, one past the highest id across the lessons and the waiting lessons). `--merge IDS --text TEXT` removes the named lessons and appends one lesson; an unknown id is a usage error naming the id.
+- The 40-lesson limit is a code rule (`--limit` overrides it for tests). A write past the limit fails with `EXIT_USAGE` and the message `notebook is full (40 lessons): merge overlapping lessons or remove stale ones first, then retry`; nothing is written. A learn pass that still does not fit after its merge call keeps the new lessons as `waiting` lessons in the file (never dropped) and promotes them into `lessons` as soon as there is room; the director never sees them. The `waiting` list holds at most 3 lessons in total.
+- `--propose PART --text TEXT` records a proposal to move a repeated sentence to `channel.fixed.<part>` (`members_sentence`, `closing` or `thumbnail_formula`); the code never writes the config — the owner says yes by editing it. `llm_director.py` reads the notebook before every edit and `serve.py` shows it in the **Director** tab with a delete form.
+- `--learn --workspace PATH` runs the learning pass: it reads the workspace's `feedback.jsonl` rows newer than the `last_learn_at` in the machine-owned marker `<workspace>/.learn.json`, makes one cheap `metadata`-class model call through `common/llm.py` (the cost is charged to the notebook ledger next to the notebook file, `notebook.spend.json`) and writes at most 3 short lessons. When the 40-lesson limit would be passed it makes one more merge call (`prompts/notebook_merge.md`) to merge overlapping lessons or remove stale ones; lessons that still do not fit are kept as `waiting` lessons in the file (never dropped). With no new feedback it is skipped, makes no model call and writes nothing. A pass whose waiting list is full makes no model call, reports `"status": "waiting_full"`, writes nothing and leaves the marker; a notebook that already holds more lessons than the limit does the same (reason `the notebook is over its limit`), the over-limit lessons staying in the file as lessons until the owner removes some; the overflow to waiting is capped at 3, the rest staying in `lessons`; when some room is left it asks for at most the remaining room's worth of new lessons, so nothing is learned twice. After the merge step any lesson past the limit (merged ones included) goes to waiting, newest first, so the notebook never holds more than the limit. `--workspace` is required with `--learn` and only valid with it; a missing `OPENROUTER_API_KEY` is `EXIT_USAGE`, an unparseable answer is `EXIT_RUNTIME`.
 
 ---
 
@@ -414,6 +482,7 @@ The `verify` step compares the corrected `<name>_RO.srt` with the final video al
 - `--title` is the chosen title the human already picked; the model gets it in a `## Chosen title` section and uses it verbatim as the first title.
 - `--chapters` takes a `chapters.json` (validated against `schemas/chapters.schema.json`) and uses its chapters instead of the model's.
 - The channel's fixed wording comes from `channel.fixed` in the config, one string per language: `members_sentence` (with `{members}` filled from `channel.members`) and `closing` are inserted verbatim, the RO description getting the RO string and the EN description the EN one. A missing part, a missing language or an empty string leaves that part out — never replaced by built-in text. `channel.members` is required only when a `members_sentence` string contains the `{members}` placeholder; a channel that does not thank members in the description runs without it.
+- The channel's own style instructions come from `channel.style` in the config, one non-empty string per part (`title_style`, `description_order`, `pinned_comment_voice`). The tool hands the present parts to the model in a `## Style` section, one line per part; a missing part is left out — never replaced by built-in text. `thumbnail_formula` stays in `channel.fixed`. The `channel.style.description_order` list sets the order of the description parts (`intro`, `github`, `members`, `previous`, `subscribe`, `promo`, `closing`); an unknown name is a config error; unset keeps the default order.
 - A chapter may carry `title_en`; when at least one does, the draft adds a `## Chapters (EN)` section and `metadata.json` keeps `title_en` per chapter.
 
 ### Thumbnail concepts (thumbnail_concepts.py)

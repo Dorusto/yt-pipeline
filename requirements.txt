@@ -1,4 +1,5 @@
 opencv-python-headless
+numpy
 openai
 openai-whisper
 pillow
@@ -8,6 +9,7 @@ pysubs2
 pyyaml
 jsonschema
 filelock
+mcp
 psutil
 rembg[cpu]
 torch

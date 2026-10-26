@@ -370,14 +370,6 @@ def test_no_storage_message_names_the_flag():
     assert "limits.storage_gb" in message
 
 
-def test_no_project_totals_message_names_the_flag():
-    message = config.no_project_totals_message("--project-totals-url")
-    assert "no project totals URL configured" in message
-    assert "--project-totals-url" in message
-    assert config.PROJECT_TOTALS_URL_ENV in message
-    assert "costs.project_totals_url" in message
-
-
 def test_brand_logo_defaults_to_option_1(monkeypatch):
     monkeypatch.delenv(config.BRAND_LOGO_ENV, raising=False)
     assert config.brand_logo(config={}) == "option-1"
@@ -461,3 +453,169 @@ def test_channel_fixed_unknown_key_raises(tmp_path):
     with pytest.raises(config.ConfigError) as exc:
         config.load_config(write_config(tmp_path, data))
     assert "nope" in str(exc.value)
+
+
+def test_channel_style_loads(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {
+        "style": {
+            "title_style": "short and concrete",
+            "pinned_comment_voice": "plain first person",
+        },
+    }
+    loaded = config.load_config(write_config(tmp_path, data))
+    assert loaded["channel"]["style"]["title_style"] == "short and concrete"
+    assert loaded["channel"]["style"]["pinned_comment_voice"] == "plain first person"
+
+
+def test_channel_style_invalid_raises(tmp_path):
+    for bad in (
+        "nope",
+        {"title_style": ""},
+        {"title_style": 5},
+        {"nope": "x"},
+    ):
+        data = copy.deepcopy(VALID)
+        data["channel"] = {"style": bad}
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, data))
+
+
+def test_channel_style_description_order_loads(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"style": {"description_order": "closing, intro, subscribe"}}
+    loaded = config.load_config(write_config(tmp_path, data))
+    assert loaded["channel"]["style"]["description_order"] == "closing, intro, subscribe"
+
+
+def test_channel_style_description_order_unknown_part_raises(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"style": {"description_order": "intro, nope"}}
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_config(write_config(tmp_path, data))
+    assert "nope" in str(exc.value)
+
+
+def test_channel_style_description_order_empty_raises(tmp_path):
+    for value in (",", "  "):
+        data = copy.deepcopy(VALID)
+        data["channel"] = {"style": {"description_order": value}}
+        with pytest.raises(config.ConfigError):
+            config.load_config(write_config(tmp_path, data))
+
+
+def test_channel_style_description_order_duplicate_raises(tmp_path):
+    data = copy.deepcopy(VALID)
+    data["channel"] = {"style": {"description_order": "intro, intro"}}
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_config(write_config(tmp_path, data))
+    assert "intro" in str(exc.value)
+
+
+def test_beats_engine_defaults_to_numpy(monkeypatch):
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    assert config.beats_engine(config={}) == "numpy"
+
+
+def test_beats_engine_reads_flag_env_and_config(monkeypatch):
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    assert config.beats_engine("beat_this", {"beats": {"engine": "numpy"}}) == "beat_this"
+    monkeypatch.setenv(config.BEATS_ENGINE_ENV, "beat_this")
+    assert config.beats_engine(None, {"beats": {"engine": "numpy"}}) == "beat_this"
+    assert config.beats_engine("numpy", {"beats": {"engine": "beat_this"}}) == "numpy"
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    assert config.beats_engine(None, {"beats": {"engine": "beat_this"}}) == "beat_this"
+
+
+def test_beats_engine_rejects_an_unknown_value(monkeypatch):
+    monkeypatch.delenv(config.BEATS_ENGINE_ENV, raising=False)
+    with pytest.raises(config.ConfigError):
+        config.beats_engine("bogus", {})
+    monkeypatch.setenv(config.BEATS_ENGINE_ENV, "bogus")
+    with pytest.raises(config.ConfigError):
+        config.beats_engine(None, {})
+
+
+def test_beats_section_validated(tmp_path):
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("beats", {"engine": "bogus"})))
+    loaded = config.load_config(write_config(tmp_path, with_value("beats", {"engine": "beat_this"})))
+    assert loaded["beats"]["engine"] == "beat_this"
+
+
+def test_whip_min_hold_s_default_and_override(tmp_path):
+    assert config.whip_min_hold_s({}) == 3.0
+    assert config.whip_min_hold_s({"whip": {"min_hold_s": 2.5}}) == 2.5
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("whip", {"min_hold_s": -1})))
+
+
+def test_director_reasoning_effort_defaults_to_medium():
+    assert config.director_reasoning_effort(config={}) == "medium"
+
+
+def test_director_reasoning_effort_flag_wins_over_config():
+    assert config.director_reasoning_effort("high", {"director": {"reasoning_effort": "medium"}}) == "high"
+
+
+def test_director_reasoning_effort_reads_the_config():
+    assert config.director_reasoning_effort(None, {"director": {"reasoning_effort": "medium"}}) == "medium"
+
+
+def test_director_reasoning_effort_rejects_an_unknown_value():
+    with pytest.raises(config.ConfigError):
+        config.director_reasoning_effort("bogus", {})
+    with pytest.raises(config.ConfigError):
+        config.director_reasoning_effort(None, {"director": {"reasoning_effort": "bogus"}})
+
+
+def test_director_section_validated(tmp_path):
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("director", {"reasoning_effort": "bogus"})))
+    loaded = config.load_config(write_config(tmp_path, with_value("director", {"reasoning_effort": "off"})))
+    assert loaded["director"]["reasoning_effort"] == "off"
+
+
+def test_recap_meta_section_validated(tmp_path):
+    loaded = config.load_config(write_config(tmp_path, with_value("recap", {"meta": True})))
+    assert loaded["recap"]["meta"] is True
+    loaded = config.load_config(write_config(tmp_path, with_value("recap", {"meta": False})))
+    assert loaded["recap"]["meta"] is False
+    for bad in ("yes", 1, "true"):
+        with pytest.raises(config.ConfigError) as exc:
+            config.load_config(write_config(tmp_path, with_value("recap", {"meta": bad})))
+        assert "recap.meta" in str(exc.value)
+    with pytest.raises(config.ConfigError):
+        config.load_config(write_config(tmp_path, with_value("recap", "nope")))
+
+
+def test_recap_meta_enabled_flag_wins():
+    assert config.recap_meta_enabled(True, {"recap": {"meta": False}}) is True
+    assert config.recap_meta_enabled(False, {"recap": {"meta": True}}) is False
+
+
+def test_recap_meta_enabled_reads_the_config():
+    assert config.recap_meta_enabled(None, {"recap": {"meta": True}}) is True
+    assert config.recap_meta_enabled(None, {"recap": {"meta": False}}) is False
+
+
+def test_recap_meta_enabled_defaults_to_false():
+    assert config.recap_meta_enabled(None, {}) is False
+    assert config.recap_meta_enabled(None, {"recap": {}}) is False
+    assert config.DEFAULT_RECAP_META is False
+
+
+def test_shot_limits_defaults_and_overrides():
+    assert config.shot_limits("vacation", config={}) == {"min_s": 1.5, "max_s": 8.0}
+    rows = {"director": {"shot_limits": {"default": {"max_s": 6}, "tutorial": {"min_s": 3, "max_s": 20}}}}
+    assert config.shot_limits("vacation", config=rows) == {"min_s": 1.5, "max_s": 6.0}
+    assert config.shot_limits("tutorial", config=rows) == {"min_s": 3.0, "max_s": 20.0}
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [{"default": {"max_s": 0}}, {"default": {"min_s": 9, "max_s": 3}}, {"default": {"fast": 1}}, {"default": 5}, [1]],
+)
+def test_bad_shot_limits_are_rejected(limits):
+    with pytest.raises(config.ConfigError):
+        config._validate_shot_limits(limits)

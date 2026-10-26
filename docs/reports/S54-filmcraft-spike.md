@@ -1,6 +1,6 @@
 # S54 — FilmCraft export spike (lot 1)
 
-Draft report for Doru to confirm. Scope: can `edit.json` be exported to an
+Draft report for the owner to confirm. Scope: can `edit.json` be exported to an
 editable FilmCraft `.fcproj` without FilmCraft installed at export time?
 
 ## What works
@@ -28,7 +28,7 @@ editable FilmCraft `.fcproj` without FilmCraft installed at export time?
 - Media is referenced by path, never embedded; a missing path with
   `offline: false` opens fine (offline media), `offline: true` is refused.
   Ticks: 254 016 000 000 per second.
-- **Marker interpretation (for Doru to confirm):** "a marker per edit decision
+- **Marker interpretation (for the owner to confirm):** "a marker per edit decision
   that has a reason, Green sections / Rose to redo / Mango animation" = one
   marker per used slot with a reason (Green) at the slot's timeline in-point,
   REPLACED by a Rose marker when the slot is flagged for a human check
@@ -89,7 +89,7 @@ churn risk if FilmCraft bumps it.
 
 Adopt route A. Format churn is contained in one module (`export_filmcraft.py`),
 and the headless open plus the round trip prove the file is editable. Kdenlive
-export stays the fallback until Doru opens a real project on his machine.
+export stays the fallback until the owner opens a real project on his machine.
 
 ## Proposed DECISIONS entry
 

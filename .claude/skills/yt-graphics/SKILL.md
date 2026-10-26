@@ -1,7 +1,7 @@
 ---
 name: yt-graphics
 description: Plan where graphic overlays belong on a timeline (graphics_plan.py, the graphics model proposes time, template, props and reason for human approval) and render the approved ones (graphics.py) as ProRes 4444 .mov files with alpha at timeline resolution, ready to drop over the edit in the editor. The engine is HyperFrames (Apache-2.0); the look comes from brand.json. Use when the user wants a lower third, a counter or a callout overlay, a transparent graphic for the edit, a graphics plan, or to render the approved entries of a graphics plan. Trigger phrases - "randeaza un lower third", "graphic overlay", "counter overlay", "callout animat", "graphics.py", "graphics_plan.py", "planul de grafice", "unde pun graficele", "plan the graphics", "ProRes overlay cu alpha", "lower third cu brandul", "render the graphics plan". Not for placing the overlay on a timeline (the editor's job), not for captions/ASS burn-in (that is the render) and not for still thumbnails (that is `thumbnail`).
-compatibility: Run from the repository root. `graphics_plan.py` needs the `graphics` model role in the config (OpenRouter or `llm_backend: mock`). `graphics.py` needs Node.js 22+ and npx on PATH for the default `--backend hyperframes` (the pinned HyperFrames CLI is fetched by npx, never vendored) and ffmpeg/ffprobe for `--backend mock` and the alpha check; it makes no LLM calls, so its run costs 0 USD.
+compatibility: Run with the `yt` entry point on PATH. `graphics_plan.py` needs the `graphics` model role in the config (OpenRouter or `llm_backend: mock`). `graphics.py` needs Node.js 22+ and npx on PATH for the default `--backend hyperframes` (the pinned HyperFrames CLI is fetched by npx, never vendored) and ffmpeg/ffprobe for `--backend mock` and the alpha check; it makes no LLM calls, so its run costs 0 USD.
 ---
 
 # yt-graphics
@@ -19,8 +19,8 @@ files.
 ## Step 1: plan the graphics
 
 ```bash
-.venv/bin/python scripts/graphics_plan.py words.json --json
-.venv/bin/python scripts/graphics_plan.py words.json --markers markers.json \
+yt graphics_plan words.json --json
+yt graphics_plan words.json --markers markers.json \
   --context context.md --max-entries 3 --out graphics_plan.json
 ```
 
@@ -57,11 +57,11 @@ render; nothing is rendered by this step.
 ## Step 2: render one overlay
 
 ```bash
-.venv/bin/python scripts/graphics.py --template lower_third \
+yt graphics --template lower_third \
   --props '{"name":"<name>","role":"creator"}' --out /tmp/lt.mov --json
-.venv/bin/python scripts/graphics.py --template counter \
+yt graphics --template counter \
   --props '{"number":"42","label":"clips"}' --out /tmp/counter.mov --duration 3
-.venv/bin/python scripts/graphics.py --template callout \
+yt graphics --template callout \
   --props '{"text":"echo hello","style":"terminal"}' --out /tmp/callout.mov
 ```
 
@@ -90,7 +90,7 @@ render; nothing is rendered by this step.
 ## Step 3: render an approved graphics plan
 
 ```bash
-.venv/bin/python scripts/graphics.py --plan graphics_plan.json --out-dir overlays/ --json
+yt graphics --plan graphics_plan.json --out-dir overlays/ --json
 ```
 
 `graphics_plan.json` is validated against `schemas/graphics_plan.schema.json`

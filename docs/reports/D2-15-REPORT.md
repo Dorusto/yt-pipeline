@@ -6,7 +6,7 @@
 - Full test suite green.
 
 ## Mocked / not verified
-- The real model's eye judgement on Doru's photos (checked in D2-16 on kotor-demo).
+- The real model's eye judgement on the owner's photos (checked in D2-16 on kotor-demo).
 
-## Doru, check this
+## the owner, check this
 - Shots tab after the next run: the left-out photos say `defect: eyes_closed` or `near-duplicate of …`.

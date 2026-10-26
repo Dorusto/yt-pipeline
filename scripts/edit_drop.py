@@ -220,6 +220,7 @@ def main(argv=None):
     for key in ("created_at", "files"):
         meta.pop(key, None)
     meta.update({"feedback": [], "note": note, "status": "done", "failed_at": None})
+    meta["cost_usd"] = summary["llm_cost_usd"]
     directory = versions.snapshot(workspace, meta)
     summary["version"] = directory.name if directory else None
     print(json.dumps(summary) if args.json else f"new version {summary['version']}: {note}")

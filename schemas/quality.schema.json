@@ -20,7 +20,7 @@
     },
     "defect_name": {
       "type": "string",
-      "enum": ["blur", "shake", "exposure", "obstruction", "horizon"]
+      "enum": ["blur", "shake", "exposure", "obstruction", "horizon", "face_cut"]
     },
     "uncertain_reason": {
       "type": "string",
@@ -97,6 +97,36 @@
             "minimum": 0,
             "maximum": 1,
             "description": "confidence of motion_label, taken from the overlapping motion move or phase; null when there is no motion label"
+          },
+          "speed": {
+            "type": ["string", "null"],
+            "enum": ["slow", "regular", "fast", null],
+            "description": "the segment's camera speed from the motion file"
+          },
+          "faces_max": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "largest number of faces in any counted sample of the segment"
+          },
+          "face_size_max": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "largest face box area as a share of the analysed frame"
+          },
+          "face_cut": {
+            "type": "boolean",
+            "description": "true when a face box touches a frame edge within the tolerance"
+          },
+          "face_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "counted samples with at least one face times the sample interval"
+          },
+          "whip": {
+            "type": ["string", "null"],
+            "enum": ["short_hold", "deliberate", null],
+            "description": "whip short-hold mark on a fast move between short people holds, or deliberate on a fast move between two long holds"
           },
           "defects": {
             "type": "array",

@@ -52,6 +52,12 @@ def is_photo(path):
     return Path(path).suffix.lower() in PHOTO_EXTENSIONS
 
 
+def proxy_name(photo):
+    """The proxy file name for a photo: HEIC becomes ``<stem>.jpg``, else the file name."""
+    photo = Path(photo)
+    return photo.stem + ".jpg" if photo.suffix.lower() == ".heic" else photo.name
+
+
 def open_photo(path):
     """Open a JPEG/HEIC still with EXIF orientation applied; returns an RGB image."""
     _register_heif()

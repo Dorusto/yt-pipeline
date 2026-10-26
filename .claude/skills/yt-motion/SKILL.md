@@ -1,17 +1,17 @@
 ---
 name: yt-motion
-description: Analyse the camera motion of a clip with OpenCV optical flow on the CPU — a sampled trajectory, a split of the take into motion phases (still, ramp, steady move, ramp, still), labelled moves (pan, tilt, roll, dolly/zoom, complex, travel_forward/travel_backward, truck_left/truck_right, orbit_candidate) with speed, steadiness, steady range, cut handles, parallax, platform and platform_bob, a confidence per label and an uncertain flag with reasons when the flow signals disagree, plus a per-second scene_activity series and scene events (subject enters/approaches/leaves). Use when the user asks what the camera did in a clip, where the stable moves are, wants moves and handles to cut on, or asks when something moved in the scene. Trigger phrases - "analizează mișcarea camerei", "ce mișcări sunt în clip", "camera motion", "găsește mișcările stabile", "unde începe și se termină o panoramă", "când intră un subiect în cadru". Not for image quality defects (that is `quality`), semantic moves such as orbit or tracking (that is `describe`) or generating clips.
-compatibility: Run from the repository root. Needs the repo .venv with opencv-python-headless; CPU only, no GPU and no network. Reads clips read-only and writes motion/<stem>.json into the workspace. About 1.5x real time or faster per clip at the default settings.
+description: Analyse the camera motion of a clip with OpenCV optical flow — a sampled trajectory, a split of the take into motion phases (still, ramp, steady move, ramp, still), labelled moves (pan, tilt, roll, dolly/zoom, complex, travel_forward/travel_backward, truck_left/truck_right, orbit_candidate) with speed, steadiness, steady range, cut handles, parallax, platform and platform_bob, a confidence per label and an uncertain flag with reasons, plus a per-second scene_activity series and scene events (subject enters/approaches/leaves). Use when the user asks what the camera did in a clip, where the stable moves are, wants moves and handles to cut on, or asks when something moved in the scene. Trigger phrases - "analizează mișcarea camerei", "ce mișcări sunt în clip", "camera motion", "găsește mișcările stabile", "unde începe și se termină o panoramă", "când intră un subiect în cadru". Not for image quality defects (that is `quality`), semantic moves such as orbit or tracking (that is `describe`) or generating clips.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with opencv-python-headless; CPU only, no GPU and no network. Reads clips read-only and writes motion/<stem>.json into the workspace. About 1.5x real time or faster per clip at the default settings.
 ---
 
 # yt-motion
 
-Measure how the camera moved in a clip before any editing decision. A Lucas-Kanade optical-flow pass with a partial-affine RANSAC fit per sampled frame pair builds a camera trajectory; the take is split into motion phases and each steady span becomes a labelled move with a steady range and cut handles. Labels use the CameraBench geometric vocabulary; the meaning of the motion (orbit, tracking, reveal) is left to `describe`. All commands run from the repository root.
+Measure how the camera moved in a clip before any editing decision. A Lucas-Kanade optical-flow pass with a partial-affine RANSAC fit per sampled frame pair builds a camera trajectory; the take is split into motion phases and each steady span becomes a labelled move with a steady range and cut handles. Labels use the CameraBench geometric vocabulary; the meaning of the motion (orbit, tracking, reveal) is left to `describe`. All commands run through `yt <tool>`.
 
 ## Step 1: analyse one clip or a folder
 
 ```bash
-.venv/bin/python scripts/motion.py /path/to/clip.mp4 --workspace /path/to/workspace
+yt motion /path/to/clip.mp4 --workspace /path/to/workspace
 ```
 
 - `INPUT` is one video file, or a folder scanned non-recursively for `.mp4`, `.mov` and `.m4v` files (any letter case, sorted by name).
@@ -23,7 +23,7 @@ Measure how the camera moved in a clip before any editing decision. A Lucas-Kana
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/motion.py /path/to/clip.mp4 --workspace /path/to/workspace --json
+yt motion /path/to/clip.mp4 --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"clips": 21, "analyzed": 21, "skipped": 0, "output_dir": "/abs/workspace/motion", "wall_time_s": 42.7, "llm_cost_usd": 0.0}`. `wall_time_s` is the seconds the run took and `llm_cost_usd` is always `0.0` (this tool never calls a model). Read `DIR/motion/<stem>.json` for the per-clip detail; it is validated against `schemas/motion.schema.json` and written atomically, so a run leaves a complete valid file or none.

@@ -36,7 +36,7 @@ schemas exist; read them for style and contracts but do not change them.
    public: never commit footage or frames.
 6. **Core principle — label, never decide alone (docs/guides/shot-grammar.md §1):**
    "A segment is never thrown away by the analysis tools. They label it; the
-   director (and Doru in the review UI) decides." Intent and defect are separate
+   director (and the owner in the review UI) decides." Intent and defect are separate
    fields: motion blur during a whip pan is intent; motion blur on a static shot
    is a defect. `setup` / `teardown` / `accidental` are *likely* roles with a
    confidence, never a verdict. One file can hold several intentional shots.

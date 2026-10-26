@@ -45,7 +45,7 @@ the whole point of the D1b uncertainty work.
 
 ## Side by side — the uncertain segments (verdicts)
 
-Ground truth is Doru's `eval/ground_truth_boat_2026-10-12.yaml` (times in the
+Ground truth is the owner's `eval/ground_truth_boat_2026-10-12.yaml` (times in the
 source clip).
 
 | segment | geometry said | ground truth | DeepSeek verdict | GLM verdict | better |
@@ -65,10 +65,10 @@ failures are the highest-value adjudications (the wake and the cave pull-back).
 
 ## Side by side — content scoring (interest, hero)
 
-Doru's S1 review named the missing best moments: *orbit 0091, approaching boat
+the owner's S1 review named the missing best moments: *orbit 0091, approaching boat
 0083, cave 0081, tunnel 0072*.
 
-| clip / segment | DeepSeek interest / hero | GLM interest / hero | Doru's list |
+| clip / segment | DeepSeek interest / hero | GLM interest / hero | the owner's list |
 |---|---|---|---|
 | 0072 s5 tunnel approach | 55 / no | 65 / **hero** | tunnel ✓ |
 | 0072 s7 tunnel transit | 65 / no | 72 / **hero** | tunnel ✓ |
@@ -108,7 +108,7 @@ segments where a more forceful second opinion helps.
 
 Reasons: 100% parse rate vs 94%, the correct verdict on the wake segment that
 motivated the whole uncertainty work, correct verdicts on 0081 s7 and s15, hero
-flags that match the moments Doru named, 9x cheaper and no reasoning-token
+flags that match the moments the owner named, 9x cheaper and no reasoning-token
 landmine. DeepSeek's reasoning budget is a maintenance hazard: it needs 8000
 output tokens per segment and still loses the answer sometimes.
 

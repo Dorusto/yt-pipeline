@@ -40,6 +40,20 @@ channel:
     thumbnail_formula:
       ro: "Formula canalului: subiectul, o emoție reală și text scurt."
       en: "Channel formula: the subject, a real emotion and short text."
+  # style is optional: the channel's own style instructions, one non-empty
+  # string per part (not per language — the style is an instruction and the
+  # model writes in the language it is already writing in). Each writing tool
+  # hands the model the style parts that apply to it in a ## Style section, one
+  # line per part (recap_meta: title_style and pinned_comment_voice); a missing
+  # part is left out, never replaced by built-in text.
+  # description_order is a comma-separated list of the description part names
+  # (intro, github, members, previous, subscribe, promo, closing); unset keeps
+  # the default order.
+  # thumbnail_formula stays in fixed.
+  style:
+    title_style: "<how the titles should read>"
+    # description_order: "<the order the description parts should follow>"
+    pinned_comment_voice: "<the voice of the pinned comment>"
 
 # Maximum USD one job may spend on OpenRouter calls across processes. The LLM
 # client refuses further calls once this is reached. Omit or use null for no limit.
@@ -58,7 +72,7 @@ llm_backend: openrouter
 # Optional ntfy server URL for scripts/notify.py and the watchdog (also read
 # from the NTFY_URL environment variable; no built-in default). Never commit a
 # private address — this public repository only names `<ntfy-url>`.
-# ntfy_url: http://ntfy.example.invalid/opencode-doru
+# ntfy_url: http://ntfy.example.invalid/yt-pipeline
 
 # Optional per-project spend ledger (JSON) so llm_budget_usd caps a whole job
 # across separate tool runs. Prefer the workspace copy: <workspace>/llm_spend.json.
@@ -73,6 +87,43 @@ llm_backend: openrouter
 # folder; they never download music.
 # music:
 #   library: <music-library>
+
+# Beat/downbeat engine for scripts/beats.py: numpy (pure numpy, the default) or
+# beat_this (the optional Beat This! model; needs the beat-this package, see the
+# yt-beats skill). Set it here, in the YT_PIPELINE_BEATS_ENGINE environment
+# variable, or pass --engine. The default is numpy.
+# beats:
+#   engine: numpy
+
+# Whip short-hold threshold for scripts/quality.py: a fast move between holds
+# shorter than this many seconds on people is marked as a whip (a filming
+# mistake) and scores low. The default is 3.0.
+# whip:
+#   min_hold_s: 3.0
+
+# Director reasoning effort for scripts/llm_director.py: how much hidden
+# reasoning the model spends on every call. One of low, medium, high or off
+# (off disables reasoning). Set it here or pass --reasoning-effort; the default
+# is medium. There is no environment variable.
+# director:
+#   reasoning_effort: medium
+#
+# Video shot length limits (seconds) for the code editor. A wide frame, not a
+# wall: the editor cuts every shot on a beat, a shot asked longer than max_s is
+# cut shorter, and a plan shot with an over_limit_reason may run past max_s.
+# `default` applies to every content type; a row named after a content type
+# (vacation, tutorial, presentation, ...) overrides it. Built-in: 1.5 and 8.
+#   shot_limits:
+#     default: {min_s: 1.5, max_s: 8}
+#     tutorial: {min_s: 3, max_s: 20}
+
+# Recap title and description. recap.meta (default false) makes the recap run
+# write the YouTube title and description (the recap_meta station); the web
+# Upload and Re-edit forms carry a "Title and description" option and
+# recap.py --meta / --no-meta override it. With it off the station is skipped
+# and the Recap tab shows no title/description block.
+# recap:
+#   meta: false
 
 # Whisper model for scripts/transcribe.py and the publish chain's --media step.
 # There is a default: turbo with a CUDA GPU, else medium on CPU for a
@@ -107,12 +158,13 @@ llm_backend: openrouter
 #   donation_links:
 #     - label: Support the project
 #       url: https://example.org/donate
-#   project_totals_url is the owner instance's GET /costs.json; when set, a
-#   friend instance's Costs page leads with the donation buttons, then its own
-#   model cost to cover, then the owner instance's costs as voluntary project
-#   costs, then the per-clip table and the donation list. Set it here, in the
-#   YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or pass
-#   --project-totals-url.
+#   project_totals_url marks a friend instance: its Costs page shows the
+#   donation buttons, then its own model cost to cover, then its limits, then
+#   the per-clip table ("Model cost of your clips"), then the line "Anything
+#   you pay above your model cost goes into building the app further.", then
+#   Feedback and requests — and no owner project totals and no donations list.
+#   Set it here, in the YT_PIPELINE_PROJECT_TOTALS_URL environment variable, or
+#   pass --project-totals-url.
 #   project_totals_url: https://example.org/costs.json
 
 # Feedback/requests file for the web app's Costs page: one JSON line per
@@ -121,6 +173,15 @@ llm_backend: openrouter
 # examples write <requests.jsonl>.
 # requests:
 #   path: <requests.jsonl>
+
+# Instance learning notebook for notebook.py, llm_director.py and serve.py: a
+# small JSON file of short lessons the director keeps between edits, at most 40
+# of them. It is optional: with no path set the director reads nothing and the
+# web app shows no section. There is no personal default in code: set the file
+# here, in the YT_PIPELINE_NOTEBOOK environment variable, or pass --notebook.
+# Docs and examples write <notebook-file>.
+# notebook:
+#   path: <notebook-file>
 
 # Instance limits for the web app. limits.storage_gb caps the workspaces and the
 # inbox size: the Upload and Costs pages show "X GB of Y GB used", warn over 80 %

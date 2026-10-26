@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 from common.config import ConfigError, load_config
+from common.channel import RECAP_META_STYLE_PARTS, style_section, style_strings
 from common.brief_facts import FACT_LABELS, load_brief_facts
 from common.jsonio import load_json, now_iso, parse_model_json, write_json
 from common.llm import LLMError, make_client
@@ -152,7 +153,7 @@ def build_facts(edit, workspace_path):
     }
 
 
-def build_message(prompt_text, facts):
+def build_message(prompt_text, facts, style=None):
     facts_block = (
         f"{FACT_LABELS['place']}: {facts['place'] or '(unknown)'}\n"
         f"{FACT_LABELS['when']}: {facts['when'] or '(unknown)'}\n"
@@ -163,8 +164,11 @@ def build_message(prompt_text, facts):
         shots = "\n".join(f"- {text}" for text in facts["descriptions"])
     else:
         shots = "- (no shot descriptions)"
+    section = style_section(style, parts=RECAP_META_STYLE_PARTS)
+    style_block = f"\n\n{section}" if section is not None else ""
     return (
         prompt_text
+        + style_block
         + "\n\n## Brief\n"
         + facts["brief_text"]
         + "\n\n## Facts\n"
@@ -258,8 +262,7 @@ def output_is_up_to_date(out_path, edit_path):
         return False
 
 
-def effective_config(budget_usd):
-    config = load_config()
+def effective_config(config, budget_usd):
     if budget_usd is not None:
         config = dict(config)
         config["llm_budget_usd"] = budget_usd
@@ -293,6 +296,7 @@ def run(workspace, out=None, prompt_path=None, dry_run=False, force=False, budge
         raise RecapMetaError(f"workspace is not a directory: {workspace_path}")
     edit_path = workspace_path / "edit.json"
     edit = load_edit(edit_path)
+    config = load_config()
     out_path = Path(out).expanduser() if out else workspace_path / "recap_meta.json"
     if not dry_run and not force and output_is_up_to_date(out_path, edit_path):
         facts = build_facts(edit, workspace_path)
@@ -301,7 +305,8 @@ def run(workspace, out=None, prompt_path=None, dry_run=False, force=False, budge
     prompt_file = Path(prompt_path).expanduser() if prompt_path else DEFAULT_PROMPT
     prompt_text = read_prompt(prompt_file)
     facts = build_facts(edit, workspace_path)
-    message = build_message(prompt_text, facts)
+    style = style_strings(config)
+    message = build_message(prompt_text, facts, style)
 
     if dry_run:
         summary = {
@@ -314,7 +319,7 @@ def run(workspace, out=None, prompt_path=None, dry_run=False, force=False, budge
         summary.update(summary_fields(started, 0.0))
         return summary
 
-    client = get_client(effective_config(budget_usd))
+    client = get_client(effective_config(config, budget_usd))
     answer, response, run_cost = request_meta(client, message)
     document = {
         "schema_version": SCHEMA_VERSION,

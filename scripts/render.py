@@ -38,7 +38,7 @@ from common.ambience import (
     resolve_denoiser,
 )
 from common.ffmpeg_tools import ffmpeg_path, probe_duration
-from common.moves import middle_speed_of, screen_factor, slot_screen_length
+from common.moves import middle_speed_of, screen_factor, slot_duration
 from common.timeline_words import fade_for_join
 from common.photos import ensure_jpeg, open_photo
 from common import vertical
@@ -298,13 +298,6 @@ def resolve_photo(photo, sources, media_dir, originals_dir):
     if fallback is not None:
         return fallback, "sources"
     return None, None
-
-
-def slot_duration(slot):
-    """The on-screen length of a slot: ``duration_s`` for photos, the ramp-aware length for video."""
-    if slot.get("kind") == "photo":
-        return float(slot["duration_s"])
-    return slot_screen_length(slot)
 
 
 def oriented_photo_size(path):

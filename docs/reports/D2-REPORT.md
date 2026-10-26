@@ -44,7 +44,7 @@ buckets, but both land on the same length.
   candidate replaces a weaker same-take slot. Verified on the real workspace:
   0 phrase violations, 0 adjacent same-take pairs, 0051 out.
 - **Hero and semantic moves keep their range up to 8 s** (`--important-max-s`).
-  The 0091 orbit went from 2.5 s (Doru's "shows only its start") to 8 s; the
+  The 0091 orbit went from 2.5 s (the owner's "shows only its start") to 8 s; the
   0072 tunnel, 0080/0081 cave approaches, 0082 cliffs and 0084 chapel each
   keep their whole window or 8 s. Ordinary slots keep the pacing.
 - **`describe` summary and tags** — `summary` ≤ 12 words and a short lowercase
@@ -113,7 +113,7 @@ buckets, but both land on the same length.
 - **Kdenlive itself** — the project is validated with melt's XML check and
   opens as a file, but no human has opened it in the Kdenlive GUI.
 
-## Doru, check this
+## the owner, check this
 
 1. Watch `~/media/yt-test/workspace/recap_d2_720p.mp4` (92.5 s) next to
    `recap_d1b_720p.mp4` (81 s) — are the tunnel, cave, cliffs, chapel and the

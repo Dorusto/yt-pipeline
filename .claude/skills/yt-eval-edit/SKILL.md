@@ -1,19 +1,19 @@
 ---
 name: yt-eval-edit
-description: Check a workspace edit.json against a YAML of human expectations — every must_include item (at least one of its shot keys must appear on a slot) and the total on-screen length (length_s target ± tolerance, middle-speed ramps and photo durations counted) printed as a PASS/FAIL table, exit 1 on any fail, exit 2 on a bad input. Use when the user asks to verify an edit against Doru's feedback turned into a test, to check that the heroes made it into the edit, or to re-check an edit after a director or llm_director run. Trigger phrases - "verifică edit.json", "sunt cadrele hero în montaj", "check the edit against expectations", "eval the edit", "did the edit pass the expectations", "rulează așteptările pe edit". Not for scoring motion/quality labels against ground truth (that is yt-eval) and not for building or fixing the edit (that is director / llm_director).
-compatibility: Run from the repository root. Needs the repo .venv with pyyaml; CPU only, no GPU, no network, no model calls. Reads the workspace and the YAML read-only; the only file written is --out. Fast (well under a second).
+description: Check a workspace edit.json against a YAML of human expectations — every must_include item (at least one of its shot keys must appear on a slot) and the total on-screen length (length_s target ± tolerance, middle-speed ramps and photo durations counted) printed as a PASS/FAIL table, exit 1 on any fail, exit 2 on a bad input. Use when the user asks to verify an edit against the owner's feedback turned into a test, to check that the heroes made it into the edit, or to re-check an edit after a director or llm_director run. Trigger phrases - "verifică edit.json", "sunt cadrele hero în montaj", "check the edit against expectations", "eval the edit", "did the edit pass the expectations", "rulează așteptările pe edit". Not for scoring motion/quality labels against ground truth (that is yt-eval) and not for building or fixing the edit (that is director / llm_director).
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with pyyaml; CPU only, no GPU, no network, no model calls. Reads the workspace and the YAML read-only; the only file written is --out. Fast (well under a second).
 ---
 
 # yt-eval-edit
 
-Turn "the edit looks right" into a pass/fail list. The expectations YAML holds what a human requires of an edit — the shot keys that must appear and the total length — and this tool checks `WORKSPACE/edit.json` against it, one PASS/FAIL row per expectation in YAML order. Use it after a director run and every time Doru's review feedback is written down as an expectation, so the same mistake cannot come back unnoticed.
+Turn "the edit looks right" into a pass/fail list. The expectations YAML holds what a human requires of an edit — the shot keys that must appear and the total length — and this tool checks `WORKSPACE/edit.json` against it, one PASS/FAIL row per expectation in YAML order. Use it after a director run and every time the owner's review feedback is written down as an expectation, so the same mistake cannot come back unnoticed.
 
 ## Step 1: check an edit
 
 ```bash
-.venv/bin/python scripts/eval_edit.py --workspace /path/to/ws --expect eval/kotor-edit.yaml
-.venv/bin/python scripts/eval_edit.py --workspace /path/to/ws --expect eval/kotor-edit.yaml --json
-.venv/bin/python scripts/eval_edit.py --workspace /path/to/ws --expect eval/kotor-edit.yaml --out report.json
+yt eval_edit --workspace /path/to/ws --expect eval/kotor-edit.yaml
+yt eval_edit --workspace /path/to/ws --expect eval/kotor-edit.yaml --json
+yt eval_edit --workspace /path/to/ws --expect eval/kotor-edit.yaml --out report.json
 ```
 
 - `--workspace DIR` (required) holds `edit.json` (written by `scripts/llm_director.py` or `scripts/director.py`). `--expect PATH` (required) is the YAML below.

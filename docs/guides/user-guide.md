@@ -41,7 +41,7 @@ flowchart LR
     I[ingest] --> M[motion] --> Q[quality] --> D[describe<br/>vision model] --> S[similarity] --> X[index<br/>shotlog + contact sheet]
   end
   subgraph edit[Edit — as many times as you like]
-    RT[router] --> DIR[director<br/>screenwriter → editor → reviewer] --> E[(edit.json)]
+    RT[router] --> DIR[director → editor → review] --> E[(edit.json)]
   end
   subgraph out[Output]
     P[720p preview] 
@@ -195,7 +195,7 @@ Say what you want, not how to cut it. The router reads length, order, pacing, mu
 
 ## The web app (phone + desktop)
 
-`serve.py` is the app Doru uses from the phone. It is **tailnet-only** (one
+`serve.py` is the app the owner uses from the phone. It is **tailnet-only** (one
 bind address, never the wildcard) and it never exposes the footage beyond the
 finished recap, the explanation and the contact sheet.
 
@@ -215,43 +215,74 @@ finished recap, the explanation and the contact sheet.
   into `inbox/<folder>/` (allowlisted extensions, size caps, never overwrites,
   never outside the inbox) and starts `recap.py` in the background; the status
   shows on Projects.
-- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there and pick it; a picked block shows a bin icon (remove the shot) and a **− 1 s** / **+ 1 s** row (make it shorter or longer, within the source clip; the presses add up into one running total for the picked shot, a different shot starts a new total, and Yes submits that total) — each renders a new version from the proxies, no model call, and the old version is never edited — and the vertical 9:16 player when the format was 9:16 or both), **Files**, **Cuts** and **Shorts**.
+- **A project page** has the tabs **Recap** (the player, with the recap's poster as its poster image and a strip of shot thumbnails below — tap a block to jump there and pick it; a picked block shows a bin icon (remove the shot) and a **− 1 s** / **+ 1 s** row (make it shorter or longer, within the source clip; the presses add up into one running total for the picked shot, a different shot starts a new total, and Yes submits that total) — each renders a new version from the proxies, no model call, and the old version is never edited — and the vertical 9:16 player when the format was 9:16 or both), **Director** (the director's idea, structure, per-shot reasons and the editor's report in plain words, then the chat with the director and, under it, the collapsible notebook), **Files**, **Cuts**, **Shorts** and **Debug** (last, muted: the shot list, the raw plan, the report, the rounds and the model calls). The old **Why?** tab is gone; `explain.html` is still served.
 - **Files** lists every clip and photo of the project (from its proxies and its inbox source) with its length or "photo", its size and its state — `in the edit`, `new` (added after the last edit) or `left out`. **Add files** drops more clips and photos into the project's inbox source folder (the same consent and storage checks as the Upload page); when there are new files the tab says "N new files. They join the next edit." with a **Make a new edit** button that opens the Re-edit form. A bin icon next to a file asks "Leave out <name>?" and writes the name to `<workspace>/excluded.json`; a left-out file shows **Bring back**. Nothing is deleted from disk — every station that lists clips or photos skips the left-out names, and only a project delete removes files.
 - **Re-edit** on the project page repeats the options and adds a **feedback
   box**: plain words against those short ids ("drop 0071/s2, tunnel longer").
   It re-runs only the edit and the render — the analysis is reused. The
   feedback is appended to `feedback.jsonl` in the workspace.
-- **Ask the director.** The Re-edit box has an **Ask the director** button that asks how the
-  director reads the request — one cheap model call, no new version — and
-  shows the reply with a cost/time estimate and two buttons: **Make the new
-  version** (starts the re-edit with the feedback plus the reply as a hint) and
-  **Change my request** (back to the box with the text kept). No new version
-  starts without the click. From the command line:
-  `.venv/bin/python scripts/llm_director.py --workspace <workspace> --interpret-feedback "drop 0071/s2, tunnel longer" --json`.
+- **Chat with the director.** The chat sits in the **Director** tab (it is no
+  longer in the Recap tab). The director's notes appear in it as the
+  director's own sentences, each naming the shot by its number on the timeline.
+  The user writes what they like and what they do not, and the chat goes through
+  the director: one director call reads the message with the last plan, the
+  editor's report, the rounds, the owner's earlier notes and the notebook, and
+  answers in plain words how it reads the request, naming the shots it means,
+  with a cost/time estimate (no new version), and **Make the new version** starts
+  the re-edit with the feedback; no new version starts without the click. When
+  the owner decided something (a shot out, a length, an order, a mood), the reply
+  carries a short decision note, shown under the reply and carried into the next
+  run's feedback. The reply
+  carries `can_do` (`all`, `part` or `none`); when it is not `all` the **Make the
+  new version** button is replaced by a disabled **Answer the director first**
+  button until the owner sends another message. When the director cannot do what
+  the user asked, it says so in plain words (what it can do instead) and the
+  request is noted in the requests file as a missing tool (`type: missing_tool`),
+  so the owner sees which tools the director needs next. The chat shows the last
+  3 exchanges; older ones sit in a closed **Earlier messages (N)** section above
+  them, and the message box and the approve/disabled button sit directly under
+  the newest exchange. When the director cannot make the edit and a simpler
+  editor makes it instead, the page says so in plain words ("The director could
+  not make this edit; a simpler editor made it.") and lists which requested
+  changes were applied and which were not. The director's reasoning
+  effort — how much hidden reasoning the model spends on every call — comes from
+  `--reasoning-effort` (`low`, `medium`, `high` or `off`), else
+  `director.reasoning_effort` in the config, else `medium`. From the command line:
+  `.venv/bin/python scripts/llm_director.py --workspace <workspace> --chat "drop 0071/s2, tunnel longer" --json`.
 - **Versions.** Every re-edit is kept: the Recap tab has a row of chips
   (v1, v2, …), each with its own strip and the feedback that asked for it. While a run is
   going the page shows the last finished version, the step it is on, and
-  refreshes by itself; a failed run says where it failed and why. A version that
-  is neither the latest nor the first shows a **Delete this version** button; it
+  refreshes by itself; a failed run says where it failed and why. A **Stop**
+  button on the progress card stops the run and its child processes and leaves
+  the previous version as the current one. Any version
+  except the latest shows a **Delete this version** button; it
   asks once ("Delete version N? Its video and files are removed for good."),
   removes that version's folder for good and returns to the latest version. The
-  latest, the first and a version while a run is going cannot be deleted.
-- **Title, description and hashtags.** The Recap tab shows a box with the
-  YouTube title, a 2-3 sentence description and 5-10 hashtags for the shown
-  version, each with a **Copy** button. A **Rewrite** button opens the four
-  fact fields (Place, When, Who is in it, Occasion) and re-runs
-  `recap_meta.py --force` for the shown version, showing the cost; a field the
-  brief and `brief_facts.json` did not carry is marked "Add this for a better
-  title". The text comes from `recap_meta.py`, which reads `edit.json` and
-  `brief_facts.json` and writes `recap_meta.json` (kept in each version):
+  first can be deleted too while another version stays; the latest and a version
+  while a run is going cannot be deleted.
+- **Title, description and hashtags.** Optional and off by default: the recap
+  run writes the title and description only when asked. Turn it on with
+  `recap.py --meta`, `recap.meta: true` in the config, or the **Title and
+  description** option on the Upload and Re-edit forms (Auto follows the
+  config); `--no-meta` turns it off even when the config says true. With it off
+  the `recap_meta` station is skipped and the Recap tab shows no title box. When
+  it is on, the Recap tab shows a box with the YouTube title, a 2-3 sentence
+  description and 5-10 hashtags for the shown version, each with a **Copy**
+  button. A **Rewrite** button opens the four fact fields (Place, When, Who is
+  in it, Occasion) and re-runs `recap_meta.py --force` for the shown version,
+  showing the cost; a field the brief and `brief_facts.json` did not carry is
+  marked "Add this for a better title". The text comes from `recap_meta.py`,
+  which reads `edit.json` and `brief_facts.json` and writes `recap_meta.json`
+  (kept in each version):
   `.venv/bin/python scripts/recap_meta.py --workspace <workspace>`.
 - **Length** takes a preset, or pick **Exact seconds…** in the same menu and type the number.
 - **Costs** (top bar) is a read-only page: per project the model cost and the
   number of versions, then the ledger totals (monthly running cost, development
   total, donations and the balance) and an optional donation link. On a friend
   instance it leads with the donation buttons, then its own model cost to cover,
-  then the owner instance's costs as voluntary project costs, then the per-clip
-  table and the donation list; the owner's page is unchanged. It reads the
+  then its limits, then the per-clip table ("Model cost of your clips") and one
+  line saying anything paid above the model cost goes into building the app
+  further; the owner's page is unchanged. It reads the
   same totals object as `costs.py totals --json`. The **Feedback and requests**
   form on the same page appends one JSON line (`date`, `type`, `text`,
   `contact`, `backed`) to the requests file; with no requests file configured
@@ -343,11 +374,12 @@ and the app never handles payments.
 
 The owner instance serves `GET /costs.json` (the totals object, no notes and no
 requests). An instance with `costs.project_totals_url` (`--project-totals-url`,
-else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) fetches it: a friend
-instance leads with the donation buttons, then its own model cost to cover, then
-the owner instance's costs as voluntary project costs, then the per-clip table
-and the donation list; the owner's page is unchanged. A failed fetch says the
-project costs are unavailable.
+else `YT_PIPELINE_PROJECT_TOTALS_URL`, else the config) is a friend instance:
+its Costs page leads with the donation buttons, then its own model cost to
+cover, then its limits, then the per-clip table ("Model cost of your clips") and
+one line saying anything paid above the model cost goes into building the app
+further — it does not fetch the owner's totals and shows no donations list; the
+owner's page is unchanged.
 
 ## How it learns
 
@@ -360,6 +392,24 @@ The AI models do not change. What improves is data and rules on disk, all plain 
 | Editing rules you asked for | `docs/guides/shot-grammar.md` and the director's rules; history in `docs/DECISIONS.md` | one rule per piece of feedback |
 
 Sizes stay small: a correction is ~200 bytes, so 10 000 corrections are about 2 MB. No footage or frames are stored, only clip names and timecodes. See `docs/DECISIONS.md`, 2026-10-14, *Feedback storage and the rules digest*, for limits and compaction.
+
+The director also keeps a small **notebook** of short lessons on this instance (the file at `notebook.path`). It reads the notebook before every edit, and after each new version the web app makes one cheap model call that writes at most 3 short lessons from the feedback since the last pass. A sentence that repeats across clips (for example the sponsor line) becomes a `proposal` lesson to move it to `channel.fixed`; it moves only after the owner says yes by editing the config. The notebook holds at most 40 lessons and is shown in the **Director** tab, where a lesson can be deleted. When the notebook is full the pass asks the model once to merge overlapping lessons or remove stale ones; lessons that still do not fit wait in the file and are written as soon as there is room — nothing is dropped. At most 3 lessons wait at a time; while 3 are waiting the pass writes nothing and learns them once a lesson is removed; when some room is left it asks for fewer new lessons, so nothing is learned twice. A notebook that already holds more lessons than the limit (for example after a hand edit) makes the pass write nothing and report that it is full until a lesson is removed; no lesson is ever dropped. The project page shows them under the message **The notebook is full. Remove a lesson to make room for a new one.**, with the same delete button.
+
+## From a coding agent
+
+A host coding agent (Claude Code, opencode, any Agent Skills tool) can direct the
+edit on its own subscription, with no OpenRouter key:
+
+1. `yt llm_director --workspace <ws> --brief "..." --prepare` writes
+   `<ws>/director/inputs.md` — the brief, the settings, the editing techniques,
+   the shortlisted shots and the shapes to write.
+2. The agent reads it and writes `<ws>/director_plan.json` (and
+   `<ws>/director_review.json` for the notes round).
+3. `yt llm_director --workspace <ws> --brief "..." --apply` validates the plan,
+   runs the code editor and writes the final `edit.json` with
+   `meta.director.by = "agent"`.
+
+The web app keeps the OpenRouter film-crew flow.
 
 ## Pilot host
 

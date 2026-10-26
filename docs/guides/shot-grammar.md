@@ -15,9 +15,9 @@ Every technique has three columns: how it is filmed, how `motion` / `quality` / 
 
 ## 1. Core principle: label, never decide alone
 
-A segment is never thrown away by the analysis tools. They **label** it; the director (and Doru in the review UI) decides.
+A segment is never thrown away by the analysis tools. They **label** it; the director (and the owner in the review UI) decides.
 
-- **Intent and defect are separate fields.** Motion blur during a whip pan is intent; motion blur on a static shot is a defect. A fast rotation at the end of a take may be the first half of a transition, not junk.
+- **Intent and defect are separate fields.** Motion blur during a whip pan is intent; motion blur on a static shot is a defect. A fast rotation at the end of a take may be the first half of a transition, not junk. A fast move between short holds on people is a filming mistake (marked `whip: "short_hold"`, scores low), while a fast move between two long holds is a deliberate move (marked `whip: "deliberate"`) and its motion blur is not a defect; a deliberate move (orbit, pan, tilt, dolly, travel, truck) is not punished for shake the way a static hold is.
 - Each segment gets a **role** with a confidence: `move`, `hold`, `transition_out`, `transition_in`, `setup`, `teardown`, `accidental`, plus a list of **defects** (`blur`, `shake`, `exposure`, `obstruction`, `horizon`), each with a measured value.
 - **One file can hold several intentional shots.** Segmentation follows motion phases and content changes, not file boundaries.
 - `setup` / `teardown` are *likely* roles (short, irregular motion right after record starts or right before it stops), not a verdict. If that motion is a clean fast rotation, it is a `transition_in` / `transition_out` candidate instead.
@@ -64,13 +64,14 @@ The director pairs `transition_out` with `transition_in` of matching type and di
 - **Coverage sequence:** wide (where) → medium (who / what) → close (detail) → reaction. A good place has at least one of each.
 - **Screen direction:** keep movement direction consistent across cuts (boat moving right keeps moving right), unless the change is the point.
 - **Cut on motion:** cut inside the steady phase of a move; a pan right into a pan right reads as one movement.
+- **No pointless jump cuts:** two neighbouring slots that are beats of one segment, or a `similar_to` pair, are a pointless jump cut; keep only the better one unless the owner asked for both.
 - **Handles:** never start or end a used segment inside an acceleration ramp; keep a few frames of steady motion on each side.
 - **Shot length follows pacing:** relaxed 4–8 s or longer, energetic 1–3 s; with music, lengths in whole beats or bars.
 - **Audio:** ambient sound is kept under picture; J/L cuts (sound of the next shot starts early) smooth scene changes.
 
 ### 2.4 Defects (always measured, never assumed)
 
-blur (Laplacian variance vs the clip's median), shake (trajectory residual), exposure (clipped highs / crushed lows), obstruction (water drops, finger, pocket), horizon tilt (roll offset on a static shot), accidental recording (pocket, ground, sky for minutes).
+blur (Laplacian variance vs the clip's median), shake (trajectory residual), exposure (clipped highs / crushed lows), obstruction (water drops, finger, pocket), horizon tilt (roll offset on a static shot), face_cut (a face box touching the frame edge), accidental recording (pocket, ground, sky for minutes).
 
 ## 3. What professional software does today (October 2026)
 

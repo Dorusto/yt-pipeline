@@ -19,3 +19,22 @@ def append_feedback(workspace, action, **fields):
     row.update(fields)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def read_feedback(workspace):
+    """The workspace's feedback.jsonl rows, oldest first; [] when absent or unreadable."""
+    try:
+        text = (Path(workspace) / "feedback.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows

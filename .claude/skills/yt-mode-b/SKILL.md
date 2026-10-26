@@ -1,7 +1,7 @@
 ---
 name: yt-mode-b
-description: Turn one or more talking-head + screen recording sessions into a Mode B rough-cut edit.json — silence/pause gaps cut, standalone Romanian filler words dropped, restarted sentences (retakes) removed, every cut carrying a reason, and paired screen/camera slots sharing one id so export_filmcraft.py opens them as two angles of one cut. Also writes the edit's topic chapters (chapters.py, one LLM pass, chapters.json) and scores a rough cut against a hand-made FilmCraft edit of the same material (precision/recall, the sessions and sections the reference did not use, the biggest disagreements). Also runs the whole flow on a folder of OBS recordings in one command (mode_b.py transcribes what has no words JSON yet, pairs each camera file with the screen file whose name timestamp is nearest, rough-cuts it, writes chapters.json and exports the FilmCraft project). Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, write the chapters of a rough cut, run the whole Mode B flow on a folder in one command, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "fă capitolele montajului", "chapters.json", "rulează tot fluxul Mode B", "mode_b.py", "one command Mode B", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for the deterministic director over analysed footage (that is `director`), the LLM director (`llm_director`), rendering (`render`), subtitles (`publish`/`subs_from_edit.py`) or the FilmCraft export itself (`export_filmcraft.py`).
-compatibility: Run from the repository root. Needs the repo .venv, PyYAML and ffprobe (for media duration and container start time; missing media is a warning, not an error). No model is called unless --llm is given, and --llm only proposes cuts for human approval — it never changes the edit.
+description: Turn talking-head + screen sessions into a Mode B rough-cut edit.json — pauses, fillers and retakes cut, screen/camera slots sharing one id. Use when the user asks to rough-cut a talking-head + screen session, remove pauses/fillers/retakes from a recording, build an edit.json from a sessions manifest, prepare a Mode B recording for a human edit in FilmCraft, write the chapters of a rough cut, run the whole Mode B flow on a folder in one command, or score the rough cut against a hand edit. Trigger phrases - "fă rough-cut din sesiunile astea", "taie pauzele și filler-ele", "scoate repetările", "rough cut talking-head + ecran", "edit.json din sessions.yaml", "Mode B rough cut", "cut the pauses and fillers", "remove the retakes", "rough-cut this recording", "fă capitolele montajului", "chapters.json", "rulează tot fluxul Mode B", "mode_b.py", "one command Mode B", "score the rough cut", "eval_rough_cut", "cât de bun e rough-cut-ul". Not for `director`, `llm_director`, `render`, `publish` or `export_filmcraft.py`.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv, PyYAML and ffprobe (for media duration and container start time; missing media is a warning, not an error). No model is called unless --llm is given, and --llm only proposes cuts for human approval — it never changes the edit.
 ---
 
 # yt-mode-b
@@ -15,11 +15,11 @@ the camera on `Camera 1`, the same cuts on both, ready for a human edit.
 ## Rough cut (`rough_cut.py`)
 
 ```bash
-.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --json
-.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json \
+yt rough_cut sessions.yaml --out edit.json --json
+yt rough_cut sessions.yaml --out edit.json \
   --config scripts/rough_cut_config_example.yaml
-.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json --llm --json
-.venv/bin/python scripts/rough_cut.py sessions.yaml --out edit.json \
+yt rough_cut sessions.yaml --out edit.json --llm --json
+yt rough_cut sessions.yaml --out edit.json \
   --review cut_review.yaml --json
 ```
 
@@ -49,7 +49,7 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 ## FilmCraft export
 
 ```bash
-.venv/bin/python scripts/export_filmcraft.py edit.json --out project.fcproj \
+yt export_filmcraft edit.json --out project.fcproj \
   --screen "2026-10-17 22-25-44.mp4" --json
 ```
 
@@ -58,11 +58,11 @@ When a session has a screen file, each kept window becomes a pair of slots shari
 ## Chapters (`chapters.py`)
 
 ```bash
-.venv/bin/python scripts/chapters.py edit.json words/ --json
-.venv/bin/python scripts/chapters.py edit.json words/ --out chapters.json
-.venv/bin/python scripts/chapters.py --fcproj project.fcproj --sequence Main \
+yt chapters edit.json words/ --json
+yt chapters edit.json words/ --out chapters.json
+yt chapters --fcproj project.fcproj --sequence Main \
   --words-dir words/ --json
-.venv/bin/python scripts/chapters.py --timeline-words edit_words.json --json
+yt chapters --timeline-words edit_words.json --json
 ```
 
 `chapters.py` turns the kept transcript of an edit into topic chapters with one
@@ -104,19 +104,19 @@ kit can take its chapters from this file instead of asking the model again, and
 ## Eval against a hand edit (`eval_rough_cut.py`)
 
 ```bash
-.venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
+yt eval_rough_cut --edit edit.json --sessions sessions.yaml \
   --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ --json
-.venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
+yt eval_rough_cut --edit edit.json --sessions sessions.yaml \
   --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ \
   --section-min-s 30.0 --out report.json
-.venv/bin/python scripts/eval_rough_cut.py --edit edit.json --sessions sessions.yaml \
+yt eval_rough_cut --edit edit.json --sessions sessions.yaml \
   --fcproj REF.fcproj --sequence "Second Brain - 15 min" --words-dir words/ \
   --review cut_review.yaml --json
 ```
 
 - Compares the words `rough_cut.py` kept with the words a human kept in a FilmCraft project of the same material. Both sides use the same midpoint rule (`(start + end) / 2` in `[in, out)`); a word is identified by `(stem, flat index)`.
 - `--edit` is the `edit.json` `rough_cut.py` wrote; `--sessions` is the same manifest (validated against `schemas/sessions.schema.json`); `--fcproj` + `--sequence` name the reference project and the sequence to read (its `Audio 1` track); `--words-dir` holds one words JSON per source stem.
-- `--review FILE` reads the phone cut review `cut_review.yaml` and treats each row as extra ground truth that wins over the `--fcproj` reference inside its span: a `keep` row adds the words of its window to Doru-kept (recall drops when our edit cut them), a `cut` row removes them from Doru-kept (precision drops when our edit kept them). The report gains `review_rows` (the number of rows applied) only when the flag is given.
+- `--review FILE` reads the phone cut review `cut_review.yaml` and treats each row as extra ground truth that wins over the `--fcproj` reference inside its span: a `keep` row adds the words of its window to the owner-kept (recall drops when our edit cut them), a `cut` row removes them from the owner-kept (precision drops when our edit kept them). The report gains `review_rows` (the number of rows applied) only when the flag is given.
 - `--until-s S` scores only the first S seconds of the reference timeline (float, must be `> 0`): the reference clips are trimmed at S, the kept set is built from the trimmed windows, and a word counts on either side only when its stem has a counted clip and its midpoint lies inside that stem's covered source span. Stems the reference uses only after S land in `bucket.session_words`. The `subs_from_edit.py` cross-check stays full-sequence whatever `--until-s` says. The report carries `until_s` (`null` when the flag is absent).
 - Reports `precision`/`recall` and `precision_used`/`recall_used` (the same numbers minus the bucket: words in sessions the reference did not use at all, plus dropped runs spanning `--section-min-s`), the ten biggest disagreement runs with timecodes, and a `subs_from_edit.py` cross-check of `words_kept` against our `|doru|`.
 - `--json` prints the report object; `--out` also writes it atomically. Exit codes: `0` success (the eval has no pass/fail gate), `2` user error (missing file, bad sequence, a clip with `speed != 1.0` or `reverse`, a non-positive `--until-s`), `3` runtime failure (the `subs_from_edit.py` cross-check failed or `--out` could not be written). No model is called (`llm_cost_usd` is always `0.0`).
@@ -124,9 +124,9 @@ kit can take its chapters from this file instead of asking the model again, and
 ## One command (`mode_b.py`)
 
 ```bash
-.venv/bin/python scripts/mode_b.py FOLDER --json
-.venv/bin/python scripts/mode_b.py FOLDER --backend mock --force --json
-.venv/bin/python scripts/mode_b.py FOLDER --check --json
+yt mode_b FOLDER --json
+yt mode_b FOLDER --backend mock --force --json
+yt mode_b FOLDER --check --json
 ```
 
 `mode_b.py` is the Mode B front door: it scans `FOLDER`, transcribes every

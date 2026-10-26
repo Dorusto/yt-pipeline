@@ -52,7 +52,7 @@ acceptance run, $0.0763 on a 2-clip smoke run during the audit.
 - `recap.kdenlive` passes `melt` validation but was not opened in the Kdenlive
   GUI.
 
-## Doru, check this
+## the owner, check this
 
 1. Watch `/root/media/yt-test/ws-d23/recap_720p.mp4` (84 s) — is this the recap
    quality you want for the publish-gate demo?

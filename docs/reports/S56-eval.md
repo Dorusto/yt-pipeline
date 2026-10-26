@@ -1,6 +1,6 @@
 # S56 — Mode B rough-cut eval (lot 2, follow-up 02)
 
-Draft report for Doru to confirm. Scope: does `rough_cut.py` keep the words a
+Draft report for the owner to confirm. Scope: does `rough_cut.py` keep the words a
 human kept in a hand-made FilmCraft edit of the same material, and can the lot 1
 thresholds be tuned on that number?
 
@@ -15,7 +15,7 @@ word is identified by `(stem, flat index)`. It reports:
 - `precision_used` / `recall_used`, the same numbers minus the **bucket** — the
   words in sessions the reference did not use at all, plus the words in dropped
   runs spanning at least `--section-min-s` (default 30 s). These are the headline
-  numbers: recall on content Doru chose to drop is not expected;
+  numbers: recall on content the owner chose to drop is not expected;
 - the ten biggest disagreement runs (`ours_only` / `doru_only`) with timecodes;
 - a cross-check of `subs_from_edit.py`'s `words_kept` against our `|doru|`.
 

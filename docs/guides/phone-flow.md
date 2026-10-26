@@ -21,7 +21,7 @@ recap. **Two ways to get the clips over** — pick one:
 Either way, when a recap finishes `recap.py` posts an ntfy message with a
 preview link and you open that link in the phone browser over the tailnet.
 
-The steps below are Doru's to run on his machines; the repo only ships the tools
+The steps below are the owner's to run on his machines; the repo only ships the tools
 and these instructions.
 
 ## What runs where
@@ -48,8 +48,8 @@ project appears on **Projects** with a `running` badge and turns `done` when
 the recap is ready. The project page's tabs are **Recap**, **Files**, **Cuts**
 and **Shorts**; **Re-edit**
 re-runs only the edit with your options and a feedback note, and keeps the
-earlier versions (chips v1, v2, …). A version that is neither the latest nor
-the first can be deleted from the **Recap** tab (its folder is removed for
+earlier versions (chips v1, v2, …). Any version except the
+latest can be deleted from the **Recap** tab (its folder is removed for
 good).
 
 ## 1. (Optional) Phone: install Syncthing
@@ -61,7 +61,7 @@ while pairing.
 
 ## 2. (Optional) LXC: install Syncthing
 
-Doru runs these on the LXC:
+the owner runs these on the LXC:
 
 ```bash
 sudo apt update && sudo apt install -y syncthing
@@ -82,7 +82,7 @@ clips from the phone. Optionally add ignore patterns (`.thumbnails`, `.*`).
 
 ## 4. Start the watcher and the server
 
-Doru runs these on the LXC, in two terminals or two tmux windows:
+the owner runs these on the LXC, in two terminals or two tmux windows:
 
 ```bash
 cd <repo>
@@ -96,7 +96,7 @@ export OPENROUTER_API_KEY=...        # never commit it
 flag is documented in each tool's `--help`, which is the source of truth.
 
 <details>
-<summary>Optional: systemd user units (Doru's step — the repo does not touch systemd)</summary>
+<summary>Optional: systemd user units (the owner's step — the repo does not touch systemd)</summary>
 
 Create two files under `~/.config/systemd/user/` and enable them yourself:
 
@@ -129,7 +129,7 @@ WantedBy=default.target
 ```
 
 Then `systemctl --user daemon-reload && systemctl --user enable --now yt-inbox yt-serve`.
-Creating and enabling these units is Doru's step.
+Creating and enabling these units is the owner's step.
 
 </details>
 
@@ -147,7 +147,7 @@ this repo as its working directory (or the `--add-dir` equivalent). Hermes needs
 the repo path, `.venv/bin/python`, `OPENROUTER_API_KEY`, `NTFY_URL` and network
 access to `<agent-host>`. Then, in Telegram, send one of the phrases in the skill
 ("fă-mi un recap din clipurile de azi") and confirm Hermes answers with the
-preview link. Enabling and maintaining Hermes itself is Doru's step.
+preview link. Enabling and maintaining Hermes itself is the owner's step.
 
 ## 7. Test the loop end to end
 

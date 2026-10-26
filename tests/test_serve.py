@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -13,6 +14,7 @@ import pytest
 import yaml
 
 import serve
+import common.theme as theme
 import common.config as config
 from common.costs import connect, insert_entry
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
@@ -22,7 +24,6 @@ from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 def _no_network(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     serve._credit_cache.update({"at": 0.0, "value": None, "failed_at": 0.0})
-    serve._totals_cache.update({"at": 0.0, "url": None, "value": None, "failed_at": 0.0})
 
 
 def make_root(tmp_path):
@@ -54,7 +55,7 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
                  ledger=None, requests=None, donation_links=None,
                  features=None, consent_text=None,
                  storage_gb=None, credit_warn_usd=None, project_totals_url=None,
-                 brand_logo=None):
+                 brand_logo=None, notebook=None):
     if music_dir is None:
         music_dir = str(root / "no-music-dir")
     if inbox is None:
@@ -77,6 +78,7 @@ def start_server(root, music_dir=None, inbox=None, max_upload_mb=4096, max_total
         credit_warn_usd,
         project_totals_url,
         brand_logo if brand_logo is not None else serve.DEFAULT_BRAND_LOGO,
+        notebook,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -147,10 +149,26 @@ def test_run_json_alone_is_a_project(tmp_path):
 
 
 def test_project_status_running_for_live_pid(tmp_path):
+    import psutil
+
     folder = tmp_path / "2026-10-14"
     folder.mkdir()
-    (folder / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    started = psutil.Process(os.getpid()).create_time()
+    (folder / ".run.json").write_text(
+        json.dumps({"pid": os.getpid(), "pid_started": started}), encoding="utf-8"
+    )
     assert serve.project_status(folder) == "running"
+
+
+def test_project_status_done_for_a_live_unrelated_pid(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / "recap_720p.mp4").write_bytes(b"x")
+    (folder / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    assert serve.project_status(folder) in ("done", "stopped")
+    assert serve.project_status(folder) != "running"
+    serve.stop_run(folder)
+    assert serve.project_status(folder) == "stopped"
 
 
 def test_project_status_failed_for_dead_pid_without_recap(tmp_path):
@@ -177,6 +195,76 @@ def test_project_status_ignores_malformed_run_json(tmp_path):
     assert serve.project_status(folder) == "done"
 
 
+def test_project_status_stopped_for_dead_pid_marked_stopped(tmp_path):
+    folder = tmp_path / "2026-10-14"
+    folder.mkdir()
+    (folder / ".run.json").write_text(
+        json.dumps({"pid": 2**31 - 1, "stopped": True}), encoding="utf-8"
+    )
+    assert serve.project_status(folder) == "stopped"
+
+
+def test_project_page_shows_the_stop_button_while_running(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
+        assert status == 200
+        page = body.decode()
+        assert 'class="stop-run"' in page
+        assert 'action="/2026-10-14/stop-run"' in page
+        assert ">Stop<" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stop_run_kills_the_group_and_marks_the_run_stopped(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / ".run.json").write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+    alive = {"value": True}
+    killed = []
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: alive["value"])
+
+    def fake_terminate(pid):
+        killed.append(pid)
+        alive["value"] = False
+
+    monkeypatch.setattr(serve, "_terminate_group", fake_terminate)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
+    server = start_server(root)
+    try:
+        status, headers, _ = request(server, "POST", "/2026-10-14/stop-run")
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert killed == [4242]
+        marker = json.loads((project / ".run.json").read_text(encoding="utf-8"))
+        assert marker["stopped"] is True
+        _, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
+        assert b"Stopped. The previous version is still here." in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stop_run_without_a_run_is_409(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    monkeypatch.setattr(serve, "pid_alive", lambda pid: False)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "POST", "/2026-10-14/stop-run")
+        assert status == 409
+        assert b"nothing is running" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_index_lists_project_with_done_badge(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
@@ -195,9 +283,14 @@ def test_index_lists_project_with_done_badge(tmp_path):
 
 
 def test_index_shows_running_badge(tmp_path):
+    import psutil
+
     root = make_root(tmp_path)
     project = root / "2026-10-14"
-    (project / ".run.json").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    started = psutil.Process(os.getpid()).create_time()
+    (project / ".run.json").write_text(
+        json.dumps({"pid": os.getpid(), "pid_started": started}), encoding="utf-8"
+    )
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/")
@@ -235,6 +328,7 @@ def test_project_page_default_tab_is_recap(tmp_path):
         assert b'href="/2026-10-14/?tab=recap"' in body
         assert b'href="/2026-10-14/?tab=why"' not in body
         assert b'href="/2026-10-14/?tab=shots"' not in body
+        assert b'href="/2026-10-14/?tab=debug"' not in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -258,13 +352,134 @@ def test_project_page_without_recap_has_no_player(tmp_path):
         server.server_close()
 
 
-def test_tab_why_embeds_explain(tmp_path):
+def test_director_tab_shows_the_chat_and_the_notebook(tmp_path):
+    root = make_root(tmp_path)
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(
+        json.dumps({"lessons": [{"id": "l001", "text": "keep the tunnel longer", "kind": "lesson"}]}),
+        encoding="utf-8",
+    )
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert 'id="chat"' in page
+        assert 'id="notebook"' in page
+        assert "keep the tunnel longer" in page
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=recap")
+        assert status == 200
+        page = body.decode()
+        assert 'id="chat"' not in page
+        assert 'id="notebook"' not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_shows_the_rule_fallback_notice(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    edit = {
+        "meta": {"director": {"by": "rules", "approved": False}},
+        "video": [{"id": "v1", "shot_key": "0072/s7b5"}],
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add the orbit, drop one bunker shot",
+        "reply": "I read this as: add 0091/s2, drop 0072/s7b1.",
+        "add_keys": ["0091/s2"],
+        "drop_keys": ["0072/s7b1"],
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "The director could not make this edit; a simpler editor made it." in page
+        assert "Not applied: 0091/s2" in page
+        assert "Applied: 0072/s7b1" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_hides_the_notice_for_an_llm_edit(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    edit = {
+        "meta": {"director": {"by": "llm", "approved": True}},
+        "video": [{"id": "v1", "shot_key": "0091/s2"}],
+    }
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    row = {
+        "ts": "2026-10-24T10:00:00+00:00",
+        "action": "reply",
+        "text": "add the orbit",
+        "reply": "I read this as: add 0091/s2.",
+        "add_keys": ["0091/s2"],
+        "drop_keys": [],
+    }
+    (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert "The director could not make this edit" not in body.decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_tab_bar_has_director_and_recap_off_hides_it(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        _, _, body = request(server, "GET", "/2026-10-14/")
+        assert b'href="/2026-10-14/?tab=director#chat-latest"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+    server = start_server(root, features=["upload", "why", "shots", "shorts", "costs", "requests"])
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert b'href="/2026-10-14/?tab=director#chat-latest"' not in body
+        assert b'<iframe src="shotlog.html"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_is_phone_first(tmp_path):
+    root = make_root(tmp_path)
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(json.dumps({"lessons": []}), encoding="utf-8")
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert b'name="viewport" content="width=device-width, initial-scale=1"' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+    panel = serve.render_director_panel(root / "2026-10-14", "2026-10-14", notebook=notebook)
+    assert 'id="chat"' in panel
+    assert 'id="notebook"' in panel
+    assert "width:" not in panel
+
+
+def test_tab_why_is_gone(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
         assert status == 200
-        assert b'<iframe src="explain.html"' in body
+        assert b'<iframe src="explain.html"' not in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -289,10 +504,6 @@ def test_tab_without_file_shows_placeholder(tmp_path):
     (folder / "recap_720p.mp4").write_bytes(b"x")
     server = start_server(root)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
-        assert status == 200
-        assert b"explain.html" not in body
-        assert b"scripts/explain.py" in body
         status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
         assert status == 200
         assert b"shotlog.html" not in body
@@ -1068,6 +1279,50 @@ def test_recap_panel_uses_the_shown_version_meta(tmp_path):
     assert "Titlu nou" not in page
 
 
+def test_upload_and_reedit_forms_have_the_meta_select():
+    page = serve.render_upload([])
+    assert '<select name="meta">' in page
+    assert "Title and description" in page
+    assert "Auto (off)" in page and ">on<" in page and ">off<" in page
+    assert '<select name="meta">' in serve.render_reedit("2026-10-14", [])
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("on", "--meta"), ("off", "--no-meta"), ("auto", None), (None, None), ("junk", None)],
+)
+def test_meta_field_becomes_the_recap_argv(tmp_path, value, expected):
+    fields = {} if value is None else {"meta": value}
+    command = serve.build_recap_command("python", tmp_path / "in", tmp_path / "ws", "brief", fields, tmp_path / "music")
+    if expected is None:
+        assert "--meta" not in command and "--no-meta" not in command
+    else:
+        assert expected in command
+
+
+def test_recap_panel_hides_the_meta_box_when_the_run_turned_it_off(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_meta(project)
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 1, "options": {"meta": "off"}}), encoding="utf-8"
+    )
+    page = serve.render_recap_panel(project)
+    assert "Title, description and hashtags" not in page
+    assert 'class="copy"' not in page
+
+
+def test_recap_panel_shows_the_meta_box_when_the_run_asked_for_it(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    write_meta(project)
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 1, "options": {"meta": "on"}}), encoding="utf-8"
+    )
+    page = serve.render_recap_panel(project)
+    assert "Title, description and hashtags" in page
+
+
 def test_latest_version_without_video_falls_back_to_the_last_one_that_played(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
@@ -1113,6 +1368,7 @@ def test_running_project_shows_progress_and_refreshes(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
     page = serve.render_project("2026-10-14", project, "recap")
     assert "8 of 11 steps done" in page
     assert 'http-equiv="refresh"' in page
@@ -1157,6 +1413,7 @@ def test_run_notice_shows_the_current_station_and_progress(tmp_path, monkeypatch
         encoding="utf-8",
     )
     monkeypatch.setattr(serve, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve, "run_is_ours", lambda directory, pid: True)
     page = serve.render_project("2026-10-14", project, "recap")
     assert "Now: checking quality" in page
     assert "step 3 of 11</span>" in page
@@ -1619,7 +1876,7 @@ def test_shotlog_regeneration_updates_the_used_grouping(tmp_path):
     assert "must be in" in page and "wrong label" in page
 
 
-def test_tab_bar_has_no_why_or_shots_links_but_pages_stay_reachable(tmp_path):
+def test_tab_bar_has_no_why_or_shots_links_but_the_shots_page_stays_reachable(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
@@ -1629,9 +1886,7 @@ def test_tab_bar_has_no_why_or_shots_links_but_pages_stay_reachable(tmp_path):
         nav = page[page.index('<nav class="tabs">'):page.index("</nav>")]
         assert "?tab=why" not in nav
         assert "?tab=shots" not in nav
-        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
-        assert status == 200
-        assert b'<iframe src="explain.html"' in body
+        assert 'href="/2026-10-14/?tab=debug"' not in nav
         status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
         assert status == 200
         assert b'<iframe src="shotlog.html"' in body
@@ -2333,6 +2588,36 @@ def test_run_notice_shows_step_times_and_a_live_total(tmp_path):
     assert "previous version" in serve.render_run_notice("running", report, has_previous=True)
 
 
+def test_run_notice_marks_a_skipped_step_already_done():
+    report = {
+        "outcome": None, "done": 2, "total": 3, "last": "quality",
+        "failed_at": None, "error": None, "current": None, "current_step": 0,
+        "elapsed": None, "started_at": None, "step_started_at": None,
+        "steps": [
+            {"step": 1, "name": "proxy", "seconds": 0.0},
+            {"step": 2, "name": "quality", "seconds": None},
+        ],
+        "cost_usd": None,
+    }
+    notice = serve.render_run_notice("running", report)
+    assert "already done" in notice
+    assert "0 s" not in notice
+    assert "?" in notice
+
+
+def test_run_notice_hides_the_total_when_it_equals_the_step(monkeypatch):
+    monkeypatch.setattr(serve.time, "time", lambda: 1000.0)
+    report = {
+        "outcome": None, "done": 1, "total": 3, "last": "proxy",
+        "failed_at": None, "error": None, "current": "ingest", "current_step": 2,
+        "elapsed": 5.0, "started_at": 995.0, "step_started_at": 995.0,
+        "steps": [], "cost_usd": None,
+    }
+    assert "Total so far" not in serve.render_run_notice("running", report)
+    report["elapsed"] = 2.0
+    assert "Total so far" in serve.render_run_notice("running", report)
+
+
 def test_run_cost_and_version_cost(tmp_path):
     import json as _json
 
@@ -2622,17 +2907,6 @@ def test_fetch_model_credit_parses_the_key_endpoint():
     assert no_limit["remaining"] is None
 
 
-def test_fetch_project_totals_parses_the_json():
-    payload = {"balance_usd": 12.5, "monthly_running_usd": 3.0}
-    assert serve.fetch_project_totals(
-        "https://example.org/costs.json", opener=fake_opener(payload)
-    ) == payload
-    with pytest.raises(ValueError):
-        serve.fetch_project_totals(
-            "https://example.org/costs.json", opener=fake_opener({"nope": 1})
-        )
-
-
 def test_costs_page_shows_storage_and_credit(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
@@ -2806,15 +3080,8 @@ def test_costs_json_without_a_ledger_is_404(tmp_path):
         server.server_close()
 
 
-def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
+def test_friend_costs_page_shows_only_its_own_costs(tmp_path, monkeypatch):
     root = make_root(tmp_path)
-    totals = {
-        "balance_usd": 7.5,
-        "monthly_running_usd": 3.0,
-        "development_total_usd": 2.0,
-        "donations_usd": 10.0,
-    }
-    monkeypatch.setattr(serve, "fetch_project_totals", lambda *a, **k: totals)
     server = start_server(root, project_totals_url="https://example.org/costs.json")
     try:
         status, _, body = request(server, "GET", "/costs")
@@ -2822,28 +3089,12 @@ def test_costs_page_shows_project_totals(tmp_path, monkeypatch):
         assert status == 200
         assert "Model cost of your clips" in page
         assert "Your model cost to cover" in page
-        assert "The project's own costs" in page
-        assert "$2,00" in page
-        assert page.index("Your model cost to cover") < page.index("The project's own costs")
+        assert "What your edits cost in AI models." in page
+        assert "Anything you pay above your model cost goes into building the app further." in page
+        assert "The project's own costs" not in page
+        assert "Project costs are unavailable." not in page
         assert "Donations minus everything" not in page
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_costs_page_project_totals_unavailable(tmp_path, monkeypatch):
-    root = make_root(tmp_path)
-
-    def boom(*a, **k):
-        raise OSError("no network")
-
-    monkeypatch.setattr(serve, "fetch_project_totals", boom)
-    server = start_server(root, project_totals_url="https://example.org/costs.json")
-    try:
-        status, _, body = request(server, "GET", "/costs")
-        page = body.decode()
-        assert status == 200
-        assert "Project costs are unavailable." in page
+        assert "<h2>Donations</h2>" not in page
     finally:
         server.shutdown()
         server.server_close()
@@ -2899,7 +3150,6 @@ def test_check_reports_the_limits_settings(tmp_path, capsys, monkeypatch):
     )
     captured = capsys.readouterr()
     assert "no storage limit configured" in captured.err
-    assert "no project totals URL configured" in captured.err
     summary = json.loads(captured.out)
     assert summary["storage_gb"] is None
     assert summary["project_totals_url"] is None
@@ -2914,6 +3164,35 @@ def test_upload_page_shows_the_consent_checkbox(tmp_path):
         assert b"I own this footage." in body
         assert b'name="consent"' in body
         assert b"required" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_menu_shows_new_video(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/")
+        page = body.decode()
+        assert status == 200
+        assert ">New video</a>" in page
+        assert "New recap" not in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_upload_page_is_titled_new_video(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/upload")
+        page = body.decode()
+        assert status == 200
+        assert "<h1>New video</h1>" in page
+        assert "<title>New video</title>" in page
+        assert "New recap" not in page
     finally:
         server.shutdown()
         server.server_close()
@@ -3034,7 +3313,7 @@ def test_delete_version_removes_the_folder(tmp_path):
         server.server_close()
 
 
-def test_delete_version_refuses_latest_and_first(tmp_path):
+def test_delete_version_refuses_the_latest_but_allows_the_first(tmp_path):
     root = make_root(tmp_path)
     project = root / "2026-10-14"
     write_version(project, 1, "first", "2026-10-15T10:00:00")
@@ -3051,16 +3330,18 @@ def test_delete_version_refuses_latest_and_first(tmp_path):
         )
         assert status == 409
         assert b"cannot delete the latest version" in body
-        status, _, body = request(
+        assert (project / "versions" / "v003").is_dir()
+        status, headers, _ = request(
             server,
             "POST",
             "/2026-10-14/delete-version",
             headers=form_headers(),
             body=urllib.parse.urlencode({"version": "v001"}),
         )
-        assert status == 409
-        assert b"cannot delete the first version" in body
-        assert (project / "versions" / "v001").is_dir()
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert not (project / "versions" / "v001").exists()
+        assert (project / "versions" / "v002").is_dir()
         assert (project / "versions" / "v003").is_dir()
     finally:
         server.shutdown()
@@ -3125,7 +3406,18 @@ def test_recap_panel_shows_the_delete_version_button(tmp_path):
     assert 'value="v002"' in page
     assert "Delete version 2? Its video and files are removed for good." in page
     assert "delete-version" not in serve.render_recap_panel(project, wanted=3)
-    assert "delete-version" not in serve.render_recap_panel(project, wanted=1)
+    first = serve.render_recap_panel(project, wanted=1)
+    assert 'action="/2026-10-14/delete-version"' in first
+    assert 'value="v001"' in first
+
+
+def test_delete_version_button_is_a_bin_icon_button_not_a_bar():
+    form = serve.render_delete_version_form("2026-10-14", {"number": 2, "name": "v002"})
+    assert '<button type="button" class="version-del"' in form
+    assert "<svg" in form and "Delete this version" in form
+    css = theme.THEME_CSS
+    assert ".version-del{" in css and "form.delete-version{display:flex" in css
+    assert "width:100%" not in css.split(".version-del{", 1)[1].split("}", 1)[0]
 
 
 def test_delete_version_script():
@@ -3297,7 +3589,6 @@ def test_project_page_hides_the_reviewer_box(tmp_path):
         assert status == 200
         page = body.decode()
         assert "Reviewer:" not in page
-        assert "too long — shorten to about 2.5 s" not in page
         saved = json.loads((project / "edit.json").read_text(encoding="utf-8"))
         assert saved["meta"]["director"]["review"]["approved"] is False
     finally:
@@ -3312,44 +3603,6 @@ def test_project_page_without_review_shows_nothing(tmp_path):
         status, _, body = request(server, "GET", "/2026-10-14/")
         assert status == 200
         assert b"Reviewer:" not in body
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def test_feedback_reply_page_shows_the_reply_and_estimate(tmp_path, monkeypatch):
-    root = make_root(tmp_path)
-    calls = stub_recap(monkeypatch, tmp_path)
-    stdout = json.dumps(
-        {
-            "reply": "I will drop 0071/s2.",
-            "estimate_usd": 0.05,
-            "estimate_s": 12.3,
-            "wall_time_s": 1.0,
-            "llm_cost_usd": 0.0003,
-        }
-    )
-    monkeypatch.setattr(
-        serve.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
-    )
-    server = start_server(root)
-    try:
-        status, _, body = request(
-            server,
-            "POST",
-            "/2026-10-14/feedback-reply",
-            headers=multipart_headers(),
-            body=multipart_body([("feedback", None, "drop 0071/s2")]),
-        )
-        assert status == 200, body
-        page = body.decode()
-        assert "I will drop 0071/s2." in page
-        assert "about $0,05 and 12 s" in page
-        assert "Make the new version" in page
-        assert "Change my request" in page
-        assert calls == []
     finally:
         server.shutdown()
         server.server_close()
@@ -3437,12 +3690,6 @@ def test_reedit_without_approve_records_no_approved_line(tmp_path, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
-
-
-def test_reedit_form_has_the_ask_button():
-    page = serve.render_reedit("2026-10-14", [])
-    assert "feedback-reply" in page
-    assert "Ask the director" in page
 
 
 def test_reedit_form_prefills_the_feedback():
@@ -3941,23 +4188,9 @@ def test_credit_failure_is_cached_for_two_minutes(monkeypatch):
     assert len(calls) == 2
 
 
-def test_totals_failure_is_cached_for_two_minutes(monkeypatch):
-    calls = []
-
-    def boom(*args, **kwargs):
-        calls.append(1)
-        raise OSError("down")
-
-    monkeypatch.setattr(serve, "fetch_project_totals", boom)
-    assert serve.project_totals("http://x/costs.json", now=1000.0) is None
-    assert serve.project_totals("http://x/costs.json", now=1001.0) is None
-    assert len(calls) == 1
-
-
 def test_http_timeout_is_three_seconds():
     assert serve.HTTP_TIMEOUT_SECONDS == 3
     assert serve.fetch_model_credit.__defaults__[0] == 3
-    assert serve.fetch_project_totals.__defaults__[0] == 3
 
 
 def test_reedit_form_carries_the_shown_version():
@@ -4028,3 +4261,360 @@ def test_render_file_row_shows_short_sizes():
         "in_edit": False,
     }
     assert "0 MB" in serve._render_file_row("2026-10-14", photo)
+
+
+class FakeLearnProcess:
+    pid = 4242
+
+    def wait(self):
+        return 0
+
+
+def stub_learn(monkeypatch):
+    """Record every spawned process and make the recap exit 0."""
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append(command)
+        return FakeLearnProcess()
+
+    monkeypatch.setattr(serve.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve, "project_status", lambda directory: "done")
+    return calls
+
+
+def test_drop_shot_starts_the_learn_pass(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "versions").mkdir()
+    notebook = tmp_path / "notebook.json"
+    calls = stub_learn(monkeypatch)
+    monkeypatch.setattr(
+        serve.subprocess, "run", lambda command, **kwargs: types.SimpleNamespace(returncode=0)
+    )
+    server = start_server(root, notebook=notebook)
+    try:
+        status, headers, _ = request(
+            server,
+            "POST",
+            "/2026-10-14/drop-shot",
+            headers=multipart_headers(),
+            body=multipart_body([("shots", None, "1")]),
+        )
+        assert status == 303
+        assert headers["Location"] == "/2026-10-14/?tab=recap"
+        assert len(calls) == 1
+        command = calls[0]
+        assert command[1].endswith("notebook.py")
+        assert "--learn" in command
+        assert "--workspace" in command and str(project) in command
+        assert "--notebook" in command and str(notebook) in command
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_drop_shot_without_notebook_starts_no_learn_pass(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "versions").mkdir()
+    calls = stub_learn(monkeypatch)
+    monkeypatch.setattr(
+        serve.subprocess, "run", lambda command, **kwargs: types.SimpleNamespace(returncode=0)
+    )
+    server = start_server(root)
+    try:
+        status, _, _ = request(
+            server,
+            "POST",
+            "/2026-10-14/drop-shot",
+            headers=multipart_headers(),
+            body=multipart_body([("shots", None, "1")]),
+        )
+        assert status == 303
+        assert calls == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_reedit_chains_the_learn_pass(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    source = tmp_path / "inbox" / "2026-10-14"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    (project / ".run.json").write_text(
+        json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+    )
+    notebook = tmp_path / "notebook.json"
+    calls = stub_learn(monkeypatch)
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body([("brief", None, "about 60 seconds"), ("submit", None, "reedit")]),
+        )
+        assert status == 303, body
+        deadline = time.time() + 5
+        while len(calls) < 2 and time.time() < deadline:
+            time.sleep(0.01)
+        assert len(calls) == 2
+        learn = calls[1]
+        assert learn[1].endswith("notebook.py")
+        assert "--learn" in learn
+        assert "--notebook" in learn and str(notebook) in learn
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_notebook_panel_shows_waiting_lessons(tmp_path):
+    root = make_root(tmp_path)
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "generated_at": "2026-10-24T00:00:00+00:00",
+                "tool": "notebook",
+                "lessons": [{"id": "l001", "text": "keep the tunnel longer", "kind": "lesson"}],
+                "waiting": [{"id": "l002", "text": "waiting lesson text", "kind": "lesson"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = start_server(root, notebook=notebook)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "The notebook is full. Remove a lesson to make room for a new one." in page
+        assert "waiting lesson text" in page
+        assert 'action="/2026-10-14/notebook-delete"' in page
+        assert 'name="id" value="l002"' in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_has_proxy_uses_photo_proxy_name(tmp_path):
+    proxy_dir = tmp_path / "proxy"
+    proxy_dir.mkdir()
+    heic = tmp_path / "photo.heic"
+    heic.write_bytes(b"heic")
+    (proxy_dir / "photo.jpg").write_bytes(b"proxy")
+    assert serve._has_proxy(proxy_dir, heic) is True
+    (proxy_dir / "photo.jpg").unlink()
+    assert serve._has_proxy(proxy_dir, heic) is False
+    jpg = tmp_path / "plain.jpg"
+    jpg.write_bytes(b"jpg")
+    (proxy_dir / "plain.jpg").write_bytes(b"proxy")
+    assert serve._has_proxy(proxy_dir, jpg) is True
+
+
+def test_friend_costs_total_includes_the_notebook_ledger(tmp_path, monkeypatch):
+    monkeypatch.setattr(serve, "EUR_PER_USD", None)
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    (project / "llm_spend.json").write_text(
+        json.dumps({"entries": [{"cost_usd": 1.0}]}), encoding="utf-8"
+    )
+    notebook = tmp_path / "notebook.json"
+    notebook.write_text(json.dumps({"lessons": []}), encoding="utf-8")
+    (tmp_path / "notebook.spend.json").write_text(
+        json.dumps({"entries": [{"cost_usd": 0.5}]}), encoding="utf-8"
+    )
+    server = start_server(
+        root, project_totals_url="https://example.org/costs.json", notebook=notebook
+    )
+    try:
+        status, _, body = request(server, "GET", "/costs")
+        assert status == 200
+        page = body.decode()
+        assert "$1,50" in page
+        table = page[page.index("Model cost of your clips"):]
+        assert "$1,00" in table
+        assert "$1,50" not in table
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def spawn_sleeper(seconds="30"):
+    return subprocess.Popen(["sleep", seconds], start_new_session=True)
+
+
+def wait_gone(pid, limit=5.0):
+    deadline = time.time() + limit
+    while time.time() < deadline:
+        if not serve.pid_alive(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_terminate_group_stops_a_real_process_group():
+    child = subprocess.Popen(
+        ["sh", "-c", "sleep 30 & echo $!; wait"],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    grandchild = int(child.stdout.readline())
+    try:
+        assert serve.pid_alive(grandchild)
+        serve._terminate_group(child.pid)
+        assert child.wait(timeout=5) != 0
+        assert wait_gone(grandchild)
+    finally:
+        child.stdout.close()
+        if child.poll() is None:
+            child.kill()
+
+
+def test_stop_run_kills_only_the_recorded_run(tmp_path):
+    import psutil
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    process = spawn_sleeper()
+    try:
+        started = psutil.Process(process.pid).create_time()
+        marker = workspace / ".run.json"
+        marker.write_text(json.dumps({"pid": process.pid, "pid_started": started - 3600}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is False
+        assert serve.stop_run(workspace) is True
+        time.sleep(0.3)
+        assert process.poll() is None
+        marker.write_text(json.dumps({"pid": process.pid, "pid_started": started}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is True
+        assert serve.stop_run(workspace) is True
+        assert process.wait(timeout=5) != 0
+        assert json.loads(marker.read_text(encoding="utf-8"))["stopped"] is True
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def test_run_is_ours_falls_back_to_the_command_line(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    process = spawn_sleeper()
+    try:
+        marker = workspace / ".run.json"
+        marker.write_text(json.dumps({"pid": process.pid, "command": ["sleep", "30"]}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is True
+        marker.write_text(json.dumps({"pid": process.pid, "command": ["sleep", "31"]}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is False
+        marker.write_text(json.dumps({"pid": process.pid}), encoding="utf-8")
+        assert serve.run_is_ours(workspace, process.pid) is False
+    finally:
+        process.kill()
+        process.wait()
+
+
+def test_start_recap_records_the_start_time_and_stop_run_ends_it(tmp_path):
+    workspace = tmp_path / "ws"
+    pid = serve.start_recap(["sleep", "30"], workspace, tmp_path, {})
+    try:
+        record = json.loads((workspace / ".run.json").read_text(encoding="utf-8"))
+        assert record["pid"] == pid
+        assert isinstance(record["pid_started"], float)
+        assert serve.run_is_ours(workspace, pid) is True
+        assert serve.stop_run(workspace) is True
+        assert wait_gone(pid)
+    finally:
+        if serve.pid_alive(pid):
+            os.kill(pid, 9)
+
+
+def test_run_tool_command_raises_tool_timeout():
+    with pytest.raises(serve.ToolTimeout):
+        serve.run_tool_command(
+            [sys.executable, "-c", "import time; time.sleep(5)"], 0.2
+        )
+
+
+def test_feedback_reply_timeout_is_504(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 1))
+
+    monkeypatch.setattr(serve.subprocess, "run", timeout)
+    server = start_server(root)
+    try:
+        status, headers, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 504
+        assert headers["Content-Type"].startswith("text/plain")
+        assert b"did not finish" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_valid_version():
+    assert serve.valid_version("v12") is True
+    assert serve.valid_version("v1\n") is False
+    assert serve.valid_version("v00001") is False
+    assert serve.valid_version("../v1") is False
+
+
+def test_reedit_with_a_workspace_form_field_does_not_500(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    inbox = tmp_path / "inbox"
+    source = inbox / "kotor-day"
+    source.mkdir(parents=True)
+    (source / "brief.txt").write_text("about 60 seconds", encoding="utf-8")
+    (root / "2026-10-14" / ".run.json").write_text(
+        json.dumps({"pid": 1, "source": str(source)}), encoding="utf-8"
+    )
+    stub_recap(monkeypatch, tmp_path)
+    server = start_server(root, inbox=inbox)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/re-edit",
+            headers=multipart_headers(),
+            body=multipart_body(
+                [
+                    ("workspace", None, "/etc"),
+                    ("approved", None, "1"),
+                    ("feedback", None, "drop 0071/s2"),
+                ]
+            ),
+        )
+        assert status == 303, body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_version_cost_reads_the_stored_cost_and_survives_a_delete(tmp_path):
+    project = tmp_path / "trip"
+    for number, cost in ((1, 0.04), (2, 0.02), (3, 0.03)):
+        directory = project / "versions" / f"v{number:03d}"
+        directory.mkdir(parents=True)
+        (directory / "version.json").write_text(
+            json.dumps({"created_at": f"2026-10-15T1{number}:00:00+0000", "cost_usd": cost}),
+            encoding="utf-8",
+        )
+    versions = serve.list_versions(project)
+    assert serve.version_cost(versions[0]) == 0.04
+    assert serve.version_cost(versions[2]) == 0.03
+    shutil.rmtree(project / "versions" / "v002")
+    versions = serve.list_versions(project)
+    assert serve.version_cost(versions[-1]) == 0.03

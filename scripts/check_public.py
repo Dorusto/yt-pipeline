@@ -8,6 +8,7 @@ Checks the files staged for commit (or the paths given) for:
 - files larger than 1 MB;
 - secrets: OpenRouter / OpenAI / GitHub / AWS keys and private key blocks;
 - embedded base64 images (frames or thumbnails pasted into text files);
+- the owner's first name (the GitHub handle ``Dorusto`` is fine);
 - private IPv4 addresses (10/8, 172.16/12, 192.168/16) outside .gitignored files.
 
 Usage:
@@ -49,6 +50,7 @@ SECRET_PATTERNS = {
 }
 BASE64_IMAGE = re.compile(r"data:image/[a-z]+;base64,[A-Za-z0-9+/]{200,}")
 IPV4_CANDIDATE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+OWNER_NAME = re.compile(r"\bDoru\b")
 
 
 def staged_files():
@@ -99,6 +101,8 @@ def check_file(path):
             problems.append(f"{path}: looks like it contains a {name}")
     if BASE64_IMAGE.search(text):
         problems.append(f"{path}: contains an embedded base64 image (frame or thumbnail)")
+    if OWNER_NAME.search(text):
+        problems.append(f"{path}: contains the owner's first name")
     if not is_gitignored(path):
         address = private_ipv4(text)
         if address:

@@ -80,7 +80,7 @@ Sorted by relevance to our two modes: **A = action/travel montage**, **B = talki
 
 ### 2.9 Oh My Cassette — agent integration pattern
 - Claude Code / Codex / OpenCode plugin + local MCP server: chat brief → agent watches clips, picks shots, beat-syncs, renders. Editing runs on their cloud.
-- **Take:** expose our pipeline as **MCP tools / Claude Code skill** later, so Doru can edit from chat ("make a 30 s reel from ./footage").
+- **Take:** expose our pipeline as **MCP tools / Claude Code skill** later, so the owner can edit from chat ("make a 30 s reel from ./footage").
 
 ---
 
@@ -90,7 +90,7 @@ Sorted by relevance to our two modes: **A = action/travel montage**, **B = talki
 |---|---|---|
 | Visual understanding | **Qwen3-VL 8B** (dense), Qwen3-VL 30B-A3B (MoE, quantized), Qwen2.5-VL 7B (fallback) | Qwen3-VL has explicit textual timestamp alignment for temporal grounding; 8B fits 24 GB |
 | Text → moment | **TimeLens2-8B** (built on Qwen3-VL-8B, returns `[start,end]` intervals), Lighthouse | Natural-language search in footage |
-| ASR | WhisperX (word-level), faster-whisper | Already in Doru's stack |
+| ASR | WhisperX (word-level), faster-whisper | Already in the owner's stack |
 | Shots | PySceneDetect | Used by ElevenClip, ClipsAI |
 | Music | librosa (beats), downbeat + energy à la CutClaw | |
 | Embeddings | SigLIP / CLIP | dedup + search |

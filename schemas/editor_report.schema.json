@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dorusto/yt-pipeline/schemas/editor_report.schema.json",
+  "title": "editor_report",
+  "description": "The code editor's short report for one director plan: what it cut, what it could not do and which neighbouring slots look alike. Written by scripts/director_editor.py next to edit.json; the director reads it before approving the cut.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "tool",
+    "shots",
+    "total_length_s",
+    "target_length_s",
+    "could_not_do",
+    "similar_neighbours",
+    "summary",
+    "wall_time_s",
+    "llm_cost_usd"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "piece": {
+      "type": "object",
+      "required": ["in_s", "out_s"],
+      "additionalProperties": false,
+      "properties": {
+        "in_s": {"type": "number", "minimum": 0},
+        "out_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "description": "ISO 8601 timestamp of the write"},
+    "tool": {"type": "string"},
+    "shots": {
+      "type": "array",
+      "description": "one row per plan shot, in the plan's order",
+      "items": {
+        "type": "object",
+        "required": ["id", "shot_key", "in_s", "out_s", "length_s", "technique_asked", "technique_done", "why_not"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "description": "the plan shot's id"},
+          "shot_key": {"type": "string", "minLength": 1},
+          "in_s": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "start of the used window; null for a photo"
+          },
+          "out_s": {
+            "type": ["number", "null"],
+            "exclusiveMinimum": 0,
+            "description": "end of the used window; null for a photo"
+          },
+          "length_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "total on-screen length of the shot, its pieces included"
+          },
+          "target_s": {
+            "type": "number",
+            "description": "the length the plan asked for; compare with length_s to see which shots came out short"
+          },
+          "technique_asked": {"type": "string", "minLength": 1, "description": "the plan shot's technique"},
+          "technique_done": {
+            "type": ["string", "null"],
+            "description": "the technique when it was done, else null"
+          },
+          "why_not": {
+            "type": ["string", "null"],
+            "description": "plain words when the technique was not done, else null"
+          },
+          "pieces": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/piece"},
+            "description": "the cut pieces of a multi-piece technique, in timeline order"
+          }
+        }
+      }
+    },
+    "total_length_s": {"type": "number", "minimum": 0, "description": "sum of the slots' on-screen lengths"},
+    "target_length_s": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "the plan brief's target duration; null when it has none"
+    },
+    "could_not_do": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "one plain sentence per thing the editor could not do"
+    },
+    "similar_neighbours": {
+      "type": "array",
+      "description": "consecutive video-slot pairs whose window similarity reaches the threshold",
+      "items": {
+        "type": "object",
+        "required": ["first", "second", "score"],
+        "additionalProperties": false,
+        "properties": {
+          "first": {"type": "string", "minLength": 1, "description": "id of the earlier slot"},
+          "second": {"type": "string", "minLength": 1, "description": "id of the later slot"},
+          "score": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "one short factual sentence the director reads: counts and numbers only"
+    },
+    "wall_time_s": {"type": "number", "minimum": 0},
+    "llm_cost_usd": {"type": "number", "minimum": 0}
+  }
+}

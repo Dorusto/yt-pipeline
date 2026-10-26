@@ -12,6 +12,7 @@ Write in the same language as the brief. Concrete over clever.
 
 The tool appends these sections after this prompt:
 
+- `## Style` — the channel's own style instructions (`title_style`, `pinned_comment_voice`), handed by the tool when the config sets them; a missing part is left out.
 - `## Brief` — the brief in plain language, verbatim.
 - `## Facts` — `Place:`, `When:`, `Who is in it:` and `Occasion:` when the tool
   could read them, else `(unknown)`.

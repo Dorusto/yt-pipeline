@@ -2,7 +2,7 @@
 
 yt-pipeline turns raw clips and photos into a finished video: transcription,
 correction, translation, metadata, 9:16 Shorts and the AI Director
-(ingest → motion → quality → describe → index → director → render). Doru is the
+(ingest → motion → quality → describe → index → director → render). the owner is the
 product owner and reviewer; talk to him in Romanian, write everything in the repo
 in English.
 

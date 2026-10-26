@@ -28,11 +28,12 @@ import urllib.parse
 from pathlib import Path
 
 from common import notify, versions
-from common.config import ConfigError, music_library, no_music_library_message
+from common.config import ConfigError, music_library, no_music_library_message, recap_meta_enabled
 from common.edit_timeline import edit_summary
+from common.excluded import filter_excluded, load_excluded
 from common.jsonio import parse_child_json
 from common.media import video_files
-from common.photos import is_photo
+from common.photos import is_photo, proxy_name
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from common.errors import report_error
 
@@ -69,9 +70,11 @@ class Context:
         no_audio_clean=False,
         frame_format="16x9",
         speed_ramp=False,
+        meta=False,
     ):
         self.frame_format = frame_format
         self.speed_ramp = speed_ramp
+        self.meta = meta
         self.source = source
         self.workspace = workspace
         self.brief_text = brief_text
@@ -98,7 +101,7 @@ def build_parser():
         usage=(
             "recap.py [-h] --source SOURCE (--brief BRIEF | --brief-file BRIEF_FILE)"
             " [--workspace WORKSPACE] [--final] [--budget-usd BUDGET_USD]"
-            " [--music MUSIC] [--format {16x9,9x16,both}] [--speed-ramp] [--feedback TEXT] [--force] [--notify]"
+            " [--music MUSIC] [--format {16x9,9x16,both}] [--speed-ramp] [--meta] [--feedback TEXT] [--force] [--notify]"
             " [--preview-base PREVIEW_BASE] [--json]"
         ),
         description=(
@@ -191,6 +194,17 @@ def build_parser():
             "optional effect: let the middle half of a long camera move play up to 1.2x so more of the "
             "move fits (default off: normal speed everywhere)"
         ),
+    )
+    meta_group = parser.add_mutually_exclusive_group()
+    meta_group.add_argument(
+        "--meta",
+        action="store_true",
+        help="write the title and description (the recap_meta station); default off",
+    )
+    meta_group.add_argument(
+        "--no-meta",
+        action="store_true",
+        help="skip the title and description even when recap.meta is true in the config",
     )
     parser.add_argument(
         "--feedback",
@@ -292,15 +306,21 @@ def is_up_to_date(name, ctx):
     proxy_dir = ws / "proxy"
     proxies = video_files(proxy_dir)
     if name == "proxy":
-        clips = video_files(src)
+        excluded = load_excluded(ws)
+        clips = filter_excluded(video_files(src), excluded)
         photos = (
-            [path for path in Path(src).iterdir() if path.is_file() and is_photo(path)]
+            filter_excluded(
+                [path for path in Path(src).iterdir() if path.is_file() and is_photo(path)],
+                excluded,
+            )
             if Path(src).is_dir()
             else []
         )
         if not clips and not photos:
             return bool(directory_files(proxy_dir))
-        return all((proxy_dir / clip.name).is_file() for clip in clips)
+        if not all((proxy_dir / clip.name).is_file() for clip in clips):
+            return False
+        return all((proxy_dir / proxy_name(photo)).is_file() for photo in photos)
     if name == "ingest":
         return all_newer(ws / "ingest.json", proxies)
     if name == "beats":
@@ -734,8 +754,8 @@ def execute(station, argv, ctx):
                 "status": "FAIL",
                 "wall_time_s": round(time.monotonic() - started, 3),
                 "llm_cost_usd": 0.0,
-                "detail": "exit 1",
-                "returncode": 1,
+                "detail": f"exit {EXIT_RUNTIME}",
+                "returncode": EXIT_RUNTIME,
                 "stderr": str(exc),
             }
         returncode = result.returncode
@@ -857,6 +877,11 @@ def run(ctx):
     failed_name = None
     for index, station in enumerate(stations, start=1):
         name = station["name"]
+        if name == "recap_meta" and not ctx.meta:
+            entries.append({"name": name, "status": "skip", "wall_time_s": 0.0,
+                            "llm_cost_usd": 0.0, "detail": "not asked"})
+            print_progress(ctx, index, total, name, "skip", 0.0, "not asked")
+            continue
         rerun = name in ("llm_director", "explain", "render", "render_vertical") and (
             ctx.feedback or getattr(ctx, "new_edit", False)
         )
@@ -961,6 +986,7 @@ def keep_version(ctx, entries, failed_name):
         "speed_ramp": ctx.speed_ramp,
         "status": "failed" if failed_name else "done",
         "failed_at": failed_name,
+        "cost_usd": round(sum(entry["llm_cost_usd"] for entry in entries), 8),
     }
     try:
         directory = versions.snapshot(ctx.workspace, meta)
@@ -1050,6 +1076,8 @@ def main(argv=None):
         music_dir = library.resolve() if library is not None else None
         if music == "auto" and music_dir is None:
             raise RecapError(no_music_library_message("--music-dir"))
+        meta = True if args.meta else (False if args.no_meta else None)
+        meta = recap_meta_enabled(meta)
     except (RecapError, ConfigError) as exc:
         return report_error(exc, EXIT_USAGE, args.json)
     ctx = Context(
@@ -1073,6 +1101,7 @@ def main(argv=None):
         no_audio_clean=args.no_audio_clean,
         frame_format=args.frame_format,
         speed_ramp=args.speed_ramp,
+        meta=meta,
     )
     ctx.new_edit = args.new_edit
     summary = run(ctx)

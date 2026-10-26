@@ -1,17 +1,19 @@
 ---
 name: yt-similarity
 description: Embed every quality segment and still photo of a workspace and list the pairs whose cosine similarity reaches a threshold, so the director can refuse near-duplicate shots and the index can suppress bursts. Use when the user asks which shots or photos look the same, wants near-duplicate segments found, wants a similarity threshold applied across clips and photos, or needs the embeddings behind the diversity rule. Trigger phrases - "care cadre seamănă", "găsește segmentele duplicate", "similarity between segments", "ce cadre sunt aproape identice", "evită cadrele repetate", "care poze seamănă", "găsește pozele duplicate". Not for camera-motion geometry (that is `motion`), quality defects and roles (that is `quality`) or semantic content (that is `describe`).
-compatibility: Run from the repository root. Needs the repo .venv with opencv-python-headless; CPU only. Reads quality/<stem>.json, the clips and the photos listed in ingest.json read-only, writes similarity.json into the workspace. Frames are held in memory only and never written to disk. The default mobilenet backend downloads a 14 MB ONNX model once to ~/.cache/yt-pipeline/models/; use --backend hist for a fully offline run with no download.
+compatibility: Run with the `yt` entry point on PATH. Needs the repo .venv with opencv-python-headless; CPU only. Reads quality/<stem>.json, the clips and the photos listed in ingest.json read-only, writes similarity.json into the workspace. Frames are held in memory only and never written to disk. The default mobilenet backend downloads a 14 MB ONNX model once to ~/.cache/yt-pipeline/models/; use --backend hist for a fully offline run with no download.
 ---
 
 # yt-similarity
 
-Embed every quality segment and still photo of a workspace and list the visually similar pairs before any editing decision. The director uses the pairs to refuse near-duplicate shots ("no two similar segments in the edit unless the brief asks for it, never back to back") and the index uses them to suppress photo bursts. The output is **one file per workspace** (`WORKSPACE/similarity.json`), not per clip, because pairs cross clips and photos. **Frames are never written to disk** — the repo is public. All commands run from the repository root.
+Embed every quality segment and still photo of a workspace and list the visually similar pairs before any editing decision. The director uses the pairs to refuse near-duplicate shots ("no two similar segments in the edit unless the brief asks for it, never back to back") and the index uses them to suppress photo bursts. The output is **one file per workspace** (`WORKSPACE/similarity.json`), not per clip, because pairs cross clips and photos. **Frames are never written to disk** — the repo is public. All commands run through `yt <tool>`.
+
+`similarity.json` scores whole segments and is the **menu** the director's model sees (the `similar_to` field) and the index uses for burst suppression. The director's neighbour check does **not** use these whole-segment scores: it embeds the frames inside each slot's `in_s..out_s` (the windows actually in the edit) with the same MobileNetV2 embedding and the same 3-frame interior spacing, caches them per window key in `<workspace>/similarity_windows.json` and flags a neighbouring pair at or over the threshold (0.90). A new camera angle right after is fine — only what is on screen counts.
 
 ## Step 1: embed a workspace
 
 ```bash
-.venv/bin/python scripts/similarity.py --workspace /path/to/workspace
+yt similarity --workspace /path/to/workspace
 ```
 
 - `--workspace` is required and must hold `quality/`, `ingest.json` with `photos[]`, or both. `DIR/similarity.json` is written there, created if missing. The source clips and photos are never written to.
@@ -26,7 +28,7 @@ Embed every quality segment and still photo of a workspace and list the visually
 ## Step 2: read the result
 
 ```bash
-.venv/bin/python scripts/similarity.py --workspace /path/to/workspace --json
+yt similarity --workspace /path/to/workspace --json
 ```
 
 The `--json` output is a single object, e.g. `{"segments": 93, "photos": 3, "pairs": 110, "backend": "mobilenet", "model": "mobilenetv2-12.onnx", "threshold": 0.9, "wall_time_s": 53.84, "llm_cost_usd": 0.0, "output": ".../similarity.json", "skipped": false}`. Read `DIR/similarity.json` for the embeddings and the full pair list; it is validated against `schemas/similarity.schema.json` and written atomically, so a run leaves a complete valid file or none.

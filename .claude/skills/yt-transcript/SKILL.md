@@ -1,12 +1,12 @@
 ---
 name: yt-transcript
 description: Fix recurring Whisper mistakes in a Romanian .srt using a corrections list, and translate a Romanian .srt to English via OpenRouter. Use when the user asks to correct or clean a transcript or subtitles, apply corrections.txt, or translate / generate English subtitles for a video. Trigger phrases - "corectează transcriptul", "corectează subtitrarea", "traduce subtitrarea", "fă subtitrarea în engleză", "correct the srt", "translate the subtitles". Also offers, only after asking, the deprecated transcript-based metadata generator.
-compatibility: Run from the repository root. Needs Python 3, the repo .venv with openai installed, and OPENROUTER_API_KEY for translation.
+compatibility: Run with the `yt` entry point on PATH. Needs Python 3, the repo .venv with openai installed, and OPENROUTER_API_KEY for translation.
 ---
 
 # yt-transcript
 
-Fix and translate subtitle files (.srt) for a YouTube clip. All commands run from the repository root.
+Fix and translate subtitle files (.srt) for a YouTube clip. All commands run through `yt <tool>`.
 
 ## Before you start
 
@@ -17,7 +17,7 @@ Fix and translate subtitle files (.srt) for a YouTube clip. All commands run fro
 ## Step 1: correct recurring transcription errors
 
 ```bash
-.venv/bin/python scripts/correct_srt.py raw.srt Clip_RO.srt
+yt correct_srt raw.srt Clip_RO.srt
 ```
 
 - Reads `scripts/corrections.txt` (git-ignored, personal). If it is missing, the script prints a warning and falls back to `scripts/corrections_example.txt` (0 active corrections), so it never crashes and always writes the output. Copy the example to `scripts/corrections.txt` to add your own corrections.
@@ -37,10 +37,10 @@ Needs `OPENROUTER_API_KEY` in the environment for real runs (a missing key print
 
 ```bash
 # explicit output path (recommended)
-.venv/bin/python scripts/translate_srt.py Clip_RO.srt Clip_EN.srt
+yt translate_srt Clip_RO.srt Clip_EN.srt
 
 # or save next to the video
-.venv/bin/python scripts/translate_srt.py Clip_RO.srt /path/to/Clip.mp4
+yt translate_srt Clip_RO.srt /path/to/Clip.mp4
 ```
 
 - Naming: with a `.mp4` second argument (any letter case) the file is written next to the video as `<input name>_EN.srt`, so `Clip_RO.srt` becomes `Clip_RO_EN.srt`, not `Clip_EN.srt`. The same suffix rule applies when the second argument is omitted. Pass an explicit output path when the exact name matters.
@@ -64,7 +64,7 @@ Always ask the user first. Never run it on your own initiative. Say something li
 Run it only after an explicit yes. It needs `OPENROUTER_API_KEY`, uses API credit, and both paths must be absolute.
 
 ```bash
-.venv/bin/python scripts/analyze_srt.py /abs/path/Clip_RO.srt /abs/path/Clip.mp4 --select none
+yt analyze_srt /abs/path/Clip_RO.srt /abs/path/Clip.mp4 --select none
 ```
 
 - Sends the first 80,000 characters of the transcript to the model; the rest is ignored. The output is in Romanian.
@@ -76,7 +76,7 @@ Run it only after an explicit yes. It needs `OPENROUTER_API_KEY`, uses API credi
 Per-short metadata, once `scripts/shorts_config.yaml` has its segments: ask the user the same way, then
 
 ```bash
-.venv/bin/python scripts/analyze_srt.py /abs/path/Clip_RO.srt /abs/path/Clip.mp4 [youtube_url] --shorts-config scripts/shorts_config.yaml
+yt analyze_srt /abs/path/Clip_RO.srt /abs/path/Clip.mp4 [youtube_url] --shorts-config scripts/shorts_config.yaml
 ```
 
 It writes `shorts/<segment name>_metadata.txt` next to the video, one per segment. Without a URL, descriptions contain the placeholder `[LINK VIDEO PRINCIPAL]`; a `youtube_url` key in the config fills it.

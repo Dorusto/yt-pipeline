@@ -67,6 +67,7 @@ font-size:var(--fs-xs);font-weight:600}
 .state{font-size:var(--fs-s);display:inline-flex;align-items:center;gap:6px}
 .state::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
 .badge-done{color:var(--ok)}.badge-running{color:var(--warn)}.badge-failed{color:var(--danger)}
+.badge-stopped{color:var(--muted)}
 .badge-running::before{animation:pulse 1.6s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.badge-running::before{animation:none}}
@@ -137,6 +138,13 @@ background:var(--surface);color:var(--muted);padding:0 var(--sp-3);font:inherit;
 display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
 vertical-align:middle;margin-left:10px}
 .project-del svg{width:16px;height:16px;fill:#fff}
+form.delete-version{display:flex;max-width:none;margin:0 0 var(--sp-3)}
+.version-del{display:inline-flex;align-items:center;gap:var(--sp-2);min-height:var(--tap);padding:0 var(--sp-4);
+border:1px solid var(--line);border-radius:var(--radius-pill);background:transparent;color:var(--text);
+font:inherit;cursor:pointer}
+.version-del svg{width:16px;height:16px;fill:currentColor}
+.version-del:hover{border-color:var(--danger);color:var(--danger)}
+#chat-latest{scroll-margin-top:var(--sp-4)}
 .player{margin-bottom:var(--sp-5)}
 .player h2{font-family:var(--font-display);font-weight:500;font-size:var(--fs-l);margin:0 0 var(--sp-2)}
 .vmeta{color:var(--muted);font-size:var(--fs-s);margin:6px 0 0;overflow-wrap:anywhere}
@@ -199,6 +207,7 @@ font-size:clamp(3.4rem,14vw,5.6rem);line-height:.95}
 .clip-costs .cost{text-align:right;padding-right:0}
 .cost-lines .why{display:block;color:var(--muted);font-size:var(--fs-xs);font-weight:400;margin-top:2px}
 .cost-lines tfoot th,.cost-lines tfoot td{font-weight:700;font-size:var(--fs-m);border-bottom:0}
+.costs-note{color:var(--muted);max-width:60ch;margin:var(--sp-3) 0 0}
 .donation-list{list-style:none;margin:0;padding:0}
 .donation-list li{display:grid;grid-template-columns:auto 1fr auto;gap:var(--sp-3);padding:var(--sp-3) 0;
 border-bottom:1px solid var(--line);font-size:var(--fs-s)}
@@ -248,6 +257,23 @@ form label.check{display:flex;align-items:center;gap:var(--sp-2)}
 form label.check input{width:20px;height:20px;min-height:0;accent-color:var(--accent)}
 .mark,.bar a.nav{white-space:nowrap}
 @media (max-width:440px){.bar{gap:var(--sp-3)}.bar a.nav{font-size:var(--fs-s)}.mark{font-size:var(--fs-m)}}
+.chat{margin:var(--sp-5) 0;border:1px solid var(--line);border-radius:var(--radius-l);background:var(--surface);padding:var(--sp-4)}
+.chat h2{margin-top:0}
+.chat-msg{display:flex;gap:var(--sp-2);align-items:flex-start;margin:var(--sp-2) 0}
+.chat-msg p{margin:0}
+.chat-msg.user{justify-content:flex-end}
+.chat-msg.user p{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-l);padding:var(--sp-2) var(--sp-3);max-width:80%}
+.chat-msg.director p{background:var(--deck);border:1px solid var(--line);border-radius:var(--radius-l);padding:var(--sp-2) var(--sp-3);max-width:80%}
+.chat-shot{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--muted);border:1px solid var(--line);border-radius:var(--radius-pill);padding:0 var(--sp-2);min-width:var(--tap);text-align:center}
+.chat-estimate{color:var(--muted);font-size:var(--fs-xs)}
+.chat-decision{color:var(--muted);font-size:var(--fs-s)}
+.chat-form,.chat-approve{display:flex;gap:var(--sp-2);align-items:flex-end;margin-top:var(--sp-3)}
+.chat-form textarea{flex:1}
+.chat-earlier{margin:var(--sp-2) 0}
+.chat-earlier summary{cursor:pointer;color:var(--muted)}
+.debug{color:var(--muted);font-size:var(--fs-s)}
+.debug pre{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-s);padding:var(--sp-3)}
+.stop-run{margin-top:var(--sp-3)}
 """
 
 PROGRESS_CSS = (

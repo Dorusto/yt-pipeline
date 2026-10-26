@@ -41,7 +41,7 @@ Second pass on the AI tools yt-pipeline competes with, focused on **raw-footage*
 | 17 | Animated captions | Opus, CapCut | existing `pysubs2` karaoke | done | yes |
 | 18 | Ranking + feedback loop (heart / thumbs-down) | Opus | store approve / reject per segment, adjust score weights per user | D3 + D5 | yes — our feedback trains our own scorer |
 | 19 | Export with markers, colours, nested sequences to Premiere / Resolve / FCP | Selects, Eddie | Kdenlive now (existing); OpenTimelineIO for FCPXML / Resolve later | P2 | later |
-| 20 | Music library and templates | Quik, CapCut, Mimo | Doru's own music folder; later his local AI music project | D2 | partly |
+| 20 | Music library and templates | Quik, CapCut, Mimo | the owner's own music folder; later his local AI music project | D2 | partly |
 | 21 | Virality model trained on millions of clips | Opus | not reproducible; replaced by our score + YouTube "Most replayed" on his own channel | — | substitute |
 | 22 | Script → generated video, generated B-roll, voice cloning | CapCut, Descript | generative; out of scope by decision | — | no |
 

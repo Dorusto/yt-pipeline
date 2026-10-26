@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from common.channel import CHANNEL_FIXED_PARTS
+from common.channel import CHANNEL_FIXED_PARTS, CHANNEL_STYLE_PARTS, parse_description_order
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = REPO_ROOT / "config.yaml"
@@ -119,6 +119,14 @@ def _validate(data):
         if library is not None and (not isinstance(library, str) or not library):
             raise ConfigError("music.library must be a non-empty string")
 
+    beats = data.get("beats")
+    if beats is not None:
+        if not isinstance(beats, dict):
+            raise ConfigError("beats must be a mapping")
+        engine = beats.get("engine")
+        if engine is not None and engine not in BEATS_ENGINES:
+            raise ConfigError(f"beats.engine must be one of: {', '.join(BEATS_ENGINES)}")
+
     transcribe = data.get("transcribe")
     if transcribe is not None:
         if not isinstance(transcribe, dict):
@@ -207,6 +215,50 @@ def _validate(data):
         if path is not None and (not isinstance(path, str) or not path):
             raise ConfigError("requests.path must be a non-empty string")
 
+    notebook = data.get("notebook")
+    if notebook is not None:
+        if not isinstance(notebook, dict):
+            raise ConfigError("notebook must be a mapping")
+        path = notebook.get("path")
+        if path is not None and (not isinstance(path, str) or not path):
+            raise ConfigError("notebook.path must be a non-empty string")
+
+    whip = data.get("whip")
+    if whip is not None:
+        if not isinstance(whip, dict):
+            raise ConfigError("whip must be a mapping")
+        min_hold = whip.get("min_hold_s")
+        if min_hold is not None:
+            if (
+                isinstance(min_hold, bool)
+                or not isinstance(min_hold, (int, float))
+                or not math.isfinite(min_hold)
+                or min_hold <= 0
+            ):
+                raise ConfigError("whip.min_hold_s must be a positive number")
+
+    director = data.get("director")
+    if director is not None:
+        if not isinstance(director, dict):
+            raise ConfigError("director must be a mapping")
+        effort = director.get("reasoning_effort")
+        if effort is not None and effort not in DIRECTOR_REASONING_EFFORTS:
+            raise ConfigError(
+                "director.reasoning_effort must be one of: "
+                f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
+            )
+        limits = director.get("shot_limits")
+        if limits is not None:
+            _validate_shot_limits(limits)
+
+    recap = data.get("recap")
+    if recap is not None:
+        if not isinstance(recap, dict):
+            raise ConfigError("recap must be a mapping")
+        meta = recap.get("meta")
+        if meta is not None and not isinstance(meta, bool):
+            raise ConfigError("recap.meta must be true or false")
+
     web = data.get("web")
     if web is not None:
         if not isinstance(web, dict):
@@ -264,11 +316,31 @@ def _validate(data):
                             f"channel.fixed.{part} must map non-empty language codes "
                             "to non-empty strings"
                         )
+        style = channel.get("style")
+        if style is not None:
+            if not isinstance(style, dict):
+                raise ConfigError("channel.style must be a mapping")
+            for part, text in style.items():
+                if part not in CHANNEL_STYLE_PARTS:
+                    raise ConfigError(
+                        f"channel.style.{part} is not a known part; valid parts: "
+                        f"{', '.join(CHANNEL_STYLE_PARTS)}"
+                    )
+                if not isinstance(text, str) or not text:
+                    raise ConfigError(f"channel.style.{part} must be a non-empty string")
+                if part == "description_order":
+                    try:
+                        parse_description_order(text)
+                    except ValueError as exc:
+                        raise ConfigError(f"channel.style.description_order: {exc}") from exc
 
     return data
 
 
 MUSIC_LIBRARY_ENV = "YT_PIPELINE_MUSIC_LIBRARY"
+BEATS_ENGINE_ENV = "YT_PIPELINE_BEATS_ENGINE"
+BEATS_ENGINES = ("numpy", "beat_this")
+DEFAULT_BEATS_ENGINE = "numpy"
 INBOX_ENV = "YT_PIPELINE_INBOX"
 PROJECTS_ENV = "YT_PIPELINE_PROJECTS"
 COSTS_DB_ENV = "YT_PIPELINE_COSTS_DB"
@@ -276,10 +348,15 @@ DONATION_URL_ENV = "YT_PIPELINE_DONATION_URL"
 UPKEEP_PERCENT_ENV = "YT_PIPELINE_UPKEEP_PERCENT"
 USD_TO_EUR_ENV = "YT_PIPELINE_USD_TO_EUR"
 REQUESTS_ENV = "YT_PIPELINE_REQUESTS"
+NOTEBOOK_ENV = "YT_PIPELINE_NOTEBOOK"
 STORAGE_GB_ENV = "YT_PIPELINE_STORAGE_GB"
 PROJECT_TOTALS_URL_ENV = "YT_PIPELINE_PROJECT_TOTALS_URL"
 DEFAULT_DONATION_LABEL = "Support the project"
 DEFAULT_CREDIT_WARN_USD = 1.0
+WHIP_MIN_HOLD_S = 3.0
+DIRECTOR_REASONING_EFFORTS = ("low", "medium", "high", "off")
+DEFAULT_DIRECTOR_REASONING_EFFORT = "medium"
+DEFAULT_RECAP_META = False
 WEB_FEATURES = ("upload", "recap", "why", "shots", "shorts", "costs", "requests")
 CONSENT_TEXT_ENV = "YT_PIPELINE_CONSENT_TEXT"
 FEATURES_ENV = "YT_PIPELINE_FEATURES"
@@ -328,20 +405,19 @@ def no_requests_message(flag_name):
     )
 
 
+def no_notebook_message(flag_name):
+    """The one usage error for an unconfigured notebook, naming the flag."""
+    return (
+        f"no notebook configured: pass {flag_name} PATH, set the "
+        f"{NOTEBOOK_ENV} environment variable, or set notebook.path in the config"
+    )
+
+
 def no_storage_message(flag_name):
     """The one usage error for an unconfigured storage limit, naming the flag."""
     return (
         f"no storage limit configured: pass {flag_name} GB, set the "
         f"{STORAGE_GB_ENV} environment variable, or set limits.storage_gb in the config"
-    )
-
-
-def no_project_totals_message(flag_name):
-    """The one usage error for an unconfigured project totals URL, naming the flag."""
-    return (
-        f"no project totals URL configured: pass {flag_name} URL, set the "
-        f"{PROJECT_TOTALS_URL_ENV} environment variable, or set "
-        f"costs.project_totals_url in the config"
     )
 
 
@@ -531,6 +607,26 @@ def requests_path(cli_value=None, config=None):
     return None
 
 
+def notebook_path(cli_value=None, config=None):
+    """The instance notebook file: CLI flag, else NOTEBOOK_ENV, else notebook.path.
+
+    Returns None when none of the three is set — the notebook is optional, so the
+    director reads nothing and the app shows no section. There is no personal default.
+    """
+    if cli_value:
+        return Path(cli_value).expanduser()
+    from_env = os.environ.get(NOTEBOOK_ENV)
+    if from_env:
+        return Path(from_env).expanduser()
+    data = config if config is not None else load_config()
+    section = data.get("notebook")
+    if isinstance(section, dict):
+        value = section.get("path")
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
 def _positive_storage(value, source):
     """Return ``value`` as a float, or raise a ConfigError when it is not positive."""
     try:
@@ -577,11 +673,108 @@ def credit_warn_usd(config=None):
     return DEFAULT_CREDIT_WARN_USD
 
 
+def whip_min_hold_s(config=None):
+    """The whip short-hold threshold: ``whip.min_hold_s`` from the config, else 3.0."""
+    data = config if config is not None else load_config()
+    section = data.get("whip")
+    if isinstance(section, dict):
+        value = section.get("min_hold_s")
+        if value is not None:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ConfigError("whip.min_hold_s must be a positive number")
+            return float(value)
+    return WHIP_MIN_HOLD_S
+
+
+DEFAULT_SHOT_LIMITS = {"min_s": 1.5, "max_s": 8.0}
+
+
+def _validate_shot_limits(limits):
+    """director.shot_limits: ``default`` and per content type, each with min_s and max_s."""
+    if not isinstance(limits, dict):
+        raise ConfigError("director.shot_limits must be a mapping")
+    for name, row in limits.items():
+        if not isinstance(row, dict):
+            raise ConfigError(f"director.shot_limits.{name} must be a mapping")
+        for key, value in row.items():
+            if key not in DEFAULT_SHOT_LIMITS:
+                raise ConfigError(f"director.shot_limits.{name}.{key} is not known (min_s, max_s)")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ConfigError(f"director.shot_limits.{name}.{key} must be a positive number")
+        low = row.get("min_s", DEFAULT_SHOT_LIMITS["min_s"])
+        high = row.get("max_s", DEFAULT_SHOT_LIMITS["max_s"])
+        if low > high:
+            raise ConfigError(f"director.shot_limits.{name}: min_s must not be above max_s")
+
+
+def shot_limits(content_type=None, config=None):
+    """The video shot length limits ``{"min_s", "max_s"}`` for a content type.
+
+    Built-in defaults, then ``director.shot_limits.default``, then the row of the
+    content type. They are a wide frame, not a wall: a plan shot with an
+    ``over_limit_reason`` may run past ``max_s``.
+    """
+    limits = dict(DEFAULT_SHOT_LIMITS)
+    data = config if config is not None else load_config()
+    section = data.get("director")
+    rows = section.get("shot_limits") if isinstance(section, dict) else None
+    if isinstance(rows, dict):
+        for name in ("default", content_type):
+            row = rows.get(name) if name else None
+            if isinstance(row, dict):
+                limits.update({key: float(value) for key, value in row.items()})
+    return limits
+
+
+def director_reasoning_effort(cli_value=None, config=None):
+    """The director's reasoning effort: CLI flag, else director.reasoning_effort, else medium.
+
+    An unknown value is a ConfigError naming the valid values. There is no
+    environment variable.
+    """
+    value = cli_value
+    if not value:
+        data = config if config is not None else load_config()
+        section = data.get("director")
+        if isinstance(section, dict):
+            value = section.get("reasoning_effort")
+    if not value:
+        value = DEFAULT_DIRECTOR_REASONING_EFFORT
+    if value not in DIRECTOR_REASONING_EFFORTS:
+        raise ConfigError(
+            "director.reasoning_effort must be one of: "
+            f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
+        )
+    return value
+
+
+def recap_meta_enabled(cli_value=None, config=None):
+    """Whether the recap run writes the title and description.
+
+    CLI flag (True/False), else recap.meta in the config, else False.
+    """
+    if cli_value is not None:
+        return bool(cli_value)
+    data = config if config is not None else load_config()
+    section = data.get("recap")
+    if isinstance(section, dict):
+        value = section.get("meta")
+        if value is not None:
+            return bool(value)
+    return DEFAULT_RECAP_META
+
+
 def project_totals_url(cli_value=None, config=None):
     """The project totals URL: CLI flag, else PROJECT_TOTALS_URL_ENV, else costs.project_totals_url.
 
-    Returns None when none of the three is set — the page then shows only this
-    instance. There is no personal default.
+    Setting it marks a friend's instance: its Costs page shows only its own
+    costs and no longer fetches the owner's totals. Returns None when none of
+    the three is set. There is no personal default.
     """
     if cli_value:
         return cli_value
@@ -662,4 +855,25 @@ def brand_logo(cli_value=None, config=None):
     if not value:
         return DEFAULT_BRAND_LOGO
     _check_brand_logo(value)
+    return value
+
+
+def beats_engine(cli_value=None, config=None):
+    """The beat/downbeat engine: CLI flag, else BEATS_ENGINE_ENV, else beats.engine, else numpy.
+
+    An unknown value is a ConfigError naming the valid engines. There is a
+    default, so this is not a three-ways error.
+    """
+    value = cli_value
+    if not value:
+        value = os.environ.get(BEATS_ENGINE_ENV)
+    if not value:
+        data = config if config is not None else load_config()
+        section = data.get("beats")
+        if isinstance(section, dict):
+            value = section.get("engine")
+    if not value:
+        value = DEFAULT_BEATS_ENGINE
+    if value not in BEATS_ENGINES:
+        raise ConfigError(f"beats.engine must be one of: {', '.join(BEATS_ENGINES)}")
     return value

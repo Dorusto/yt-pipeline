@@ -20,14 +20,14 @@ is organised here.
 
 ## AI Director roles
 
-- Doru is product owner and reviewer; he steps in when a phase is ~70–80 % done,
+- the owner is product owner and reviewer; he steps in when a phase is ~70–80 % done,
   plus the mandatory D1 checkpoint.
 - The architect plans each task and writes a brief; the coder implements one task
   at a time from the brief alone; the architect audits before marking it done.
 - Stop and ask only for something irreversible or expensive, a pure taste choice
   between equal options, or a phase checkpoint.
 - A phase report goes to `docs/reports/D<n>-REPORT.md` with three short lists:
-  *Works*, *Mocked / not verified*, *Doru, check this* (max 5 bullets).
+  *Works*, *Mocked / not verified*, *the owner, check this* (max 5 bullets).
 
 ## Do not
 

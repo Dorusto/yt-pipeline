@@ -20,6 +20,7 @@ from common.llm import (
     ledger_lock,
     make_client,
     read_ledger,
+    reasoning_extra_body,
     resolve_ledger_path,
 )
 from helpers import SequenceClient
@@ -71,6 +72,28 @@ def fake_response(content="hello", cost=0.0042, prompt_tokens=11, completion_tok
         choices=[SimpleNamespace(message=message)],
         usage=usage,
     )
+
+
+def fake_response_with_reasoning(reasoning_tokens, content="hello", cost=0.0042,
+                                 prompt_tokens=11, completion_tokens=7):
+    usage = SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost=cost,
+        completion_tokens_details=SimpleNamespace(reasoning_tokens=reasoning_tokens),
+    )
+    message = SimpleNamespace(content=content)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message)],
+        usage=usage,
+    )
+
+
+def test_reasoning_extra_body_shapes():
+    assert reasoning_extra_body(None) is None
+    assert reasoning_extra_body("off") == {"reasoning": {"enabled": False}}
+    assert reasoning_extra_body("low") == {"reasoning": {"effort": "low"}}
+    assert reasoning_extra_body("high") == {"reasoning": {"effort": "high"}}
 
 
 def test_mock_returns_response():
@@ -263,6 +286,26 @@ def test_ledger_records_entries_and_total(tmp_path):
     assert data["entries"][0]["cost_usd"] == pytest.approx(0.01)
     assert data["entries"][1]["role"] == "coder"
     assert data["entries"][0]["ts"]
+
+
+def test_ledger_records_reasoning_tokens(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    client = OpenRouterClient(
+        client=FakeOpenAI(fake_response_with_reasoning(42)), ledger_path=ledger
+    )
+    response = client.complete("vision", MESSAGES, model="vision/model")
+    assert response.reasoning_tokens == 42
+    data = read_ledger(ledger)
+    assert data["entries"][0]["reasoning_tokens"] == 42
+
+
+def test_ledger_records_zero_reasoning_tokens_without_details(tmp_path):
+    ledger = tmp_path / "llm_spend.json"
+    client = OpenRouterClient(client=FakeOpenAI(fake_response()), ledger_path=ledger)
+    response = client.complete("vision", MESSAGES, model="vision/model")
+    assert response.reasoning_tokens == 0
+    data = read_ledger(ledger)
+    assert data["entries"][0]["reasoning_tokens"] == 0
 
 
 def test_ledger_caps_the_job_across_processes(tmp_path):

@@ -1,0 +1,68 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-10-25T21:00:00+00:00",
+  "tool": "director",
+  "brief": {
+    "text": "A calm recap of the boat trip, 30 seconds, ending when the camp is empty.",
+    "target_duration_s": 30,
+    "order": "chronological",
+    "pacing": "calm-to-energy",
+    "ambient_only": false
+  },
+  "content_type": "vacation",
+  "idea": "A quiet camp wakes up, the group leaves on the boat, and the camp is left empty.",
+  "structure": {
+    "kind": "frame",
+    "why": "The trip starts and ends in the same place, so opening on the empty camp and leaving it empty again makes the trip feel like a small story with a start and an end.",
+    "beats": [
+      {"id": "b1", "name": "Empty camp", "intent": "set the calm and make the viewer curious", "target_s": 5},
+      {"id": "b2", "name": "Getting ready", "intent": "build anticipation", "target_s": 9},
+      {"id": "b3", "name": "On the water", "intent": "the energy of the trip", "target_s": 12},
+      {"id": "b4", "name": "Empty camp again", "intent": "a clean, quiet ending", "target_s": 4}
+    ]
+  },
+  "shots": [
+    {
+      "id": "v1", "beat": "b1", "shot_key": "0012/s1",
+      "purpose": "open on the empty camp so the viewer wonders who comes",
+      "technique": "opening_shot",
+      "moment": {"hint": "the camp before anyone appears"},
+      "target_s": 3.0,
+      "why": "A short, still opening shot sets the calm and promises that something will change."
+    },
+    {
+      "id": "v2", "beat": "b2", "shot_key": "0014/s2",
+      "purpose": "the group packs the boat",
+      "technique": "clean_entry",
+      "moment": {"at_s": 8.4, "hint": "the first person walks into the frame"},
+      "target_s": 4.0,
+      "why": "The frame settles first and the people walk in, so the viewer sees the change."
+    },
+    {
+      "id": "v3", "beat": "b3", "shot_key": "0021/s4",
+      "purpose": "the boat heads for the tunnel",
+      "technique": "jerky_approach",
+      "pieces": 3,
+      "moment": {"hint": "the boat entering the tunnel"},
+      "target_s": 5.0,
+      "why": "Three short pieces of the same approach, each closer, build speed before the tunnel."
+    },
+    {
+      "id": "v4", "beat": "b3", "shot_key": "0025/s1",
+      "purpose": "the group laughs on deck",
+      "technique": "cut_on_motion",
+      "moment": {"at_s": 3.2},
+      "target_s": 3.5,
+      "why": "Cutting on the wave of the hand carries the eye from the tunnel to the people."
+    },
+    {
+      "id": "v5", "beat": "b4", "shot_key": "0012/s3",
+      "purpose": "the camp is empty again",
+      "technique": "clean_exit",
+      "moment": {"hint": "everyone has left the frame"},
+      "target_s": 4.0,
+      "why": "We cut after the last person left, so the frame ends empty like it began."
+    }
+  ],
+  "notes": ["Owner note followed: end on the empty camp."]
+}

@@ -22,9 +22,22 @@ def test_skills_name_only_existing_tools():
 def test_every_tool_is_named():
     skill_text = "\n".join(skill.read_text(encoding="utf-8") for skill in SKILLS)
     tools_md = (ROOT / "docs" / "guides" / "tools.md").read_text(encoding="utf-8")
+    haystack = skill_text + "\n" + tools_md
     unnamed = [
         path.name
         for path in TOOLS
-        if path.name not in skill_text and path.name not in tools_md
+        if path.name not in haystack and f"yt {path.stem}" not in haystack
     ]
     assert unnamed == []
+
+
+def test_rules_checked_has_one_channel_style_row():
+    text = (ROOT / "docs" / "agents" / "rules-checked.md").read_text(encoding="utf-8")
+    rows = [
+        line
+        for line in text.splitlines()
+        if line.startswith("|") and "channel.style" in line
+    ]
+    assert len(rows) == 1
+    assert "tests/test_config.py" in rows[0]
+    assert "tests/test_metadata.py" in rows[0]

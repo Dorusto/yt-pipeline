@@ -20,7 +20,7 @@ Branch `d0-foundation`. Scope: `scripts/common/`, `schemas/`, pytest suite, CPU-
 - ntfy delivery — `tests/test_notify.py` stubs `urlopen`; a real POST to the project server was only smoke-tested via `--dry-run`.
 - Cumulative subtitle drift between `kdenlive_from_fragments.py` and `srt_from_fragments.py` (frame-inclusive vs `out - in`) — still unverified, listed in ROADMAP known issues.
 
-## Doru, check this
+## the owner, check this
 
 - `.venv/bin/python -m pytest -q` → expect `89 passed` (offline, no GPU, no key).
 - `cat config.yaml.example` → are the five roles and `llm_budget_usd: 5.0` the right starting point? The D1 bake-off only edits `vision` here.

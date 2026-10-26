@@ -14,6 +14,7 @@ for the rules that depend on review alone (no program can check them).
 | Editing grammar — same-take slots need a different take between | `tests/test_director.py` |
 | Editing grammar — one candidate contributes at most one slot | `tests/test_director.py` |
 | Editing grammar — no two similar segments in one edit | `tests/test_director.py` |
+| Editing grammar — no pointless jump cuts (same-segment beats or similar neighbours) | `tests/test_common_neighbours.py`, `tests/test_director.py`, `tests/test_llm_director.py` |
 | Editing grammar — hero and semantic moves keep their range | `tests/test_director.py` |
 | Editing grammar — length policy and speed ramp | `tests/test_moves.py` |
 | Editing grammar — on-screen length formula | `tests/test_moves.py` |
@@ -24,7 +25,7 @@ for the rules that depend on review alone (no program can check them).
 | Editing grammar — pacing table | `tests/test_pacing.py` |
 | Editing grammar — time-overlapping shots keep the higher score | `tests/test_overlap.py` |
 | Editing grammar — long segments split into content beats | `tests/test_describe.py` |
-| Editing grammar — screenwriter's menu is the cuttable pool | `tests/test_llm_director.py` |
+| Editing grammar — the screenwriter's menu is a shortlist of the cuttable pool | `tests/test_llm_director.py` |
 | Editing grammar — edit.json is the only source of truth | `tests/test_schema.py` |
 | Editing grammar — Mode B paired slots | `tests/test_export_filmcraft.py` |
 | Editing grammar — Mode B cut rules | `tests/test_rough_cut.py` |
@@ -44,7 +45,8 @@ for the rules that depend on review alone (no program can check them).
 | Defaults and thresholds — scene activity band and events | `tests/test_motion.py` |
 | Defaults and thresholds — accidental run rule | `tests/test_quality.py` |
 | Defaults and thresholds — quality segments head/tail and slivers | `tests/test_quality.py` |
-| Defaults and thresholds — shotlog score formula | `tests/test_index.py` |
+| Defaults and thresholds — shotlog score formula | `tests/test_index.py`, `tests/test_common_scoring.py` |
+| Defaults and thresholds — whip and faces | `tests/test_quality.py`, `tests/test_index.py`, `tests/test_director.py` |
 | Defaults and thresholds — confident skip roles are ineligible | `tests/test_index.py` |
 | Defaults and thresholds — similarity backend and threshold | `tests/test_similarity.py` |
 | Defaults and thresholds — eval scoring | `tests/test_eval_labels.py` |
@@ -56,6 +58,7 @@ for the rules that depend on review alone (no program can check them).
 | Model routing — every LLM call through common/llm.py | `tests/test_llm.py` |
 | Model routing — transcriber interface | `tests/test_transcribe.py` |
 | Model routing — config.yaml model ids and budget | `tests/test_config.py` |
+| Model routing — director reasoning effort | `tests/test_config.py`, `tests/test_llm_director.py` |
 | Model routing — music models YuE2 and ACE-Step | review |
 | Model routing — no ComfyUI | review |
 | Model routing — no torch unless needed; encoder choice | `tests/test_ffmpeg_tools.py` |
@@ -68,7 +71,7 @@ for the rules that depend on review alone (no program can check them).
 | Costs — instance limits and shared project costs | `tests/test_serve.py` |
 | Costs — costs page read-only | `tests/test_serve.py` |
 | Costs — feedback.jsonl and requests file separate | `tests/test_feedback.py` |
-| Costs — LLM director reviewer verdict | `tests/test_llm_director.py` |
+| Costs — LLM director reviewer verdict | `tests/test_llm_director.py`, `tests/test_serve_chat.py` |
 | Safety rules — originals read-only | `tests/test_render.py` |
 | Safety rules — private by default, tailnet-only | `tests/test_serve.py` |
 | Safety rules — never commit footage, keys or private IPs | `tests/test_check_public.py` |
@@ -89,7 +92,12 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — no tool depends on one person's setup | `tests/test_no_personal_setup.py` |
 | Safety rules — metadata prompt fixed | `tests/test_metadata.py` |
 | Safety rules — channel.fixed mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_doctor.py` |
+| Safety rules — channel.style mapping | `tests/test_config.py`, `tests/test_metadata.py`, `tests/test_recap_meta.py` |
+| Safety rules — recap title and description optional, off by default | `tests/test_recap.py`, `tests/test_serve.py` |
+| Safety rules — learning notebook and the learn pass | `tests/test_notebook.py`, `tests/test_serve.py` |
 | Safety rules — --skip-alignment only when the JSON is correct | review |
+| Safety rules — `yt` is the named dispatcher for every tool | `tests/test_yt_entry.py` |
+| Safety rules — director agent mode | `tests/test_llm_director_agent.py` |
 | Safety rules — recap.py is the single entry point | `tests/test_recap.py` |
 | Safety rules — recap skip rule | `tests/test_recap.py` |
 | Safety rules — proxies keep the source filename | `tests/test_proxy.py` |
@@ -107,12 +115,14 @@ for the rules that depend on review alone (no program can check them).
 | Safety rules — shotlog grouping is index.py's | `tests/test_index.py` |
 | Safety rules — colour.py session colour recipe | `tests/test_colour.py` |
 | Safety rules — director selection and stars | `tests/test_director.py` |
+| Safety rules — chronological order survives the director's repairs | `tests/test_llm_director.py` |
 | Safety rules — top heroes kept by the model | `tests/test_llm_director.py` |
 | Safety rules — edit expectations are tests | `tests/test_eval_edit.py` |
 | Safety rules — versions | `tests/test_versions.py` |
 | Safety rules — vertical 9:16 | `tests/test_vertical.py` |
 | Safety rules — README is the front door | `tests/test_readme_layout.py` |
 | Safety rules — AGENTS.md is the shared instruction file | `tests/test_agents_md.py` |
+| Safety rules — typed MCP server per plugin | `tests/test_yt_mcp.py` |
 | Photos and music — photos are first-class candidates | `tests/test_photos.py` |
 | Photos and music — photo pseudo-segment p1 | `tests/test_describe.py` |
 | Photos and music — burst rule | `tests/test_index.py` |
@@ -121,6 +131,7 @@ for the rules that depend on review alone (no program can check them).
 | Photos and music — music is the bed under the ambient | `tests/test_render.py` |
 | Photos and music — --music auto picks the track | `tests/test_music_pick.py` |
 | Photos and music — beat-snapped cuts | `tests/test_llm_director.py`, `tests/test_director.py` |
+| Photos and music — beat/downbeat engine is a config value | `tests/test_config.py`, `tests/test_beats.py` |
 | Packaging and brand — brand.json is the brand kit | `tests/test_thumbnail.py` |
 | Packaging and brand — fonts load only from the brand paths | `tests/test_thumbnail.py` |
 | Packaging and brand — thumbnail cut-out is rembg | `tests/test_thumbnail.py` |
