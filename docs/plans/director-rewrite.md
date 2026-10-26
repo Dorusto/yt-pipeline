@@ -203,3 +203,12 @@ R2 → R3 → R4 → R5 → R6.
 ## Failing tests: checked
 
 A report of 6 failed tests (doctor and graphics) came from a different checkout: 2569 tests and 457 files, while this branch has 2489 tests and 468 files. On this branch the full suite passes (2489 passed, 7 skipped). If the other checkout is master, run its suite there to see them.
+
+## Where to stop, and room to improve
+
+Development of the director stops here for now. Next step is the owner watching real clips. Ideas for later, in order:
+- Give the director more useful facts about each shot (what is in the frame, how the shot starts and ends, what comes before and after) so it chooses better.
+- Teach it the editing craft from the research notes (docs/research/editing-craft.md, docs/guides/shot-grammar.md): cutting on motion, clean entry and exit, a video to still photo change that does not read as a jump.
+- A way to archive or hide old test projects in the project list.
+- Debug tab: hidden for now (still at ?tab=debug); decide later what it should show.
+- Director tab: shorter, only how the director thought, why, the problems and what it did.
