@@ -2534,7 +2534,10 @@ def render_director_explanation(directory, shown):
             f'{html_escape(str(shot.get("purpose") or ""))} — {html_escape(str(shot.get("why") or ""))}</li>'
         )
     if shot_rows:
-        parts.append(f'<ol class="director-shots">{"".join(shot_rows)}</ol>')
+        parts.append(
+            f'<details class="director-shots-fold"><summary>Shot by shot ({len(shot_rows)} shots)</summary>'
+            f'<ol class="director-shots">{"".join(shot_rows)}</ol></details>'
+        )
     parts.append(render_editor_report(directory))
     parts.append(render_director_notes(directory, shown))
     return "".join(parts)
@@ -2569,7 +2572,10 @@ def render_editor_report(directory):
                 f'{html_escape(str(pair.get("second") or ""))} look alike '
                 f'({html_escape(str(pair.get("score") or ""))})</li>'
             )
-        parts.append(f'<ul class="similar-neighbours">{"".join(rows)}</ul>')
+        parts.append(
+            f'<details class="similar-fold"><summary>Shots that look alike ({len(rows)})</summary>'
+            f'<ul class="similar-neighbours">{"".join(rows)}</ul></details>'
+        )
     parts.append("</section>")
     return "".join(parts)
 
