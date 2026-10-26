@@ -200,6 +200,6 @@ R2 → R3 → R4 → R5 → R6.
 - https://workflow.frame.io/guide/stringouts
 - https://spliceapp.com/blog/crafting-a-quick-vacation-recap-montage-for-travel-vloggers/
 
-## Open: investigate failing tests
+## Failing tests: checked
 
-A full run reported 6 failed tests (among them tests/test_doctor.py::test_publish_config_warns_listing_missing, tests/test_doctor.py::test_warn_alone_keeps_ok, tests/test_graphics.py::test_hyperframes_render_has_alpha). They do not fail in the director suite run on this branch (2489 passed). Find out which run produced them and why.
+A report of 6 failed tests (doctor and graphics) came from a different checkout: 2569 tests and 457 files, while this branch has 2489 tests and 468 files. On this branch the full suite passes (2489 passed, 7 skipped). If the other checkout is master, run its suite there to see them.
