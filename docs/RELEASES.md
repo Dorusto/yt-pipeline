@@ -2,7 +2,7 @@
 
 One section per version. Per version: the tools and behaviour marked **stable** (passed the real test, has a regression test) and **experimental** (everything else). The protocol is in [`RELEASING.md`](RELEASING.md).
 
-## v0.3.0 (2026-10-26)
+## v0.3.0 (candidate)
 
 v0.3.0 makes the director usable as an extension of any coding agent. One `yt`
 command runs every tool from any folder, and the pipeline ships as five Claude
