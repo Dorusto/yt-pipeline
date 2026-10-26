@@ -2875,7 +2875,10 @@ def run_director_flow(
     round_cost_start = 0.0
     report = None
     for round_index in range(1, max_rounds + 1):
-        edit, report = _run_editor(workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path)
+        edit, report = _run_editor(
+            workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path,
+            music=music, ambient_under_music_db=ambient_under_music_db, speed_ramp=speed_ramp,
+        )
         for note in report.get("could_not_do") or []:
             if note not in warnings:
                 warnings.append(note)
@@ -2912,6 +2915,7 @@ def run_director_flow(
     edit = load_json(out_path)
     if not isinstance(edit, dict) or not edit.get("video"):
         raise LLMDirectorRuntimeError("the editor wrote no usable edit")
+    edit["decisions"] = flow_decisions(plan, report, shotlog, facts)
     edit.setdefault("meta", {})["speed_ramp"] = bool(speed_ramp)
     write_edit(out_path, edit, started, state.cost_usd, director_info("llm", approved, notes))
     slots = edit["video"]
@@ -3004,7 +3008,7 @@ def _write_director_plan(path, plan, started, cost_usd):
     atomic_write_json(path, plan)
 
 
-def _run_editor(workspace_path, plan_path, out_path, report_path, beats_path):
+def _run_editor(workspace_path, plan_path, out_path, report_path, beats_path, music=None, ambient_under_music_db=None, speed_ramp=False):
     """Run the code editor as a subprocess and return ``(edit, report)``."""
     command = [
         sys.executable,
@@ -3021,6 +3025,12 @@ def _run_editor(workspace_path, plan_path, out_path, report_path, beats_path):
     ]
     if beats_path is not None:
         command += ["--beats", str(beats_path)]
+    if music is not None:
+        command += ["--music", str(music)]
+    if ambient_under_music_db is not None:
+        command += ["--ambient-under-music-db", str(ambient_under_music_db)]
+    if speed_ramp:
+        command.append("--speed-ramp")
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
@@ -3141,6 +3151,56 @@ def _write_rounds(path, rounds, total_cost):
             "total_cost_usd": round(total_cost, 8),
         },
     )
+
+
+def flow_decisions(plan, report, shotlog, facts):
+    """The ``decisions[]`` rows of the film-crew flow: one used row per plan shot plus the editor's could-not-do items."""
+    report_by_id = {row.get("id"): row for row in (report or {}).get("shots") or []}
+    used_keys = []
+    rows = []
+    for shot in plan.get("shots") or []:
+        key = shot.get("shot_key")
+        used_keys.append(key)
+        fact = facts.get(key) or {}
+        entry = shotlog.get(key) or {}
+        row = report_by_id.get(shot.get("id")) or {}
+        reason = f"{shot.get('purpose')} — {shot.get('why')}"
+        asked = row.get("technique_asked")
+        done = row.get("technique_done")
+        why_not = row.get("why_not")
+        if done == asked and asked != "none":
+            reason += f" (technique {asked} done)"
+        elif done is not None and done != asked:
+            reason += f" (technique {asked} done as {done})"
+        elif done is None and why_not:
+            reason += f" (technique {asked} not done: {why_not})"
+        rows.append(
+            {
+                "id": key,
+                "status": "used",
+                "reason": reason,
+                "slot": shot.get("id"),
+                "score": entry.get("score"),
+                "clip": entry.get("clip"),
+                "window_in_s": fact.get("window_in_s"),
+                "window_out_s": fact.get("window_out_s"),
+            }
+        )
+    for item in (report or {}).get("could_not_do") or []:
+        named = next((key for key in used_keys if key and key in item), None)
+        rows.append(
+            {
+                "id": named or "editor",
+                "status": "rejected",
+                "reason": item,
+                "slot": None,
+                "score": None,
+                "clip": None,
+                "window_in_s": None,
+                "window_out_s": None,
+            }
+        )
+    return rows
 
 
 def _run_loop(
@@ -3711,6 +3771,8 @@ def apply_agent_answer(
     approved = None
     notes = []
     rounds_log = []
+    plan = None
+    report = None
     review_path = workspace_path / REVIEW_FILE
     if review_path.is_file():
         review, review_errors = _parse_director_review(
@@ -3732,7 +3794,10 @@ def apply_agent_answer(
             notes = list(review.get("notes") or [])
         else:
             _write_director_plan(plan_path, review["plan"], started, 0.0)
-            edit, report = _run_editor(workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path)
+            edit, report = _run_editor(
+                workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path,
+                music=music, ambient_under_music_db=ambient_under_music_db, speed_ramp=speed_ramp,
+            )
             rounds_log.append(
                 {
                     "round": len(rounds_log) + 1,
@@ -3743,6 +3808,9 @@ def apply_agent_answer(
                 }
             )
             _write_rounds(workspace_path / ROUNDS_FILE, rounds_log, 0.0)
+        plan = load_json(plan_path)
+        if report is None:
+            report = load_json(workspace_path / REPORT_FILE)
         os.replace(review_path, workspace_path / REVIEW_APPLIED_FILE)
     else:
         raw_plan = load_json(plan_path)
@@ -3779,7 +3847,10 @@ def apply_agent_answer(
             }
             return summary, EXIT_OK
         _write_director_plan(plan_path, plan, started, 0.0)
-        edit, report = _run_editor(workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path)
+        edit, report = _run_editor(
+            workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path,
+            music=music, ambient_under_music_db=ambient_under_music_db, speed_ramp=speed_ramp,
+        )
         rounds_log = [
             {
                 "round": 1,
@@ -3793,6 +3864,8 @@ def apply_agent_answer(
     edit = load_json(out_path)
     if not isinstance(edit, dict) or not edit.get("video"):
         raise LLMDirectorRuntimeError("the editor wrote no usable edit")
+    if isinstance(plan, dict):
+        edit["decisions"] = flow_decisions(plan, report, shotlog, context["facts"])
     edit.setdefault("meta", {})["speed_ramp"] = bool(speed_ramp)
     write_edit(out_path, edit, started, 0.0, director_info("agent", approved, notes))
     slots = edit["video"]

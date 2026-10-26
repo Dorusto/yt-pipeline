@@ -5,6 +5,7 @@ import pytest
 
 import director_editor
 from common.exit_codes import EXIT_OK, EXIT_USAGE
+from common.moves import slot_duration
 from common.schema import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -520,3 +521,80 @@ def test_json_summary_and_failure_object(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert payload["ok"] is False
     assert payload["exit_code"] == EXIT_USAGE
+
+
+def test_editor_cli_records_music_and_ambient(tmp_path):
+    root = hold_workspace(tmp_path / "ws")
+    plan_path = write_plan(root, [plan_shot("v1", "clipA/s1", technique="none", target_s=3.0)])
+    music = tmp_path / "track.mp3"
+    music.write_bytes(b"x")
+    assert (
+        director_editor.main(
+            [
+                "--workspace",
+                str(root),
+                "--plan",
+                str(plan_path),
+                "--music",
+                str(music),
+                "--ambient-under-music-db",
+                "8",
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
+    edit = json.loads((root / "edit.json").read_text(encoding="utf-8"))
+    assert edit["audio"]["music"] == {"path": str(music)}
+    assert edit["audio"]["ambient_under_music_db"] == 8
+
+
+def test_editor_without_music_records_none(tmp_path):
+    root = hold_workspace(tmp_path / "ws")
+    plan_path = write_plan(root, [plan_shot("v1", "clipA/s1", technique="none", target_s=3.0)])
+    edit, _, _ = execute(root, plan_path)
+    assert edit["audio"]["music"] is None
+    assert edit["audio"]["ambient_under_music_db"] is None
+
+
+def test_speed_ramp_extends_a_move_and_keeps_the_target_length(tmp_path):
+    root = move_workspace(tmp_path / "ws")
+    plan_path = write_plan(root, [plan_shot("v1", "clipA/s1", technique="none", target_s=3.0)])
+    edit, report, _ = execute(root, plan_path, speed_ramp=True)
+    slot = edit["video"][0]
+    assert slot["middle_speed"] > 1.0
+    assert slot["out_s"] - slot["in_s"] > 3.0
+    assert slot_duration(slot) == pytest.approx(3.0, abs=0.05)
+    assert report["shots"][0]["length_s"] == pytest.approx(3.0, abs=0.05)
+
+
+def test_without_speed_ramp_no_slot_gets_middle_speed(tmp_path):
+    root = move_workspace(tmp_path / "ws")
+    plan_path = write_plan(root, [plan_shot("v1", "clipA/s1", technique="none", target_s=3.0)])
+    edit, _, _ = execute(root, plan_path)
+    assert "middle_speed" not in edit["video"][0]
+    assert edit["video"][0]["out_s"] - edit["video"][0]["in_s"] == pytest.approx(3.0)
+
+
+def test_speed_ramp_never_touches_a_photo_or_a_static_hold(tmp_path):
+    photo_root = photo_workspace(tmp_path / "photos")
+    photo_plan = write_plan(photo_root, [plan_shot("p1", "photo_01/p1", technique="none", target_s=3.0)])
+    photo_edit, _, _ = execute(photo_root, photo_plan, speed_ramp=True)
+    assert "middle_speed" not in photo_edit["video"][0]
+    hold_root = hold_workspace(tmp_path / "holds")
+    hold_plan = write_plan(hold_root, [plan_shot("v1", "clipA/s1", technique="none", target_s=3.0)])
+    hold_edit, _, _ = execute(hold_root, hold_plan, speed_ramp=True)
+    assert "middle_speed" not in hold_edit["video"][0]
+
+
+def test_speed_ramp_leaves_multi_piece_and_clean_techniques_at_normal_speed(tmp_path):
+    root = move_workspace(tmp_path / "ws")
+    plan_path = write_plan(
+        root,
+        [
+            plan_shot("v1", "clipA/s1", technique="jerky_approach", target_s=5.0, pieces=3),
+            plan_shot("v2", "clipA/s1", technique="time_compression", target_s=4.0, pieces=3),
+        ],
+    )
+    edit, _, _ = execute(root, plan_path, speed_ramp=True)
+    assert all("middle_speed" not in slot for slot in edit["video"])

@@ -474,7 +474,11 @@ def _timeline_row(slot, sources, used_by_slot, by_id, shotlog_by_key):
     slot_id = escape(str(slot.get("id") or ""))
     shot_key = slot.get("shot_key")
     key_html = f' <span class="short-id">· {escape(str(shot_key))}</span>' if shot_key else ""
-    reason = escape(str(slot.get("reason") or ""))
+    decision = used_by_slot.get(str(slot.get("id") or ""))
+    reason_text = str(slot.get("reason") or "")
+    if decision is not None and decision.get("reason"):
+        reason_text = str(decision["reason"])
+    reason = escape(reason_text)
     meta_parts = [escape(source_name)]
     if _is_number(slot.get("score")):
         meta_parts.append(f"score {float(slot['score']):.2f}")
@@ -554,7 +558,9 @@ def _decision_maps(decisions):
     used_by_slot = {}
     by_id = {}
     for row in decisions:
-        by_id[str(row.get("id") or "")] = row
+        ident = str(row.get("id") or "")
+        if row.get("status") == "used" or ident not in by_id:
+            by_id[ident] = row
         if row.get("status") == "used" and row.get("slot"):
             used_by_slot[str(row["slot"])] = row
     return used_by_slot, by_id

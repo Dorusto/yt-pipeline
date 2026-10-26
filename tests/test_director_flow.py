@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import explain
 import llm_director
 from common.schema import validate
 from test_llm_director import BRIEF, StubClient, build_workspace
@@ -299,3 +300,101 @@ def test_feedback_reaches_the_director_payload(tmp_path):
         for line in (workspace / "feedback.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert any(row["action"] == "feedback" and row["text"] == "drop 0071/s2" for row in rows)
+
+
+def test_flow_records_music_and_ambient_in_the_edit(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    music = tmp_path / "track.mp3"
+    music.write_bytes(b"x")
+    client = StubClient([flow_plan(), review_approved()])
+    summary, code = llm_director.run(
+        workspace,
+        brief=BRIEF,
+        client=client,
+        picture_fn=PictureStub(),
+        music=str(music),
+        ambient_under_music_db=8,
+    )
+    assert code == 0
+    edit = read_json(workspace / "edit.json")
+    assert edit["audio"]["music"] == {"path": str(music.resolve())}
+    assert edit["audio"]["ambient_under_music_db"] == 8
+
+
+def test_flow_without_music_records_none(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([flow_plan(), review_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, picture_fn=PictureStub())
+    assert code == 0
+    edit = read_json(workspace / "edit.json")
+    assert edit["audio"]["music"] is None
+    assert edit["audio"]["ambient_under_music_db"] is None
+
+
+def test_new_flow_edit_has_one_used_decision_per_plan_shot(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([flow_plan(), review_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, picture_fn=PictureStub())
+    assert code == 0
+    edit = read_json(workspace / "edit.json")
+    plan = read_json(workspace / "director_plan.json")
+    used = [row for row in edit["decisions"] if row["status"] == "used"]
+    assert [row["id"] for row in used] == [shot["shot_key"] for shot in plan["shots"]]
+    first = used[0]
+    assert first["slot"] == "v1"
+    assert first["reason"].startswith("open on the wake so the viewer settles into the calm — ")
+    assert "(technique opening_shot done)" in first["reason"]
+    assert first["score"] == 0.6
+    assert first["clip"] == "clip_0056_x.mp4"
+    assert first["window_in_s"] == 0.0
+    assert first["window_out_s"] == 20.0
+    assert "(technique" not in used[1]["reason"]
+
+
+def test_editor_could_not_do_items_become_rejected_decisions(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    plan = json.loads(flow_plan())
+    plan["shots"][1]["technique"] = "clean_entry"
+    client = StubClient([json.dumps(plan), review_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, picture_fn=PictureStub())
+    assert code == 0
+    edit = read_json(workspace / "edit.json")
+    rejected = [row for row in edit["decisions"] if row["status"] == "rejected"]
+    assert rejected
+    assert rejected[0]["id"] == "0057/s1"
+    assert "no subject-enters event" in rejected[0]["reason"]
+    assert rejected[0]["slot"] is None
+    assert rejected[0]["score"] is None
+
+
+def test_explain_renders_the_new_flow_decisions(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([flow_plan(), review_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, picture_fn=PictureStub())
+    assert code == 0
+    explain_summary, explain_code = explain.run(workspace)
+    assert explain_code == 0
+    html = (workspace / "explain.html").read_text(encoding="utf-8")
+    assert "open on the wake so the viewer settles into the calm" in html
+
+
+def test_flow_speed_ramp_reaches_the_editor(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([flow_plan(), review_approved()])
+    summary, code = llm_director.run(
+        workspace, brief=BRIEF, client=client, picture_fn=PictureStub(), speed_ramp=True
+    )
+    assert code == 0
+    edit = read_json(workspace / "edit.json")
+    move_slot = next(slot for slot in edit["video"] if slot["shot_key"] == "0080/s1")
+    assert move_slot["middle_speed"] > 1.0
+    assert edit["meta"]["speed_ramp"] is True
+
+
+def test_flow_without_speed_ramp_has_no_middle_speed(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    client = StubClient([flow_plan(), review_approved()])
+    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, picture_fn=PictureStub())
+    assert code == 0
+    edit = read_json(workspace / "edit.json")
+    assert all("middle_speed" not in slot for slot in edit["video"])

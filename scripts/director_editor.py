@@ -18,6 +18,7 @@ report. No model call.
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -40,7 +41,7 @@ from common.facts import (
     load_shotlog,
 )
 from common.jsonio import load_json, now_iso, write_json
-from common.moves import slot_duration
+from common.moves import MIDDLE_SPEED_MAX, is_move_slot, slot_duration, source_length_for
 from common.peak import centre_window, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate_or_raise
@@ -95,6 +96,25 @@ def build_parser():
         "--beats",
         default=None,
         help="beat grid JSON from beats.py (default WORKSPACE/beats.json when it exists)",
+    )
+    parser.add_argument(
+        "--music",
+        default=None,
+        help="music track to record in edit.json audio.music (the render mixes it under the ambient bus)",
+    )
+    parser.add_argument(
+        "--ambient-under-music-db",
+        type=float,
+        default=None,
+        help="how far the ambient bus sits under the music, in dB (recorded in edit.json)",
+    )
+    parser.add_argument(
+        "--speed-ramp",
+        action="store_true",
+        help=(
+            "optional effect: let the middle half of a long camera move play up to 1.2x so more of "
+            "the move fits (default off: every slot plays at normal speed)"
+        ),
     )
     parser.add_argument("--json", action="store_true", help="print a machine-readable summary")
     return parser
@@ -181,8 +201,33 @@ def _compression_pieces(window_in, window_out, length, pieces):
     return cuts
 
 
-def _video_cut(shot, fact, could_not_do):
-    """The cut pieces of one video shot: ``(pieces, technique_done, why_not)``."""
+def _is_move_fact(fact):
+    """True when the shot fact holds a camera move, the same test ``common.moves.is_move_slot`` uses."""
+    return is_move_slot(
+        {
+            "role": fact.get("role"),
+            "motion_label": fact.get("motion_label"),
+            "important": bool(fact.get("keep_whole")),
+        }
+    )
+
+
+def _ramped_cut(fact, budget, moment):
+    """The plain cut extended to the longest source window that fits ``budget`` on screen at up to 1.2x."""
+    window_in = float(fact["window_in_s"])
+    window_out = float(fact["window_out_s"])
+    source_len = min(window_out - window_in, source_length_for(budget, MIDDLE_SPEED_MAX))
+    in_s, out_s = centre_window(window_in, window_out, source_len, moment, min_out_s=landing_floor(fact))
+    source_len = out_s - in_s
+    if source_len <= budget + 1e-9:
+        return in_s, out_s, 1.0
+    needed = 0.5 / (budget / source_len - 0.5)
+    speed = min(MIDDLE_SPEED_MAX, math.ceil(needed * 100 - 1e-9) / 100)
+    return in_s, out_s, max(1.0, speed)
+
+
+def _video_cut(shot, fact, could_not_do, speed_ramp=False):
+    """The cut pieces of one video shot: ``(pieces, technique_done, why_not, middle_speed)``."""
     window_in = float(fact["window_in_s"])
     window_out = float(fact["window_out_s"])
     window_len = window_out - window_in
@@ -197,18 +242,22 @@ def _video_cut(shot, fact, could_not_do):
     floor = landing_floor(fact)
 
     if technique == "opening_shot":
-        return [_plain_cut(fact, clamp(length, SLOT_MIN_S, OPENING_MAX_S), moment)], technique, None
+        budget = clamp(length, SLOT_MIN_S, OPENING_MAX_S)
+        if speed_ramp and _is_move_fact(fact):
+            in_s, out_s, speed = _ramped_cut(fact, budget, moment)
+            return [(in_s, out_s)], technique, None, speed
+        return [_plain_cut(fact, budget, moment)], technique, None, 1.0
 
     if technique == "clean_entry":
         enter = fact.get("subject_enter_s")
         if enter is None:
             why = "no subject-enters event inside the window"
             could_not_do.append(f"{shot['id']} {shot['shot_key']}: {why}")
-            return [_plain_cut(fact, length, moment)], None, why
+            return [_plain_cut(fact, length, moment)], None, why, 1.0
         in_s = max(window_in, float(enter) - ENTRY_SETTLE_S)
         out_s = min(window_out, in_s + length)
         in_s, out_s = _apply_floor(in_s, out_s, window_in, window_out, floor, length)
-        return [(in_s, out_s)], technique, None
+        return [(in_s, out_s)], technique, None, 1.0
 
     if technique == "clean_exit":
         leave = fact.get("subject_leave_s")
@@ -217,11 +266,11 @@ def _video_cut(shot, fact, could_not_do):
             could_not_do.append(f"{shot['id']} {shot['shot_key']}: {why}")
             out_s = window_out
             in_s = max(window_in, out_s - length)
-            return [(in_s, out_s)], None, why
+            return [(in_s, out_s)], None, why, 1.0
         out_s = min(window_out, float(leave) + EXIT_AFTER_S)
         in_s = max(window_in, out_s - length)
         in_s, out_s = _apply_floor(in_s, out_s, window_in, window_out, floor, length)
-        return [(in_s, out_s)], technique, None
+        return [(in_s, out_s)], technique, None, 1.0
 
     if technique == "jerky_approach":
         pieces = int(clamp(int(shot.get("pieces") or DEFAULT_PIECES), 3, 4))
@@ -229,8 +278,8 @@ def _video_cut(shot, fact, could_not_do):
         if window_len < needed:
             why = f"the window is too short for {pieces} pieces (needs {needed:.1f} s, has {window_len:.1f} s)"
             could_not_do.append(f"{shot['id']} {shot['shot_key']}: {why}")
-            return [_plain_cut(fact, length, moment)], None, why
-        return _jerky_pieces(window_in, window_out, length, pieces), technique, None
+            return [_plain_cut(fact, length, moment)], None, why, 1.0
+        return _jerky_pieces(window_in, window_out, length, pieces), technique, None, 1.0
 
     if technique == "time_compression":
         pieces = int(clamp(int(shot.get("pieces") or DEFAULT_PIECES), 2, 5))
@@ -238,10 +287,13 @@ def _video_cut(shot, fact, could_not_do):
         if window_len < needed:
             why = f"the window is too short for {pieces} slices (needs {needed:.1f} s, has {window_len:.1f} s)"
             could_not_do.append(f"{shot['id']} {shot['shot_key']}: {why}")
-            return [_plain_cut(fact, length, moment)], None, why
-        return _compression_pieces(window_in, window_out, length, pieces), technique, None
+            return [_plain_cut(fact, length, moment)], None, why, 1.0
+        return _compression_pieces(window_in, window_out, length, pieces), technique, None, 1.0
 
-    return [_plain_cut(fact, length, moment)], technique, None
+    if speed_ramp and _is_move_fact(fact):
+        in_s, out_s, speed = _ramped_cut(fact, length, moment)
+        return [(in_s, out_s)], technique, None, speed
+    return [_plain_cut(fact, length, moment)], technique, None, 1.0
 
 
 def _photo_cut(shot, fact, could_not_do):
@@ -255,8 +307,8 @@ def _photo_cut(shot, fact, could_not_do):
     return duration, None, why
 
 
-def _video_slot(slot_id, shot, fact, entry, in_s, out_s):
-    return {
+def _video_slot(slot_id, shot, fact, entry, in_s, out_s, middle_speed=1.0):
+    slot = {
         "id": slot_id,
         "clip": fact.get("clip") or entry.get("clip"),
         "in_s": round(float(in_s), 3),
@@ -270,6 +322,9 @@ def _video_slot(slot_id, shot, fact, entry, in_s, out_s):
         "description": entry.get("description"),
         "shot_key": shot["shot_key"],
     }
+    if middle_speed > 1.0:
+        slot["middle_speed"] = round(float(middle_speed), 2)
+    return slot
 
 
 def _photo_slot(slot_id, shot, fact, entry, duration):
@@ -351,7 +406,17 @@ def _sources(slots, clips, workspace):
     return sources
 
 
-def run_editor(workspace, plan_path, out_path=None, report_path=None, beats_path=None, similar_fn=None):
+def run_editor(
+    workspace,
+    plan_path,
+    out_path=None,
+    report_path=None,
+    beats_path=None,
+    similar_fn=None,
+    music=None,
+    ambient_under_music_db=None,
+    speed_ramp=False,
+):
     """Execute the plan and return ``(edit, report, summary)``."""
     started = time.monotonic()
     workspace = Path(workspace).expanduser()
@@ -397,11 +462,11 @@ def run_editor(workspace, plan_path, out_path=None, report_path=None, beats_path
                 {"shot": shot, "fact": fact, "indices": [len(slots) - 1], "technique_done": technique_done, "why_not": why_not}
             )
             continue
-        cuts, technique_done, why_not = _video_cut(shot, fact, could_not_do)
+        cuts, technique_done, why_not, middle_speed = _video_cut(shot, fact, could_not_do, speed_ramp)
         indices = []
         for index, (in_s, out_s) in enumerate(cuts):
             slot_id = shot["id"] if index == 0 else f"{shot['id']}p{index + 1}"
-            slots.append(_video_slot(slot_id, shot, fact, entry, in_s, out_s))
+            slots.append(_video_slot(slot_id, shot, fact, entry, in_s, out_s, middle_speed))
             indices.append(len(slots) - 1)
         rows.append(
             {"shot": shot, "fact": fact, "indices": indices, "technique_done": technique_done, "why_not": why_not}
@@ -497,8 +562,8 @@ def run_editor(workspace, plan_path, out_path=None, report_path=None, beats_path
         "video": slots,
         "audio": {
             "ambience": {"enabled": True, "gain_db": 0, "source": "slot", "file": None},
-            "music": None,
-            "ambient_under_music_db": None,
+            "music": {"path": str(Path(music).expanduser())} if music else None,
+            "ambient_under_music_db": ambient_under_music_db,
             "sfx": [],
             "levels": {"target_lufs": None, "true_peak_db": None},
         },
@@ -552,7 +617,16 @@ def run_editor(workspace, plan_path, out_path=None, report_path=None, beats_path
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        _, _, summary = run_editor(args.workspace, args.plan, args.out, args.report, args.beats)
+        _, _, summary = run_editor(
+            args.workspace,
+            args.plan,
+            args.out,
+            args.report,
+            args.beats,
+            music=args.music,
+            ambient_under_music_db=args.ambient_under_music_db,
+            speed_ramp=args.speed_ramp,
+        )
     except EditorRuntimeError as exc:
         return report_error(exc, EXIT_RUNTIME, args.json)
     except EditorError as exc:
