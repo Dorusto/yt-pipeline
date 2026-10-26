@@ -115,6 +115,7 @@ OpenRouter (#123). The same plan schema and the same code editor serve both.
 - **Acceptance:** a mock-model round loop test; the chat route goes through the
   director; the Debug tab renders the plan and the report.
 - **Cap:** 0.8 USD. **Hard:** yes (coder-max).
+- **Done (R4a):** the flow, the notes round and agent mode shipped in V030 lot R4a; cost: 0.79186415 USD (the lot's spend, architect and coder rounds together).
 
 ### R5 — remove old code + rewrite RULES + update skills and guide + squash the c30 "wip" commit (cap 0.5 USD)
 

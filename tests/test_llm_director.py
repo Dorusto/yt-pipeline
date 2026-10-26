@@ -19,6 +19,14 @@ from common.schema import validate
 from common.exit_codes import EXIT_OK, EXIT_ATTENTION, EXIT_USAGE, EXIT_RUNTIME
 from helpers import make_click
 
+
+def run_legacy(*args, **kwargs):
+    """The old three-role loop, kept for the machinery tests until R5 removes it."""
+    summary, code = llm_director._run_loop(*args, **kwargs)
+    summary["feedback"] = list(kwargs.get("feedback") or [])
+    return summary, code
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "llm_director.py"
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -460,7 +468,7 @@ def reviewer_slots_from(user_message):
 def test_happy_path(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()], cost_per_call=0.002)
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["rounds_used"] == 1
@@ -490,7 +498,7 @@ def test_reviewer_sends_fixes(tmp_path):
             reviewer_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["rounds_used"] == 2
     assert summary["approved"] is True
@@ -512,7 +520,7 @@ def test_max_rounds_keeps_clean_draft(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
     assert summary["rounds_used"] == 2
     assert summary["approved"] is False
@@ -532,7 +540,7 @@ def test_max_rounds_with_violations_keeps_the_repaired_draft(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["fallback"] is None
@@ -1049,7 +1057,7 @@ def test_validator_catches_rule_break(tmp_path):
             reviewer_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["approved"] is True
@@ -1073,7 +1081,7 @@ def test_reviewer_sees_the_repaired_windows(tmp_path):
             reviewer_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     reviewer_calls = calls_for(client, "# Reviewer")
     slots = reviewer_slots_from(reviewer_calls[0]["messages"][1]["content"])
@@ -1115,7 +1123,7 @@ def test_ineligible_segment_not_in_screenwriter_menu(tmp_path):
     assert "0056/s2" not in facts
 
     client = StubClient([plan_answer()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, dry_run=True)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, dry_run=True)
     assert code == 0
     screenwriter_calls = calls_for(client, "# Screenwriter")
     user = screenwriter_calls[0]["messages"][1]["content"]
@@ -1129,7 +1137,7 @@ def test_brief_facts_reach_the_screenwriter(tmp_path):
         json.dumps({"place": "Retezat", "when": "July 2026"}), encoding="utf-8"
     )
     client = StubClient([plan_answer()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, dry_run=True)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, dry_run=True)
     assert code == 0
     user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
     assert "Place: Retezat" in user
@@ -1147,7 +1155,7 @@ def test_missing_editor_slot_is_violation(tmp_path):
             reviewer_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["fallback"] is None
@@ -1165,7 +1173,7 @@ def test_missing_editor_slot_is_violation(tmp_path):
 def test_empty_editor_answer_falls_back(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer_empty(), editor_answer_empty()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "fallback"
     assert summary["fallback"] == "rules"
@@ -1195,7 +1203,7 @@ def test_validator_catches_missing_plan_slot():
 def test_budget_exceeded_falls_back(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "fallback"
     assert summary["fallback"] == "rules"
@@ -1205,7 +1213,7 @@ def test_budget_exceeded_falls_back(tmp_path):
 def test_budget_exceeded_no_fallback_exits_3(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, fallback_rules=False)
     assert code == EXIT_RUNTIME
     assert summary["status"] == "error"
     assert not (workspace / "edit.json").exists()
@@ -1214,7 +1222,7 @@ def test_budget_exceeded_no_fallback_exits_3(tmp_path):
 def test_fallback_summary_reports_shortlist(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "fallback"
     assert summary["shortlist"] > 0
@@ -1224,7 +1232,7 @@ def test_fallback_summary_reports_shortlist(tmp_path):
 def test_stop_summary_reports_shortlist(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), BudgetExceeded("budget reached")])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, fallback_rules=False)
     assert code == EXIT_RUNTIME
     assert summary["status"] == "error"
     assert summary["shortlist"] > 0
@@ -1233,7 +1241,7 @@ def test_stop_summary_reports_shortlist(tmp_path):
 def test_unparseable_answers_retried_then_fallback(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(["not json at all", "still not json"])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "fallback"
     assert len(client.calls) == 2
@@ -1242,7 +1250,7 @@ def test_unparseable_answers_retried_then_fallback(tmp_path):
 def test_dry_run_writes_plan_only(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer()], cost_per_call=0.003)
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, dry_run=True)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, dry_run=True)
     assert code == 0
     assert (workspace / "shot_plan.json").exists()
     assert not (workspace / "edit.json").exists()
@@ -1256,9 +1264,9 @@ def test_dry_run_writes_plan_only(tmp_path):
 def test_dry_run_ignores_rerun_safety(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=first)
+    run_legacy(workspace, brief=BRIEF, client=first)
     second = StubClient([plan_answer()], cost_per_call=0.004)
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=second, dry_run=True)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=second, dry_run=True)
     assert code == 0
     assert summary["status"] == "written"
     assert len(second.calls) == 1
@@ -1268,7 +1276,7 @@ def test_dry_run_ignores_rerun_safety(tmp_path):
 def test_json_summary_has_every_key(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     for key in (
         "status",
@@ -1291,9 +1299,9 @@ def test_json_summary_has_every_key(tmp_path):
 def test_rerun_safety_skips(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=first)
+    run_legacy(workspace, brief=BRIEF, client=first)
     second = StubClient([])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=second)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=second)
     assert code == 0
     assert summary["status"] == "skipped"
     assert second.calls == []
@@ -1309,7 +1317,7 @@ def test_missing_shotlog_falls_back(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     (workspace / "shotlog.json").unlink()
     client = StubClient([])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "fallback"
     assert any("no shotlog" in warning for warning in summary["warnings"])
@@ -1320,7 +1328,7 @@ def test_missing_shotlog_no_fallback_errors(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     (workspace / "shotlog.json").unlink()
     client = StubClient([])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, fallback_rules=False)
     assert code == EXIT_USAGE
     assert summary["status"] == "error"
 
@@ -1631,7 +1639,7 @@ def test_make_window_similar_falls_back_to_similar_to_on_embed_error():
 def test_final_edit_of_a_stub_run_passes_validate_edit(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     plan = json.loads((workspace / "shot_plan.json").read_text(encoding="utf-8"))
@@ -1643,7 +1651,7 @@ def test_final_edit_of_a_stub_run_passes_validate_edit(tmp_path):
 def test_final_edit_of_a_stub_run_respects_pacing_and_windows(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     plan = json.loads((workspace / "shot_plan.json").read_text(encoding="utf-8"))
@@ -1768,7 +1776,7 @@ def test_editor_facts_follow_fact_keep_whole(tmp_path):
 def test_normalisation_reported_in_warnings(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer_long_ordinary(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["fallback"] is None
@@ -1790,7 +1798,7 @@ def test_missing_last_round_slot_is_synthesised(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["fallback"] is None
@@ -2062,7 +2070,7 @@ def short_editor_answer():
 def test_short_edit_allows_one_and_a_half_second_slots(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([short_plan_answer(), short_editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(
+    summary, code = run_legacy(
         workspace, brief="about 20 seconds, chronological, ambient sound only", client=client
     )
     assert code == 0
@@ -2123,7 +2131,7 @@ def test_photo_shot_becomes_photo_slot(tmp_path):
     )
     workspace = build_photo_workspace(tmp_path / "ws", photo, shot)
     client = StubClient([photo_plan_answer(), photo_editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "written"
     assert summary["approved"] is True
@@ -2229,7 +2237,7 @@ def test_dropped_hero_photo_is_synthesised(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
     assert summary["status"] == "written"
     assert any("fixed p1" in warning for warning in summary["warnings"])
@@ -2255,7 +2263,7 @@ def test_photo_slot_from_in_out_answer(tmp_path):
         }
     )
     client = StubClient([photo_plan_answer(), answer, reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     slot = next(item for item in edit["video"] if item.get("kind") == "photo")
@@ -2529,7 +2537,7 @@ def test_run_with_beats_writes_cut_transitions(tmp_path):
             reviewer_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, beats=str(beats_path))
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, beats=str(beats_path))
     assert code == 0
     assert summary["status"] == "written"
     assert summary["beat_snap"]["beats"] == 80
@@ -2541,7 +2549,7 @@ def test_run_with_beats_writes_cut_transitions(tmp_path):
 def test_run_without_beats_reports_no_beat_snap(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["beat_snap"] is None
 
@@ -2644,7 +2652,7 @@ def test_schema_failure_at_write_falls_back_to_rules(tmp_path, monkeypatch):
     workspace = build_workspace(tmp_path / "ws")
     pollute_first_video_slot(monkeypatch)
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["status"] == "fallback"
     assert summary["fallback"] == "rules"
@@ -2670,7 +2678,7 @@ def test_schema_failure_on_a_kept_draft_falls_back_to_rules(tmp_path, monkeypatc
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
     assert summary["status"] == "fallback"
     assert summary["fallback"] == "rules"
@@ -2684,7 +2692,7 @@ def test_schema_failure_without_fallback_errors(tmp_path, monkeypatch):
     workspace = build_workspace(tmp_path / "ws")
     pollute_first_video_slot(monkeypatch)
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, fallback_rules=False)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, fallback_rules=False)
     assert code == EXIT_RUNTIME
     assert summary["status"] == "error"
     assert any("duration_s" in warning for warning in summary["warnings"])
@@ -2735,7 +2743,7 @@ def test_feedback_block_reaches_screenwriter_and_editor(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     write_previous_edit(workspace)
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(
+    summary, code = run_legacy(
         workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2, tunnel longer"]
     )
     assert code == 0
@@ -2757,7 +2765,7 @@ def test_feedback_block_reaches_screenwriter_and_editor(tmp_path):
 def test_feedback_appends_one_line_per_flag(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=first, feedback=["drop 0071/s2", "tunnel longer"])
+    run_legacy(workspace, brief=BRIEF, client=first, feedback=["drop 0071/s2", "tunnel longer"])
     rows = feedback_jsonl_rows(workspace)
     assert [row["text"] for row in rows] == ["drop 0071/s2", "tunnel longer"]
     for row in rows:
@@ -2765,7 +2773,7 @@ def test_feedback_appends_one_line_per_flag(tmp_path):
         assert row["tool"] == "scripts/llm_director.py"
         assert row["ts"]
     second = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=second, feedback=["drop 0071/s2"])
+    run_legacy(workspace, brief=BRIEF, client=second, feedback=["drop 0071/s2"])
     rows = feedback_jsonl_rows(workspace)
     assert len(rows) == 3
     assert rows[0]["text"] == "drop 0071/s2"
@@ -2775,14 +2783,14 @@ def test_feedback_appends_one_line_per_flag(tmp_path):
 def test_feedback_forces_rerun_of_up_to_date_edit(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     first = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=first)
+    run_legacy(workspace, brief=BRIEF, client=first)
     second = StubClient([])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=second)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=second)
     assert code == 0
     assert summary["status"] == "skipped"
     assert second.calls == []
     third = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=third, feedback=["keep it as it is"])
+    summary, code = run_legacy(workspace, brief=BRIEF, client=third, feedback=["keep it as it is"])
     assert code == 0
     assert summary["status"] == "written"
     assert len(third.calls) == 3
@@ -2792,7 +2800,7 @@ def test_feedback_forces_rerun_of_up_to_date_edit(tmp_path):
 def test_feedback_without_previous_edit_still_reaches_the_screenwriter(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
     assert code == 0
     assert summary["status"] == "written"
     screenwriter_user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
@@ -2804,7 +2812,7 @@ def test_feedback_without_previous_edit_still_reaches_the_screenwriter(tmp_path)
 def test_feedback_recorded_even_when_the_loop_falls_back(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient(["not json at all", "still not json"])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, feedback=["drop 0071/s2"])
     assert code == 0
     assert summary["status"] == "fallback"
     rows = feedback_jsonl_rows(workspace)
@@ -2814,7 +2822,7 @@ def test_feedback_recorded_even_when_the_loop_falls_back(tmp_path):
 def test_no_feedback_keeps_summary_shape(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["feedback"] == []
 
@@ -3002,14 +3010,14 @@ def test_policy_with_the_ramp_reproduces_the_middle_speed_behaviour():
 def test_run_default_has_no_ramp_and_speed_ramp_reaches_the_record(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     assert all("middle_speed" not in slot for slot in edit["video"])
     assert edit["meta"]["speed_ramp"] is False
     assert all("peak_s" in slot and "centred" in slot for slot in edit["video"])
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, speed_ramp=True)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, speed_ramp=True)
     assert code == 0 and summary["status"] == "written"
     ramped = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     assert ramped["meta"]["speed_ramp"] is True
@@ -3018,11 +3026,11 @@ def test_run_default_has_no_ramp_and_speed_ramp_reaches_the_record(tmp_path):
 def test_up_to_date_edit_is_redone_when_the_speed_ramp_changes(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=client)
-    again, _ = llm_director.run(workspace, brief=BRIEF, client=StubClient([]))
+    run_legacy(workspace, brief=BRIEF, client=client)
+    again, _ = run_legacy(workspace, brief=BRIEF, client=StubClient([]))
     assert again["status"] == "skipped"
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    redone, _ = llm_director.run(workspace, brief=BRIEF, client=client, speed_ramp=True)
+    redone, _ = run_legacy(workspace, brief=BRIEF, client=client, speed_ramp=True)
     assert redone["status"] == "written"
 
 
@@ -3058,7 +3066,7 @@ def test_repair_drops_a_slot_whose_window_is_too_short_for_any_valid_cut():
 def test_edit_records_the_reviewer_review(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     assert edit["meta"]["director"]["review"] == {"approved": True, "objections": []}
@@ -3076,7 +3084,7 @@ def test_edit_records_the_objections(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=2)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=2)
     assert code == 0
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     review = edit["meta"]["director"]["review"]
@@ -3124,7 +3132,7 @@ def test_review_object_drops_stale_objections():
 def test_old_edit_without_review_still_validates(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    llm_director.run(workspace, brief=BRIEF, client=client)
+    run_legacy(workspace, brief=BRIEF, client=client)
     edit = json.loads((workspace / "edit.json").read_text(encoding="utf-8"))
     del edit["meta"]["director"]["review"]
     assert validate(edit, "edit") == []
@@ -3340,7 +3348,7 @@ def test_run_loop_forwards_the_owner_keys_to_the_rules_director(tmp_path, monkey
 
     monkeypatch.setattr(llm_director, "run_rules_director", spy)
     client = StubClient(["not json", "still not json"])
-    summary, code = llm_director.run(
+    summary, code = run_legacy(
         workspace,
         brief=BRIEF,
         client=client,
@@ -3505,7 +3513,7 @@ def test_call_client_without_effort_sends_no_extra_body():
 def test_run_sends_the_reasoning_effort_on_every_call(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(
+    summary, code = run_legacy(
         workspace, brief=BRIEF, client=client, reasoning_effort="low"
     )
     assert code == 0
@@ -3602,7 +3610,7 @@ def build_many_workspace(root, count=100, stars=5):
 def test_approved_on_round_one_stops_early(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["rounds_used"] == 1
     assert summary["approved"] is True
@@ -3620,7 +3628,7 @@ def test_default_rounds_cap_at_two(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert summary["rounds_used"] == 2
     assert summary["approved"] is False
@@ -3639,7 +3647,7 @@ def test_rounds_three_stops_early_on_the_same_blocking_violations(tmp_path):
             reviewer_not_approved(),
         ]
     )
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, rounds=3)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, rounds=3)
     assert code == 0
     assert summary["rounds_used"] == 2
     assert summary["approved"] is False
@@ -3712,7 +3720,7 @@ def test_screenwriter_message_uses_the_shortlist(tmp_path):
     shortlist_keys = {row["key"] for row in context["shortlist"]}
     assert len(shortlist_keys) < len(context["shotlog_rows"])
     client = StubClient([plan_answer()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client, dry_run=True)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client, dry_run=True)
     assert code == 0
     user = calls_for(client, "# Screenwriter")[0]["messages"][1]["content"]
     payload = user.split("Eligible shotlog rows:", 1)[1].strip()
@@ -3725,7 +3733,7 @@ def test_screenwriter_message_uses_the_shortlist(tmp_path):
 def test_json_summary_has_shortlist_and_candidates(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
     client = StubClient([plan_answer(), editor_answer(), reviewer_approved()])
-    summary, code = llm_director.run(workspace, brief=BRIEF, client=client)
+    summary, code = run_legacy(workspace, brief=BRIEF, client=client)
     assert code == 0
     assert "shortlist" in summary
     assert "candidates" in summary

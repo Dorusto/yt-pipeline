@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent entry point: `yt <tool> [args]` runs any tool from any folder, and `yt --help --json` lists the tools as JSON.
 - Claude Code plugin: five plugins in one marketplace `yt-pipeline` (`yt-director`, `yt-publish`, `yt-shorts`, `yt-editor`, `yt-admin`), each installable alone; every skill works on its own through `yt <tool>`.
 - Typed tools (MCP): each plugin ships `scripts/yt_mcp.py` with `yt_list`, `yt_describe`, `yt_run` and `yt_preview`.
-- Director agent mode: `llm_director.py --prepare` writes the inputs and `--apply` validates and writes the edit with `meta.director.by = "agent"`, so a host agent can direct the edit on its own subscription with no OpenRouter key.
+- Director agent mode: `llm_director.py --prepare` writes the director prompt and payload, `--apply` validates `director_plan.json` and runs the editor, and `--prepare --review` writes the pictures and the report and the host agent writes `director_review.json`, so a host agent can direct the edit on its own subscription with no OpenRouter key.
 - Director chat in the Director tab: the reviewer's objections in plain words, a message in and a reply out with a cost/time estimate, and a Make-the-new-version button.
 - The director is honest about its tools: when it cannot do something it says what it can do instead and the request is logged as a missing tool.
 - Per-instance style settings: `channel.style` (`title_style`, `description_order`, `pinned_comment_voice`).
@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Director: the default flow is the film crew — one director call writes `director_plan.json`, the code editor cuts it into `edit.json` and `editor_report.json` without changing the shots, the director reviews the cut with one picture per shot (at most 2 rounds, `director_rounds.json` records every round), and the rule director is the fallback only when the model gives no usable plan.
 - The recap's YouTube title and description are optional and off by default: `recap.py --meta` / `--no-meta` override `recap.meta` in the config (default false), the web Upload and Re-edit forms carry a "Title and description" option, and with it off the `recap_meta` station is skipped and the Recap tab shows no title/description block.
 - The project page's reviewer box is replaced by the chat in the Director tab (the notebook too).
 - The metadata prompt no longer carries a built-in pinned-comment voice; it comes from `channel.style.pinned_comment_voice`.

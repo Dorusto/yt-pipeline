@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""LLM director: screenwriter, editor and reviewer loop into edit.json.
+"""LLM director: one director call writes the plan, the code editor cuts it, the director reviews the cut.
 
 Usage:
     python scripts/llm_director.py --workspace DIR --brief "..."
@@ -10,15 +10,17 @@ Usage:
     python scripts/llm_director.py --workspace DIR --brief "..." --feedback "drop 0071/s2, tunnel longer"
 
 Reads ``shotlog.json``, ``ingest.json``, ``motion/<stem>.json`` and
-``quality/<stem>.json`` from the workspace and runs a three-role LLM loop: the
-screenwriter writes ``shot_plan.json``, the editor picks the cut windows, the
-reviewer checks the result against the brief and the editing rules and sends
-fixes back for at most ``--rounds`` rounds. The rule-based ``scripts/director.py``
-is the fallback when the loop fails and the ``--dry-run`` baseline. Sources are
-read-only; outputs are written atomically.
+``quality/<stem>.json`` from the workspace and runs the film crew: one director
+call writes ``director_plan.json``, the code editor (``director_editor.py``)
+cuts it into ``edit.json`` and ``editor_report.json`` without changing the
+shots, and the director reviews the cut (one picture per shot plus the report)
+for at most 2 rounds. The rule-based ``scripts/director.py`` is the fallback
+only when the model gives no usable plan and the ``--dry-run`` baseline.
+Sources are read-only; outputs are written atomically.
 """
 
 import argparse
+import base64
 import copy
 import json
 import math
@@ -41,6 +43,7 @@ from common.notebook import notebook_block
 from common.pacing import estimate_all_good
 from common.peak import centre_window, choose_peak, is_centred
 from common.embed import EmbedError
+from common.frames import FramesError, extract_frame
 from common.llm import BudgetExceeded, LLMError, make_client, reasoning_extra_body
 from common import runlog
 from common.constants import MIN_SHOT_LENGTH_S, SNAP_MIN_SLOT_S
@@ -137,6 +140,13 @@ DIRECTOR_SCRIPT = REPO_ROOT / "scripts" / "director.py"
 
 MAX_ROUNDS = 3
 DEFAULT_ROUNDS = 2
+FLOW_MAX_ROUNDS = 2
+PICTURE_WIDTH = 320
+PLAN_FILE = "director_plan.json"
+REPORT_FILE = "editor_report.json"
+ROUNDS_FILE = "director_rounds.json"
+REVIEW_FILE = "director_review.json"
+REVIEW_APPLIED_FILE = "director_review.applied.json"
 SHORTLIST_FACTOR = 2
 SHORTLIST_MIN = 24
 SHORTLIST_MAX = 60
@@ -215,10 +225,12 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="llm_director.py",
         description=(
-            "Turn a brief and a workspace shotlog into edit.json with a three-role "
-            "LLM loop: screenwriter (shot_plan.json), editor (cut windows) and "
-            "reviewer (checks and fixes, max 3 rounds). Falls back to the rule-based "
-            "director when the loop fails."
+            "Turn a brief and a workspace shotlog into edit.json with the film crew: "
+            "one director call writes director_plan.json, the code editor cuts it into "
+            "edit.json and editor_report.json without changing the shots, and the "
+            "director reviews the cut (one picture per shot plus the report) for at "
+            "most 2 rounds. The rule-based director is the fallback only when the "
+            "model gives no usable plan."
         ),
         epilog=(
             "examples:\n"
@@ -238,9 +250,9 @@ def build_parser():
     parser.add_argument("--brief", default=None, help="the brief in plain language")
     parser.add_argument("--brief-file", default=None, help="path to a file holding the brief")
     parser.add_argument("--out", default=None, help="edit list to write (default WORKSPACE/edit.json)")
-    parser.add_argument("--plan-out", default=None, help="shot plan to write (default WORKSPACE/shot_plan.json)")
-    parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS, help="review rounds (default 2, max 3)")
-    parser.add_argument("--dry-run", action="store_true", help="run only the screenwriter and print the rule-based baseline")
+    parser.add_argument("--plan-out", default=None, help="director plan to write (default WORKSPACE/director_plan.json)")
+    parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS, help="review rounds (default 2, max 2)")
+    parser.add_argument("--dry-run", action="store_true", help="run only the director and print the rule-based baseline")
     parser.add_argument(
         "--prepare",
         action="store_true",
@@ -249,7 +261,12 @@ def build_parser():
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="read the agent's shot_plan.json and edit.json, validate, repair and write the final edit.json",
+        help="read the agent's director_plan.json (and director_review.json), validate, run the editor and write the final edit.json",
+    )
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help="with --prepare: write the pictures and the editor report for the notes round",
     )
     parser.add_argument("--fallback-rules", dest="fallback_rules", action="store_true", default=True, help="fall back to the rule-based director when the loop fails (default)")
     parser.add_argument("--no-fallback-rules", dest="fallback_rules", action="store_false", help="error instead of falling back to the rule-based director")
@@ -2555,9 +2572,10 @@ def run(
     speed_ramp=False,
     notebook=None,
     reasoning_effort=None,
+    picture_fn=None,
 ):
-    """Run the three-role loop and return ``(summary, exit_code)``."""
-    summary, code = _run_loop(
+    """Run the director flow and return ``(summary, exit_code)``."""
+    summary, code = run_director_flow(
         workspace,
         brief=brief,
         brief_file=brief_file,
@@ -2582,9 +2600,411 @@ def run(
         speed_ramp=speed_ramp,
         notebook=notebook,
         reasoning_effort=reasoning_effort,
+        picture_fn=picture_fn,
     )
     summary["feedback"] = list(feedback or [])
     return summary, code
+
+
+def run_director_flow(
+    workspace,
+    brief=None,
+    brief_file=None,
+    out=None,
+    plan_out=None,
+    rounds=DEFAULT_ROUNDS,
+    dry_run=False,
+    fallback_rules=True,
+    model=None,
+    budget_usd=None,
+    force=False,
+    config=None,
+    client=None,
+    important_max_s=None,
+    target_duration_s=None,
+    order=None,
+    pacing=None,
+    beats=None,
+    music=None,
+    ambient_under_music_db=None,
+    feedback=None,
+    speed_ramp=False,
+    notebook=None,
+    reasoning_effort=None,
+    picture_fn=None,
+):
+    """The film-crew flow: one director call, the code editor, at most 2 review rounds."""
+    started = time.monotonic()
+    workspace_path, brief_text, brief_path = _resolve_workspace_brief(workspace, brief, brief_file)
+    feedback = list(feedback or [])
+    if feedback:
+        append_feedback_lines(workspace_path, feedback)
+    feedback_block = build_feedback_block(feedback, workspace_path) if feedback else None
+    notebook_file = notebook_path(notebook)
+    notebook_text = notebook_block(notebook_file) if notebook_file is not None else None
+
+    out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
+    plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / PLAN_FILE
+    beats_path = Path(beats).expanduser().resolve() if beats else None
+    if music:
+        music_path = Path(music).expanduser().resolve()
+        if not music_path.is_file():
+            raise LLMDirectorError(f"music file not found: {music}")
+        music = str(music_path)
+    beat_grid = load_beats(beats_path) if beats_path is not None else None
+
+    if not force and not dry_run and not feedback and is_up_to_date(out_path, workspace_path, brief_path, plan_path, beats_path, speed_ramp):
+        existing = load_json(out_path) or {}
+        slots = existing.get("video") or []
+        total = sum(slot_duration(slot) for slot in slots)
+        return base_summary("skipped", out_path, plan_path, 0, None, None, len(slots), total, 0, [], started, 0.0), 0
+
+    warnings = []
+    state = LoopState()
+    shotlog = load_shotlog(workspace_path)
+    if shotlog is None:
+        warnings.append("no shotlog.json in the workspace; using the rule-based director")
+        hints = parse_brief(brief_text)
+        if target_duration_s is not None:
+            hints["target_duration_s"] = target_duration_s
+        if order is not None:
+            hints["order"] = order
+        if pacing is not None:
+            hints["pacing"] = pacing
+        if fallback_rules:
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp)
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE)
+
+    context = _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_duration_s, order, pacing)
+    hints = context["hints"]
+    prompt_brief = context["prompt_brief"]
+    content_type = context["content_type"]
+    pacing = context["pacing"]
+    effective_important_max_s = context["effective_important_max_s"]
+    facts = context["facts"]
+    clips = context["clips"]
+    fact_warnings = context["fact_warnings"]
+    sources = context["sources"]
+    shotlog_rows = context["shotlog_rows"]
+    shortlist = context["shortlist"]
+    brief_obj = context["brief_obj"]
+    drop_reasons = context["drop_reasons"]
+    warnings.extend(fact_warnings)
+    if not facts:
+        warnings.append("no eligible shots in the shotlog; using the rule-based director")
+        if fallback_rules:
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, beats_path=beats_path, music=music, ambient_under_db=ambient_under_music_db, speed_ramp=speed_ramp, shortlist=len(shortlist))
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_USAGE, shortlist=len(shortlist))
+    candidates = len(shotlog_rows)
+
+    if client is None:
+        if config is None:
+            config = load_config()
+        effective = dict(config)
+        models = dict(effective.get("models") or {})
+        if model is not None:
+            models["director"] = model
+        effective["models"] = models
+        if budget_usd is not None:
+            effective["llm_budget_usd"] = budget_usd
+        client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
+
+    state.reasoning_effort = director_reasoning_effort(reasoning_effort, config)
+
+    prompt = read_prompt("director.md")
+    payload = _director_payload(context, brief_text, feedback_block, notebook_text)
+
+    try:
+        plan, plan_errors = _director_plan_call(client, prompt, payload, state, facts, brief_obj, content_type)
+    except (LLMError, BudgetExceeded) as exc:
+        plan, plan_errors = None, str(exc)
+    if plan is None:
+        warnings.append("the director gave no usable plan: " + plan_errors)
+        if fallback_rules:
+            return fallback_result(workspace_path, brief_text, hints, out_path, plan_path, warnings, state, 0, None, [], started, candidates, beats_path, music, ambient_under_music_db, speed_ramp, shortlist=len(shortlist))
+        return stop_result(out_path, plan_path, warnings, state, 0, None, [], started, EXIT_RUNTIME, candidates, shortlist=len(shortlist))
+
+    _write_director_plan(plan_path, plan, started, state.cost_usd)
+    if dry_run:
+        baseline = run_baseline(workspace_path, prompt_brief, hints, beats_path, music, ambient_under_music_db, speed_ramp)
+        summary = base_summary("written", None, plan_path, 0, None, None, 0, 0.0, 0, warnings, started, state.cost_usd, candidates, shortlist=len(shortlist))
+        summary["baseline"] = baseline
+        summary["dry_run"] = True
+        return summary, 0
+
+    max_rounds = max(1, min(rounds, FLOW_MAX_ROUNDS))
+    rounds_log = []
+    approved = None
+    notes = []
+    round_cost_start = 0.0
+    report = None
+    for round_index in range(1, max_rounds + 1):
+        edit, report = _run_editor(workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path)
+        for note in report.get("could_not_do") or []:
+            if note not in warnings:
+                warnings.append(note)
+        pictures = _make_pictures(edit, workspace_path, round_index, picture_fn, warnings)
+        review, review_errors = _director_review_call(client, prompt, payload, report, pictures, state, facts, brief_obj, content_type)
+        round_cost = round(state.cost_usd - round_cost_start, 8)
+        round_cost_start = state.cost_usd
+        if review is None:
+            detail = review_errors if isinstance(review_errors, str) else "; ".join(review_errors)
+            warnings.append("the director gave no usable review: " + detail)
+            rounds_log.append({"round": round_index, "plan": plan, "report": report, "review": None, "cost_usd": round_cost})
+            _write_rounds(workspace_path / ROUNDS_FILE, rounds_log, state.cost_usd)
+            break
+        approved = bool(review["approved"])
+        rounds_log.append(
+            {
+                "round": round_index,
+                "plan": plan,
+                "report": report,
+                "review": {"approved": approved, "summary": review["summary"], "notes": list(review.get("notes") or [])},
+                "cost_usd": round_cost,
+            }
+        )
+        _write_rounds(workspace_path / ROUNDS_FILE, rounds_log, state.cost_usd)
+        if approved:
+            break
+        notes = list(review.get("notes") or [])
+        plan = review["plan"]
+        _write_director_plan(plan_path, plan, started, state.cost_usd)
+        if round_index == max_rounds:
+            warnings.append("the director did not approve after 2 rounds; delivering the cut with its notes")
+            break
+
+    edit = load_json(out_path)
+    if not isinstance(edit, dict) or not edit.get("video"):
+        raise LLMDirectorRuntimeError("the editor wrote no usable edit")
+    edit.setdefault("meta", {})["speed_ramp"] = bool(speed_ramp)
+    write_edit(out_path, edit, started, state.cost_usd, director_info("llm", approved, notes))
+    slots = edit["video"]
+    total = sum(slot_duration(slot) for slot in slots)
+    return base_summary("written", out_path, plan_path, len(rounds_log), approved, None, len(slots), total, 0, warnings, started, state.cost_usd, candidates, shortlist=len(shortlist)), 0
+
+
+def _director_payload(context, brief_text, feedback_block, notebook_text):
+    """The user payload of the director call: the brief, the shortlist facts, the notes and the notebook."""
+    hints = context["hints"]
+    return {
+        "brief": {
+            "text": brief_text,
+            "target_duration_s": hints.get("target_duration_s"),
+            "order": hints.get("order"),
+            "pacing": hints.get("pacing"),
+            "ambient_only": hints.get("ambient_only"),
+        },
+        "content_type": context["content_type"],
+        "facts": [
+            context["facts"][row["key"]]
+            for row in context["shortlist"]
+            if row.get("key") in context["facts"]
+        ],
+        "feedback": feedback_block or None,
+        "notebook": notebook_text or None,
+    }
+
+
+def _director_plan_call(client, prompt, payload, state, facts, brief_obj, content_type):
+    """One director call plus one repair retry that sends the exact validation errors."""
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    response = call_client(client, messages, state)
+    plan, errors = _parse_director_plan(response.text, facts, brief_obj, content_type)
+    if plan is not None:
+        return plan, None
+    messages.append({"role": "assistant", "content": response.text or ""})
+    messages.append(
+        {
+            "role": "user",
+            "content": "Your answer was not a valid plan: "
+            + "; ".join(errors)
+            + ". Answer again with ONE JSON object in the plan shape, no other text.",
+        }
+    )
+    response = call_client(client, messages, state)
+    plan, errors = _parse_director_plan(response.text, facts, brief_obj, content_type)
+    if plan is not None:
+        return plan, None
+    return None, "; ".join(errors)
+
+
+def _parse_director_plan(text, facts, brief_obj, content_type):
+    """The plan from a model answer, with the envelope fields set and the shot keys checked."""
+    data = parse_json(text)
+    if data is None:
+        return None, ["the answer is not a JSON object"]
+    plan = dict(data)
+    plan["schema_version"] = plan.get("schema_version") or SCHEMA_VERSION
+    plan["generated_at"] = plan.get("generated_at") or datetime.now(timezone.utc).isoformat()
+    plan["tool"] = TOOL
+    plan["brief"] = brief_obj
+    plan["content_type"] = content_type
+    plan.pop("meta", None)
+    errors = validate(plan, "director_plan")
+    shots = plan.get("shots")
+    unknown = [
+        shot.get("shot_key")
+        for shot in (shots if isinstance(shots, list) else [])
+        if isinstance(shot, dict) and shot.get("shot_key") not in facts
+    ]
+    if unknown:
+        errors.append("unknown shot_key: " + ", ".join(unknown))
+    if errors:
+        return None, errors
+    return plan, []
+
+
+def _write_director_plan(path, plan, started, cost_usd):
+    """Write the plan with its meta block, validated against the director_plan schema."""
+    plan["meta"] = {
+        "tool": TOOL,
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": round(cost_usd, 8),
+    }
+    validate_or_raise(plan, "director_plan")
+    atomic_write_json(path, plan)
+
+
+def _run_editor(workspace_path, plan_path, out_path, report_path, beats_path):
+    """Run the code editor as a subprocess and return ``(edit, report)``."""
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "director_editor.py"),
+        "--workspace",
+        str(workspace_path),
+        "--plan",
+        str(plan_path),
+        "--out",
+        str(out_path),
+        "--report",
+        str(report_path),
+        "--json",
+    ]
+    if beats_path is not None:
+        command += ["--beats", str(beats_path)]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip().splitlines()
+        raise LLMDirectorRuntimeError(f"the editor failed: {detail[-1] if detail else 'unknown error'}")
+    return load_json(out_path), load_json(report_path)
+
+
+def _make_pictures(edit, workspace_path, round_number, picture_fn, warnings):
+    """One picture per slot of the cut, in timeline order, under director/rounds/round-N/."""
+    picture_fn = picture_fn or extract_frame
+    round_dir = workspace_path / "director" / "rounds" / f"round-{round_number}"
+    round_dir.mkdir(parents=True, exist_ok=True)
+    sources = {row.get("file"): row.get("path") for row in edit.get("sources") or []}
+    pictures = []
+    for slot in edit.get("video") or []:
+        slot_id = slot.get("id")
+        if slot.get("kind") == "photo":
+            name = slot.get("photo")
+            t_s = 0.0
+        else:
+            name = slot.get("clip")
+            t_s = (float(slot.get("in_s") or 0.0) + float(slot.get("out_s") or 0.0)) / 2
+        path = sources.get(name)
+        if not path:
+            warnings.append(f"no source path for {slot_id}; no picture")
+            continue
+        safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", str(slot_id))
+        out = round_dir / f"{safe_id}.jpg"
+        try:
+            picture_fn(path, t_s, out, PICTURE_WIDTH)
+        except FramesError as exc:
+            warnings.append(f"no picture for {slot_id}: {exc}")
+            continue
+        pictures.append({"id": slot_id, "shot_key": slot.get("shot_key"), "path": str(out)})
+    return pictures
+
+
+def _picture_data_uri(path):
+    """The JPEG file as a data URI, or None when it cannot be read."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
+
+
+def _director_review_call(client, prompt, payload, report, pictures, state, facts, brief_obj, content_type):
+    """One review call: the payload, the editor report and one picture per shot."""
+    user_text = (
+        json.dumps(payload, ensure_ascii=False)
+        + "\n\nThe editor cut your plan. Its report:\n"
+        + json.dumps(report, ensure_ascii=False)
+        + "\n\nPictures of the cut, one per shot, in timeline order: "
+        + ", ".join(f"{picture['id']} ({picture['shot_key']})" for picture in pictures)
+        + ". Approve or answer with a complete revised plan."
+    )
+    content = [{"type": "text", "text": user_text}]
+    for picture in pictures:
+        uri = _picture_data_uri(picture["path"])
+        if uri is not None:
+            content.append({"type": "image_url", "image_url": {"url": uri}})
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": content},
+    ]
+    try:
+        response = call_client(client, messages, state)
+    except (LLMError, BudgetExceeded) as exc:
+        return None, str(exc)
+    return _parse_director_review(response.text, facts, brief_obj, content_type)
+
+
+def _parse_director_review(text, facts, brief_obj, content_type):
+    """The review from a model answer; a not-approved review carries a complete revised plan."""
+    data = parse_json(text)
+    if data is None:
+        return None, ["the answer is not a JSON object"]
+    review = dict(data)
+    review["schema_version"] = review.get("schema_version") or SCHEMA_VERSION
+    review["generated_at"] = review.get("generated_at") or datetime.now(timezone.utc).isoformat()
+    review["tool"] = TOOL
+    errors = validate(review, "director_review")
+    if review.get("approved") is False and isinstance(review.get("plan"), dict):
+        plan = dict(review["plan"])
+        plan["schema_version"] = plan.get("schema_version") or SCHEMA_VERSION
+        plan["generated_at"] = plan.get("generated_at") or datetime.now(timezone.utc).isoformat()
+        plan["tool"] = TOOL
+        plan["brief"] = brief_obj
+        plan["content_type"] = content_type
+        plan.pop("meta", None)
+        plan_errors = validate(plan, "director_plan")
+        shots = plan.get("shots")
+        unknown = [
+            shot.get("shot_key")
+            for shot in (shots if isinstance(shots, list) else [])
+            if isinstance(shot, dict) and shot.get("shot_key") not in facts
+        ]
+        if unknown:
+            plan_errors.append("plan unknown shot_key: " + ", ".join(unknown))
+        if plan_errors:
+            errors.extend("plan: " + error for error in plan_errors)
+        else:
+            review["plan"] = plan
+    if errors:
+        return None, errors
+    return review, []
+
+
+def _write_rounds(path, rounds, total_cost):
+    """Write director_rounds.json: every round with its review and its cost."""
+    atomic_write_json(
+        path,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "tool": TOOL,
+            "rounds": rounds,
+            "total_cost_usd": round(total_cost, 8),
+        },
+    )
 
 
 def _run_loop(
@@ -2943,15 +3363,19 @@ def _agent_inputs_text(
     workspace_path,
     brief_text,
     context,
-    out_path,
+    payload,
     plan_path,
+    out_path,
     beat_grid=None,
     music=None,
     ambient_under_music_db=None,
     speed_ramp=False,
     notebook_block=None,
+    review=False,
+    report=None,
+    pictures=None,
 ):
-    """The ``inputs.md`` the host agent reads: brief, settings, rules, shots and shapes."""
+    """The ``inputs.md`` the host agent reads: the director prompt, the payload and what to write."""
     hints = context["hints"]
     pacing = context["pacing"]
     parts = [read_prompt("agent_director.md").rstrip()]
@@ -2994,19 +3418,14 @@ def _agent_inputs_text(
             ]
         )
     )
-    parts.append(
-        "\n".join(
-            [
-                "## The rules",
-                "",
-                read_role_prompt("screenwriter.md").rstrip(),
-                "",
-                read_role_prompt("editor.md").rstrip(),
-            ]
-        )
-    )
-    parts.append("## The shortlisted shots\n\n```json\n" + json.dumps(context["shortlist"], indent=2) + "\n```")
-    parts.append("## The shot facts\n\n```json\n" + json.dumps(context["facts"], indent=2) + "\n```")
+    parts.append("## The director prompt\n\n" + read_prompt("director.md").rstrip())
+    parts.append("## The payload\n\n```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```")
+    if review:
+        parts.append("## The editor report\n\n```json\n" + json.dumps(report, ensure_ascii=False) + "\n```")
+        picture_lines = ["## The pictures of the cut", ""]
+        for picture in pictures or []:
+            picture_lines.append(f"- {picture['id']} ({picture['shot_key']}): {picture['path']}")
+        parts.append("\n".join(picture_lines))
     apply_flags = []
     if beat_grid is not None:
         apply_flags += ["--beats", "<path>"]
@@ -3019,27 +3438,21 @@ def _agent_inputs_text(
     run_line = f'    yt llm_director --workspace {workspace_path} --brief "..." --apply'
     if apply_flags:
         run_line += " " + " ".join(apply_flags)
-    parts.append(
-        "\n".join(
-            [
-                "## What to write",
-                "",
-                f"Write the plan to `{plan_path}` (schema `schemas/shot_plan.schema.json`), then the editor answer to `{out_path}`.",
-                "",
-                "The plan shape (from `prompts/screenwriter.md`):",
-                "",
-                _prompt_section("screenwriter.md", "## What to return"),
-                "",
-                "The editor answer shape (from `prompts/editor.md`):",
-                "",
-                _prompt_section("editor.md", "## What to return"),
-                "",
-                "Then run:",
-                "",
-                run_line,
-            ]
-        )
-    )
+    if review:
+        what_lines = [
+            "## What to write",
+            "",
+            f"Write the review to `{workspace_path / REVIEW_FILE}` (schema `schemas/director_review.schema.json`): "
+            "approve the cut, or answer with a complete revised plan and the notes.",
+        ]
+    else:
+        what_lines = [
+            "## What to write",
+            "",
+            f"Write the plan to `{plan_path}` (schema `schemas/director_plan.schema.json`).",
+        ]
+    what_lines += ["", "Then run:", "", run_line]
+    parts.append("\n".join(what_lines))
     return "\n\n".join(parts) + "\n"
 
 
@@ -3058,6 +3471,8 @@ def prepare_agent_inputs(
     ambient_under_music_db=None,
     speed_ramp=False,
     notebook=None,
+    review=False,
+    picture_fn=None,
 ):
     """Write WORKSPACE/director/inputs.md for the host agent; no model call."""
     started = time.monotonic()
@@ -3067,7 +3482,7 @@ def prepare_agent_inputs(
         raise LLMDirectorError(f"missing shotlog.json in {workspace_path}")
     context = _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_duration_s, order, pacing)
     out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
-    plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
+    plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / PLAN_FILE
     inputs_path = workspace_path / "director" / "inputs.md"
     inputs_path.parent.mkdir(parents=True, exist_ok=True)
     beats_path = Path(beats).expanduser().resolve() if beats else None
@@ -3079,18 +3494,36 @@ def prepare_agent_inputs(
         music = str(music_path)
     notebook_file = notebook_path(notebook)
     notebook_text = notebook_block(notebook_file) if notebook_file is not None else None
+    payload = _director_payload(context, brief_text, None, notebook_text)
+    warnings = list(context["fact_warnings"])
+    report = None
+    pictures = []
+    if review:
+        edit = load_json(out_path)
+        if not isinstance(edit, dict) or not edit.get("video"):
+            raise LLMDirectorError(f"missing edit.json for the review: {out_path}")
+        report = load_json(workspace_path / REPORT_FILE)
+        if not isinstance(report, dict):
+            raise LLMDirectorError(f"missing editor report for the review: {workspace_path / REPORT_FILE}")
+        rounds = (load_json(workspace_path / ROUNDS_FILE) or {}).get("rounds") or []
+        round_number = len(rounds) or 1
+        pictures = _make_pictures(edit, workspace_path, round_number, picture_fn, warnings)
     inputs_path.write_text(
         _agent_inputs_text(
             workspace_path,
             brief_text,
             context,
-            out_path,
+            payload,
             plan_path,
+            out_path,
             beat_grid=beat_grid,
             music=music,
             ambient_under_music_db=ambient_under_music_db,
             speed_ramp=speed_ramp,
             notebook_block=notebook_text,
+            review=review,
+            report=report,
+            pictures=pictures,
         ),
         encoding="utf-8",
     )
@@ -3099,7 +3532,8 @@ def prepare_agent_inputs(
         "inputs": str(inputs_path),
         "candidates": len(context["shotlog_rows"]),
         "shortlist": len(context["shortlist"]),
-        "warnings": context["fact_warnings"],
+        "review": bool(review),
+        "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": 0.0,
     }
@@ -3122,7 +3556,7 @@ def apply_agent_answer(
     speed_ramp=False,
     force=False,
 ):
-    """Validate, repair and write the host agent's plan and editor answer as edit.json."""
+    """Validate the host agent's plan or review, run the editor and write edit.json."""
     started = time.monotonic()
     workspace_path, brief_text, brief_path = _resolve_workspace_brief(workspace, brief, brief_file)
     shotlog = load_shotlog(workspace_path)
@@ -3130,108 +3564,102 @@ def apply_agent_answer(
         raise LLMDirectorError(f"missing shotlog.json in {workspace_path}")
     context = _agent_context(workspace_path, shotlog, brief_text, important_max_s, target_duration_s, order, pacing)
     out_path = Path(out).expanduser().resolve() if out else workspace_path / "edit.json"
-    plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / "shot_plan.json"
-    if not plan_path.is_file():
-        raise LLMDirectorError(f"missing agent plan: {plan_path}")
-    raw_plan = load_json(plan_path)
-    if not isinstance(raw_plan, dict):
-        raise LLMDirectorError(f"agent plan must be a JSON object: {plan_path}")
-    plan = complete_plan(raw_plan, brief_text, context["hints"], context["content_type"])
-    validate_or_raise(plan, "shot_plan")
-    if not out_path.is_file():
-        raise LLMDirectorError(f"missing agent answer: {out_path}")
-    raw_answer = load_json(out_path)
-    if not isinstance(raw_answer, dict):
-        raise LLMDirectorError(f"agent answer must be a JSON object with a slots list: {out_path}")
-    if isinstance(raw_answer.get("video"), list) and not force:
-        slots = raw_answer.get("video") or []
-        total = sum(slot_duration(slot) for slot in slots)
-        summary = {
-            "status": "skipped",
-            "out": str(out_path),
-            "plan": str(plan_path),
-            "slots": len(slots),
-            "total_duration_s": round(total, 2),
-            "validator_violations": 0,
-            "shortlist": len(context["shortlist"]),
-            "warnings": [],
-            "wall_time_s": round(time.monotonic() - started, 2),
-            "llm_cost_usd": 0.0,
-        }
-        return summary, EXIT_OK
-    if isinstance(raw_answer.get("video"), list):
-        answer = {
-            "slots": [
-                {
-                    "id": slot.get("id"),
-                    "shot_key": slot.get("shot_key"),
-                    "in_s": slot.get("in_s"),
-                    "out_s": slot.get("out_s"),
-                    "duration_s": slot.get("duration_s"),
-                    "transition": (slot.get("transition") or {}).get("type")
-                    if isinstance(slot.get("transition"), dict)
-                    else slot.get("transition"),
-                }
-                for slot in raw_answer.get("video") or []
-            ]
-        }
-    elif isinstance(raw_answer.get("slots"), list):
-        answer = raw_answer
-    else:
-        raise LLMDirectorError(f"agent answer must be a JSON object with a slots list: {out_path}")
+    plan_path = Path(plan_out).expanduser().resolve() if plan_out else workspace_path / PLAN_FILE
     beats_path = Path(beats).expanduser().resolve() if beats else None
-    beat_grid = load_beats(beats_path) if beats_path is not None else None
     if music:
         music_path = Path(music).expanduser().resolve()
         if not music_path.is_file():
             raise LLMDirectorError(f"music file not found: {music}")
         music = str(music_path)
     warnings = list(context["fact_warnings"])
-    record = build_edit_record(
-        plan,
-        answer,
-        context["facts"],
-        shotlog,
-        context["sources"],
-        context["brief_obj"],
-        time.monotonic() - started,
-        0.0,
-        warnings,
-        context["effective_important_max_s"],
-        beats=beat_grid,
-        music=music,
-        ambient_under_db=ambient_under_music_db,
-    )
-    if record is None:
-        raise LLMDirectorError("the agent answer had no usable slot")
-    used_ids = set()
-    violations = validate_edit(record, plan, context["facts"], context["effective_important_max_s"])
-    if blocking(violations):
-        for note in repair_draft(
-            record, plan, context["facts"], shotlog, violations, context["effective_important_max_s"], used_ids=used_ids
-        ):
-            if note not in warnings:
-                warnings.append(note)
-        violations = validate_edit(record, plan, context["facts"], context["effective_important_max_s"])
-        if blocking(violations):
-            first = blocking(violations)[0]
-            raise LLMDirectorError(
-                f"edit.json breaks the editing grammar: {first.get('rule')}: {first.get('message')}"
+    approved = None
+    notes = []
+    rounds_log = []
+    review_path = workspace_path / REVIEW_FILE
+    if review_path.is_file():
+        review, review_errors = _parse_director_review(
+            review_path.read_text(encoding="utf-8"),
+            context["facts"],
+            context["brief_obj"],
+            context["content_type"],
+        )
+        if review is None:
+            raise LLMDirectorError("the review is not valid: " + "; ".join(review_errors))
+        rounds_log = (load_json(workspace_path / ROUNDS_FILE) or {}).get("rounds") or []
+        if review["approved"]:
+            approved = True
+            if rounds_log:
+                rounds_log[-1]["review"] = {"approved": True, "summary": review["summary"], "notes": []}
+            _write_rounds(workspace_path / ROUNDS_FILE, rounds_log, 0.0)
+        elif len(rounds_log) >= FLOW_MAX_ROUNDS:
+            approved = False
+            notes = list(review.get("notes") or [])
+        else:
+            _write_director_plan(plan_path, review["plan"], started, 0.0)
+            edit, report = _run_editor(workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path)
+            rounds_log.append(
+                {
+                    "round": len(rounds_log) + 1,
+                    "plan": review["plan"],
+                    "report": report,
+                    "review": None,
+                    "cost_usd": 0.0,
+                }
             )
-    finish_record(
-        record,
-        plan,
-        context["facts"],
-        shotlog,
-        beat_grid,
-        warnings,
-        context["effective_important_max_s"],
-        speed_ramp,
-        used_ids=used_ids,
-    )
-    attach_decisions(record, context["facts"], shotlog, context["drop_reasons"])
-    write_edit(out_path, record, started, 0.0, director_info("agent", True, warnings))
-    slots = record["video"]
+            _write_rounds(workspace_path / ROUNDS_FILE, rounds_log, 0.0)
+        os.replace(review_path, workspace_path / REVIEW_APPLIED_FILE)
+    else:
+        raw_plan = load_json(plan_path)
+        if not isinstance(raw_plan, dict):
+            raise LLMDirectorError(f"missing agent plan: {plan_path}")
+        plan, plan_errors = _parse_director_plan(
+            json.dumps(raw_plan),
+            context["facts"],
+            context["brief_obj"],
+            context["content_type"],
+        )
+        if plan is None:
+            raise LLMDirectorError("the plan is not valid: " + "; ".join(plan_errors))
+        existing = load_json(out_path)
+        if (
+            not force
+            and isinstance(existing, dict)
+            and existing.get("video")
+            and (workspace_path / ROUNDS_FILE).is_file()
+        ):
+            slots = existing.get("video") or []
+            total = sum(slot_duration(slot) for slot in slots)
+            summary = {
+                "status": "skipped",
+                "out": str(out_path),
+                "plan": str(plan_path),
+                "slots": len(slots),
+                "total_duration_s": round(total, 2),
+                "validator_violations": 0,
+                "shortlist": len(context["shortlist"]),
+                "warnings": [],
+                "wall_time_s": round(time.monotonic() - started, 2),
+                "llm_cost_usd": 0.0,
+            }
+            return summary, EXIT_OK
+        _write_director_plan(plan_path, plan, started, 0.0)
+        edit, report = _run_editor(workspace_path, plan_path, out_path, workspace_path / REPORT_FILE, beats_path)
+        rounds_log = [
+            {
+                "round": 1,
+                "plan": plan,
+                "report": report,
+                "review": None,
+                "cost_usd": 0.0,
+            }
+        ]
+        _write_rounds(workspace_path / ROUNDS_FILE, rounds_log, 0.0)
+    edit = load_json(out_path)
+    if not isinstance(edit, dict) or not edit.get("video"):
+        raise LLMDirectorRuntimeError("the editor wrote no usable edit")
+    edit.setdefault("meta", {})["speed_ramp"] = bool(speed_ramp)
+    write_edit(out_path, edit, started, 0.0, director_info("agent", approved, notes))
+    slots = edit["video"]
     total = sum(slot_duration(slot) for slot in slots)
     summary = {
         "status": "written",
@@ -3239,7 +3667,9 @@ def apply_agent_answer(
         "plan": str(plan_path),
         "slots": len(slots),
         "total_duration_s": round(total, 2),
-        "validator_violations": len(violations),
+        "validator_violations": 0,
+        "rounds_used": len(rounds_log),
+        "shortlist": len(context["shortlist"]),
         "warnings": warnings,
         "wall_time_s": round(time.monotonic() - started, 2),
         "llm_cost_usd": 0.0,
@@ -3262,6 +3692,8 @@ def _check_agent_mode_conflict(args):
         raise LLMDirectorError("give only one of " + ", ".join(modes))
     if args.prepare and args.force:
         raise LLMDirectorError("--prepare does not accept --force")
+    if args.review and not args.prepare:
+        raise LLMDirectorError("--review needs --prepare")
 
 
 def print_human(summary, record):
@@ -3333,6 +3765,8 @@ def main(argv=None):
                 ambient_under_music_db=args.ambient_under_music_db,
                 speed_ramp=args.speed_ramp,
                 notebook=args.notebook,
+                review=args.review,
+                picture_fn=None,
             )
         elif args.apply:
             summary, code = apply_agent_answer(

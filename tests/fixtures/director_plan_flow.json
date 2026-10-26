@@ -1,0 +1,56 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-10-25T21:00:00+00:00",
+  "tool": "director",
+  "brief": {
+    "text": "about 90 seconds, chronological, calm start, more energy towards the end, ambient sound only",
+    "target_duration_s": 90,
+    "order": "chronological",
+    "pacing": "calm-to-energy",
+    "ambient_only": true
+  },
+  "content_type": "vacation",
+  "idea": "A calm morning on the water ends with the cave.",
+  "structure": {
+    "kind": "journey",
+    "why": "The day moves from the wake to the bay and ends at the cave, so the order carries the story.",
+    "beats": [
+      {"id": "b1", "name": "The wake", "intent": "open calm", "target_s": 30},
+      {"id": "b2", "name": "The bay", "intent": "the middle", "target_s": 30},
+      {"id": "b3", "name": "The cave", "intent": "the energy", "target_s": 30}
+    ]
+  },
+  "shots": [
+    {
+      "id": "v1",
+      "beat": "b1",
+      "shot_key": "0056/s1",
+      "purpose": "open on the wake so the viewer settles into the calm",
+      "technique": "opening_shot",
+      "moment": {"hint": "the calm water"},
+      "target_s": 3.0,
+      "why": "A short still opening sets the calm before the day starts."
+    },
+    {
+      "id": "v2",
+      "beat": "b2",
+      "shot_key": "0057/s1",
+      "purpose": "the bay carries the middle of the day",
+      "technique": "none",
+      "moment": {"at_s": 10.0},
+      "target_s": 3.0,
+      "why": "The bay is the quiet middle the story needs."
+    },
+    {
+      "id": "v3",
+      "beat": "b3",
+      "shot_key": "0080/s1",
+      "purpose": "the cave ends the film with the energy of the move",
+      "technique": "cut_on_motion",
+      "moment": {"at_s": 10.0},
+      "target_s": 4.0,
+      "why": "The hero move ends the film with energy."
+    }
+  ],
+  "notes": ["Owner note followed: ambient sound only."]
+}

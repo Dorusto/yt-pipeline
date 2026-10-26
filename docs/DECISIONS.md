@@ -4,6 +4,45 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] The director flow (V030 lot R4a)
+
+**Context:** The director rewrite (V030 lot R1) decided the film crew: the
+director (the AI) picks the idea, the structure and the shots, the editor is
+code that executes the plan and never changes the shots, and the director
+reviews the cut for at most 2 rounds. The plan contract shipped in R2 and the
+code editor in R3, but the default `llm_director.py` flow was still the old
+three-role loop with its chain of repairs, which contradicted the film-crew
+decision.
+
+**Decision:** The default flow is the film crew. One director call writes
+`director_plan.json`, with one repair retry that sends the exact validation
+errors back to the model. The code editor (`director_editor.py`, called as a
+subprocess) executes the plan and never changes the shots. The notes round
+sends one picture per shot plus the editor report and the director answers
+`director_review.json`: approved, or a complete revised plan with notes. At most
+2 rounds; after the second the cut is delivered with the remaining notes in
+`edit.json` `meta.director.notes`. The rule director is the fallback only when
+the model gives no usable plan. `director_plan.json`, `editor_report.json` and
+`director_rounds.json` are written in the workspace; `meta.director.by` is
+`llm`, `agent` or `rules`. The agent mode is `--prepare` / `--apply` /
+`--prepare --review` with no model call.
+
+**Why:** The chain of repairs contradicted itself (R1): the model's plan and
+the code's repairs fought over the same decisions, and the reviewer judged a
+draft the repairs had already rewritten. One plan, one executor and one review
+round keep the director's decisions intact.
+
+**Consequence:** Files touched — `scripts/llm_director.py`,
+`schemas/director_review.schema.json`, `prompts/agent_director.md`,
+`tests/test_director_flow.py`, `tests/test_llm_director.py`,
+`tests/test_llm_director_agent.py`, `tests/fixtures/director_plan_flow.json`,
+`CHANGELOG.md`, `docs/plans/director-rewrite.md`, `docs/guides/tools.md`,
+`prompts/tools.md`, `docs/RULES.md`. The old loop, its repairs and the star
+machinery stay in the file until R5 removes them. The chat through the director
+and the Director and Debug tabs are R4b.
+
+---
+
 ## [2026-10-25] The code editor and its report (V030 lot R3)
 
 **Context:** The director rewrite (V030 lot R1) splits the work into a film

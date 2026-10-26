@@ -19,7 +19,7 @@ channel-specific.
 - `yt describe` — describe segments and photos.
 - `yt index` — build the shotlog.
 - `yt director` — the rule-based edit.
-- `yt llm_director` — the LLM edit.
+- `yt llm_director` — the director writes the plan, the code editor cuts it, the director reviews the cut (max 2 rounds).
 - `yt director_editor` — cut the director's plan into the exact windows.
 - `yt music_pick` — pick a track.
 - `yt render` — render the MP4.
