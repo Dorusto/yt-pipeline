@@ -328,7 +328,7 @@ def test_project_page_default_tab_is_recap(tmp_path):
         assert b'href="/2026-10-14/?tab=recap"' in body
         assert b'href="/2026-10-14/?tab=why"' not in body
         assert b'href="/2026-10-14/?tab=shots"' not in body
-        assert b'href="/2026-10-14/?tab=debug"' in body
+        assert b'href="/2026-10-14/?tab=debug"' not in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -1886,7 +1886,7 @@ def test_tab_bar_has_no_why_or_shots_links_but_the_shots_page_stays_reachable(tm
         nav = page[page.index('<nav class="tabs">'):page.index("</nav>")]
         assert "?tab=why" not in nav
         assert "?tab=shots" not in nav
-        assert 'href="/2026-10-14/?tab=debug"' in nav
+        assert 'href="/2026-10-14/?tab=debug"' not in nav
         status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
         assert status == 200
         assert b'<iframe src="shotlog.html"' in body

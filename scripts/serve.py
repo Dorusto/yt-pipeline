@@ -2717,8 +2717,7 @@ def _render_tabs(name, enabled, tab):
     for key in ("cuts", "shorts"):
         if key in enabled:
             parts.append(link(key))
-    if "debug" in enabled:
-        parts.append(link("debug"))
+    # Debug stays reachable at ?tab=debug but has no link for now.
     return f'<nav class="tabs">{"".join(parts)}</nav>'
 
 
