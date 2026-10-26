@@ -107,6 +107,15 @@ llm_backend: openrouter
 # is medium. There is no environment variable.
 # director:
 #   reasoning_effort: medium
+#
+# Video shot length limits (seconds) for the code editor. A wide frame, not a
+# wall: the editor cuts every shot on a beat, a shot asked longer than max_s is
+# cut shorter, and a plan shot with an over_limit_reason may run past max_s.
+# `default` applies to every content type; a row named after a content type
+# (vacation, tutorial, presentation, ...) overrides it. Built-in: 1.5 and 8.
+#   shot_limits:
+#     default: {min_s: 1.5, max_s: 8}
+#     tutorial: {min_s: 3, max_s: 20}
 
 # Recap title and description. recap.meta (default false) makes the recap run
 # write the YouTube title and description (the recap_meta station); the web

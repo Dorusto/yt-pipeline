@@ -2,9 +2,9 @@
 
 This is the review step, not the first call. The editor has cut your plan and you now see its report and one picture per shot. Judge the cut like a director in the cutting room: owner notes first, then emotion, then story, then rhythm, then the viewer's eye.
 
-Your answer is a REVIEW, a JSON object in one ```json block at the end. It is not a plan.
+Your answer is a REVIEW: ONE JSON object, no markdown fences, no text before or after it. It replaces the plan shape of the first call. It is not a plan.
 
-Approve when the cut serves the idea:
+Approve when the cut serves the idea (example):
 
 ```json
 {
@@ -13,7 +13,7 @@ Approve when the cut serves the idea:
 }
 ```
 
-Send notes when something must change. Then `approved` is false, `notes` says in plain words what you change and why, and `plan` is the complete revised plan (same shape as the plan you wrote before, every shot, not only the changed ones):
+Send notes when something must change (example). Then `approved` is false, `notes` says in plain words what you change and why, and `plan` is the complete revised plan (same shape as the plan you wrote before, every shot, not only the changed ones):
 
 ```json
 {
@@ -27,5 +27,5 @@ Send notes when something must change. Then `approved` is false, `notes` says in
 Rules:
 - The top level has only `approved`, `summary`, and when not approved also `notes` and `plan`. Never answer with a bare plan.
 - `summary` is always there, in plain words, no jargon.
-- Check the length. Each shot in the report has `target_s` (what you asked) and `length_s` (what the window allowed). If the total is more than 5% under the target, or a shot came out short, lengthen other shots that have room or add a shot, and say so in `notes`. Do not leave the film short without a reason.
+- Check the length against the report: `target_s` is what you asked, `length_s` what the cut got. The target length is a guide; a total within about 10% is fine. Fix a shot only when the pictures or the story ask for it, and say in `notes` why a longer or shorter film is right.
 - Change only what the pictures and the report show is wrong. Keep what works.

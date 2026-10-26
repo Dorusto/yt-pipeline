@@ -163,6 +163,12 @@ $ git grep -n "fill_to_target(record\|final_neighbour_check\|review_copy\|review
 (no output)
 ```
 
+## R7 to R9 (done directly by the coordinator, not as agent lots)
+
+- **R7** (`cea2a5f`, `0ea6c12`): the notes-round call was reusing the plan prompt, so the model answered with a plan. `prompts/director_review.md` now ends the system message of the review call (and fills the agent-mode inputs); the editor report carries `target_s` per shot. Re-runs on copies of the Kotor and Monschau tests showed the notes round working.
+- **R8** (`2efed12`): the three duplicated helpers merged into `scripts/common/`.
+- **R9**: length is a guide, the beat and the director win. Shot limits 1.5 to 8 s in `config.yaml` (`director.shot_limits`), `over_limit_reason` on a plan shot, calm holds no longer exempt. See DECISIONS 2026-10-26.
+
 ## Build order
 
 R2 → R3 → R4 → R5 → R6.

@@ -1019,7 +1019,8 @@ def slot_bounds_for(slot):
         ),
     }
     bounds = slot_bounds(slot, fact, cap=slot.get("max_screen_s"))
-    bounds["important"] = bool(slot.get("important"))
+    if not bounds.get("photo"):
+        bounds["important"] = bool(slot.get("important"))
     return bounds
 
 

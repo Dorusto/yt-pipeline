@@ -115,7 +115,12 @@
           "target_s": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "description": "how long the shot should be on screen; the editor keeps it within 2 to 5 s by clip length unless the technique needs otherwise"
+            "description": "how long the shot should be on screen; a guide: the editor cuts on a beat and keeps it inside the shot length limits (config director.shot_limits) unless over_limit_reason is given"
+          },
+          "over_limit_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "optional; one plain sentence saying why this shot may run longer than the shot length limit; the editor then keeps the asked length, still on a beat"
           },
           "why": {
             "type": "string",

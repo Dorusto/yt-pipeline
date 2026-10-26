@@ -1476,6 +1476,7 @@ def _agent_inputs_text(
     parts.append("## The director prompt\n\n" + read_prompt("director.md").rstrip())
     parts.append("## The payload\n\n```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```")
     if review:
+        parts.append("## The review of the cut\n\n" + read_prompt("director_review.md").split("\n", 1)[1].lstrip())
         parts.append("## The editor report\n\n```json\n" + json.dumps(report, ensure_ascii=False) + "\n```")
         picture_lines = ["## The pictures of the cut", ""]
         for picture in pictures or []:

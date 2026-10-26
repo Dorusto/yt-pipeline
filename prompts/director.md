@@ -68,9 +68,9 @@ For each shot give `moment`: `at_s` (seconds inside the source clip, when the sh
 ## Rules for the plan
 
 - Use only `shot_key` values that exist in the shot facts you got. Never invent a shot, never change a shot's content; the editor will not change it either.
-- Shots are in timeline order; ids are `v1`, `v2`, ...; each `beat` is the id of a beat in `structure.beats`; the beat targets add up to the target length (within 3 s), and so do the shot targets.
-- A shot never runs longer than its good window, so some come out shorter than asked. Put the shot targets at the top of the allowed sum (up to 3 s above the target length) so the cut still reaches it.
-- Shot lengths follow the clip: 2 to 5 s, shorter for a quick action, longer for a calm hold. A technique that needs more (`time_compression`) is the exception, say so in `why`.
+- Shots are in timeline order; ids are `v1`, `v2`, ...; each `beat` is the id of a beat in `structure.beats`; the beat targets and the shot targets add up to about the target length. The target length is a guide, not a wall: a cut 10% longer or shorter is fine when the story or the beat asks for it.
+- A shot never runs longer than its good window, so some come out shorter than asked.
+- Shot lengths follow the clip, usually 1.5 to 8 s, shorter for a quick action, longer for a calm hold. The editor cuts on a beat, so a shot may lose or gain a fraction of a second. A shot you ask longer than 8 s is cut shorter, on a beat, unless you give `over_limit_reason` (one plain sentence, for example the whole turn of the boat must be seen); then the editor keeps your length, still on a beat. The limits are in the config and the owner may change them.
 - A photo is a shot too: give no `moment`; the editor sets its length.
 - The owner's notes are binding. If a note asks for a shot, include it; if it asks to remove one, remove it. Mention in `notes` which notes you followed.
 - When the eyes list near-identical neighbours, pick the better one or separate them with another shot.

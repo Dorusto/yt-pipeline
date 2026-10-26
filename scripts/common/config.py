@@ -247,6 +247,9 @@ def _validate(data):
                 "director.reasoning_effort must be one of: "
                 f"{', '.join(DIRECTOR_REASONING_EFFORTS)}"
             )
+        limits = director.get("shot_limits")
+        if limits is not None:
+            _validate_shot_limits(limits)
 
     recap = data.get("recap")
     if recap is not None:
@@ -686,6 +689,46 @@ def whip_min_hold_s(config=None):
                 raise ConfigError("whip.min_hold_s must be a positive number")
             return float(value)
     return WHIP_MIN_HOLD_S
+
+
+DEFAULT_SHOT_LIMITS = {"min_s": 1.5, "max_s": 8.0}
+
+
+def _validate_shot_limits(limits):
+    """director.shot_limits: ``default`` and per content type, each with min_s and max_s."""
+    if not isinstance(limits, dict):
+        raise ConfigError("director.shot_limits must be a mapping")
+    for name, row in limits.items():
+        if not isinstance(row, dict):
+            raise ConfigError(f"director.shot_limits.{name} must be a mapping")
+        for key, value in row.items():
+            if key not in DEFAULT_SHOT_LIMITS:
+                raise ConfigError(f"director.shot_limits.{name}.{key} is not known (min_s, max_s)")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ConfigError(f"director.shot_limits.{name}.{key} must be a positive number")
+        low = row.get("min_s", DEFAULT_SHOT_LIMITS["min_s"])
+        high = row.get("max_s", DEFAULT_SHOT_LIMITS["max_s"])
+        if low > high:
+            raise ConfigError(f"director.shot_limits.{name}: min_s must not be above max_s")
+
+
+def shot_limits(content_type=None, config=None):
+    """The video shot length limits ``{"min_s", "max_s"}`` for a content type.
+
+    Built-in defaults, then ``director.shot_limits.default``, then the row of the
+    content type. They are a wide frame, not a wall: a plan shot with an
+    ``over_limit_reason`` may run past ``max_s``.
+    """
+    limits = dict(DEFAULT_SHOT_LIMITS)
+    data = config if config is not None else load_config()
+    section = data.get("director")
+    rows = section.get("shot_limits") if isinstance(section, dict) else None
+    if isinstance(rows, dict):
+        for name in ("default", content_type):
+            row = rows.get(name) if name else None
+            if isinstance(row, dict):
+                limits.update({key: float(value) for key, value in row.items()})
+    return limits
 
 
 def director_reasoning_effort(cli_value=None, config=None):

@@ -356,7 +356,7 @@ def test_every_shot_length_is_inside_its_bounds(tmp_path):
     edit, report, _ = execute(root, plan_path)
     assert report["shots"][0]["length_s"] == pytest.approx(1.5)
     assert report["shots"][1]["length_s"] == pytest.approx(8.0)
-    assert report["shots"][2]["length_s"] == pytest.approx(2.0)
+    assert report["shots"][2]["length_s"] == pytest.approx(1.5)
     for slot in edit["video"]:
         assert slot["out_s"] > slot["in_s"]
 
@@ -598,3 +598,22 @@ def test_speed_ramp_leaves_multi_piece_and_clean_techniques_at_normal_speed(tmp_
     )
     edit, _, _ = execute(root, plan_path, speed_ramp=True)
     assert all("middle_speed" not in slot for slot in edit["video"])
+
+
+def test_a_shot_asked_over_the_limit_is_cut_shorter_and_reported(tmp_path):
+    root = two_clip_workspace(tmp_path / "ws", first_end=20.0)
+    plan_path = write_plan(root, [plan_shot("v1", "clipA/s1", technique="none", target_s=12.0)])
+    _, report, _ = execute(root, plan_path)
+    assert report["shots"][0]["length_s"] == pytest.approx(8.0)
+    assert report["shots"][0]["target_s"] == 12.0
+    assert any("over the 8 s limit" in item for item in report["could_not_do"])
+
+
+def test_a_shot_with_an_over_limit_reason_keeps_its_length(tmp_path):
+    root = two_clip_workspace(tmp_path / "ws", first_end=20.0)
+    shot = plan_shot("v1", "clipA/s1", technique="none", target_s=12.0)
+    shot["over_limit_reason"] = "the whole turn of the boat must be seen"
+    plan_path = write_plan(root, [shot])
+    _, report, _ = execute(root, plan_path)
+    assert report["shots"][0]["length_s"] == pytest.approx(12.0)
+    assert not any("limit" in item for item in report["could_not_do"])

@@ -603,3 +603,19 @@ def test_recap_meta_enabled_defaults_to_false():
     assert config.recap_meta_enabled(None, {}) is False
     assert config.recap_meta_enabled(None, {"recap": {}}) is False
     assert config.DEFAULT_RECAP_META is False
+
+
+def test_shot_limits_defaults_and_overrides():
+    assert config.shot_limits("vacation", config={}) == {"min_s": 1.5, "max_s": 8.0}
+    rows = {"director": {"shot_limits": {"default": {"max_s": 6}, "tutorial": {"min_s": 3, "max_s": 20}}}}
+    assert config.shot_limits("vacation", config=rows) == {"min_s": 1.5, "max_s": 6.0}
+    assert config.shot_limits("tutorial", config=rows) == {"min_s": 3.0, "max_s": 20.0}
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [{"default": {"max_s": 0}}, {"default": {"min_s": 9, "max_s": 3}}, {"default": {"fast": 1}}, {"default": 5}, [1]],
+)
+def test_bad_shot_limits_are_rejected(limits):
+    with pytest.raises(config.ConfigError):
+        config._validate_shot_limits(limits)

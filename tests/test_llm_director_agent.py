@@ -287,3 +287,13 @@ def test_prepare_writes_the_notebook_block(tmp_path):
     text = (workspace / "director" / "inputs.md").read_text(encoding="utf-8")
     assert "## Notebook" in text
     assert "keep the tunnel longer" in text
+
+
+def test_review_inputs_carry_the_review_prompt(tmp_path):
+    workspace = build_workspace(tmp_path / "ws")
+    write_plan(workspace)
+    llm_director.apply_agent_answer(workspace, brief=BRIEF)
+    llm_director.prepare_agent_inputs(workspace, brief=BRIEF, review=True, picture_fn=PictureStub())
+    text = (workspace / "director" / "inputs.md").read_text(encoding="utf-8")
+    assert "## The review of the cut" in text
+    assert "ONE JSON object" in text

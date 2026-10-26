@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from common.beatsnap import PHOTO_MAX_S, PHOTO_MIN_S, BeatsError, load_beats, slot_bounds, snap_slots
+from common.config import ConfigError, shot_limits
 from common.constants import MIN_SHOT_LENGTH_S
 from common.embed import DEFAULT_THRESHOLD, EmbedError
 from common.errors import report_error
@@ -30,7 +31,6 @@ from common.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from common.facts import (
     DEFAULT_IMPORTANT_MAX_S,
     MAX_SLOT_S,
-    NON_MOVE_MOTION_LABELS,
     FactsError,
     build_shot_facts,
     clamp,
@@ -49,8 +49,6 @@ from common.window_similarity import WindowEmbedder
 
 TOOL = "scripts/director_editor.py"
 SCHEMA_VERSION = "0.1"
-SLOT_MIN_S = 2.0
-SLOT_MAX_S = 5.0
 OPENING_MAX_S = 3.0
 JERKY_PIECE_S = 0.6
 JERKY_ENTRY_MIN_S = 1.0
@@ -223,23 +221,33 @@ def _ramped_cut(fact, budget, moment):
     return in_s, out_s, ramp_speed(source_len, budget)
 
 
-def _video_cut(shot, fact, could_not_do, speed_ramp=False):
+def _max_for(shot, limits):
+    """The longest this shot may run: the limit, or no limit when the director gave a reason."""
+    if str(shot.get("over_limit_reason") or "").strip():
+        return float("inf")
+    return limits["max_s"]
+
+
+def _video_cut(shot, fact, could_not_do, limits, speed_ramp=False):
     """The cut pieces of one video shot: ``(pieces, technique_done, why_not, middle_speed)``."""
     window_in = float(fact["window_in_s"])
     window_out = float(fact["window_out_s"])
     window_len = window_out - window_in
     technique = shot["technique"]
     target = float(shot["target_s"])
-    calm_hold = fact.get("role") == "hold" and fact.get("motion_label") in NON_MOVE_MOTION_LABELS
-    if calm_hold:
-        length = min(max(target, SLOT_MIN_S), window_len)
-    else:
-        length = min(clamp(target, SLOT_MIN_S, SLOT_MAX_S), window_len)
+    min_s = limits["min_s"]
+    max_s = _max_for(shot, limits)
+    if target > max_s:
+        could_not_do.append(
+            f"{shot['id']} {shot['shot_key']}: asked {target:g} s, over the {max_s:g} s limit "
+            "with no over_limit_reason; cut shorter"
+        )
+    length = min(clamp(target, min_s, max_s), window_len)
     moment = _moment(shot, fact, window_in, window_out)
     floor = landing_floor(fact)
 
     if technique == "opening_shot":
-        budget = clamp(length, SLOT_MIN_S, OPENING_MAX_S)
+        budget = clamp(length, min_s, OPENING_MAX_S if max_s <= limits["max_s"] else max_s)
         if speed_ramp and _is_move_fact(fact):
             in_s, out_s, speed = _ramped_cut(fact, budget, moment)
             return [(in_s, out_s)], technique, None, speed
@@ -340,14 +348,12 @@ def _photo_slot(slot_id, shot, fact, entry, duration):
     }
 
 
-def _cap_for(fact):
+def _cap_for(fact, shot, limits):
     """The longest on-screen length the snap may give one slot of this shot."""
     if fact.get("media_type") == "photo":
         return PHOTO_MAX_S
     window_len = float(fact["window_out_s"]) - float(fact["window_in_s"])
-    if fact.get("role") == "hold" and fact.get("motion_label") in NON_MOVE_MOTION_LABELS:
-        return window_len
-    return min(SLOT_MAX_S, window_len)
+    return min(_max_for(shot, limits), window_len)
 
 
 def _similar_neighbours(slots, similar_fn, could_not_do):
@@ -427,6 +433,10 @@ def run_editor(
         validate_or_raise(plan, "director_plan")
     except SchemaError as exc:
         raise EditorError(f"plan does not match director_plan: {exc}") from exc
+    try:
+        limits = shot_limits(plan.get("content_type"))
+    except ConfigError:
+        limits = shot_limits(plan.get("content_type"), config={})
     shotlog = load_shotlog(workspace)
     if shotlog is None:
         raise EditorError(f"missing shotlog.json in {workspace}")
@@ -459,7 +469,7 @@ def run_editor(
                 {"shot": shot, "fact": fact, "indices": [len(slots) - 1], "technique_done": technique_done, "why_not": why_not}
             )
             continue
-        cuts, technique_done, why_not, middle_speed = _video_cut(shot, fact, could_not_do, speed_ramp)
+        cuts, technique_done, why_not, middle_speed = _video_cut(shot, fact, could_not_do, limits, speed_ramp)
         indices = []
         for index, (in_s, out_s) in enumerate(cuts):
             slot_id = shot["id"] if index == 0 else f"{shot['id']}p{index + 1}"
@@ -479,7 +489,7 @@ def run_editor(
     if beat_grid is not None:
         bounds = []
         for row in rows:
-            cap = _cap_for(row["fact"])
+            cap = _cap_for(row["fact"], row["shot"], limits)
             for index in row["indices"]:
                 bounds.append(slot_bounds(slots[index], row["fact"], cap))
         snap_warnings = []

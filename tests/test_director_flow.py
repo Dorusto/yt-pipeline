@@ -407,3 +407,4 @@ def test_flow_without_speed_ramp_has_no_middle_speed(tmp_path):
     assert code == 0
     edit = read_json(workspace / "edit.json")
     assert all("middle_speed" not in slot for slot in edit["video"])
+

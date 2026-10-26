@@ -4,6 +4,31 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-26] Length is a guide, the beat and the director win (V030 lot R9)
+
+**Context:** The editor held every shot to 2-5 s and moved a cut onto a beat
+only while the shot stayed inside that range, so a few cuts stayed off the
+beat, and the director was nudged to hit the target length exactly. The test
+runs showed a 53 s cut for a 60 s target and 4 of 13 cuts off the beat.
+
+**Options:** (A) keep the narrow limits and add more repair rules; (B) widen
+the limits, make them configurable, let the director go past them with a
+reason, and let the target length drift.
+
+**Decision:** B. Order of priority: the beat, then the length the director asked
+for, then the limits. The video shot limits are 1.5 to 8 s by default and live
+in `config.yaml` under `director.shot_limits` (a `default` row and one row per
+content type); a shot asked longer than `max_s` is cut shorter, on a beat,
+unless the plan shot carries `over_limit_reason`, then the editor keeps its
+length, still on a beat. The target length is a guide: about 10% either way is
+fine and the director says why in its notes. Photos stay at 2-4 s.
+
+**Rationale:** The director is the creative; the code only executes. Hard
+limits and a hard total were fighting the beat. Limits stay as a wide frame
+the owner can change per content type.
+
+---
+
 ## [2026-10-25] The old director machinery removed (V030 lot R5)
 
 **Context:** The film crew shipped in R4a/R4b, but the old three-role loop, its

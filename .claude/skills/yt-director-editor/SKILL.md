@@ -28,7 +28,9 @@ yt director_editor --workspace /path/to/workspace --plan director_plan.json --be
 
 The `--json` summary is a flat object: `ok`, `workspace`, `plan`, `edit`, `report`, `slots`, `total_length_s`, `target_length_s`, `could_not_do` (count), `similar_neighbours` (count), `wall_time_s` and `llm_cost_usd` (always `0.0` — this tool never calls a model). Without `--json` it prints one line: `N slots, X.Xs -> /path/edit.json`.
 
-The report carries one row per plan shot (`id`, `shot_key`, `in_s`, `out_s`, `length_s`, `technique_asked`, `technique_done`, `why_not`, and `pieces[]` when the shot was cut in several pieces), the `could_not_do` list, the `similar_neighbours` pairs and a one-sentence `summary`.
+The report carries one row per plan shot (`id`, `shot_key`, `in_s`, `out_s`, `length_s`, `target_s` (the length the plan asked for), `technique_asked`, `technique_done`, `why_not`, and `pieces[]` when the shot was cut in several pieces), the `could_not_do` list, the `similar_neighbours` pairs and a one-sentence `summary`.
+
+Lengths: the editor cuts every shot on a beat and keeps a video shot between `min_s` and `max_s` (default 1.5 and 8 s; `director.shot_limits` in `config.yaml`, a `default` row and one row per content type). A shot asked longer than `max_s` is cut shorter, on a beat, and listed in `could_not_do`, unless the plan shot has `over_limit_reason`: then the editor keeps the asked length. The plan's target length is a guide; the report shows `total_length_s` against `target_length_s` and the editor never pads or trims to match it.
 
 Exit codes: `0` success, `2` usage or input error (bad flags, missing workspace or plan, a plan that does not validate, an unknown shot key), `3` runtime failure after work started (a write failure or an invalid record).
 
