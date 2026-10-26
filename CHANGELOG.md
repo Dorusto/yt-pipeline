@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Director: the shot length limits (, 1.5 to 8 s by default, one row per content type) are in ; the length asked is a guide, the beat and the director's own length come first, and a shot asked longer than the limit stays long only when the director gives an .
+- Director: a review prompt () for the notes round, so the review call answers with a review and not with a plan.
+- Web app: the Director tab folds the shot-by-shot list and the look-alike list; the Debug tab has no link for now (the page stays at ).
 - Agent entry point: `yt <tool> [args]` runs any tool from any folder, and `yt --help --json` lists the tools as JSON.
 - Claude Code plugin: five plugins in one marketplace `yt-pipeline` (`yt-director`, `yt-publish`, `yt-shorts`, `yt-editor`, `yt-admin`), each installable alone; every skill works on its own through `yt <tool>`.
 - Typed tools (MCP): each plugin ships `scripts/yt_mcp.py` with `yt_list`, `yt_describe`, `yt_run` and `yt_preview`.
