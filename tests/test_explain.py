@@ -171,15 +171,43 @@ def build_plan():
             "pacing": "calm-to-energy",
         },
         "content_type": "vacation",
-        "logline": LOGLINE,
-        "structure": [
-            {"id": "b1", "name": "Calm open", "intent": "open on the water, calm", "target_s": 8.0},
-            {"id": "b2", "name": "Wind picks up", "intent": "energy arrives", "target_s": 12.0},
-        ],
-        "slot_plan": [
-            {"id": "v1", "beat": "b1", "shot_key": "0071/s2", "target_s": 5.0, "why": "the still water hold"},
-            {"id": "p1", "beat": "b1", "shot_key": "0072/p1", "target_s": 3.0, "why": "the lighthouse still"},
-            {"id": "v2", "beat": "b2", "shot_key": "0071/s3", "target_s": 4.0, "why": "the wake picks up"},
+        "idea": LOGLINE,
+        "structure": {
+            "kind": "chronological",
+            "why": "the morning builds from calm to wind",
+            "beats": [
+                {"id": "b1", "name": "Calm open", "intent": "open on the water, calm", "target_s": 8.0},
+                {"id": "b2", "name": "Wind picks up", "intent": "energy arrives", "target_s": 12.0},
+            ],
+        },
+        "shots": [
+            {
+                "id": "v1",
+                "beat": "b1",
+                "shot_key": "0071/s2",
+                "purpose": "open calm",
+                "technique": "opening_shot",
+                "target_s": 5.0,
+                "why": "the still water hold",
+            },
+            {
+                "id": "p1",
+                "beat": "b1",
+                "shot_key": "0072/p1",
+                "purpose": "breathe",
+                "technique": "none",
+                "target_s": 3.0,
+                "why": "the lighthouse still",
+            },
+            {
+                "id": "v2",
+                "beat": "b2",
+                "shot_key": "0071/s3",
+                "purpose": "payoff",
+                "technique": "cut_on_motion",
+                "target_s": 4.0,
+                "why": "the wake picks up",
+            },
         ],
         "meta": {"tool": "scripts/llm_director.py", "wall_time_s": 1.0, "llm_cost_usd": 0.01},
     }
@@ -231,7 +259,7 @@ def build_workspace(root):
     video_path = write_video(root / "media" / "clip_0071.mp4")
     photo_path = write_photo(root / "media" / "photo_01.jpg")
     write_json(root / "edit.json", build_edit(video_path, photo_path))
-    write_json(root / "shot_plan.json", build_plan())
+    write_json(root / "director_plan.json", build_plan())
     write_json(root / "shotlog.json", build_shotlog())
     return root
 
@@ -248,7 +276,7 @@ def test_fixtures_are_schema_valid(tmp_path):
     video_path = tmp_path / "media" / "clip_0071.mp4"
     photo_path = tmp_path / "media" / "photo_01.jpg"
     assert validate(build_edit(video_path, photo_path), "edit") == []
-    assert validate(build_plan(), "shot_plan") == []
+    assert validate(build_plan(), "director_plan") == []
     assert validate(build_shotlog(), "shotlog") == []
 
 
@@ -273,7 +301,10 @@ def test_explain_writes_html_with_brief_plan_timeline_and_candidates(tmp_path):
     assert f"music {MUSIC_PATH}" in html
     assert "ambient 12.00 dB under the music" in html
     assert LOGLINE in html
+    assert "chronological — the morning builds from calm to wind" in html
     assert "open on the water, calm" in html
+    assert "open calm" in html
+    assert "opening_shot" in html
     assert "the still water hold" in html
     for slot_id, shot_key in (("v1", "0071/s2"), ("p1", "0072/p1"), ("v2", "0071/s3")):
         assert slot_id in html
@@ -334,13 +365,13 @@ def test_missing_workspace_exits_2(tmp_path):
     assert "[error]" in result.stderr
 
 
-def test_without_shot_plan_says_so_in_one_line(tmp_path):
+def test_without_director_plan_says_so_in_one_line(tmp_path):
     workspace = build_workspace(tmp_path / "ws")
-    (workspace / "shot_plan.json").unlink()
+    (workspace / "director_plan.json").unlink()
     result = run_tool(workspace, "--json")
     assert result.returncode == EXIT_OK, result.stderr
     html = (workspace / "explain.html").read_text(encoding="utf-8")
-    assert "No shot plan (shot_plan.json) in this workspace" in html
+    assert "No director plan (director_plan.json) in this workspace" in html
     assert LOGLINE not in html
 
 

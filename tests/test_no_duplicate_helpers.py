@@ -3,33 +3,30 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Pre-existing overlaps this lot does not touch.
 BASELINE = {
-    "AMBIENT_PHRASES", "BACKENDS", "BATCH_CHARS", "BEAT_SNAP_FRACTION",
-    "BRIEF_KEYWORDS", "CAMERA_PREFIX", "CLIP_COUNTER",
-    "DEFAULT_HEIGHT",
-    "DEFAULT_IMPORTANT_MAX_S", "DEFAULT_TRACK", "DEFAULT_WIDTH",
-    "DURATION_RE", "FPS", "FRAME_COUNT",
-    "IMPORTANT_MOTION_LABELS", "IMPORTANT_SEMANTIC_MOTIONS",
-    "INVALID_FRAME_RATES", "JPEG_QUALITY", "LANDING_FLOOR_S", "LANDING_GAP_S",
-    "LONG_CUT_PACING_S", "MAX_LINE_CHARS", "MINUTE_UNITS", "MOVE_ROLES",
-    "NON_MOVE_MOTION_LABELS", "ORDER_CHRONOLOGICAL", "ORDER_SCORE",
+    "AMBIENT_PHRASES", "BACKENDS", "BATCH_CHARS", "BRIEF_KEYWORDS",
+    "CAMERA_PREFIX", "CLIP_COUNTER", "CONFIG_PATH", "DEFAULT_FRAME_RATE",
+    "DEFAULT_HEIGHT", "DEFAULT_IMPORTANT_MAX_S", "DEFAULT_TARGET_LUFS", "DEFAULT_TRACK",
+    "DEFAULT_WIDTH", "DURATION_RE", "FPS", "FRAME_COUNT",
+    "INVALID_FRAME_RATES", "JPEG_QUALITY", "LONG_CUT_PACING_S", "MAX_LINE_CHARS",
+    "MINUTE_UNITS", "MOVE_ROLES", "ORDER_CHRONOLOGICAL", "ORDER_SCORE",
     "PACING_ANCHORS", "PHOTO_DEFAULT_S", "PHOTO_END_S", "PHOTO_MAX_S",
     "PHOTO_MIN_S", "PHOTO_SEGMENT_ID", "PHOTO_START_S", "REPO_ROOT",
-    "SCHEMA_VERSION", "SCREEN_TOKEN", "SILENCE_FLOOR_DBFS",
-    "SKIP_ROLES", "TRAVEL_LABELS",
-    "UNIFORM_PHRASES", "VIDEO_EXTENSIONS",
-    "_atomic_write_json", "_clip_tokens", "_dbfs", "_ffprobe_path",
-    "_load_json", "_matches", "_median", "_phrase_move", "_runs",
-    "_to_analysis_gray", "atomic_write_json", "beats_by_segment_from_shotlog",
-    "best_overlapping_move", "build_phrases", "candidate_key", "clamp",
-    "clip_counter", "clip_position", "derive_beat_period", "find_clips",
-    "find_photos", "first_not_none", "fmt", "get_client", "is_important",
-    "is_number", "is_photo_slot", "is_within", "landing_pairs",
-    "load_ingest_photos", "load_json", "load_shotlog", "nearest_beat",
-    "normalize_timestamp", "order_clips", "pacing_table", "parse_duration",
-    "parse_time", "screen_length", "segment_key", "segment_subranges",
-    "shots_similar", "slot_duration", "snap_warning",
-    "source_delta", "spent_usd", "timestamp_seconds", "write_json",
+    "SCHEMA_VERSION", "SCREEN_TOKEN", "SILENCE_FLOOR_DBFS", "SKIP_ROLES",
+    "TRAVEL_LABELS", "UNIFORM_PHRASES", "VIDEO_EXTENSIONS", "_atomic_write_json",
+    "_clip_tokens", "_dbfs", "_ffprobe_path", "_load_json",
+    "_matches", "_median", "_runs", "_to_analysis_gray",
+    "atomic_write_json", "build_candidates", "build_groups", "capture_time",
+    "clamp", "clip_counter", "crop_size", "edit_summary",
+    "find_clips", "find_photos", "fmt", "format_clock",
+    "format_transcript", "frame_times", "get_client", "is_number",
+    "is_photo_slot", "is_within", "load_brand", "load_config",
+    "load_json", "normalize_timestamp", "pacing_table", "parse_duration",
+    "parse_model_json", "parse_srt", "parse_time", "piecewise_expression",
+    "read_frames", "read_ledger", "resolve_font", "run_command",
+    "screen_length", "segment_key", "slot_screen_length",
+    "spent_usd", "timestamp_seconds", "write_json",
 }
 
 
@@ -63,9 +60,9 @@ def collect(path):
     return found
 
 
-def duplicate_names():
-    top_level = sorted((ROOT / "scripts").glob("*.py"))
-    common = sorted((ROOT / "scripts" / "common").glob("*.py"))
+def duplicate_names(root=ROOT):
+    top_level = sorted((root / "scripts").glob("*.py"))
+    common = sorted((root / "scripts" / "common").glob("*.py"))
     definitions = {}
     for path in top_level + common:
         for key, owner in collect(path).items():
@@ -73,8 +70,15 @@ def duplicate_names():
     names = set()
     for (name, _), owners in definitions.items():
         tops = {owner for owner in owners if owner.parent.name == "scripts"}
+        if len(tops) >= 2:
+            names.add(name)
+    by_name = {}
+    for (name, _), owners in definitions.items():
+        by_name.setdefault(name, set()).update(owners)
+    for name, owners in by_name.items():
+        tops = {owner for owner in owners if owner.parent.name == "scripts"}
         commons = {owner for owner in owners if owner.parent.name == "common"}
-        if len(tops) >= 2 or (tops and commons):
+        if tops and commons:
             names.add(name)
     return names
 
@@ -85,6 +89,17 @@ def test_no_new_duplicate_helpers():
 
 def test_baseline_has_no_stale_entries():
     assert BASELINE - duplicate_names() == set()
+
+
+def test_common_and_top_level_same_name_is_flagged(tmp_path):
+    (tmp_path / "scripts" / "common").mkdir(parents=True)
+    (tmp_path / "scripts" / "common" / "shared.py").write_text(
+        "def helper():\n    return 1\n", encoding="utf-8"
+    )
+    (tmp_path / "scripts" / "tool.py").write_text(
+        "def helper():\n    return 2\n", encoding="utf-8"
+    )
+    assert "helper" in duplicate_names(tmp_path)
 
 
 def test_no_hand_rolled_worker_pool():

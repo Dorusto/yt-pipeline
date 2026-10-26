@@ -4,6 +4,63 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] The old director machinery removed (V030 lot R5)
+
+**Context:** The film crew shipped in R4a/R4b, but the old three-role loop, its
+chain of repairs and the star/group/auto-fill machinery were still in
+`llm_director.py`, and the old feedback-reply path (`--interpret-feedback`) was
+still in the code. RULES, the skills and the guide still described them. The
+film-crew flow also did not yet write into `edit.json` what the old flow wrote:
+the music track, the ambient level under it and the `decisions[]` rows.
+
+**Decision:** The film-crew flow writes `audio.music` and
+`audio.ambient_under_music_db` when they come from flags, and `decisions[]` —
+one used row per plan shot (the director's purpose and why, the technique done
+or not) plus the editor's could-not-do items; the director no longer lists every
+candidate it left out. `--speed-ramp` reaches the editor, which sets
+`middle_speed` on a move's plain cut (the middle half up to 1.2x, head and tail
+real time). `explain.py` keeps the used row when a rejected row shares its id.
+The old machinery is removed: the screenwriter/editor/reviewer prompts, the
+`shot_plan.json` schema, the star/group/auto-fill repairs (`hero_missing`, the
+star groups, the repair chain), the old feedback-reply path and the
+`meta.director.review` writer. What stays: the rule director
+(`scripts/director.py`) with its own selection heuristics (its `fill_to_target`
+and star-first pick are its own code, not the removed flow), `is_star` in
+`llm_director.py` for the shortlist, and the shared helpers in
+`scripts/common/` (facts, beatsnap, moves, window similarity) that the editor
+and the director both import. The dedup test now flags two top-level scripts
+with the same helper name as well as a top-level/common overlap, its baseline
+was rebuilt and a stale-entry test fails when the baseline lists a name that is
+no longer a duplicate.
+
+**Why:** The chain of repairs contradicted itself (R1) and the film crew
+replaced it; keeping the old code would keep two flows alive and the docs would
+describe a flow that no longer runs. The music, the ambient level and
+`decisions[]` are what the render and `explain.html` read, so the new flow must
+write them.
+
+**Consequence:** Files touched — `scripts/llm_director.py`, `scripts/director.py`,
+`scripts/director_editor.py`, `scripts/explain.py`, `scripts/serve.py`,
+`scripts/render.py`, `scripts/common/beatsnap.py`, `scripts/common/frames.py`,
+`scripts/common/html.py`, `prompts/director.md`, `prompts/screenwriter.md`
+(removed), `prompts/editor.md` (removed), `prompts/reviewer.md` (removed),
+`prompts/interpret_feedback.md` (removed), `prompts/playbook.md` (removed),
+`schemas/shot_plan.schema.json` (removed), `tests/test_no_duplicate_helpers.py`,
+`tests/test_llm_director.py`, `tests/test_director.py`, `tests/test_explain.py`,
+`tests/test_notebook.py`, `tests/test_prompts.py`, `tests/test_schema.py`,
+`docs/RULES.md`, `docs/AGENT_SETUP.md`, `docs/guides/user-guide.md`,
+`.claude/skills/yt-llm-director/SKILL.md`,
+`.claude/skills/yt-director-editor/SKILL.md` (new),
+`.claude/skills/yt-explain/SKILL.md`, `.claude/skills/yt-recap/SKILL.md`,
+`.claude/skills/yt-notebook/SKILL.md`, `.claude-plugin/marketplace.json`,
+`tests/test_plugin_manifest.py`, `CHANGELOG.md`, `docs/plans/director-rewrite.md`.
+The grep proof: `git grep` for `shot_plan|screenwriter`, for the star/repair
+names and for the old helper names over `scripts/`, `prompts/`, `schemas/`,
+`tests/`, `.claude/` and the guides returns nothing; the DECISIONS history is
+the only place the removed names may still appear.
+
+---
+
 ## [2026-10-25] The chat through the director and the two tabs (V030 lot R4b)
 
 **Context:** The director rewrite (V030 lot R1) decided the film crew and that

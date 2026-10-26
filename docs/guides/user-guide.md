@@ -41,7 +41,7 @@ flowchart LR
     I[ingest] --> M[motion] --> Q[quality] --> D[describe<br/>vision model] --> S[similarity] --> X[index<br/>shotlog + contact sheet]
   end
   subgraph edit[Edit — as many times as you like]
-    RT[router] --> DIR[director<br/>screenwriter → editor → reviewer] --> E[(edit.json)]
+    RT[router] --> DIR[director → editor → review] --> E[(edit.json)]
   end
   subgraph out[Output]
     P[720p preview] 
@@ -222,8 +222,8 @@ finished recap, the explanation and the contact sheet.
   It re-runs only the edit and the render — the analysis is reused. The
   feedback is appended to `feedback.jsonl` in the workspace.
 - **Chat with the director.** The chat sits in the **Director** tab (it is no
-  longer in the Recap tab). The reviewer's objections appear in it as the
-  reviewer's own sentences, each naming the shot by its number on the timeline.
+  longer in the Recap tab). The director's notes appear in it as the
+  director's own sentences, each naming the shot by its number on the timeline.
   The user writes what they like and what they do not, and the chat goes through
   the director: one director call reads the message with the last plan, the
   editor's report, the rounds, the owner's earlier notes and the notebook, and
@@ -403,13 +403,13 @@ edit on its own subscription, with no OpenRouter key:
 1. `yt llm_director --workspace <ws> --brief "..." --prepare` writes
    `<ws>/director/inputs.md` — the brief, the settings, the editing techniques,
    the shortlisted shots and the shapes to write.
-2. The agent reads it and writes `<ws>/shot_plan.json` and `<ws>/edit.json` (the
-   editor answer shape).
-3. `yt llm_director --workspace <ws> --brief "..." --apply` validates both,
-   repairs mechanical faults and writes the final `edit.json` with
+2. The agent reads it and writes `<ws>/director_plan.json` (and
+   `<ws>/director_review.json` for the notes round).
+3. `yt llm_director --workspace <ws> --brief "..." --apply` validates the plan,
+   runs the code editor and writes the final `edit.json` with
    `meta.director.by = "agent"`.
 
-The web app keeps the OpenRouter three-role loop.
+The web app keeps the OpenRouter film-crew flow.
 
 ## Pilot host
 

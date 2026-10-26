@@ -100,6 +100,15 @@ def encode_thumbnail(frame):
     return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
+def file_data_uri(path):
+    """A JPEG file as a base64 data URI, or None when it cannot be read."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
+
+
 def _read_frame(capture, t_s):
     capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(t_s)) * 1000.0)
     ok, frame = capture.read()

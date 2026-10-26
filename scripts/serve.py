@@ -10,8 +10,8 @@ Usage:
 Projects page lists, in descending folder-name order, every direct child
 directory that holds at least one of ``.run.json``, ``recap_720p.mp4``,
 ``recap_720p_9x16.mp4``, ``recap_final.mp4``, ``shotlog.html``, ``explain.html`` or ``edit.json``, with a
-running/failed/done status badge. Each project page has the Recap / Why? / Shots
-tabs (recap player, ``explain.html``, ``shotlog.html``) and a Re-edit form;
+running/failed/done status badge. Each project page has the Recap / Director / Shots
+tabs (recap player, the director's cut in plain words, ``shotlog.html``) and a Re-edit form;
 ``/upload`` takes clips and photos from a phone browser into the inbox and
 starts ``recap.py`` in the background. Only the finished artifacts (both recap formats, final, explain, shots) are ever
 served, also from ``versions/vNNN/``; proxies, ``edit.json``, ``.run.json``,

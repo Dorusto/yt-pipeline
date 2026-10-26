@@ -216,13 +216,14 @@ def _cap_target(grid_name, times, end, start, cap, tolerance, beat_s):
     return grid_name, times, target, reach
 
 
-def snap_slots(slots, bounds, beat_grid, warnings, slot_min_s=None):
+def snap_slots(slots, bounds, beat_grid, warnings, slot_min_s=None, downbeats_at=None):
     """Snap every timeline cut to a beat, preferring downbeats; return the summary counts.
 
     A downbeat or half-bar cut snaps when the target keeps the slot at least
     ``slot_min_s`` long (the pacing min); the slot's allowed length range is the
     reach, and the window and cap helpers still bound the move. The plain beat
-    candidate keeps the half-beat tolerance.
+    candidate keeps the half-beat tolerance. ``downbeats_at`` is an optional
+    per-slot list: a slot whose entry is false tries only the beat grid.
     """
     beat_s = beat_grid["beat_s"]
     downbeat_s = beat_grid["downbeat_s"] or beat_s
@@ -241,7 +242,10 @@ def snap_slots(slots, bounds, beat_grid, warnings, slot_min_s=None):
         cap = bounds[index].get("cap")
         chosen = None
         last_target = None
-        for grid_name, times in (("downbeat", downbeat_s), ("half_bar", half_bar_s), ("beat", beat_s)):
+        grids = (("downbeat", downbeat_s), ("half_bar", half_bar_s), ("beat", beat_s))
+        if downbeats_at is not None and not downbeats_at[index]:
+            grids = (("beat", beat_s),)
+        for grid_name, times in grids:
             used_grid, times, target, reach = _cap_target(grid_name, times, end, start, cap, tolerance, beat_s)
             last_target = target
             if target is None:

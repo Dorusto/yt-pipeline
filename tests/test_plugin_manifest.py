@@ -12,6 +12,7 @@ PLUGIN_SKILLS = {
     "yt-director": [
         "yt-recap",
         "yt-director",
+        "yt-director-editor",
         "yt-llm-director",
         "yt-beats",
         "yt-music-pick",

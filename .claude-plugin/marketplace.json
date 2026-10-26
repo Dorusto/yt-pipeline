@@ -20,6 +20,7 @@
       "skills": [
         "./.claude/skills/yt-recap",
         "./.claude/skills/yt-director",
+        "./.claude/skills/yt-director-editor",
         "./.claude/skills/yt-llm-director",
         "./.claude/skills/yt-beats",
         "./.claude/skills/yt-music-pick",

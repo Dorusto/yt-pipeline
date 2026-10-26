@@ -25,6 +25,7 @@ Plain rules that follow:
 
 - No two near-identical shots in a row, unless you do it on purpose and say so in `why`.
 - Cut on motion or on the beat when you can.
+- A move and the hold it lands on are one phrase: keep the move through its landing, or use only the hold.
 - Every shot enters and leaves cleanly: the subject is not cut in half halfway through its move.
 - Fewer strong shots beat many weak ones. Do not pad.
 - The owner's request is the contract: length, order, what must be in, what must be out.

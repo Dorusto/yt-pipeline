@@ -118,7 +118,7 @@ OpenRouter (#123). The same plan schema and the same code editor serve both.
 - **Done (R4a):** the flow, the notes round and agent mode shipped in V030 lot R4a; cost: 0.79186415 USD (the lot's spend, architect and coder rounds together).
 - **Done (R4b):** the chat through the director (`llm_director.py --chat` with the plan, the report, the rounds, the owner's notes and the notebook, and the `decision_note` stored as an owner note), the Director tab explanation and the Debug tab shipped in V030 lot R4b; cost: 0.745294036 USD (the lot's spend, architect and coder rounds together).
 
-### R5 — remove old code + rewrite RULES + update skills and guide + squash the c30 "wip" commit (cap 0.5 USD)
+### R5 — remove old code + rewrite RULES + update skills and guide (hard, cap 1.0 USD)
 
 - **Issue:** #118.
 - **Files:** `scripts/llm_director.py`, `scripts/director.py`,
@@ -127,13 +127,15 @@ OpenRouter (#123). The same plan schema and the same code editor serve both.
   `.claude/skills/yt-director/SKILL.md`, `docs/guides/user-guide.md`,
   `docs/guides/tools.md`.
 - **Design:** remove the old three-role loop, the star/group/auto-fill repairs
-  and the rule-based fallback (keep only the "model did not answer" fallback);
-  rewrite the RULES editing-grammar section to the short list; update the skills
-  and the guide; squash the c30 "wip" commit (`556bc05`) into proper history
-  before the PR.
-- **Acceptance:** full suite green; no dead code; RULES matches the new grammar;
-  the squash leaves a clean history.
-- **Cap:** 0.5 USD. **Hard:** no.
+  and the old feedback-reply path (keep only the "model did not answer"
+  fallback); rewrite the RULES editing-grammar section to the short list; update
+  the skills and the guide.
+- **Acceptance:** full suite green; no dead code; RULES matches the new grammar.
+- **Cap:** 1.0 USD. **Hard:** yes (coder-max).
+- **Done:** shipped in V030 lot R5. The greps in "R5 done" below are empty; the
+  DECISIONS history is the only place the removed names may still appear. Cost:
+  1.4464926 USD (the lot's spend, architect and coder rounds together; the
+  lot's cap was 1.0 USD).
 
 ### R6 — test on fresh copies of Kotor and Monschau (cap 0.5 USD)
 
@@ -144,6 +146,22 @@ OpenRouter (#123). The same plan schema and the same code editor serve both.
   report the two runs, the eval results and the owner's check.
 - **Acceptance:** the report with the two runs and the eval results.
 - **Cap:** 0.5 USD. **Hard:** no.
+
+## R5 done
+
+The three greps below return no matches (exit 1, no output); the DECISIONS
+history is the only place the removed names may still appear.
+
+```
+$ git grep -n "shot_plan\|screenwriter" -- scripts/ prompts/ schemas/ tests/ .claude/ docs/guides/ docs/AGENT_SETUP.md
+(no output)
+
+$ git grep -n "hero_missing\|repair_missing_stars\|star_groups\|required_star_keys\|star_group_keys\|sorted_stars\|stars_share_one_group\|collapse_star_groups" -- scripts/ tests/ prompts/
+(no output)
+
+$ git grep -n "fill_to_target(record\|final_neighbour_check\|review_copy\|review_object\|interpret_feedback\|build_interpret_user\|request_reply\|append_reply_line\|owner_keys_from_feedback\|read_role_prompt\|read_chat_prompt\|three-role" -- scripts/ tests/ prompts/ .claude/
+(no output)
+```
 
 ## Build order
 

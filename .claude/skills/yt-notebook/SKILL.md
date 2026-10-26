@@ -6,7 +6,7 @@ compatibility: Run with the `yt` entry point on PATH. Reads and writes one JSON 
 
 # yt-notebook
 
-The **learning notebook** is a small JSON file of short lessons the director keeps between edits on this instance. `yt notebook` reads and edits it and enforces a fixed limit of **40 lessons**. The director (`yt-llm-director`) reads the notebook before every edit and hands it to the screenwriter, the editor and the reviewer; the web app shows it as a collapsible section in the **Director** tab, where a lesson can be deleted. All commands run through `yt <tool>`.
+The **learning notebook** is a small JSON file of short lessons the director keeps between edits on this instance. `yt notebook` reads and edits it and enforces a fixed limit of **40 lessons**. The director (`yt-llm-director`) reads the notebook before every edit and hands it to the director; the web app shows it as a collapsible section in the **Director** tab, where a lesson can be deleted. All commands run through `yt <tool>`.
 
 ## Step 1: read the notebook
 

@@ -2,17 +2,17 @@
 
 How to drive this pipeline from natural language with Claude Code, opencode or any
 tool that reads the Agent Skills format, instead of remembering script flags. The
-repo ships 35 skills in `.claude/skills/`, grouped into five plugins in one
+repo ships 36 skills in `.claude/skills/`, grouped into five plugins in one
 marketplace, `yt-pipeline`. Every skill calls the tools through the `yt` entry
 point, so a skill works on its own once `yt` is on `PATH`.
 
 ## 1. What you get
 
-The 35 skills are grouped into five plugins, each installable alone:
+The 36 skills are grouped into five plugins, each installable alone:
 
 | Plugin | Skills | What it covers |
 |:---|:---|:---|
-| `yt-director` | 19 | the recap flow: ingest, motion, quality, describe, similarity, index, router, director, llm_director, render, thumbs, explain, beats, music_pick, edit_drop, eval_edit, mode_b, rough_cut, notebook |
+| `yt-director` | 20 | the recap flow: ingest, motion, quality, describe, similarity, index, router, director, director_editor, llm_director, render, thumbs, explain, beats, music_pick, edit_drop, eval_edit, mode_b, rough_cut, notebook |
 | `yt-publish` | 5 | transcript, publish, recap_meta, thumbnail, audio_clean |
 | `yt-shorts` | 2 | shorts, reframe |
 | `yt-editor` | 6 | filmcraft, export_kdenlive, finish_pip, graphics, matte, motion |
@@ -145,7 +145,7 @@ so this guide makes no claim either way; install the skills for opencode by
 copying them into `.claude/skills/` or `~/.claude/skills/` (section 8). See the
 opencode skills doc: https://opencode.ai/docs/skills/.
 
-Ask the agent to list its skills. You should see all 35.
+Ask the agent to list its skills. You should see all 36.
 
 ## 8. Other Agent Skills tools
 
@@ -168,7 +168,7 @@ every skill calls tools through `yt <tool>`).
 
 | Plugin | Skills | Related plugin |
 |:---|:---|:---|
-| `yt-director` | `yt-recap`, `yt-director`, `yt-llm-director`, `yt-beats`, `yt-music-pick`, `yt-edit-drop`, `yt-render`, `yt-thumbs`, `yt-explain`, `yt-ingest`, `yt-index`, `yt-describe`, `yt-quality`, `yt-similarity`, `yt-eval-edit`, `yt-mode-b`, `yt-rough-cut`, `yt-router`, `yt-notebook` | `yt-editor` (`yt-render` → `yt-motion`), `yt-publish` (`yt-recap` → `yt-transcript`), `yt-admin` (`yt-eval-edit` → `yt-eval`) |
+| `yt-director` | `yt-recap`, `yt-director`, `yt-director-editor`, `yt-llm-director`, `yt-beats`, `yt-music-pick`, `yt-edit-drop`, `yt-render`, `yt-thumbs`, `yt-explain`, `yt-ingest`, `yt-index`, `yt-describe`, `yt-quality`, `yt-similarity`, `yt-eval-edit`, `yt-mode-b`, `yt-rough-cut`, `yt-router`, `yt-notebook` | `yt-editor` (`yt-render` → `yt-motion`), `yt-publish` (`yt-recap` → `yt-transcript`), `yt-admin` (`yt-eval-edit` → `yt-eval`) |
 | `yt-publish` | `yt-transcript`, `yt-publish`, `yt-recap-meta`, `yt-thumbnail`, `yt-audio-clean` | `yt-director` (`yt-thumbnail` → `yt-render`), `yt-shorts` (`yt-thumbnail` → `yt-shorts`) |
 | `yt-shorts` | `yt-shorts`, `yt-reframe` | `yt-publish` (`yt-shorts` → `yt-transcript`) |
 | `yt-editor` | `yt-filmcraft`, `yt-export-kdenlive`, `yt-finish-pip`, `yt-graphics`, `yt-matte`, `yt-motion` | `yt-director` (`yt-export-kdenlive` → `yt-ingest`, `yt-index`, `yt-director`) |

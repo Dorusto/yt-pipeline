@@ -5,7 +5,6 @@ import sys
 import threading
 from pathlib import Path
 
-import llm_director
 import notebook
 import serve
 from common.llm import JSONResponse
@@ -583,18 +582,13 @@ def test_json_failure_prints_one_error_object(tmp_path):
     assert isinstance(payload["error"], str) and payload["error"]
 
 
-def test_notebook_block_and_screenwriter_user(tmp_path):
+def test_notebook_block_lists_lessons_and_proposals(tmp_path):
     notebook = tmp_path / "notebook.json"
     run_notebook("--notebook", str(notebook), "--add", "keep the tunnel longer")
     run_notebook("--notebook", str(notebook), "--propose", "members_sentence", "--text", "sponsor line")
     block = notebook_block(notebook)
     assert "keep the tunnel longer" in block
     assert "channel.fixed.members_sentence" in block
-    user = llm_director.build_screenwriter_user(
-        "brief", "vacation", {}, [], 6.0, notebook_block=block
-    )
-    assert "## Notebook" in user
-    assert "keep the tunnel longer" in user
 
 
 def make_root(tmp_path):
