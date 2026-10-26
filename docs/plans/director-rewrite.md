@@ -216,8 +216,8 @@ Development of the director stops here for now. Next step is the owner watching 
 ## Notes from the review of the first real runs (to pick up in the next version)
 
 - The director already receives a plain-words description, summary, tags, subject and scenery for each shot (107 of 109 in the Kotor test). What holds it back is the set of rules around it. Next version: fewer rules, more independence, better facts about each shot.
-- Beats: checked on the Kotor song. The old engine and the  model agree within 12 ms (31 ms at most), tempo steady at 107 bpm, and all 16 cuts of the test cut sit within 5 ms of a beat. So the beat tool does not look like the cause. Still open: the owner hears cuts that feel on beat but in another rhythm. Cuts fall every 4 or 8 beats, sometimes 1.7 s apart.
-- Gap in the tests: test runs through  leave  empty in , so on beat was only checked against the grid, not with sound. Next time check a web run with the music attached, and ask the owner for the exact seconds that feel wrong.
+- Beats: checked on the Kotor song. The old engine and the beat_this model agree within 12 ms (31 ms at most), tempo steady at 107 bpm, and all 16 cuts of the test cut sit within 5 ms of a beat. So the beat tool does not look like the cause. Still open: the owner hears cuts that feel on beat but in another rhythm. Cuts fall every 4 or 8 beats, sometimes 1.7 s apart.
+- Gap in the tests: test runs through llm_director.py leave audio.music empty in edit.json, so on beat was only checked against the grid, not with sound. Next time check a web run with the music attached, and ask the owner for the exact seconds that feel wrong.
 - Cut from a video to a still photo can feel like a jump (Kotor, about 10.9 s). To handle with the editing-craft notes.
 - A shot the director dropped (the tunnel in one Kotor version) is a choice, not a cutting bug. The reason is in the Director tab.
 - Test runs were made in separate project copies on purpose, so the owner's own project and its versions stay untouched. Old copies were deleted; only the latest test copies remain.
