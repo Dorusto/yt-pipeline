@@ -4,6 +4,52 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] The code editor and its report (V030 lot R3)
+
+**Context:** The director rewrite (V030 lot R1) splits the work into a film
+crew: the director (the AI) writes `director_plan.json` with the idea, the
+structure and the shots, and the editor is code that executes the plan and never
+changes the shots. The plan contract shipped in R2; the editor did not exist
+yet, and the window, peak, landing, beat and similarity helpers lived inside
+`llm_director.py`, which VISION principle 1 forbids another tool to import.
+
+**Options:** (A) let `director_editor.py` import `llm_director.py` and reuse its
+helpers; (B) move the helpers to `scripts/common/` and have both tools import
+them; (C) copy the helpers into the editor.
+
+**Decision:** B. `scripts/common/facts.py` holds the shot-fact helpers (the
+workspace read, the candidate windows, the peaks, the landings, the subject
+events) and `scripts/common/beatsnap.py` the beat-grid and snap helpers;
+`slot_duration` moves next to `slot_screen_length` in `common/moves.py`.
+`llm_director.py` imports them back, so its behaviour is unchanged. The new
+`scripts/director_editor.py` turns a validated `director_plan.json` plus the
+workspace shotlog into `edit.json` and a short `editor_report.json`
+(`schemas/editor_report.schema.json`): one row per plan shot, the total and
+target length, what it could not do, the similar neighbours and a factual
+summary. It never swaps, drops, adds or reorders shots; what it cannot do goes
+in the report. No model call.
+
+**Why not A:** a tool importing another tool's code breaks the independence
+rule. **Why not C:** a copy would drift from the director's helpers.
+
+**Consequence:** files touched — `scripts/director_editor.py`,
+`schemas/editor_report.schema.json`, `scripts/common/facts.py`,
+`scripts/common/beatsnap.py`, `scripts/common/moves.py`,
+`scripts/llm_director.py`, `tests/test_director_editor.py`,
+`tests/test_no_duplicate_helpers.py`, `docs/plans/director-rewrite.md`,
+`docs/guides/tools.md`, `CHANGELOG.md`. The editor is not wired into the web
+app, `llm_director.py`'s CLI or the plugin yet; R4 does the rounds and the tabs.
+
+## [2026-10-25] Director rewrite as a film crew (V030 lot R1)
+
+**Context — what the director was:** The director had grown into a chain of repairs that contradict each other: a rule-based fallback that punishes the cut when the final check fails on small issues, and rules the owner never asked for — mandatory star shots, groups, auto-fill, repeated passes that drop shots, hidden shot swaps, and a second AI call as "editor".
+
+**Why it is rewritten:** On the Kotor test the fallback produced a 52 s cut instead of the 60 s asked for, caused by a 1.6 s shot made by a code repair and one missing star shot.
+
+**Decision:** The film crew replaces the chain. Eyes = the existing analysis tools, which only annotate. Director = the AI, which picks the idea, the structure with a reason and the shots with a purpose and a technique. Editor = code that executes, never changes the shots and returns a short report. The director reviews the cut, max 2 rounds. The owner's chat goes through the director. The fallback runs only when the model does not answer at all. RULES is cut down to: owner notes > emotion > story > rhythm > viewer eye > space; no two near-identical shots in a row unless intended; cut on motion/beat; clean entry and exit.
+
+**Consequence:** The RULES editing-grammar section is rewritten in lot R5; the plan is `docs/plans/director-rewrite.md`; the lots are R2–R6.
+
 ## [2026-10-25] Stop, learn and delete-version cleanup (V030 lot c30)
 
 **Context:** The read-only audit of the rest of v0.3.0 found several loose ends.
@@ -4185,15 +4231,3 @@ README short and its links resolving.
 **Context:** issue #95 — in the first holiday-flow pilot most cuts missed the beat; the director notes carried `cut k: not snapped to a beat (nearest X s away)` for 4 of the cuts. Reproduced on the first holiday pilot: the cuts that start a new `shot_plan` structure beat snap to the nearest **downbeat**, and the downbeat grid is sparse (every 4 beats ≈ 2.1 s), so the nearest downbeat is often farther than the half-beat snap window and the cut is left unsnapped even though a beat is ~0.2 s away.
 
 **Decision:** in `llm_director.snap_slots` a structure-beat cut prefers the nearest downbeat only when it lies inside the small window (`BEAT_SNAP_FRACTION × beat_period_s`); otherwise it lands on the nearest beat of the dense grid. Every cut is then on a beat. The rule-based `director.py` never passes downbeats, so it is unchanged. Measured on the first holiday pilot: 9/9 cuts snapped (was 7/9).
-
----
-
-## [2026-10-25] Director rewrite as a film crew (V030 lot R1)
-
-**Context — what the director was:** The director had grown into a chain of repairs that contradict each other: a rule-based fallback that punishes the cut when the final check fails on small issues, and rules the owner never asked for — mandatory star shots, groups, auto-fill, repeated passes that drop shots, hidden shot swaps, and a second AI call as "editor".
-
-**Why it is rewritten:** On the Kotor test the fallback produced a 52 s cut instead of the 60 s asked for, caused by a 1.6 s shot made by a code repair and one missing star shot.
-
-**Decision:** The film crew replaces the chain. Eyes = the existing analysis tools, which only annotate. Director = the AI, which picks the idea, the structure with a reason and the shots with a purpose and a technique. Editor = code that executes, never changes the shots and returns a short report. The director reviews the cut, max 2 rounds. The owner's chat goes through the director. The fallback runs only when the model does not answer at all. RULES is cut down to: owner notes > emotion > story > rhythm > viewer eye > space; no two near-identical shots in a row unless intended; cut on motion/beat; clean entry and exit.
-
-**Consequence:** The RULES editing-grammar section is rewritten in lot R5; the plan is `docs/plans/director-rewrite.md`; the lots are R2–R6.

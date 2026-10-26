@@ -16,7 +16,7 @@ BASELINE = {
     "PACING_ANCHORS", "PHOTO_DEFAULT_S", "PHOTO_END_S", "PHOTO_MAX_S",
     "PHOTO_MIN_S", "PHOTO_SEGMENT_ID", "PHOTO_START_S", "REPO_ROOT",
     "SCHEMA_VERSION", "SCREEN_TOKEN", "SILENCE_FLOOR_DBFS",
-    "SKIP_ROLES", "TOLERANCE_S", "TRAVEL_LABELS",
+    "SKIP_ROLES", "TRAVEL_LABELS",
     "UNIFORM_PHRASES", "VIDEO_EXTENSIONS",
     "_atomic_write_json", "_clip_tokens", "_dbfs", "_ffprobe_path",
     "_load_json", "_matches", "_median", "_phrase_move", "_runs",

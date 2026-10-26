@@ -75,6 +75,13 @@ def slot_screen_length(slot):
     return screen_length(float(slot["out_s"]) - float(slot["in_s"]), middle_speed_of(slot))
 
 
+def slot_duration(slot):
+    """The on-screen length of an edit.json slot, video or photo."""
+    if slot.get("kind") == "photo":
+        return slot.get("duration_s") or 0.0
+    return slot_screen_length(slot)
+
+
 def is_move_slot(slot):
     """True for a slot that holds a camera move: a move role or an important shot, never a static label."""
     if is_photo_slot(slot):

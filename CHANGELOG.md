@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: a **Director** tab holds the chat with the director and, under it, the collapsible notebook.
 - Web app: a **Stop** button on the progress card of a running edit stops the run and its child processes and leaves the previous version as the current one.
 - Director: the rule director takes the owner's explicit keys (`--add-shots`/`--drop-shots`, comma-separated and repeatable) and the `--json` summary reports `applied_keys`/`not_applied_keys`; the web app says "The director could not make this edit; a simpler editor made it." and lists which requested changes were applied and which were not when the shown edit is a rule fallback.
+- Director rewrite: the code editor `scripts/director_editor.py` turns a `director_plan.json` into `edit.json` and an `editor_report.json`, cutting the windows around the director's moments, on the beat, and never changing the shots.
 
 ### Changed
 

@@ -19,15 +19,17 @@ tags, role, motion label, semantic motion, faces and defects.
 ### Director
 
 The AI. It reads the brief, the shotlog, the notebook and the style and writes
-`shot_plan.json`: the idea (logline), the structure (beats, each with a reason)
-and the shots (each with a purpose and a technique). It also reviews the cut.
+`director_plan.json`: the `idea`, the `structure` (`kind`, `why` and the
+`beats[]`, each with `id`, `name`, `intent` and `target_s`) and the `shots[]`
+(each with `id`, `beat`, `shot_key`, `purpose`, `technique`, optional `pieces`,
+optional `moment`, `target_s` and `why`). It also reviews the cut.
 
 ### Editor
 
-Code. It reads `shot_plan.json`, `shotlog.json` and the beat grid, picks the
+Code. It reads `director_plan.json`, `shotlog.json` and the beat grid, picks the
 exact in/out inside each shot's window, applies the length policy, peak-centring,
 beat snap and transitions, never changes which shots are used, writes `edit.json`
-and returns a short report.
+and returns a short report (`editor_report.json`).
 
 ### Reviewer = the director
 
@@ -63,35 +65,42 @@ OpenRouter (#123). The same plan schema and the same code editor serve both.
 ### R2 — director skill + plan schema (hard, cap 0.6 USD)
 
 - **Issue:** #118, #123.
-- **Files:** `schemas/shot_plan.schema.json`, `prompts/director.md` (new,
-  replaces `prompts/screenwriter.md`), `prompts/agent_director.md`,
+- **Files:** `schemas/director_plan.schema.json`, `prompts/director.md` (new,
+  replaces the screenwriter's role), `prompts/agent_director.md`,
   `.claude/skills/yt-llm-director/SKILL.md`.
-- **Design:** the plan schema requires `logline`, `structure[]` with `id`,
-  `name`, `intent`, `reason`, `target_s`, and `slot_plan[]` with `id`, `beat`,
-  `shot_key`, `target_s`, `purpose`, `technique` (`technique` is a short phrase
-  from the playbook, e.g. "cut on the move", "hold the still", "match cut"). The
-  director prompt tells the model to write the plan only, no timecodes.
+- **Design:** the plan schema requires `idea`, `structure` (`kind`, `why` and
+  `beats[]` with `id`, `name`, `intent`, `target_s`) and `shots[]` with `id`,
+  `beat`, `shot_key`, `purpose`, `technique`, optional `pieces`, optional
+  `moment`, `target_s` and `why` (`technique` is one of the catalogue in
+  `prompts/director.md`). The director prompt tells the model to write the plan
+  only, no timecodes. `prompts/director.md` replaces the screenwriter's role;
+  the old `schemas/shot_plan.schema.json` and `prompts/screenwriter.md` stay
+  until R5 removes them.
 - **Acceptance:** a test that the schema requires the new fields and rejects a
   plan without them; a test that `prompts/director.md` exists and names the plan
   schema.
 - **Cap:** 0.6 USD. **Hard:** yes (coder-max).
 
-### R3 — code editor + report (cap 0.6 USD)
+### R3 — code editor + report (hard, cap 1.0 USD)
 
 - **Issue:** #118.
-- **Files:** `scripts/editor.py` (new), `schemas/editor_report.schema.json`
-  (new), tests.
-- **Design:** `editor.py --workspace W --plan shot_plan.json --out edit.json
-  --report editor_report.json` reads the plan, the shotlog and the beats, picks
-  the exact windows (length policy, peak-centring, beat snap, transitions),
-  writes `edit.json` (schema `edit.schema.json`) and a short report
-  (`schema_version`, `slots`, `clamped[]`, `warnings[]`, `wall_time_s`,
-  `llm_cost_usd: 0`). It never changes the shot keys or the slot order; a shot
-  with no usable window is a report warning, not a silent swap.
-- **Acceptance:** on a synthetic workspace, `editor.py` writes a valid
+- **Files:** `scripts/director_editor.py` (new),
+  `schemas/editor_report.schema.json` (new), `scripts/common/facts.py` and
+  `scripts/common/beatsnap.py` (the shot-fact and beat-snap helpers moved out
+  of `llm_director.py`), tests.
+- **Design:** `director_editor.py --workspace W --plan director_plan.json --out
+  edit.json --report editor_report.json` reads the plan, the shotlog and the
+  beats, picks the exact windows (length policy, peak-centring, beat snap,
+  transitions), writes `edit.json` (schema `edit.schema.json`) and a short
+  report (`schemas/editor_report.schema.json`: one row per plan shot, the total
+  and target length, what it could not do, the similar neighbours and a factual
+  summary). It never changes the shot keys or the slot order; a shot with no
+  usable window is a report note, not a silent swap.
+- **Acceptance:** on a synthetic workspace, `director_editor.py` writes a valid
   `edit.json` and a report; the shot keys match the plan exactly; a plan slot
   outside the shotlog is a usage error.
-- **Cap:** 0.6 USD. **Hard:** no.
+- **Cap:** 1.0 USD. **Hard:** yes (coder-max).
+- **Done:** shipped in V030 lot R3; cost: 0.65603894 USD.
 
 ### R4 — director-editor rounds + chat through the director + Director tab + Debug tab (hard, cap 0.8 USD)
 
@@ -138,21 +147,12 @@ OpenRouter (#123). The same plan schema and the same code editor serve both.
 
 R2 → R3 → R4 → R5 → R6.
 
-## Questions for the owner
+## Owner decisions
 
-1. **What does the Director tab show by default?**
-   - (A) the director's plain-words explanation of the cut only;
-   - (B) the explanation plus the plan (logline, beats, shots);
-   - (C) the explanation plus a collapsed plan.
-   Recommended: (C) — the explanation is what the owner reads, the plan is one
-   click away when something looks wrong.
-
-2. **What is the Debug tab called and who sees it?**
-   - (A) "Debug", visible to everyone;
-   - (B) "Debug", hidden behind a flag or a query parameter;
-   - (C) a different name, e.g. "Details" or "Under the hood".
-   Recommended: (B) — the plan, the report and the model calls are for the
-   owner and the architect, not for a first-time visitor.
+- The Director tab always shows the director's idea, the structure and why, why
+  each shot, and the editor's report; it replaces the "Why?" button.
+- A separate, discreet Debug tab shows the shot list and the raw details.
+- The app has no settings.
 
 ## Out of scope
 

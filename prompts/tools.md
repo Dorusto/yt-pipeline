@@ -20,6 +20,7 @@ channel-specific.
 - `yt index` — build the shotlog.
 - `yt director` — the rule-based edit.
 - `yt llm_director` — the LLM edit.
+- `yt director_editor` — cut the director's plan into the exact windows.
 - `yt music_pick` — pick a track.
 - `yt render` — render the MP4.
 - `yt recap` — the whole recap flow in one command.

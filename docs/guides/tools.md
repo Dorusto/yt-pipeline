@@ -188,6 +188,15 @@ The agent mode splits the loop in two so a host coding agent can direct the edit
   --brief "about 90 seconds, chronological" --apply --json
 ```
 
+### Code editor (director rewrite, V030 lot R3)
+
+`director_editor.py` executes a validated `director_plan.json` (the director rewrite's plan: idea, structure, shots) and writes `edit.json` plus a short `editor_report.json` — the exact cut windows around the director's moments, on the beat when a beat grid is given, never changing the shots. No model call.
+
+```bash
+.venv/bin/python scripts/director_editor.py --workspace /path/to/ws \
+  --plan /path/to/ws/director_plan.json --json
+```
+
 ### Notebook (learning notebook)
 
 `notebook.py` reads and edits the instance's learning notebook — a small JSON file (`schemas/notebook.schema.json`) of short lessons the director keeps between edits, at most 40 of them. Skill: `yt-notebook`.
