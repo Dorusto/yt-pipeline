@@ -161,7 +161,7 @@ ARTIFACT_LABELS = (
     ("explain.html", "why"),
     ("shotlog.html", "shots"),
 )
-TABS = (("recap", "Recap"), ("director", "Director"), ("files", "Files"), ("why", "Why?"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"))
+TABS = (("recap", "Recap"), ("director", "Director"), ("files", "Files"), ("shots", "Shots"), ("cuts", "Cuts"), ("shorts", "Shorts"), ("debug", "Debug"))
 TAB_KEYS = tuple(key for key, _ in TABS)
 SHORTS_LAYOUT_POLICIES = ("auto", "on", "off")
 SHORTS_LAYOUTS = ("face", "split")
@@ -2070,9 +2070,13 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
             estimate_text = format_estimate(estimate.get("usd"), estimate.get("s"))
             if estimate_text:
                 estimate_html = f'<p class="chat-estimate">{html_escape(estimate_text)}</p>'
+        decision_html = ""
+        decision_note = row.get("decision_note")
+        if isinstance(decision_note, str) and decision_note.strip():
+            decision_html = f'<p class="chat-decision">Decision: {html_escape(decision_note)}</p>'
         exchanges.append(
             f'<div class="chat-msg user"><p>{html_escape(text)}</p></div>'
-            f'<div class="chat-msg director"><p>{html_escape(reply)}</p>{estimate_html}</div>'
+            f'<div class="chat-msg director"><p>{html_escape(reply)}</p>{decision_html}{estimate_html}</div>'
         )
     if exchanges:
         exchanges[-1] = exchanges[-1].replace(
@@ -2105,6 +2109,9 @@ def render_chat_panel(directory, name, version_path=None, version_name=""):
         can_do = normalise_can_do(last.get("can_do"))
         if can_do == "all":
             hint = last["text"] + "\n\nDirector's reading: " + last["reply"]
+            decision_note = last.get("decision_note")
+            if isinstance(decision_note, str) and decision_note.strip():
+                hint += "\n\nDecision: " + decision_note
             parts.append(
                 f'<form class="chat-approve" method="post" action="/{html_escape(name)}/re-edit" '
                 'enctype="multipart/form-data">'
@@ -2491,8 +2498,196 @@ def render_notebook_panel(notebook, name):
     )
 
 
+def render_director_explanation(directory, shown):
+    """The director's cut in plain words: the idea, the structure, the shots and the editor's report."""
+    directory = Path(directory)
+    plan = load_json(directory / "director_plan.json")
+    if not isinstance(plan, dict):
+        return '<p class="empty">No director data yet.</p>'
+    parts = ["<h2>The director's cut</h2>"]
+    parts.append(
+        f'<p class="director-idea"><strong>Idea:</strong> {html_escape(str(plan.get("idea") or ""))}</p>'
+    )
+    structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
+    parts.append(
+        f'<p class="director-structure"><strong>Structure:</strong> '
+        f'{html_escape(str(structure.get("kind") or ""))} — {html_escape(str(structure.get("why") or ""))}</p>'
+    )
+    beats = structure.get("beats") if isinstance(structure.get("beats"), list) else []
+    beat_rows = []
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        beat_rows.append(
+            f'<li><strong>{html_escape(str(beat.get("name") or ""))}</strong> — '
+            f'{html_escape(str(beat.get("intent") or ""))} ({html_escape(str(beat.get("target_s") or ""))} s)</li>'
+        )
+    if beat_rows:
+        parts.append(f'<ul class="director-beats">{"".join(beat_rows)}</ul>')
+    shots = plan.get("shots") if isinstance(plan.get("shots"), list) else []
+    shot_rows = []
+    for shot in shots:
+        if not isinstance(shot, dict):
+            continue
+        shot_rows.append(
+            f'<li><span class="shot-key">{html_escape(str(shot.get("shot_key") or ""))}</span> '
+            f'{html_escape(str(shot.get("purpose") or ""))} — {html_escape(str(shot.get("why") or ""))}</li>'
+        )
+    if shot_rows:
+        parts.append(f'<ol class="director-shots">{"".join(shot_rows)}</ol>')
+    parts.append(render_editor_report(directory))
+    parts.append(render_director_notes(directory, shown))
+    return "".join(parts)
+
+
+def render_editor_report(directory):
+    """The editor's report in plain words: the length, what it could not do and the look-alike neighbours."""
+    report = load_json(Path(directory) / "editor_report.json")
+    parts = ["<section class=\"director-report\"><h3>Editor's report</h3>"]
+    if not isinstance(report, dict):
+        parts.append('<p class="empty">No editor report yet.</p>')
+        parts.append("</section>")
+        return "".join(parts)
+    total = html_escape(str(report.get("total_length_s")))
+    target = report.get("target_length_s")
+    if target is None:
+        parts.append(f"<p>{total} s</p>")
+    else:
+        parts.append(f"<p>{total} s of {html_escape(str(target))} s</p>")
+    could_not_do = report.get("could_not_do") if isinstance(report.get("could_not_do"), list) else []
+    if could_not_do:
+        rows = "".join(f"<li>{html_escape(str(note))}</li>" for note in could_not_do)
+        parts.append(f'<ul class="could-not-do">{rows}</ul>')
+    similar = report.get("similar_neighbours") if isinstance(report.get("similar_neighbours"), list) else []
+    if similar:
+        rows = []
+        for pair in similar:
+            if not isinstance(pair, dict):
+                continue
+            rows.append(
+                f'<li>{html_escape(str(pair.get("first") or ""))} and '
+                f'{html_escape(str(pair.get("second") or ""))} look alike '
+                f'({html_escape(str(pair.get("score") or ""))})</li>'
+            )
+        parts.append(f'<ul class="similar-neighbours">{"".join(rows)}</ul>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def render_director_notes(directory, shown):
+    """The notes of the rounds, or the shown edit's own notes when the rounds carry none."""
+    directory = Path(directory)
+    rounds = load_json(directory / "director_rounds.json")
+    round_rows = rounds.get("rounds") if isinstance(rounds, dict) and isinstance(rounds.get("rounds"), list) else []
+    notes = []
+    for row in round_rows:
+        if not isinstance(row, dict):
+            continue
+        review = row.get("review")
+        if not isinstance(review, dict):
+            continue
+        for note in review.get("notes") or []:
+            if isinstance(note, str) and note.strip():
+                notes.append((row.get("round"), note))
+    parts = ['<section class="director-notes"><h3>Notes</h3>']
+    if notes:
+        multiple = len(round_rows) > 1
+        rows = []
+        for round_number, note in notes:
+            prefix = f"Round {round_number}: " if multiple else ""
+            rows.append(f"<li>{html_escape(prefix + note)}</li>")
+        parts.append(f"<ul>{''.join(rows)}</ul>")
+    else:
+        path = Path(shown["path"]) / "edit.json" if shown else directory / "edit.json"
+        edit = load_json(path)
+        director = (edit.get("meta") or {}).get("director") if isinstance(edit, dict) else None
+        fallback = director.get("notes") if isinstance(director, dict) else None
+        if isinstance(fallback, list) and fallback:
+            rows = "".join(f"<li>{html_escape(str(note))}</li>" for note in fallback)
+            parts.append(f"<ul>{rows}</ul>")
+        else:
+            parts.append('<p class="empty">No notes.</p>')
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def render_debug_panel(directory, name):
+    """The Debug tab: the shot list, the raw plan, report, rounds and model calls."""
+    directory = Path(directory)
+    plan = load_json(directory / "director_plan.json")
+    parts = ['<div class="debug"><h2>Debug</h2>']
+    if not isinstance(plan, dict):
+        parts.append('<p class="empty">No director data yet.</p></div>')
+        return "".join(parts)
+    edit = load_json(directory / "edit.json")
+    slots = edit.get("video") if isinstance(edit, dict) and isinstance(edit.get("video"), list) else []
+    plan_shots = {}
+    for shot in plan.get("shots") or []:
+        if isinstance(shot, dict) and shot.get("id") is not None:
+            plan_shots[shot["id"]] = shot
+    rows = []
+    for slot in slots:
+        if not isinstance(slot, dict):
+            continue
+        shot = plan_shots.get(slot.get("id")) or {}
+        if slot.get("kind") == "photo":
+            window = "photo"
+        else:
+            window = f"{slot.get('in_s')}–{slot.get('out_s')}"
+        moment = shot.get("moment") if isinstance(shot.get("moment"), dict) else {}
+        moment_text = moment.get("at_s")
+        if moment_text is None:
+            moment_text = moment.get("hint")
+        rows.append(
+            "<tr>"
+            f"<td>{html_escape(str(slot.get('id') or ''))}</td>"
+            f"<td>{html_escape(str(slot.get('shot_key') or ''))}</td>"
+            f"<td>{html_escape(window)}</td>"
+            f"<td>{html_escape(str(shot.get('technique') or ''))}</td>"
+            f"<td>{html_escape(str(moment_text if moment_text is not None else ''))}</td>"
+            "</tr>"
+        )
+    parts.append("<h3>Shots</h3>")
+    parts.append(
+        "<table><thead><tr><th>id</th><th>shot</th><th>window</th><th>technique</th><th>moment</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+    for heading, filename in (
+        ("Plan", "director_plan.json"),
+        ("Editor report", "editor_report.json"),
+        ("Rounds", "director_rounds.json"),
+    ):
+        data = load_json(directory / filename)
+        parts.append(f"<h3>{heading}</h3><pre>{html_escape(json.dumps(data, ensure_ascii=False))}</pre>")
+    parts.append("<h3>Costs and model calls</h3>")
+    ledger = load_json(directory / "llm_spend.json")
+    entries = ledger.get("entries") if isinstance(ledger, dict) and isinstance(ledger.get("entries"), list) else []
+    cost_rows = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cost_rows.append(
+            "<tr>"
+            f"<td>{html_escape(str(entry.get('role') or ''))}</td>"
+            f"<td>{html_escape(str(entry.get('model') or ''))}</td>"
+            f"<td>{html_escape(str(entry.get('cost_usd') or ''))}</td>"
+            "</tr>"
+        )
+    parts.append(
+        "<table><thead><tr><th>role</th><th>model</th><th>cost</th></tr></thead>"
+        f"<tbody>{''.join(cost_rows)}</tbody></table>"
+    )
+    total = (edit.get("meta") or {}).get("llm_cost_usd") if isinstance(edit, dict) else None
+    total_line = f"Total: {html_escape(str(total))} USD"
+    rounds = load_json(directory / "director_rounds.json")
+    if isinstance(rounds, dict) and rounds.get("total_cost_usd") is not None:
+        total_line += f" (rounds: {html_escape(str(rounds['total_cost_usd']))} USD)"
+    parts.append(f"<p>{total_line}</p></div>")
+    return "".join(parts)
+
+
 def render_director_panel(directory, name, notebook=None, wanted=None):
-    """The Director tab: the chat with the director and the collapsible notebook."""
+    """The Director tab: the director's cut in plain words, the chat and the collapsible notebook."""
     directory = Path(directory)
     shown = pick_version(list_versions(directory), wanted)
     if shown is not None:
@@ -2501,11 +2696,11 @@ def render_director_panel(directory, name, notebook=None, wanted=None):
         )
     else:
         chat = render_chat_panel(directory, name)
-    return chat + render_notebook_panel(notebook, name)
+    return render_director_explanation(directory, shown) + chat + render_notebook_panel(notebook, name)
 
 
 def _render_tabs(name, enabled, tab):
-    """The project tab bar: Recap, Director, Files, Cuts and Shorts."""
+    """The project tab bar: Recap, Director, Files, Cuts, Shorts and Debug."""
     labels = dict(TABS)
     def link(key):
         active = ' class="active"' if key == tab else ""
@@ -2522,6 +2717,8 @@ def _render_tabs(name, enabled, tab):
     for key in ("cuts", "shorts"):
         if key in enabled:
             parts.append(link(key))
+    if "debug" in enabled:
+        parts.append(link("debug"))
     return f'<nav class="tabs">{"".join(parts)}</nav>'
 
 
@@ -2540,7 +2737,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
             continue
         if key == "shorts" and (not has_shorts or not feature_on(features, "shorts")):
             continue
-        if key in ("recap", "why", "shots") and not feature_on(features, key):
+        if key in ("recap", "shots") and not feature_on(features, key):
             continue
         if key in ("files", "director") and not feature_on(features, "recap"):
             continue
@@ -2554,12 +2751,6 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
                                              meta_cost=meta_cost)
     if "director" in enabled:
         panels["director"] = render_director_panel(directory, name, notebook=notebook, wanted=wanted)
-    if "why" in enabled:
-        panels["why"] = render_iframe_panel(
-            directory,
-            "explain.html",
-            "No explanation for this edit yet. Run scripts/explain.py, or re-edit it once to create one.",
-        )
     if "shots" in enabled:
         panels["shots"] = render_iframe_panel(
             directory,
@@ -2572,6 +2763,7 @@ def render_project(name, directory, tab, music_tracks=(), wanted=None, compare_w
         panels["shorts"] = render_shorts_panel(directory, name)
     if "files" in enabled:
         panels["files"] = render_files_panel(directory, name, features, consent_text=consent_text)
+    panels["debug"] = render_debug_panel(directory, name)
     lede = f'<span class="state badge-{status}">{status}</span>'
     estimate = all_good_estimate(directory)
     if estimate and estimate["shots"]:
@@ -3933,7 +4125,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
         self.send_redirect(f"/{project}/?tab=recap")
 
     def handle_feedback_reply(self, project):
-        """The chat with the director: how it reads a feedback request; start no run."""
+        """The chat with the director: one director call answers the message; start no run."""
         workspace = self.server.root / project
         if not workspace.is_dir() or not is_project(workspace):
             self.send_error_text(404, "unknown project")
@@ -3951,7 +4143,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             sys.executable,
             str(Path(__file__).resolve().parent / "llm_director.py"),
             "--workspace", str(workspace),
-            "--interpret-feedback", feedback,
+            "--chat", feedback,
             "--json",
         ]
         version = (fields.get("version") or "").strip()
@@ -3962,7 +4154,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             return
         if result.returncode != 0:
             message = (result.stderr or "").strip().splitlines()[-1:] or ["the director could not answer"]
-            self.send_error_text(400 if result.returncode == 2 else 500, message[0])
+            self.send_error_text(400 if result.returncode == 2 else 502, message[0])
             return
         try:
             summary = json.loads((result.stdout or "").strip().splitlines()[-1])
@@ -3970,7 +4162,7 @@ class WorkspaceHandler(http.server.BaseHTTPRequestHandler):
             summary = None
         reply = summary.get("reply") if isinstance(summary, dict) else None
         if not isinstance(reply, str) or not reply.strip():
-            self.send_error_text(500, "the director gave no answer")
+            self.send_error_text(502, "the director gave no answer")
             return
         can_do = normalise_can_do(summary.get("can_do"))
         missing_tool = summary.get("missing_tool")

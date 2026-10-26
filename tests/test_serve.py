@@ -328,6 +328,7 @@ def test_project_page_default_tab_is_recap(tmp_path):
         assert b'href="/2026-10-14/?tab=recap"' in body
         assert b'href="/2026-10-14/?tab=why"' not in body
         assert b'href="/2026-10-14/?tab=shots"' not in body
+        assert b'href="/2026-10-14/?tab=debug"' in body
         assert b"recap_final.mp4" not in body
         assert b"edit.json" not in body
     finally:
@@ -447,7 +448,7 @@ def test_tab_bar_has_director_and_recap_off_hides_it(tmp_path):
         status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
         assert status == 200
         assert b'href="/2026-10-14/?tab=director#chat-latest"' not in body
-        assert b'<iframe src="explain.html"' in body
+        assert b'<iframe src="shotlog.html"' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -471,13 +472,14 @@ def test_director_tab_is_phone_first(tmp_path):
     assert "width:" not in panel
 
 
-def test_tab_why_embeds_explain(tmp_path):
+def test_tab_why_is_gone(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
         status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
         assert status == 200
-        assert b'<iframe src="explain.html"' in body
+        assert b'<iframe src="explain.html"' not in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
     finally:
         server.shutdown()
         server.server_close()
@@ -502,10 +504,6 @@ def test_tab_without_file_shows_placeholder(tmp_path):
     (folder / "recap_720p.mp4").write_bytes(b"x")
     server = start_server(root)
     try:
-        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
-        assert status == 200
-        assert b"explain.html" not in body
-        assert b"scripts/explain.py" in body
         status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
         assert status == 200
         assert b"shotlog.html" not in body
@@ -1878,7 +1876,7 @@ def test_shotlog_regeneration_updates_the_used_grouping(tmp_path):
     assert "must be in" in page and "wrong label" in page
 
 
-def test_tab_bar_has_no_why_or_shots_links_but_pages_stay_reachable(tmp_path):
+def test_tab_bar_has_no_why_or_shots_links_but_the_shots_page_stays_reachable(tmp_path):
     root = make_root(tmp_path)
     server = start_server(root)
     try:
@@ -1888,9 +1886,7 @@ def test_tab_bar_has_no_why_or_shots_links_but_pages_stay_reachable(tmp_path):
         nav = page[page.index('<nav class="tabs">'):page.index("</nav>")]
         assert "?tab=why" not in nav
         assert "?tab=shots" not in nav
-        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
-        assert status == 200
-        assert b'<iframe src="explain.html"' in body
+        assert 'href="/2026-10-14/?tab=debug"' in nav
         status, _, body = request(server, "GET", "/2026-10-14/?tab=shots")
         assert status == 200
         assert b'<iframe src="shotlog.html"' in body

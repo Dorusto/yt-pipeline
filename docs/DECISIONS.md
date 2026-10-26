@@ -4,6 +4,42 @@ Format: **[Date] Title** — context, options considered, decision, rationale.
 
 ---
 
+## [2026-10-25] The chat through the director and the two tabs (V030 lot R4b)
+
+**Context:** The director rewrite (V030 lot R1) decided the film crew and that
+the owner's chat goes through the director. The chat was still a separate cheap
+interpret call (`llm_director.py --interpret-feedback`) that only said how the
+director read a request, and the project page still had a **Why?** tab with the
+old `explain.html` iframe.
+
+**Decision:** The chat is one director call: `llm_director.py --chat` sends the
+owner's message with the last plan, the editor report, the rounds, the owner's
+earlier notes and the notebook, and answers a plain reply. When the owner
+decided something, the answer carries a short `decision_note` stored as an
+owner note in `feedback.jsonl` and carried into the next run's feedback; the
+chat never edits the cut. The Director tab shows the director's idea, structure,
+per-shot reasons and the editor's report in plain words, then the chat and the
+notebook. A new Debug tab (last, muted) shows the shot list, the raw plan, the
+report, the rounds and the model calls. The **Why?** tab is gone (the
+`explain.html` artifact stays served); the old `--interpret-feedback` path stays
+in the code until R5.
+
+**Why:** The chat is the owner talking to the director, so it must see what the
+director sees (the plan, the report, the rounds, the notes, the notebook) and
+its decisions must reach the next run; a separate interpret call could only
+guess. The explanation belongs in the Director tab where the owner already
+talks to the director, and the raw files belong in a discreet Debug tab.
+
+**Consequence:** Files touched — `prompts/director_chat.md` (new),
+`scripts/llm_director.py`, `scripts/serve.py`, `scripts/common/theme.py`,
+`tests/test_director_chat.py` (new), `tests/test_serve_chat.py`,
+`tests/test_serve.py`, `docs/RULES.md`, `docs/AGENT_SETUP.md`,
+`docs/guides/user-guide.md`, `docs/guides/tools.md`,
+`.claude/skills/yt-recap/SKILL.md`, `CHANGELOG.md`,
+`docs/plans/director-rewrite.md`.
+
+---
+
 ## [2026-10-25] The director flow (V030 lot R4a)
 
 **Context:** The director rewrite (V030 lot R1) decided the film crew: the

@@ -259,14 +259,14 @@ after work started.
 Four project agents ship in `.opencode/agents/`, used to build the AI Director
 (see `docs/VISION.md`), not to run the pipeline. Every agent runs on the same
 model, `deepseek/deepseek-v4.1-flash`; the reasoning level is set per agent with
-a `reasoning:` block in the agent file (`effort: high` for the planning and
-writing agents, `effort: xhigh` for `coder-max`).
+a `reasoning:` block in the agent file (`effort: max` for `architect`, `coder`
+and `coder-max` and `high` for `specwriter`).
 
 | Agent | Mode | Model (OpenRouter) | Reasoning | Role |
 |:---|:---|:---|:---|:---|
-| `architect` | primary (Tab to select) | `deepseek/deepseek-v4.1-flash` | `high` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
-| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | `high` | implements one brief, never commits |
-| `coder-max` | subagent | `deepseek/deepseek-v4.1-flash` | `xhigh` | implements one brief for a hard lot, with the deepest reasoning; slower and costlier than `coder` |
+| `architect` | primary (Tab to select) | `deepseek/deepseek-v4.1-flash` | `max` | plans a phase, writes task briefs to `.opencode/tasks/`, delegates, audits, commits on phase branches |
+| `coder` | subagent | `deepseek/deepseek-v4.1-flash` | `max` | implements one brief, never commits |
+| `coder-max` | subagent | `deepseek/deepseek-v4.1-flash` | `max` | implements one brief for a hard lot, with the deepest reasoning; slower and costlier than `coder` |
 | `specwriter` | primary | `deepseek/deepseek-v4.1-flash` | `high` | writes and maintains `docs/SPEC.md`, never code |
 
 `opencode.json` in the repo root registers the OpenRouter model and the shared

@@ -169,23 +169,34 @@ def test_chat_panel_disables_the_button_when_can_do_none(tmp_path):
         server.server_close()
 
 
-def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatch):
+def stub_tool(monkeypatch, stdout, returncode=0, stderr=""):
+    """Replace the tool subprocess with a stub that records its argv."""
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+    return calls
+
+
+def test_chat_message_runs_the_director_chat_and_redirects(tmp_path, monkeypatch):
     root = make_root(tmp_path)
-    calls = stub_recap(monkeypatch, tmp_path)
+    recap_calls = stub_recap(monkeypatch, tmp_path)
     stdout = json.dumps(
         {
             "reply": "I will drop 0071/s2.",
+            "decision_note": None,
+            "can_do": "all",
+            "missing_tool": None,
             "estimate_usd": 0.05,
             "estimate_s": 12.3,
             "wall_time_s": 1.0,
             "llm_cost_usd": 0.0003,
         }
     )
-    monkeypatch.setattr(
-        serve.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout, ""),
-    )
+    calls = stub_tool(monkeypatch, stdout)
     server = start_server(root)
     try:
         status, headers, body = request(
@@ -197,7 +208,271 @@ def test_chat_message_runs_the_interpret_call_and_redirects(tmp_path, monkeypatc
         )
         assert status == 303, body
         assert headers["Location"] == "/2026-10-14/?tab=director#chat-latest"
-        assert calls == []
+        assert "--chat" in calls[-1]
+        assert "--interpret-feedback" not in calls[-1]
+        assert recap_calls == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_decision_note_reaches_the_next_run(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    stub_recap(monkeypatch, tmp_path)
+    stdout = json.dumps(
+        {
+            "reply": "I read this as: drop 0071/s2.",
+            "decision_note": "drop 0071/s2",
+            "can_do": "all",
+            "missing_tool": None,
+            "estimate_usd": None,
+            "estimate_s": None,
+            "wall_time_s": 1.0,
+            "llm_cost_usd": 0.0003,
+        }
+    )
+    stub_tool(monkeypatch, stdout)
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 303, body
+        row = {
+            "ts": "2026-10-24T10:00:00+00:00",
+            "action": "reply",
+            "text": "drop 0071/s2",
+            "reply": "I read this as: drop 0071/s2.",
+            "decision_note": "drop 0071/s2",
+        }
+        (project / "feedback.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert '<p class="chat-decision">Decision: drop 0071/s2</p>' in page
+        form = page.split('class="chat-approve"', 1)[1].split("</form>", 1)[0]
+        assert "Decision: drop 0071/s2" in form
+        rows = [
+            json.loads(line)
+            for line in (project / "feedback.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert rows[0]["decision_note"] == "drop 0071/s2"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_chat_model_failure_is_a_clear_message(tmp_path, monkeypatch):
+    root = make_root(tmp_path)
+    stub_recap(monkeypatch, tmp_path)
+    stub_tool(
+        monkeypatch,
+        "",
+        returncode=3,
+        stderr="[error] model produced no usable reply after one retry\n",
+    )
+    server = start_server(root)
+    try:
+        status, _, body = request(
+            server,
+            "POST",
+            "/2026-10-14/feedback-reply",
+            headers=multipart_headers(),
+            body=multipart_body([("feedback", None, "drop 0071/s2")]),
+        )
+        assert status == 502
+        assert b"model produced no usable reply after one retry" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_shows_the_explanation(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    plan = {
+        "schema_version": "1",
+        "generated_at": "2026-10-25T21:00:00+00:00",
+        "tool": "director",
+        "brief": {"text": "a calm recap"},
+        "content_type": "vacation",
+        "idea": "A calm morning on the water ends with the cave.",
+        "structure": {
+            "kind": "journey",
+            "why": "the order carries the story",
+            "beats": [{"id": "b1", "name": "The wake", "intent": "open calm", "target_s": 30}],
+        },
+        "shots": [
+            {
+                "id": "v1",
+                "beat": "b1",
+                "shot_key": "0056/s1",
+                "purpose": "open on the wake",
+                "technique": "none",
+                "target_s": 3.0,
+                "why": "sets the calm",
+            }
+        ],
+    }
+    report = {
+        "schema_version": "1",
+        "generated_at": "2026-10-25T21:00:00+00:00",
+        "tool": "director_editor",
+        "shots": [],
+        "total_length_s": 12.0,
+        "target_length_s": 90.0,
+        "could_not_do": ["could not do the jerky approach"],
+        "similar_neighbours": [{"first": "v1", "second": "v2", "score": 0.93}],
+        "summary": "3 slots",
+        "wall_time_s": 0.1,
+        "llm_cost_usd": 0.0,
+    }
+    rounds = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-25T21:00:00+00:00",
+        "tool": "scripts/llm_director.py",
+        "rounds": [
+            {
+                "round": 1,
+                "plan": plan,
+                "report": report,
+                "review": {"approved": False, "summary": "the middle drags", "notes": ["cut the last shot shorter"]},
+                "cost_usd": 0.001,
+            }
+        ],
+        "total_cost_usd": 0.001,
+    }
+    (project / "director_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (project / "editor_report.json").write_text(json.dumps(report), encoding="utf-8")
+    (project / "director_rounds.json").write_text(json.dumps(rounds), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        page = body.decode()
+        assert "A calm morning on the water ends with the cave." in page
+        assert "the order carries the story" in page
+        assert "open on the wake" in page and "sets the calm" in page
+        assert "could not do the jerky approach" in page
+        assert "12.0 s of 90.0 s" in page
+        assert "cut the last shot shorter" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_director_tab_without_files_shows_the_empty_text(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=director")
+        assert status == 200
+        assert b"No director data yet" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_debug_tab_renders(tmp_path):
+    root = make_root(tmp_path)
+    project = root / "2026-10-14"
+    plan = {
+        "schema_version": "1",
+        "generated_at": "2026-10-25T21:00:00+00:00",
+        "tool": "director",
+        "brief": {"text": "a calm recap"},
+        "content_type": "vacation",
+        "idea": "A calm morning on the water ends with the cave.",
+        "structure": {
+            "kind": "journey",
+            "why": "the order carries the story",
+            "beats": [{"id": "b1", "name": "The wake", "intent": "open calm", "target_s": 30}],
+        },
+        "shots": [
+            {
+                "id": "v1",
+                "beat": "b1",
+                "shot_key": "0056/s1",
+                "purpose": "open on the wake",
+                "technique": "cut_on_motion",
+                "moment": {"at_s": 4.0},
+                "target_s": 3.0,
+                "why": "sets the calm",
+            }
+        ],
+    }
+    report = {
+        "schema_version": "1",
+        "generated_at": "2026-10-25T21:00:00+00:00",
+        "tool": "director_editor",
+        "shots": [],
+        "total_length_s": 12.0,
+        "target_length_s": 90.0,
+        "could_not_do": [],
+        "similar_neighbours": [],
+        "summary": "3 slots",
+        "wall_time_s": 0.1,
+        "llm_cost_usd": 0.0,
+    }
+    rounds = {
+        "schema_version": "0.1",
+        "generated_at": "2026-10-25T21:00:00+00:00",
+        "tool": "scripts/llm_director.py",
+        "rounds": [],
+        "total_cost_usd": 0.001,
+    }
+    edit = {
+        "meta": {"llm_cost_usd": 0.006},
+        "video": [{"id": "v1", "shot_key": "0056/s1", "in_s": 2.0, "out_s": 7.0}],
+    }
+    ledger = {
+        "total_usd": 0.001,
+        "entries": [
+            {"ts": "2026-10-25T21:00:00+00:00", "role": "director", "model": "stub/director", "cost_usd": 0.001}
+        ],
+    }
+    (project / "director_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (project / "editor_report.json").write_text(json.dumps(report), encoding="utf-8")
+    (project / "director_rounds.json").write_text(json.dumps(rounds), encoding="utf-8")
+    (project / "edit.json").write_text(json.dumps(edit), encoding="utf-8")
+    (project / "llm_spend.json").write_text(json.dumps(ledger), encoding="utf-8")
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=debug")
+        assert status == 200
+        page = body.decode()
+        assert "0056/s1" in page
+        assert "2.0–7.0" in page
+        assert "cut_on_motion" in page
+        assert "A calm morning on the water ends with the cave." in page
+        assert "could_not_do" in page
+        assert "total_cost_usd" in page
+        assert "stub/director" in page
+        assert "Total: 0.006 USD" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_why_tab_is_gone(tmp_path):
+    root = make_root(tmp_path)
+    server = start_server(root)
+    try:
+        status, _, body = request(server, "GET", "/2026-10-14/")
+        assert status == 200
+        page = body.decode()
+        assert "?tab=why" not in page
+        assert "Why?" not in page
+        status, _, body = request(server, "GET", "/2026-10-14/?tab=why")
+        assert status == 200
+        assert b'<iframe src="explain.html"' not in body
+        assert b'<video controls playsinline preload="metadata" poster="thumbs/poster.jpg" src="recap_720p.mp4">' in body
     finally:
         server.shutdown()
         server.server_close()

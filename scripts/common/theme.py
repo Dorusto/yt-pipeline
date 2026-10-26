@@ -266,10 +266,13 @@ form label.check input{width:20px;height:20px;min-height:0;accent-color:var(--ac
 .chat-msg.director p{background:var(--deck);border:1px solid var(--line);border-radius:var(--radius-l);padding:var(--sp-2) var(--sp-3);max-width:80%}
 .chat-shot{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--muted);border:1px solid var(--line);border-radius:var(--radius-pill);padding:0 var(--sp-2);min-width:var(--tap);text-align:center}
 .chat-estimate{color:var(--muted);font-size:var(--fs-xs)}
+.chat-decision{color:var(--muted);font-size:var(--fs-s)}
 .chat-form,.chat-approve{display:flex;gap:var(--sp-2);align-items:flex-end;margin-top:var(--sp-3)}
 .chat-form textarea{flex:1}
 .chat-earlier{margin:var(--sp-2) 0}
 .chat-earlier summary{cursor:pointer;color:var(--muted)}
+.debug{color:var(--muted);font-size:var(--fs-s)}
+.debug pre{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-s);padding:var(--sp-3)}
 .stop-run{margin-top:var(--sp-3)}
 """
 

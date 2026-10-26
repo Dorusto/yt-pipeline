@@ -28,9 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web app: a **Stop** button on the progress card of a running edit stops the run and its child processes and leaves the previous version as the current one.
 - Director: the rule director takes the owner's explicit keys (`--add-shots`/`--drop-shots`, comma-separated and repeatable) and the `--json` summary reports `applied_keys`/`not_applied_keys`; the web app says "The director could not make this edit; a simpler editor made it." and lists which requested changes were applied and which were not when the shown edit is a rule fallback.
 - Director rewrite: the code editor `scripts/director_editor.py` turns a `director_plan.json` into `edit.json` and an `editor_report.json`, cutting the windows around the director's moments, on the beat, and never changing the shots.
+- Web app: a **Debug** tab (last, muted) shows the shot list, the raw plan, the editor report, the rounds and the model calls.
 
 ### Changed
 
+- Director: the chat goes through the director — `llm_director.py --chat` makes one director call with the last plan, the editor report, the rounds, the owner's notes and the notebook, and a decision the owner made is stored as an owner note and carried into the next run's feedback; the Director tab shows the director's idea, structure, per-shot reasons and the editor's report in plain words, and the **Why?** tab is replaced by the **Debug** tab (the `explain.html` artifact stays served).
 - Director: the default flow is the film crew — one director call writes `director_plan.json`, the code editor cuts it into `edit.json` and `editor_report.json` without changing the shots, the director reviews the cut with one picture per shot (at most 2 rounds, `director_rounds.json` records every round), and the rule director is the fallback only when the model gives no usable plan.
 - The recap's YouTube title and description are optional and off by default: `recap.py --meta` / `--no-meta` override `recap.meta` in the config (default false), the web Upload and Re-edit forms carry a "Title and description" option, and with it off the `recap_meta` station is skipped and the Recap tab shows no title/description block.
 - The project page's reviewer box is replaced by the chat in the Director tab (the notebook too).

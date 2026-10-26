@@ -241,6 +241,7 @@ def build_parser():
             "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --feedback \"drop 0071/s2, tunnel longer\"\n"
             "  python scripts/llm_director.py --workspace <workspace> --interpret-feedback \"drop 0071/s2, tunnel longer\" --json\n"
             "  python scripts/llm_director.py --workspace <workspace> --version v3 --interpret-feedback \"make the tunnel longer\"\n"
+            "  python scripts/llm_director.py --workspace <workspace> --chat \"drop 0071/s2, tunnel longer\" --json\n"
             "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --prepare --json\n"
             "  python scripts/llm_director.py --workspace <workspace> --brief \"...\" --apply --json\n"
         ),
@@ -323,7 +324,7 @@ def build_parser():
         "--version",
         default=None,
         metavar="vNNN",
-        help="read the previous edit context from versions/vNNN/edit.json (with --interpret-feedback)",
+        help="read the previous edit context from versions/vNNN/edit.json (with --interpret-feedback or --chat)",
     )
     parser.add_argument(
         "--interpret-feedback",
@@ -332,6 +333,17 @@ def build_parser():
         help=(
             "say in the user's language how the director reads this feedback request, "
             "with a cost and time estimate; one cheap model call, no edit written"
+        ),
+    )
+    parser.add_argument(
+        "--chat",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "talk to the director about the current edit: one model call with the director prompt "
+            "plus the chat addendum, the last plan, the editor report, the rounds, the owner's notes "
+            "and the notebook; the answer is a plain reply and, when the owner decided something, "
+            "a short decision_note stored as an owner note; no edit written"
         ),
     )
     parser.add_argument(
@@ -776,6 +788,130 @@ def interpret_feedback(workspace, text, version=None, model=None, budget_usd=Non
         "missing_tool": missing_tool,
         "add_keys": answer["add_keys"],
         "drop_keys": answer["drop_keys"],
+        "estimate_usd": estimate_usd,
+        "estimate_s": estimate_s,
+        "wall_time_s": round(time.monotonic() - started, 2),
+        "llm_cost_usd": round(state.cost_usd, 8),
+    }, EXIT_OK
+
+
+def build_chat_user(text, workspace, edit_path=None, config=None):
+    """The user message for the chat call: the message plus the plan, report, rounds, notes and notebook."""
+    workspace = Path(workspace)
+    blocks = [f"The owner's message:\n{text}"]
+    for label, name in (
+        ("The last plan (director_plan.json)", PLAN_FILE),
+        ("The editor's report (editor_report.json)", REPORT_FILE),
+        ("The rounds (director_rounds.json)", ROUNDS_FILE),
+    ):
+        data = load_json(workspace / name)
+        blocks.append(f"{label}:\n{json.dumps(data, ensure_ascii=False) if data is not None else 'none'}")
+    notes = [
+        row["text"]
+        for row in read_feedback(workspace)
+        if row.get("action") == "feedback" and isinstance(row.get("text"), str) and row["text"].strip()
+    ][-10:]
+    notes_block = "\n".join(f"- {note}" for note in notes) if notes else "none"
+    blocks.append(f"The owner's earlier notes (feedback.jsonl):\n{notes_block}")
+    notebook_file = notebook_path(None, config)
+    notebook_text = notebook_block(notebook_file) if notebook_file is not None else None
+    blocks.append(f"The notebook:\n{notebook_text or 'none'}")
+    path = Path(edit_path) if edit_path is not None else workspace / "edit.json"
+    edit = load_json(path)
+    director = (edit.get("meta") or {}).get("director") if isinstance(edit, dict) else None
+    blocks.append(
+        "The shown version's director info (edit.json meta.director):\n"
+        + (json.dumps(director, ensure_ascii=False) if director is not None else "none")
+    )
+    return "\n\n".join(blocks)
+
+
+def director_chat(workspace, text, version=None, model=None, budget_usd=None, config=None, client=None, reasoning_effort=None):
+    """One director call that answers the owner's chat message about the current edit."""
+    started = time.monotonic()
+    workspace_path = Path(workspace).expanduser().resolve()
+    if not workspace_path.is_dir():
+        raise LLMDirectorError(f"workspace not found: {workspace_path}")
+    if not text or not text.strip():
+        raise LLMDirectorError("provide --chat TEXT")
+    edit_path = None
+    if version is not None:
+        if not re.fullmatch(r"v\d+", version):
+            raise LLMDirectorError(f"--version must look like vNNN, got {version!r}")
+        edit_path = workspace_path / "versions" / version / "edit.json"
+    if client is None:
+        if config is None:
+            config = load_config()
+        effective = dict(config)
+        models = dict(effective.get("models") or {})
+        if model is not None:
+            models["director"] = model
+        effective["models"] = models
+        if budget_usd is not None:
+            effective["llm_budget_usd"] = budget_usd
+        client = make_client(config=effective, ledger_path=workspace_path / "llm_spend.json")
+    prompt = (
+        read_prompt("director.md").rstrip()
+        + "\n\n"
+        + read_prompt("tools.md").rstrip()
+        + "\n\n"
+        + read_prompt("director_chat.md")
+    )
+    state = LoopState()
+    state.reasoning_effort = director_reasoning_effort(reasoning_effort, config)
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": build_chat_user(text, workspace_path, edit_path, config)},
+    ]
+    answer = None
+    for _ in range(2):
+        try:
+            response = call_client(client, messages, state)
+        except RuntimeError as exc:
+            raise LLMDirectorRuntimeError(str(exc)) from exc
+        data = parse_json(response.text)
+        if not isinstance(data, dict):
+            continue
+        reply = data.get("reply")
+        if not isinstance(reply, str) or not reply.strip():
+            continue
+        if data.get("can_do") not in ("all", "part", "none"):
+            continue
+        answer = data
+        break
+    if answer is None:
+        raise LLMDirectorRuntimeError("model produced no usable reply after one retry")
+    reply = answer["reply"].strip()
+    decision_note = answer.get("decision_note")
+    if isinstance(decision_note, str) and decision_note.strip():
+        decision_note = decision_note.strip()
+    else:
+        decision_note = None
+    can_do = answer["can_do"]
+    missing_tool = answer.get("missing_tool")
+    if can_do != "all" and isinstance(missing_tool, str) and missing_tool.strip():
+        missing_tool = missing_tool.strip()
+    else:
+        missing_tool = None
+    estimate_usd, estimate_s = last_director_estimate(workspace_path)
+    append_feedback(
+        workspace_path,
+        "reply",
+        text=text,
+        reply=reply,
+        decision_note=decision_note,
+        estimate={"usd": estimate_usd, "s": estimate_s},
+        can_do=can_do,
+        missing_tool=missing_tool,
+        tool=TOOL,
+    )
+    if decision_note is not None:
+        append_feedback(workspace_path, "feedback", text=decision_note, tool=TOOL)
+    return {
+        "reply": reply,
+        "decision_note": decision_note,
+        "can_do": can_do,
+        "missing_tool": missing_tool,
         "estimate_usd": estimate_usd,
         "estimate_s": estimate_s,
         "wall_time_s": round(time.monotonic() - started, 2),
@@ -3678,7 +3814,7 @@ def apply_agent_answer(
 
 
 def _check_agent_mode_conflict(args):
-    """Reject more than one of --prepare, --apply, --interpret-feedback and --dry-run."""
+    """Reject more than one of --prepare, --apply, --interpret-feedback, --chat and --dry-run."""
     modes = []
     if args.prepare:
         modes.append("--prepare")
@@ -3686,6 +3822,8 @@ def _check_agent_mode_conflict(args):
         modes.append("--apply")
     if args.interpret_feedback is not None:
         modes.append("--interpret-feedback")
+    if args.chat is not None:
+        modes.append("--chat")
     if args.dry_run:
         modes.append("--dry-run")
     if len(modes) > 1:
@@ -3794,6 +3932,15 @@ def main(argv=None):
                 budget_usd=args.budget_usd,
                 reasoning_effort=args.reasoning_effort,
             )
+        elif args.chat is not None:
+            summary, code = director_chat(
+                args.workspace,
+                args.chat,
+                version=args.version,
+                model=args.model,
+                budget_usd=args.budget_usd,
+                reasoning_effort=args.reasoning_effort,
+            )
         else:
             summary, code = run(
                 args.workspace,
@@ -3831,6 +3978,8 @@ def main(argv=None):
         print_apply(summary)
     elif args.interpret_feedback is not None:
         print_interpret(summary)
+    elif args.chat is not None:
+        print(summary["reply"])
     else:
         record = load_json(summary["out"]) if summary.get("out") else None
         print_human(summary, record)
