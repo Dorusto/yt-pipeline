@@ -102,6 +102,25 @@ def test_common_and_top_level_same_name_is_flagged(tmp_path):
     assert "helper" in duplicate_names(tmp_path)
 
 
+MERGED_INTO_COMMON = {"snap_bounds", "_ramped_cut", "flow_decisions"}
+MERGED_FORMULA = "0.5 / ("
+
+
+def test_merged_helpers_are_not_reintroduced():
+    """The merged names stay out of the top-level scripts and the merged speed formula is not copied back."""
+    offenders = []
+    for path in sorted((ROOT / "scripts").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name in MERGED_INTO_COMMON and node.name != "_ramped_cut":
+                offenders.append(f"{path.name}:{node.name}")
+            if MERGED_FORMULA in ast.unparse(node):
+                offenders.append(f"{path.name}:{node.name} copies the speed formula")
+    assert offenders == []
+
+
 def test_no_hand_rolled_worker_pool():
     offenders = []
     pool = ROOT / "scripts" / "common" / "pool.py"

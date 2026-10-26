@@ -134,3 +134,53 @@ def build_decisions(shotlog, used_rows, pool_keys=None, drop_reasons=None):
         )
     decisions.sort(key=lambda item: item["id"])
     return decisions
+
+
+def flow_decisions(plan, report, shotlog, facts):
+    """The ``decisions[]`` rows of the film-crew flow: one used row per plan shot plus the editor's could-not-do items."""
+    report_by_id = {row.get("id"): row for row in (report or {}).get("shots") or []}
+    used_keys = []
+    rows = []
+    for shot in plan.get("shots") or []:
+        key = shot.get("shot_key")
+        used_keys.append(key)
+        fact = facts.get(key) or {}
+        entry = shotlog.get(key) or {}
+        row = report_by_id.get(shot.get("id")) or {}
+        reason = f"{shot.get('purpose')} — {shot.get('why')}"
+        asked = row.get("technique_asked")
+        done = row.get("technique_done")
+        why_not = row.get("why_not")
+        if done == asked and asked != "none":
+            reason += f" (technique {asked} done)"
+        elif done is not None and done != asked:
+            reason += f" (technique {asked} done as {done})"
+        elif done is None and why_not:
+            reason += f" (technique {asked} not done: {why_not})"
+        rows.append(
+            {
+                "id": key,
+                "status": "used",
+                "reason": reason,
+                "slot": shot.get("id"),
+                "score": entry.get("score"),
+                "clip": entry.get("clip"),
+                "window_in_s": fact.get("window_in_s"),
+                "window_out_s": fact.get("window_out_s"),
+            }
+        )
+    for item in (report or {}).get("could_not_do") or []:
+        named = next((key for key in used_keys if key and key in item), None)
+        rows.append(
+            {
+                "id": named or "editor",
+                "status": "rejected",
+                "reason": item,
+                "slot": None,
+                "score": None,
+                "clip": None,
+                "window_in_s": None,
+                "window_out_s": None,
+            }
+        )
+    return rows

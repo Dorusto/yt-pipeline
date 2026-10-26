@@ -1637,7 +1637,7 @@ def test_beat_snap_cut_beyond_the_slack_warns_and_stays():
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.0, "duration_s": 3.0}
     warnings = []
     stats = director.snap_slots(
-        [video, photo], director.snap_bounds([video, photo]), grid, warnings, downbeats_at=[False, False],
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
     )
     assert video["out_s"] == 2.3
     assert any("cut 1: not snapped" in warning for warning in warnings)
@@ -1659,7 +1659,7 @@ def test_beat_snap_moves_a_cut_past_the_window_within_the_slack():
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.0, "duration_s": 3.0}
     warnings = []
     stats = director.snap_slots(
-        [video, photo], director.snap_bounds([video, photo]), grid, warnings, downbeats_at=[False, False],
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
     )
     assert abs(video["out_s"] - 2.6) <= 0.02
     assert stats["unsnapped"] == 0
@@ -1670,7 +1670,7 @@ def test_beat_snap_photo_duration_lands_on_a_whole_beat():
     grid = {"beat_s": beat_s, "downbeat_s": beat_s[::4], "beat_period_s": 0.5}
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.9, "duration_s": 2.9}
     warnings = []
-    director.snap_slots([photo], director.snap_bounds([photo]), grid, warnings, downbeats_at=[False])
+    director.snap_slots([photo], [director.slot_bounds_for(photo)], grid, warnings, downbeats_at=[False])
     assert abs(photo["duration_s"] - round(photo["duration_s"] / 0.5) * 0.5) <= 0.02
     assert 2.0 <= photo["duration_s"] <= 4.0
     assert not [warning for warning in warnings if "not snapped" in warning]
@@ -1688,8 +1688,65 @@ def test_snap_slots_returns_the_beat_snap_shape():
         "important": False,
     }
     warnings = []
-    stats = director.snap_slots([video], director.snap_bounds([video]), grid, warnings, downbeats_at=[False])
+    stats = director.snap_slots([video], [director.slot_bounds_for(video)], grid, warnings, downbeats_at=[False])
     assert set(stats) == {"beats", "snapped", "unsnapped", "downbeats", "half_bar"}
+
+
+def test_slot_bounds_for_matches_the_old_snap_bounds():
+    photo = {
+        "media_type": "photo",
+        "clip": "p.jpg",
+        "in_s": 0.0,
+        "out_s": 3.0,
+        "duration_s": 3.0,
+        "max_screen_s": 4.0,
+    }
+    plain = {
+        "clip": "a.mp4",
+        "in_s": 10.0,
+        "out_s": 14.0,
+        "window_in_s": 8.0,
+        "window_out_s": 16.0,
+        "landing_floor_s": None,
+        "important": False,
+        "max_screen_s": 5.0,
+    }
+    landing = dict(plain, landing_floor_s=13.5)
+    important = dict(plain, important=True, motion_label="pan_left")
+    hero_static = dict(plain, important=True, motion_label="static")
+    assert director.slot_bounds_for(photo) == {"cap": 4.0, "important": False, "photo": True}
+    assert director.slot_bounds_for(plain) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": False,
+        "low": 10.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
+    assert director.slot_bounds_for(landing) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": False,
+        "low": 13.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
+    assert director.slot_bounds_for(important) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": True,
+        "low": 10.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
+    assert director.slot_bounds_for(hero_static) == {
+        "cap": 5.0,
+        "high": 16.0,
+        "important": True,
+        "low": 10.5,
+        "photo": False,
+        "window_in": 8.0,
+    }
 
 
 def test_beat_snap_photo_slots_stay_on_beats_in_an_edit(tmp_path):
@@ -1765,7 +1822,7 @@ def test_beat_snap_pair_absorb_moves_an_important_cut_pinned_at_the_window_end()
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.5, "duration_s": 3.5}
     warnings = []
     stats = director.snap_slots(
-        [video, photo], director.snap_bounds([video, photo]), grid, warnings, downbeats_at=[False, False],
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
     )
     assert abs(video["out_s"] - 3.0) <= 0.02
     assert 2.0 <= photo["duration_s"] <= 4.0
@@ -1788,7 +1845,7 @@ def test_beat_snap_pair_absorb_moves_an_important_cut_past_both_windows_within_t
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 2.0, "duration_s": 2.0}
     warnings = []
     stats = director.snap_slots(
-        [video, photo], director.snap_bounds([video, photo]), grid, warnings, downbeats_at=[False, False],
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
     )
     assert abs(video["out_s"] - 3.0) <= 0.02
     assert stats["unsnapped"] == 0
@@ -1809,7 +1866,7 @@ def test_beat_snap_pair_absorb_does_not_move_a_non_important_cut_past_the_window
     photo = {"media_type": "photo", "clip": "p.jpg", "in_s": 0.0, "out_s": 3.5, "duration_s": 3.5}
     warnings = []
     stats = director.snap_slots(
-        [video, photo], director.snap_bounds([video, photo]), grid, warnings, downbeats_at=[False, False],
+        [video, photo], [director.slot_bounds_for(slot) for slot in [video, photo]], grid, warnings, downbeats_at=[False, False],
     )
     assert video["out_s"] == 2.9
     assert stats["unsnapped"] >= 1

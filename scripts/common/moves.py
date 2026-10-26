@@ -64,6 +64,12 @@ def source_length_for(screen_budget_s, middle_speed=MIDDLE_SPEED_MAX):
     return max(0.0, float(screen_budget_s)) / screen_factor(middle_speed)
 
 
+def ramp_speed(source_length_s, screen_budget_s):
+    """The middle speed (1.0 to ``MIDDLE_SPEED_MAX``) that fits ``source_length_s`` into ``screen_budget_s``."""
+    needed = 0.5 / (float(screen_budget_s) / float(source_length_s) - 0.5)
+    return max(1.0, min(MIDDLE_SPEED_MAX, math.ceil(needed * 100 - 1e-9) / 100))
+
+
 def is_photo_slot(slot):
     return slot.get("kind") == "photo" or slot.get("media_type") == "photo"
 
@@ -144,9 +150,7 @@ def _fit(slot, low, high, budget, speed_ramp):
         return low, high, 1.0
     top_speed = MIDDLE_SPEED_MAX if speed_ramp else 1.0
     if speed_ramp and span <= source_length_for(budget, top_speed) + EPSILON:
-        needed = 0.5 / (budget / span - 0.5)
-        speed = min(MIDDLE_SPEED_MAX, math.ceil(needed * 100 - 1e-9) / 100)
-        return low, high, max(1.0, speed)
+        return low, high, ramp_speed(span, budget)
     length = math.floor(source_length_for(budget, top_speed) * 1000 + 1e-6) / 1000
     in_s, out_s = _place(slot, low, high, length)
     return in_s, out_s, top_speed

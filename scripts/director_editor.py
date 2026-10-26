@@ -18,7 +18,6 @@ report. No model call.
 
 import argparse
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -41,7 +40,7 @@ from common.facts import (
     load_shotlog,
 )
 from common.jsonio import load_json, now_iso, write_json
-from common.moves import MIDDLE_SPEED_MAX, is_move_slot, slot_duration, source_length_for
+from common.moves import MIDDLE_SPEED_MAX, is_move_slot, ramp_speed, slot_duration, source_length_for
 from common.peak import centre_window, is_centred
 from common.photos import ken_burns_for
 from common.schema import SchemaError, validate_or_raise
@@ -221,9 +220,7 @@ def _ramped_cut(fact, budget, moment):
     source_len = out_s - in_s
     if source_len <= budget + 1e-9:
         return in_s, out_s, 1.0
-    needed = 0.5 / (budget / source_len - 0.5)
-    speed = min(MIDDLE_SPEED_MAX, math.ceil(needed * 100 - 1e-9) / 100)
-    return in_s, out_s, max(1.0, speed)
+    return in_s, out_s, ramp_speed(source_len, budget)
 
 
 def _video_cut(shot, fact, could_not_do, speed_ramp=False):

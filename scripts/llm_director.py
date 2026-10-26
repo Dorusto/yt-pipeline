@@ -46,6 +46,7 @@ from common.facts import (
     clamp,
     load_shotlog,
 )
+from common.decisions import flow_decisions
 from common.beatsnap import BeatsError, load_beats
 from common.moves import is_star, slot_duration
 from common.schema import SchemaError, validate, validate_or_raise
@@ -1340,56 +1341,6 @@ def _write_rounds(path, rounds, total_cost):
             "total_cost_usd": round(total_cost, 8),
         },
     )
-
-
-def flow_decisions(plan, report, shotlog, facts):
-    """The ``decisions[]`` rows of the film-crew flow: one used row per plan shot plus the editor's could-not-do items."""
-    report_by_id = {row.get("id"): row for row in (report or {}).get("shots") or []}
-    used_keys = []
-    rows = []
-    for shot in plan.get("shots") or []:
-        key = shot.get("shot_key")
-        used_keys.append(key)
-        fact = facts.get(key) or {}
-        entry = shotlog.get(key) or {}
-        row = report_by_id.get(shot.get("id")) or {}
-        reason = f"{shot.get('purpose')} — {shot.get('why')}"
-        asked = row.get("technique_asked")
-        done = row.get("technique_done")
-        why_not = row.get("why_not")
-        if done == asked and asked != "none":
-            reason += f" (technique {asked} done)"
-        elif done is not None and done != asked:
-            reason += f" (technique {asked} done as {done})"
-        elif done is None and why_not:
-            reason += f" (technique {asked} not done: {why_not})"
-        rows.append(
-            {
-                "id": key,
-                "status": "used",
-                "reason": reason,
-                "slot": shot.get("id"),
-                "score": entry.get("score"),
-                "clip": entry.get("clip"),
-                "window_in_s": fact.get("window_in_s"),
-                "window_out_s": fact.get("window_out_s"),
-            }
-        )
-    for item in (report or {}).get("could_not_do") or []:
-        named = next((key for key in used_keys if key and key in item), None)
-        rows.append(
-            {
-                "id": named or "editor",
-                "status": "rejected",
-                "reason": item,
-                "slot": None,
-                "score": None,
-                "clip": None,
-                "window_in_s": None,
-                "window_out_s": None,
-            }
-        )
-    return rows
 
 
 def _resolve_workspace_brief(workspace, brief, brief_file):

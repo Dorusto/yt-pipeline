@@ -23,8 +23,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from common.beatsnap import BeatsError, load_beats, snap_slots
-from common.constants import SNAP_MIN_SLOT_S
+from common.beatsnap import BeatsError, load_beats, slot_bounds, snap_slots
 from common.decisions import build_decisions
 from common.facts import (
     FactsError,
@@ -1007,27 +1006,20 @@ def mark_centred(slot):
     )
 
 
-def snap_bounds(slots):
-    """The common beat-snap bounds for the rules program's internal slots."""
-    bounds = []
-    for slot in slots:
-        if slot.get("media_type") == "photo":
-            bounds.append({"photo": True, "important": False, "cap": slot.get("max_screen_s")})
-            continue
-        landing_floor = slot.get("landing_floor_s")
-        bounds.append(
-            {
-                "photo": False,
-                "important": bool(slot.get("important")),
-                "low": max(
-                    float(slot["in_s"]) + SNAP_MIN_SLOT_S,
-                    float(landing_floor) if landing_floor is not None else 0.0,
-                ),
-                "high": float(slot.get("window_out_s", slot["out_s"])),
-                "window_in": float(slot.get("window_in_s", slot["in_s"])),
-                "cap": slot.get("max_screen_s"),
-            }
-        )
+def slot_bounds_for(slot):
+    """The common beat-snap bounds of one internal slot, keeping the rules program's ``important`` flag."""
+    fact = {
+        "media_type": slot.get("media_type"),
+        "window_in_s": slot.get("window_in_s", slot["in_s"]),
+        "window_out_s": slot.get("window_out_s", slot["out_s"]),
+        "landing_at_s": (
+            float(slot["landing_floor_s"]) - LANDING_FLOOR_S
+            if slot.get("landing_floor_s") is not None
+            else None
+        ),
+    }
+    bounds = slot_bounds(slot, fact, cap=slot.get("max_screen_s"))
+    bounds["important"] = bool(slot.get("important"))
     return bounds
 
 
@@ -1375,7 +1367,7 @@ def run(args, started):
     beat_snap = None
     if beat_grid is not None:
         beat_snap = snap_slots(
-            slots, snap_bounds(slots), beat_grid, warnings,
+            slots, [slot_bounds_for(slot) for slot in slots], beat_grid, warnings,
             slot_min_s=min_slot_s, downbeats_at=[False] * len(slots),
         )
     for slot in slots:
